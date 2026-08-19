@@ -1,0 +1,38 @@
+import {BackendApp, HttpRequest, Response} from "@openvoxel/backend"
+import {ChunkBatchQuery, ChunkQuery, GenerationSampleQuery, chunkBatchResponse, chunkResponse, generationSampleResponse} from "@openvoxel/protocol"
+import {WorldRuntime} from "@openvoxel/world-runtime"
+
+class ChunkController:
+    constructor(private const runtime: WorldRuntime):
+        pass
+
+    async def one(request: HttpRequest) -> Response:
+        const query = ChunkQuery.parse(request.body)
+        const chunk = await self.runtime.chunk(query.worldId, query.position)
+        return Response.ok(chunkResponse(query.worldId, chunk))
+
+    async def batch(request: HttpRequest) -> Response:
+        const query = ChunkBatchQuery.parse(request.body)
+        const chunks = await self.runtime.chunks(query.worldId, query.positions)
+        return Response.ok(chunkBatchResponse(query.worldId, chunks))
+
+    async def sample(request: HttpRequest) -> Response:
+        const query = GenerationSampleQuery.parse(request.body)
+        const sample = await self.runtime.terrainSample(query.worldId, query.position)
+        return Response.ok(generationSampleResponse(query.worldId, sample))
+
+export def registerChunkModule(app: BackendApp, runtime: WorldRuntime):
+    const controller = ChunkController(runtime)
+
+    async def one(request: HttpRequest) -> Response:
+        return await controller.one(request)
+
+    async def batch(request: HttpRequest) -> Response:
+        return await controller.batch(request)
+
+    async def sample(request: HttpRequest) -> Response:
+        return await controller.sample(request)
+
+    app.post("/api/chunks/query", one)
+    app.post("/api/chunks/batch", batch)
+    app.post("/api/generation/sample", sample)

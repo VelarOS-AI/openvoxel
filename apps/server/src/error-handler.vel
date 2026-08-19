@@ -1,0 +1,11 @@
+import {Response} from "@openvoxel/backend"
+import {WorldAlreadyExistsError, WorldNotFoundError} from "@openvoxel/world-runtime"
+
+export async def handleApplicationError(error: Error) -> Response:
+    if error is WorldNotFoundError:
+        return Response.of(404, error.code, {worldId: error.worldId}, error.message)
+    if error is WorldAlreadyExistsError:
+        return Response.of(409, error.code, {worldId: error.worldId}, error.message)
+    if error.code == "TypeError" or error.code == "RangeError" or error.code == "AssertionError" or error.code == "ValidationError" or error.code == "NarrowingError":
+        return Response.failure(400, error.code, error.message)
+    return Response.failure(500, "InternalError", "The request could not be completed")

@@ -1,0 +1,37 @@
+import {Bytes} from "velar/binary"
+import {encode} from "velar/msgpack"
+import {SocketConnection} from "@openvoxel/backend"
+import {BlockChangedEvent} from "@openvoxel/protocol"
+import {BlockChange} from "@openvoxel/world-runtime"
+
+export class RealtimeHub:
+    private let connections: Set<SocketConnection> = Set()
+
+    constructor(private const warning: (message: string, context: unknown) -> null):
+        pass
+
+    def join(connection: SocketConnection):
+        self.connections.add(connection)
+
+    def leave(connection: SocketConnection):
+        self.connections.remove(connection)
+
+    async def publishChange(change: BlockChange):
+        const event: BlockChangedEvent = {
+            event: "block.changed",
+            worldId: change.worldId,
+            position: change.position,
+            previousBlockId: change.previousBlockId,
+            blockId: change.blockId,
+            revision: change.revision,
+        }
+        const message: Bytes = encode(event)
+        const failed: List<SocketConnection> = []
+        for connection in self.connections.copy():
+            try:
+                await connection.send(message)
+            catch error:
+                failed.append(connection)
+                self.warning("realtime.subscriber.failed", {code: error.code, message: error.message})
+        for connection in failed:
+            self.connections.remove(connection)

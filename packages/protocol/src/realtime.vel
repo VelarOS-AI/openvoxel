@@ -1,0 +1,14 @@
+import {BlockMutation} from "./http.vel"
+
+export type SocketBlockCommand extends BlockMutation:
+    operation: string
+
+export type BlockChangedEvent extends BlockMutation:
+    event: string
+    previousBlockId: number
+    revision: number
+
+export type SocketErrorEvent:
+    event: string
+    code: string
+    message: string

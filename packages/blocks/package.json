@@ -1,0 +1,28 @@
+{
+  "name": "@openvoxel/blocks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "data",
+    "src"
+  ],
+  "velar": {
+    "entry": "src/index.vel"
+  },
+  "scripts": {
+    "generate": "velar run tools/generate.vel",
+    "check": "npm run generate && velar check",
+    "format": "npm run generate && velar format",
+    "format:check": "npm run generate && velar format --check",
+    "test": "npm run generate && velar test",
+    "build": "npm run generate && velar build"
+  },
+  "dependencies": {
+    "@openvoxel/config": "0.1.0"
+  },
+  "devDependencies": {
+    "@velarscript/cli": "0.10.4",
+    "@velarscript/node": "0.10.4"
+  }
+}

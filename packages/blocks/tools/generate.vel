@@ -1,0 +1,65 @@
+import {parseYaml} from "@openvoxel/config"
+import {exists, readText, writeText} from "velar/fs"
+import {BlockCatalogSource} from "../src/schema.vel"
+import {BlockRegistry} from "../src/registry.vel"
+
+extern module "node:crypto":
+    export class Hash:
+        def update(data: string) -> Hash
+        def digest(encoding: string) -> string
+
+    export def createHash(algorithm: string) -> Hash
+
+import js {createHash} from "node:crypto"
+
+def digest(value: string) -> string:
+    return createHash("sha256").update(value).digest("hex")
+
+def symbolFor(key: string) -> string:
+    const parts = key.split(":")
+    assert parts.size == 2 else f"Cannot generate a symbol for block key {key}"
+    const words = parts[1].split("_")
+    assert words.size > 0 else f"Cannot generate a symbol for block key {key}"
+    let symbol = words[0]
+    for index in range(1, words.size):
+        symbol += Text.capitalize(words[index])
+    return f"{symbol}Block"
+
+const sourceText = await readText("data/blocks.yml", 1024 * 1024)
+const source = BlockCatalogSource.parse(parseYaml(sourceText))
+const registry = BlockRegistry(source)
+const canonical = Json.stableStringify(source)
+const contentHash = digest(canonical)
+const pretty = Json.stableStringify(source, 2)
+
+let output = `import {BlockCatalogSource, BlockDefinition, BlockFluid} from "./schema.vel"\n`
+output += `import {BlockRegistry} from "./registry.vel"\n\n`
+output += `const catalogJson = "\n`
+output += Text.indent(pretty, "    ")
+output += `\n"\n\n`
+output += "const catalogSource = BlockCatalogSource.parse(Json.parse(catalogJson))\n\n"
+output += "export const blockRegistry = BlockRegistry(catalogSource)\n"
+output += "export const blockCatalogSchemaVersion = catalogSource.schemaVersion\n"
+output += "export const blockCatalogVersion = catalogSource.catalogVersion\n"
+output += f`export const blockCatalogHash = "{contentHash}"\n\n`
+output += "export def blockCatalog() -> List<BlockDefinition>:\n"
+output += "    return blockRegistry.catalog()\n\n"
+output += "export def requireBlockId(blockId: number):\n"
+output += "    blockRegistry.requireById(blockId)\n\n"
+output += "export def blockDefinition(blockId: number) -> BlockDefinition:\n"
+output += "    return blockRegistry.requireById(blockId)\n\n"
+output += "export def isFluidBlock(blockId: number) -> bool:\n"
+output += "    return blockDefinition(blockId).simulation.fluid != BlockFluid.empty\n\n"
+output += "export def isNaturalRock(blockId: number) -> bool:\n"
+output += `    return blockRegistry.hasTag(blockId, "natural_rock")\n\n`
+
+const symbols: Set<string> = Set()
+for definition in registry.catalog():
+    const symbol = symbolFor(definition.key)
+    assert not (symbol in symbols) else f"Generated block symbol {symbol} is not unique"
+    symbols.add(symbol)
+    output += f`export const {symbol} = blockRegistry.idForKey("{definition.key}")\n`
+
+const generatedPath = "src/generated.vel"
+if not await exists(generatedPath) or await readText(generatedPath, 2 * 1024 * 1024) != output:
+    await writeText(generatedPath, output)

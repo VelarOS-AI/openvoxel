@@ -1,0 +1,4 @@
+export {createOpenVoxelServer} from "./server.vel"
+
+export const appName = "OpenVoxel"
+export const protocolVersion = 1

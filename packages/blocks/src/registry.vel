@@ -1,0 +1,85 @@
+import {BlockCatalogSource, BlockDefinition, BlockFluid, BlockRenderShape} from "./schema.vel"
+
+def requireTextureKey(value: string?, label: string):
+    if value != null:
+        assert not value.isBlank() else f"{label} cannot be blank"
+
+def validateRender(definition: BlockDefinition):
+    const render = definition.render
+    match render.shape:
+        case BlockRenderShape.empty:
+            assert definition.id == 0 else "Only the air block may omit rendering"
+            assert render.layer == null and render.material == null and render.textures == null and render.model == null else "A non-rendered block cannot declare render resources"
+        case BlockRenderShape.model:
+            assert render.layer != null else f"Model block {definition.key} requires a render layer"
+            assert render.material != null and not render.material.isBlank() else f"Model block {definition.key} requires a material key"
+            assert render.model != null and not render.model.isBlank() else f"Model block {definition.key} requires a model key"
+            assert render.textures == null else f"Model block {definition.key} cannot declare cube textures"
+        case _:
+            assert render.layer != null else f"Block {definition.key} requires a render layer"
+            assert render.material != null and not render.material.isBlank() else f"Block {definition.key} requires a material key"
+            assert render.textures != null else f"Block {definition.key} requires texture keys"
+            const textures = render.textures
+            requireTextureKey(textures.all, f"Block {definition.key} all texture")
+            requireTextureKey(textures.top, f"Block {definition.key} top texture")
+            requireTextureKey(textures.bottom, f"Block {definition.key} bottom texture")
+            requireTextureKey(textures.side, f"Block {definition.key} side texture")
+            const hasUniform = textures.all != null
+            const hasFaces = textures.top != null and textures.bottom != null and textures.side != null
+            assert hasUniform or hasFaces else f"Block {definition.key} requires either one uniform texture or top, bottom, and side textures"
+            assert render.model == null else f"Block {definition.key} cannot declare a model key"
+
+def validateDefinition(definition: BlockDefinition):
+    assert definition.id.isInteger() else "Block id must be an integer"
+    assert definition.id >= 0 and definition.id <= 0xffff else "Block id must fit in UInt16"
+    assert not definition.key.isBlank() and definition.key.has(":") else "Block key must be a namespaced value"
+    assert not definition.translationKey.isBlank() else f"Block {definition.key} requires a translation key"
+    const tags: Set<string> = Set()
+    for tag in definition.tags:
+        assert not tag.isBlank() else f"Block {definition.key} cannot contain a blank tag"
+        assert not (tag in tags) else f"Block {definition.key} contains duplicate tag {tag}"
+        tags.add(tag)
+    if definition.simulation.fluid != BlockFluid.empty:
+        assert str(definition.simulation.fluid) in tags else f"Fluid block {definition.key} must carry its fluid tag"
+    validateRender(definition)
+
+export def requireBlockStorageId(blockId: number):
+    assert blockId.isInteger() else "Block id must be an integer"
+    assert blockId >= 0 and blockId <= 0xffff else "Block id must fit in UInt16"
+
+export class BlockRegistry:
+    private const byId: Map<number, BlockDefinition> = Map()
+    private const byKey: Map<string, BlockDefinition> = Map()
+
+    constructor(private const source: BlockCatalogSource):
+        assert source.schemaVersion == 1 else "Unsupported block catalog schema version"
+        assert not source.catalogVersion.isBlank() else "Block catalog version cannot be blank"
+        assert source.blocks.size > 0 and source.blocks.size <= 0x10000 else "Block catalog must contain from 1 through 65536 definitions"
+        for definition in source.blocks:
+            validateDefinition(definition)
+            assert self.byId.get(definition.id) == null else f"Duplicate block id {definition.id}"
+            assert self.byKey.get(definition.key) == null else f"Duplicate block key {definition.key}"
+            self.byId.set(definition.id, definition)
+            self.byKey.set(definition.key, definition)
+        const air = self.requireById(0)
+        assert air.key == "openvoxel:air" else "Block id 0 must be openvoxel:air"
+
+    def catalog() -> List<BlockDefinition>:
+        return self.source.blocks.map(definition => definition)
+
+    def requireById(blockId: number) -> BlockDefinition:
+        requireBlockStorageId(blockId)
+        const definition = self.byId.get(blockId)
+        assert definition != null else f"Unknown block id {blockId}"
+        return definition
+
+    def requireByKey(key: string) -> BlockDefinition:
+        const definition = self.byKey.get(key)
+        assert definition != null else f"Unknown block key {key}"
+        return definition
+
+    def idForKey(key: string) -> number:
+        return self.requireByKey(key).id
+
+    def hasTag(blockId: number, tag: string) -> bool:
+        return tag in Set(self.requireById(blockId).tags)

@@ -1,0 +1,47 @@
+/// Focused baseline for horizontal terrain-column reuse. A capacity of one
+/// reconstructs columns as vertical layers revisit X/Z; the production-sized
+/// cache retains this benchmark's active horizontal neighborhood.
+
+import {monotonic} from "velar/time"
+import {ChunkPosition} from "./src/coordinates.vel"
+import {ColumnPlanner, createGenerationFields} from "./src/generation/terrain.vel"
+
+type ColumnBenchmarkResult:
+    averageMs: number
+    builds: number
+    checksum: number
+    chunks: number
+    totalMs: number
+
+const seed = "openvoxel-benchmark"
+const positions: List<ChunkPosition> = []
+for y in range(2, 6):
+    for x in range(-6, 6):
+        for z in range(-2, 2):
+            positions.append({x, y, z})
+
+def measure(capacity: number) -> ColumnBenchmarkResult:
+    const planner = ColumnPlanner(createGenerationFields(seed), 16, capacity)
+    const started = monotonic()
+    let checksum = 0
+    for position in positions:
+        const cache = planner.columns(position.x, position.z)
+        for index in range(cache.surfaceHeights.size):
+            checksum = ((checksum << 5) ^ (checksum >>> 2) ^ cache.surfaceHeights[index]) & 0xffffffff
+    const totalMs = monotonic() - started
+    return {
+        averageMs: totalMs / positions.size,
+        builds: planner.columnBuildCount,
+        checksum: checksum >>> 0,
+        chunks: positions.size,
+        totalMs,
+    }
+
+measure(1)
+measure(64)
+
+const replayed = measure(1)
+const cached = measure(64)
+assert replayed.checksum == cached.checksum else "Column caching changed terrain samples"
+print(f"columns replayed chunks={replayed.chunks} totalMs={replayed.totalMs.round()} averageMs={replayed.averageMs} builds={replayed.builds} checksum={replayed.checksum}")
+print(f"columns cached chunks={cached.chunks} totalMs={cached.totalMs.round()} averageMs={cached.averageMs} builds={cached.builds} checksum={cached.checksum}")

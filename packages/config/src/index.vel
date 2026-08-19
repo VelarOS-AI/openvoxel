@@ -1,0 +1,15 @@
+type YamlParseOptions:
+    strict: bool
+    uniqueKeys: bool
+    maxAliasCount: number
+
+extern module "yaml":
+    export def parse(source: string, options: YamlParseOptions) -> unknown
+
+import js {parse} from "yaml"
+
+/// Parses trusted, size-bounded project configuration without exposing the
+/// third-party YAML package outside this checked adapter.
+export def parseYaml(source: string) -> unknown:
+    assert not source.isBlank() else "YAML source cannot be blank"
+    return parse(source, {strict: true, uniqueKeys: true, maxAliasCount: 100})

@@ -1,0 +1,149 @@
+import {Bytes} from "velar/binary"
+import {NativeBackend, NativeFailure, NativeRequest, NativeResponse, NativeSocket, createNativeBackend} from "./bridge.vel"
+
+export enum HttpMethod:
+    get = "GET"
+    post = "POST"
+
+export type BackendOptions:
+    logger: bool
+    bodyLimit: number
+    maxMessageBytes: number
+    maxQueuedMessages: number
+    maxQueuedBytes: number
+    maxPendingSendBytes: number
+    maxConnections: number
+
+export type HttpRequest:
+    method: string
+    path: string
+    requestId: string
+    body: unknown
+
+export class Response:
+    constructor(const status: number, const code: string, const data: unknown, const message: string):
+        assert status.isInteger() and status >= 100 and status <= 599 else "HTTP response status must be an integer from 100 through 599"
+        assert code != "" else "HTTP response code cannot be empty"
+
+    static def ok(data: unknown, message: string = "success") -> Response:
+        return Response(200, "OK", data, message)
+
+    static def created(data: unknown, message: string = "created") -> Response:
+        return Response(201, "CREATED", data, message)
+
+    static def of(status: number, code: string, data: unknown, message: string) -> Response:
+        return Response(status, code, data, message)
+
+    static def failure(status: number, code: string, message: string) -> Response:
+        return Response(status, code, null, message)
+
+export type BackendAddress:
+    host: string
+    port: number
+
+export type InjectResponse:
+    status: number
+    json: unknown
+
+export type HttpHandler = (request: HttpRequest) -> Promise<Response>
+export type ErrorHandler = (error: Error) -> Promise<Response>
+
+export type SocketConnection:
+    next: () -> Promise<(string | Bytes)?>
+    send: (message: string | Bytes) -> Promise<null>
+    close: (code: number, reason: string) -> Promise<null>
+
+export type SocketHandler = (connection: SocketConnection) -> Promise<null>
+
+export type BackendApp:
+    route: (method: HttpMethod, path: string, handler: HttpHandler) -> null
+    get: (path: string, handler: HttpHandler) -> null
+    post: (path: string, handler: HttpHandler) -> null
+    websocket: (path: string, handler: SocketHandler) -> null
+    listen: (host: string, port: number) -> Promise<BackendAddress>
+    inject: (method: HttpMethod, path: string, body: unknown) -> Promise<InjectResponse>
+    close: () -> Promise<null>
+    info: (message: string, context: unknown) -> null
+    warn: (message: string, context: unknown) -> null
+    error: (message: string, context: unknown) -> null
+
+async def frameworkFailure(failure: NativeFailure) -> NativeResponse:
+    const publicMessage = failure.status >= 500 ? "The request could not be completed" : failure.message
+    return nativeResponse(Response.of(
+        failure.status,
+        failure.code,
+        {method: failure.method, path: failure.path},
+        publicMessage,
+    ))
+
+def nativeResponse(response: Response) -> NativeResponse:
+    return {
+        status: response.status,
+        json: {
+            code: response.code,
+            data: response.data,
+            message: response.message,
+        },
+    }
+
+def socketConnection(native: NativeSocket) -> SocketConnection:
+    async def next() -> (string | Bytes)?:
+        const message = await native.next()
+        if message == null:
+            return null
+        if message is string:
+            return message
+        return Bytes.parse(message)
+
+    async def send(message: string | Bytes):
+        await native.send(message)
+
+    async def close(code: number, reason: string):
+        await native.close(code, reason)
+
+    return {next, send, close}
+
+export async def backend(options: BackendOptions, errorHandler: ErrorHandler) -> BackendApp:
+    const native: NativeBackend = await createNativeBackend(options, frameworkFailure)
+
+    def route(method: HttpMethod, path: string, handler: HttpHandler):
+        async def guarded(request: NativeRequest) -> NativeResponse:
+            try:
+                return nativeResponse(await handler(request))
+            catch error:
+                const response = await errorHandler(error)
+                if response.status >= 500:
+                    native.error("request.failed", {code: error.code, message: error.message, method: request.method, path: request.path})
+                return nativeResponse(response)
+        native.route(str(method), path, guarded)
+
+    def get(path: string, handler: HttpHandler):
+        route(HttpMethod.get, path, handler)
+
+    def post(path: string, handler: HttpHandler):
+        route(HttpMethod.post, path, handler)
+
+    def websocket(path: string, handler: SocketHandler):
+        async def serve(nativeSocket: NativeSocket):
+            await handler(socketConnection(nativeSocket))
+        native.websocket(path, serve)
+
+    async def listen(host: string, port: number) -> BackendAddress:
+        return await native.listen(host, port)
+
+    async def inject(method: HttpMethod, path: string, body: unknown) -> InjectResponse:
+        return await native.inject(str(method), path, body)
+
+    async def close():
+        await native.close()
+
+    def info(message: string, context: unknown):
+        native.info(message, context)
+
+    def warn(message: string, context: unknown):
+        native.warn(message, context)
+
+    def logError(message: string, context: unknown):
+        native.error(message, context)
+
+    return {route, get, post, websocket, listen, inject, close, info, warn, error: logError}

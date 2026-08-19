@@ -1,0 +1,24 @@
+{
+  "name": "@openvoxel/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "dev": "velar run",
+    "start": "velar run",
+    "test": "velar test",
+    "build": "velar build"
+  },
+  "dependencies": {
+    "@openvoxel/async-mutex": "0.1.0",
+    "@openvoxel/backend": "0.1.0",
+    "@openvoxel/config": "0.1.0",
+    "@openvoxel/domain": "0.1.0",
+    "@openvoxel/protocol": "0.1.0",
+    "@openvoxel/world-runtime": "0.1.0",
+    "@velarscript/node": "0.10.4"
+  }
+}

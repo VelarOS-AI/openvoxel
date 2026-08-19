@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.velar/
+.DS_Store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log

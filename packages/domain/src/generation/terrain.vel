@@ -1,0 +1,352 @@
+import {simplex2, simplex3} from "velar/noise"
+import {random} from "velar/random"
+import {UInt16Buffer, uint16Buffer} from "velar/binary"
+import {airBlock, basaltBlock, clayBlock, dirtBlock, graniteBlock, grassBlock, gravelBlock, iceBlock, limestoneBlock, sandBlock, sandstoneBlock, stoneBlock, waterBlock} from "@openvoxel/blocks"
+import {Coordinate2, requireCoordinate2} from "../coordinates.vel"
+
+export const minimumWorldY = 0
+export const maximumWorldY = 255
+export const seaLevel = 64
+
+export type Noise2 = (number, number) -> number
+export type Noise3 = (number, number, number) -> number
+
+export type GenerationFields:
+    temperature: Noise2
+    humidity: Noise2
+    mountains: Noise2
+    shoreX: Noise2
+    shoreZ: Noise2
+    biomeLow: Noise2
+    biomeHigh: Noise2
+    hills: Noise2
+    rivers: Noise2
+    turbulence: Noise3
+    strata: Noise3
+    forest: Noise2
+    mountainOffsetX: number
+    mountainOffsetZ: number
+    temperatureOffsetX: number
+    temperatureOffsetZ: number
+    humidityOffsetX: number
+    humidityOffsetZ: number
+    riverOffsetX: number
+    riverOffsetZ: number
+
+export type TerrainSample:
+    position: Coordinate2
+    surfaceY: number
+    temperature: number
+    humidity: number
+    shoreDistance: number
+    mountainFactor: number
+    forestDensity: number
+    biome: string
+
+export type ColumnCache:
+    edge: number
+    samples: List<TerrainSample>
+    surfaceHeights: UInt16Buffer
+
+type TerrainShape:
+    surfaceY: number
+    shoreDistance: number
+    mountainFactor: number
+
+const columnCacheCapacity = 64
+
+export def createGenerationFields(seed: string) -> GenerationFields:
+    const offsets = random(seed).fork("survival-v1:offsets")
+    return {
+        temperature: simplex2(f"{seed}:temperature"),
+        humidity: simplex2(f"{seed}:humidity"),
+        mountains: simplex2(f"{seed}:mountains"),
+        shoreX: simplex2(f"{seed}:shore-x"),
+        shoreZ: simplex2(f"{seed}:shore-z"),
+        biomeLow: simplex2(f"{seed}:biome-low"),
+        biomeHigh: simplex2(f"{seed}:biome-high"),
+        hills: simplex2(f"{seed}:hills"),
+        rivers: simplex2(f"{seed}:rivers"),
+        turbulence: simplex3(f"{seed}:turbulence"),
+        strata: simplex3(f"{seed}:strata"),
+        forest: simplex2(f"{seed}:forest"),
+        mountainOffsetX: offsets.number() * 6000 - 3000,
+        mountainOffsetZ: offsets.number() * 6000 - 3000,
+        temperatureOffsetX: offsets.number() * 6000 - 3000,
+        temperatureOffsetZ: offsets.number() * 6000 - 3000,
+        humidityOffsetX: offsets.number() * 6000 - 3000,
+        humidityOffsetZ: offsets.number() * 6000 - 3000,
+        riverOffsetX: offsets.number() * 6000 - 3000,
+        riverOffsetZ: offsets.number() * 6000 - 3000,
+    }
+
+def saturate(value: number) -> number:
+    return Math.clamp(value, 0, 1)
+
+def lerp(start: number, end: number, amount: number) -> number:
+    return start + (end - start) * amount
+
+def squish(value: number, zero: number, one: number) -> number:
+    return saturate((value - zero) / (one - zero))
+
+def normalized(value: number) -> number:
+    return saturate(value * 0.5 + 0.5)
+
+def octave2(field: Noise2, x: number, z: number, frequency: number, octaves: number, lacunarity: number = 2, persistence: number = 0.5) -> number:
+    let amplitude = 1
+    let total = 0
+    let weight = 0
+    let scale = frequency
+    for octave in range(octaves):
+        total += normalized(field(x * scale, z * scale)) * amplitude
+        weight += amplitude
+        amplitude *= persistence
+        scale *= lacunarity
+    return total / weight
+
+def signedSquareRoot(value: number) -> number:
+    if value < 0:
+        return -Math.sqrt(-value)
+    return Math.sqrt(value)
+
+def mountainRangeFactor(fields: GenerationFields, position: Coordinate2) -> number:
+    const raw = octave2(
+        fields.mountains,
+        position.x + fields.mountainOffsetX,
+        position.z + fields.mountainOffsetZ,
+        0.0006 / 1.75,
+        3,
+        1.91,
+        0.75,
+    )
+    return saturate(1 - (2 * raw - 1).abs())
+
+def oceanShoreDistance(fields: GenerationFields, position: Coordinate2) -> number:
+    const shoreX = -200 + 150 * octave2(fields.shoreX, position.z, 0, 0.005 / 3, 4, 1.95, 1)
+    const shoreZ = -200 + 150 * octave2(fields.shoreZ, 0, position.x, 0.005 / 3, 4, 1.95, 1)
+    return Math.min(position.x - shoreX, position.z - shoreZ)
+
+def temperatureValue(fields: GenerationFields, position: Coordinate2) -> number:
+    const climate = octave2(
+        fields.temperature,
+        position.x + fields.temperatureOffsetX,
+        position.z + fields.temperatureOffsetZ,
+        0.0015 / 1.75,
+        5,
+        2,
+        0.6,
+    )
+    return Math.clamp((saturate(3 * climate - 1.1) * 16).floor(), 0, 15)
+
+def humidityValue(fields: GenerationFields, position: Coordinate2) -> number:
+    const climate = octave2(
+        fields.humidity,
+        position.x + fields.humidityOffsetX,
+        position.z + fields.humidityOffsetZ,
+        0.0012 / 1.75,
+        5,
+        2,
+        0.6,
+    )
+    return Math.clamp((saturate(3 * climate - 1.1) * 16).floor(), 0, 15)
+
+def calculateShape(fields: GenerationFields, position: Coordinate2) -> TerrainShape:
+    const oceanSlopeNoise = octave2(
+        fields.mountains,
+        position.x + fields.mountainOffsetX,
+        position.z + fields.mountainOffsetZ,
+        0.01,
+        1,
+    )
+    const oceanSlope = 0.006 + 0.004 * signedSquareRoot(2 * oceanSlopeNoise - 1)
+    const shoreDistance = oceanShoreDistance(fields, position)
+    const shoreFade = saturate(2 - 0.05 * shoreDistance.abs())
+    const islandFactor = saturate(Math.sin(0.01 * shoreDistance))
+    const islandDrop = saturate(saturate(-oceanSlope * shoreDistance) - 0.85 * islandFactor)
+    const oceanDrop = saturate(saturate(0.05 * (-shoreDistance - 10)) - islandFactor)
+    const mountain = mountainRangeFactor(fields, position)
+    const biomeNoise1 = (1 - shoreFade) * octave2(fields.biomeLow, position.x, position.z, 0.001 / 1.75, 2)
+    const biomeNoise2 = (1 - shoreFade) * octave2(fields.biomeHigh, position.x, position.z, 0.0017 / 1.75, 2, 4, 0.7)
+    const hillsBlend = (1 - oceanDrop) * (1 - shoreFade) * squish(mountain, 0.72, 0.89)
+    const mountainsBlend = (1 - oceanDrop) * squish(mountain, 0.89, 1)
+    const hillsShape = octave2(fields.hills, position.x, position.z, 0.014, 1)
+    const mountainPersistence = lerp(0.3975, 0.7049, biomeNoise1)
+    const mountainShape = 1.5 * octave2(fields.mountains, position.x, position.z, 0.003, 3, 1.98, mountainPersistence) - 0.5
+    const riverNoise = octave2(
+        fields.rivers,
+        position.x + fields.riverOffsetX,
+        position.z + fields.riverOffsetZ,
+        0.001,
+        4,
+    )
+    const riverWidth = lerp(
+        80,
+        35,
+        saturate(mountainsBlend + 0.5 * hillsBlend + saturate(1 - shoreDistance / 30)),
+    )
+    const riverStrength = saturate(1.5 - riverWidth * (2 * riverNoise - 1).abs())
+    const baseHeight = -50 * islandDrop + 1
+    const biomeHeight = lerp(0, 8, biomeNoise1) + lerp(0, -6, biomeNoise2)
+    const hillsHeight = 32 * hillsBlend * hillsShape
+    const mountainHeight = 0.4 * 220 * mountainsBlend * mountainShape
+    const totalHeight = baseHeight + biomeHeight + hillsHeight + mountainHeight
+    const riverFloor = lerp(-2, -4, saturate(mountainsBlend + 0.5 * hillsBlend))
+    const carvedHeight = Math.min(lerp(totalHeight, riverFloor, riverStrength), totalHeight)
+    return {
+        surfaceY: Math.clamp((seaLevel + carvedHeight).round(), 8, 247),
+        shoreDistance,
+        mountainFactor: mountain,
+    }
+
+def biomeName(temperature: number, humidity: number, shoreDistance: number, mountain: number, surfaceY: number) -> string:
+    if surfaceY <= seaLevel - 2:
+        return "ocean"
+    if shoreDistance.abs() < 16:
+        return "shore"
+    if temperature <= 2 or surfaceY >= 120:
+        return "tundra"
+    if mountain >= 0.9:
+        return "mountains"
+    if temperature >= 10 and humidity <= 5:
+        return "desert"
+    if humidity >= 10:
+        return "forest"
+    return "plains"
+
+export def sampleTerrainWithFields(fields: GenerationFields, position: Coordinate2) -> TerrainSample:
+    requireCoordinate2(position, "Terrain")
+    const shape = calculateShape(fields, position)
+    const temperature = temperatureValue(fields, position)
+    const humidity = humidityValue(fields, position)
+    const forestNoise = octave2(fields.forest, (position.x / 16).floor(), (position.z / 16).floor(), 0.1, 2)
+    const climateForest = saturate((humidity - 4) / 8) * saturate(1 - (temperature - 11).abs() / 10)
+    const forestDensity = saturate((forestNoise - 0.25) / 0.2 + 0.6 * climateForest)
+    return {
+        position,
+        surfaceY: shape.surfaceY,
+        temperature,
+        humidity,
+        shoreDistance: shape.shoreDistance,
+        mountainFactor: shape.mountainFactor,
+        forestDensity,
+        biome: biomeName(temperature, humidity, shape.shoreDistance, shape.mountainFactor, shape.surfaceY),
+    }
+
+export def sampleTerrain(seed: string, position: Coordinate2) -> TerrainSample:
+    return sampleTerrainWithFields(createGenerationFields(seed), position)
+
+export def terrainDensity(fields: GenerationFields, sample: TerrainSample, y: number) -> number:
+    if y <= 4:
+        return 64
+    const vertical = sample.surfaceY - y
+    const turbulenceWeight = lerp(0.04, 1, squish(sample.mountainFactor, 0.84, 1))
+    const turbulence = 18 * turbulenceWeight * saturate(vertical) * fields.turbulence(
+        sample.position.x * 0.03,
+        y * 0.03,
+        sample.position.z * 0.03,
+    )
+    return vertical - turbulence + Math.max(4 * (55 - y), 0)
+
+export def findSurfaceForSample(fields: GenerationFields, sample: TerrainSample) -> number:
+    let y = Math.min(maximumWorldY, sample.surfaceY + 24)
+    while y > minimumWorldY:
+        if terrainDensity(fields, sample, y) >= 0:
+            return y
+        y -= 1
+    return minimumWorldY
+
+export def findSurfaceY(fields: GenerationFields, position: Coordinate2) -> number:
+    return findSurfaceForSample(fields, sampleTerrainWithFields(fields, position))
+
+export def createColumnCache(fields: GenerationFields, minimum: Coordinate2, edge: number) -> ColumnCache:
+    assert edge.isInteger() and edge > 0 else "Column cache edge must be a positive integer"
+    const samples: List<TerrainSample> = []
+    const surfaceHeights = uint16Buffer(edge * edge)
+    for localX in range(edge):
+        for localZ in range(edge):
+            const index = localZ + edge * localX
+            const sample = sampleTerrainWithFields(fields, {x: minimum.x + localX, z: minimum.z + localZ})
+            samples.append(sample)
+            surfaceHeights[index] = findSurfaceForSample(fields, sample)
+    return {edge, samples, surfaceHeights}
+
+/// Keeps immutable horizontal terrain-column results near one generator. The
+/// cache key deliberately excludes Y because every vertical Chunk at the same
+/// X/Z uses the same samples and exact surface heights.
+export class ColumnPlanner:
+    private const caches: Map<string, ColumnCache> = Map()
+    private let builds: number = 0
+
+    constructor(private const fields: GenerationFields, private const edge: number, private const capacity: number = columnCacheCapacity):
+        assert edge.isInteger() and edge > 0 else "Column planner edge must be a positive integer"
+        assert capacity.isInteger() and capacity > 0 else "Column cache capacity must be a positive integer"
+
+    get cachedColumnCount() -> number:
+        return self.caches.size
+
+    get columnBuildCount() -> number:
+        return self.builds
+
+    def columns(chunkX: number, chunkZ: number) -> ColumnCache:
+        const key = f"{chunkX}:{chunkZ}"
+        const existing = self.caches.get(key)
+        if existing != null:
+            self.caches.remove(key)
+            self.caches.set(key, existing)
+            return existing
+
+        const cache = createColumnCache(self.fields, {x: chunkX * self.edge, z: chunkZ * self.edge}, self.edge)
+        self.builds += 1
+        if self.caches.size >= self.capacity:
+            self.caches.remove(self.caches.keys()[0])
+        self.caches.set(key, cache)
+        return cache
+
+export def temperatureAtHeight(temperature: number, y: number) -> number:
+    if y > seaLevel:
+        return temperature - (0.0008 * (y - seaLevel) * (y - seaLevel)).round()
+    return temperature + (0.1 * (seaLevel - y)).round()
+
+export def surfaceBlock(sample: TerrainSample, topY: number) -> number:
+    if sample.biome == "ocean":
+        return sample.humidity > 10 ? clayBlock : sandBlock
+    if sample.biome == "shore" or sample.biome == "desert":
+        return sandBlock
+    if topY <= seaLevel + 1 and sample.humidity > 10:
+        return clayBlock
+    if sample.biome == "mountains":
+        return sample.humidity < 6 ? gravelBlock : stoneBlock
+    return grassBlock
+
+export def subsurfaceBlock(sample: TerrainSample, topY: number) -> number:
+    const surface = surfaceBlock(sample, topY)
+    if surface == sandBlock:
+        return sandstoneBlock
+    if surface == clayBlock:
+        return clayBlock
+    if surface == gravelBlock or surface == stoneBlock:
+        return stoneBlock
+    return dirtBlock
+
+export def baseTerrainBlock(fields: GenerationFields, sample: TerrainSample, y: number) -> number:
+    if y < minimumWorldY or y > maximumWorldY:
+        return airBlock
+    if terrainDensity(fields, sample, y) < 0:
+        if y <= seaLevel:
+            if y == seaLevel and temperatureAtHeight(sample.temperature, y) <= 0:
+                return iceBlock
+            return waterBlock
+        return airBlock
+    if y <= 4:
+        return basaltBlock
+    const strata = fields.strata(sample.position.x * 0.045, y * 0.06, sample.position.z * 0.045)
+    if y < 32:
+        return basaltBlock
+    if sample.biome == "desert" or sample.biome == "shore":
+        if y >= sample.surfaceY - 18:
+            return sandstoneBlock
+    if strata > 0.58:
+        return limestoneBlock
+    if strata < -0.58:
+        return graniteBlock
+    return stoneBlock

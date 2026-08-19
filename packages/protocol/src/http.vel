@@ -1,0 +1,92 @@
+import {BlockDefinition, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion} from "@openvoxel/blocks"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, TerrainSample, defaultGenerator, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/domain"
+
+export type ApiResponse:
+    code: string
+    data: unknown
+    message: string
+
+export type WorldScoped:
+    worldId: string
+
+export type WorldQuery = WorldScoped
+
+export type ChunkQuery extends WorldScoped:
+    position: ChunkPosition
+
+export type ChunkBatchQuery extends WorldScoped:
+    positions: List<ChunkPosition>
+
+export type GenerationSampleQuery extends WorldScoped:
+    position: Coordinate2
+
+export type BlockMutation extends WorldScoped:
+    position: BlockPosition
+    blockId: number
+
+export type SetBlockRequest = BlockMutation
+
+export type ChunkResponse extends WorldScoped:
+    position: ChunkPosition
+    edge: number
+    revision: number
+    blocks: List<number>
+
+export type ChunkBatchResponse extends WorldScoped:
+    chunks: List<ChunkResponse>
+
+export type GenerationSampleResponse extends TerrainSample:
+    worldId: string
+
+export type BlockCatalogResponse:
+    schemaVersion: number
+    catalogVersion: string
+    contentHash: string
+    generator: string
+    minimumWorldY: number
+    maximumWorldY: number
+    seaLevel: number
+    blocks: List<BlockDefinition>
+
+export def chunkResponse(worldId: string, chunk: Chunk) -> ChunkResponse:
+    const blocks: List<number> = []
+    for index in range(chunk.blocks.size):
+        blocks.append(chunk.blocks[index])
+    return {
+        worldId,
+        position: chunk.position,
+        edge: chunk.edge,
+        revision: chunk.revision,
+        blocks,
+    }
+
+export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatchResponse:
+    const responses: List<ChunkResponse> = []
+    for chunk in chunks:
+        responses.append(chunkResponse(worldId, chunk))
+    return {worldId, chunks: responses}
+
+export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
+    return {
+        worldId,
+        position: sample.position,
+        surfaceY: sample.surfaceY,
+        temperature: sample.temperature,
+        humidity: sample.humidity,
+        shoreDistance: sample.shoreDistance,
+        mountainFactor: sample.mountainFactor,
+        forestDensity: sample.forestDensity,
+        biome: sample.biome,
+    }
+
+export def blockCatalogResponse() -> BlockCatalogResponse:
+    return {
+        schemaVersion: blockCatalogSchemaVersion,
+        catalogVersion: blockCatalogVersion,
+        contentHash: blockCatalogHash,
+        generator: defaultGenerator,
+        minimumWorldY,
+        maximumWorldY,
+        seaLevel,
+        blocks: blockCatalog(),
+    }

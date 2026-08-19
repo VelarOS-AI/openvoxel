@@ -1,0 +1,94 @@
+import {Chunk, emptyChunk} from "./chunk.vel"
+import {airBlock, isFluidBlock} from "@openvoxel/blocks"
+import {ChunkPosition, Coordinate2} from "./coordinates.vel"
+import {WorldManifest, validateWorldManifest} from "./world.vel"
+import {CavePlanner, carveCaves, generateFluidPockets, generateMinerals, generateVegetation} from "./generation/features.vel"
+import {ColumnCache, ColumnPlanner, GenerationFields, TerrainSample, baseTerrainBlock, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./generation/terrain.vel"
+
+def chunkMinimumX(chunk: Chunk) -> number:
+    return chunk.position.x * chunk.edge
+
+def chunkMinimumY(chunk: Chunk) -> number:
+    return chunk.position.y * chunk.edge
+
+def chunkMinimumZ(chunk: Chunk) -> number:
+    return chunk.position.z * chunk.edge
+
+def insideY(chunk: Chunk, y: number) -> bool:
+    const minimumY = chunkMinimumY(chunk)
+    return y >= minimumY and y < minimumY + chunk.edge
+
+def indexAt(chunk: Chunk, worldX: number, worldY: number, worldZ: number) -> number:
+    const localX = worldX - chunkMinimumX(chunk)
+    const localY = worldY - chunkMinimumY(chunk)
+    const localZ = worldZ - chunkMinimumZ(chunk)
+    return localX + chunk.edge * (localZ + chunk.edge * localY)
+
+def generateBaseTerrain(chunk: Chunk, fields: GenerationFields, cache: ColumnCache):
+    const minimumY = chunkMinimumY(chunk)
+    for localX in range(chunk.edge):
+        for localZ in range(chunk.edge):
+            const sample = cache.samples[localZ + chunk.edge * localX]
+            for localY in range(chunk.edge):
+                const worldY = minimumY + localY
+                const index = localX + chunk.edge * (localZ + chunk.edge * localY)
+                chunk.blocks[index] = baseTerrainBlock(fields, sample, worldY)
+
+def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
+    const topBlock = surfaceBlock(sample, topY)
+    const underBlock = subsurfaceBlock(sample, topY)
+    let thickness = 4
+    if sample.mountainFactor > 0.9:
+        thickness = 2
+    else if sample.humidity > 11:
+        thickness = 6
+    for depth in range(thickness):
+        const worldY = topY - depth
+        if not insideY(chunk, worldY):
+            continue
+        const index = indexAt(chunk, sample.position.x, worldY, sample.position.z)
+        if chunk.blocks[index] != airBlock and not isFluidBlock(chunk.blocks[index]):
+            chunk.blocks[index] = depth == 0 ? topBlock : underBlock
+
+def generateSurface(chunk: Chunk, cache: ColumnCache):
+    for localX in range(chunk.edge):
+        for localZ in range(chunk.edge):
+            const index = localZ + chunk.edge * localX
+            paintSurfaceColumn(chunk, cache.samples[index], cache.surfaceHeights[index])
+
+export class WorldGenerator:
+    private const seed: string
+    private const edge: number
+    private const fields: GenerationFields
+    private const columnPlanner: ColumnPlanner
+    private const cavePlanner: CavePlanner
+
+    constructor(manifest: WorldManifest):
+        const world = validateWorldManifest(manifest)
+        self.seed = world.seed
+        self.edge = world.chunkEdge
+        self.fields = createGenerationFields(world.seed)
+        self.columnPlanner = ColumnPlanner(self.fields, world.chunkEdge)
+        self.cavePlanner = CavePlanner(self.fields, world.seed)
+
+    def sample(position: Coordinate2) -> TerrainSample:
+        return sampleTerrainWithFields(self.fields, position)
+
+    def generate(position: ChunkPosition) -> Chunk:
+        const chunk = emptyChunk(position, self.edge)
+        const minimumY = position.y * self.edge
+        const maximumY = minimumY + self.edge - 1
+        if maximumY < minimumWorldY or minimumY > maximumWorldY:
+            return chunk
+
+        const cache = self.columnPlanner.columns(position.x, position.z)
+        generateBaseTerrain(chunk, self.fields, cache)
+        carveCaves(chunk, self.cavePlanner)
+        generateFluidPockets(chunk, self.seed)
+        generateMinerals(chunk, self.seed)
+        generateSurface(chunk, cache)
+        generateVegetation(chunk, self.fields, self.seed, cache)
+        return chunk
+
+export def generateChunk(manifest: WorldManifest, position: ChunkPosition) -> Chunk:
+    return WorldGenerator(manifest).generate(position)

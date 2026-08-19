@@ -1,0 +1,13 @@
+import {BackendApp, HttpRequest, Response} from "@openvoxel/backend"
+
+class SystemController:
+    async def health(request: HttpRequest) -> Response:
+        return Response.ok({status: "ready", service: "openvoxel", protocolVersion: 1})
+
+export def registerSystemModule(app: BackendApp):
+    const controller = SystemController()
+
+    async def health(request: HttpRequest) -> Response:
+        return await controller.health(request)
+
+    app.get("/api/health", health)

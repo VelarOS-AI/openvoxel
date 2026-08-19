@@ -1,0 +1,11 @@
+{
+  "name": "@openvoxel/fast-check",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "dependencies": {
+    "fast-check": "4.9.0"
+  }
+}

@@ -1,0 +1,26 @@
+/// Reproducible Node-side baseline for comparing future Chunk edge sizes and
+/// generator revisions. It reports rather than hides the checksum so a faster
+/// but semantically different implementation cannot pass unnoticed.
+
+import {monotonic} from "velar/time"
+import {WorldGenerator, chunkChecksum, createWorldManifest} from "./src/index.vel"
+
+const manifest = createWorldManifest({id: "benchmark", name: "Benchmark", seed: "openvoxel-benchmark"})
+const generator = WorldGenerator(manifest)
+
+for warmup in range(8):
+    generator.generate({x: warmup - 4, y: 4, z: 0})
+
+const started = monotonic()
+let checksum = 0
+let generated = 0
+for y in range(2, 6):
+    for x in range(-6, 6):
+        for z in range(-2, 2):
+            const chunk = generator.generate({x, y, z})
+            checksum = (checksum ^ chunkChecksum(chunk)) >>> 0
+            generated += 1
+const elapsed = monotonic() - started
+const average = elapsed / generated
+
+print(f"worldgen chunks={generated} totalMs={elapsed.round()} averageMs={average} checksum={checksum}")

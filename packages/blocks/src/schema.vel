@@ -1,0 +1,56 @@
+export enum BlockCollision:
+    empty = "none"
+    fullCube = "full_cube"
+
+export enum BlockOcclusion:
+    empty = "none"
+    fullCube = "full_cube"
+
+export enum BlockFluid:
+    empty = "none"
+    water
+    magma
+
+export enum BlockRenderShape:
+    empty = "none"
+    cube
+    cross
+    model
+
+export enum BlockRenderLayer:
+    opaque
+    cutout
+    translucent
+
+export type BlockTextures:
+    all: string?
+    top: string?
+    bottom: string?
+    side: string?
+
+export type BlockSimulation:
+    collision: BlockCollision
+    occlusion: BlockOcclusion
+    fluid: BlockFluid
+
+export type BlockRender:
+    shape: BlockRenderShape
+    layer: BlockRenderLayer?
+    material: string?
+    textures: BlockTextures?
+    model: string?
+    tint: string?
+    animation: string?
+
+export type BlockDefinition:
+    id: number
+    key: string
+    translationKey: string
+    tags: List<string>
+    simulation: BlockSimulation
+    render: BlockRender
+
+export type BlockCatalogSource:
+    schemaVersion: number
+    catalogVersion: string
+    blocks: List<BlockDefinition>

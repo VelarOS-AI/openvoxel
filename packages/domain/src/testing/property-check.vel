@@ -1,0 +1,11 @@
+/// Test-only Velar facade over fast-check. Domain tests never import JavaScript directly.
+
+import {Coordinate3} from "../coordinates.vel"
+
+extern module "@openvoxel/fast-check":
+    export def checkCoordinates(property: (position: Coordinate3) -> bool, runs: number = 1000) -> null
+
+import js {checkCoordinates as check} from "@openvoxel/fast-check"
+
+export def checkWorldCoordinates(property: (position: Coordinate3) -> bool, runs: number = 1000):
+    check(property, runs)

@@ -1,0 +1,30 @@
+import {BackendApp, HttpRequest, Response} from "@openvoxel/backend"
+import {SetBlockRequest, blockCatalogResponse} from "@openvoxel/protocol"
+import {WorldRuntime} from "@openvoxel/world-runtime"
+import {RealtimeHub} from "../adapters/realtime-hub.vel"
+
+class BlockController:
+    constructor(private const app: BackendApp, private const runtime: WorldRuntime, private const realtime: RealtimeHub):
+        pass
+
+    async def catalog(request: HttpRequest) -> Response:
+        return Response.ok(blockCatalogResponse())
+
+    async def change(request: HttpRequest) -> Response:
+        const command = SetBlockRequest.parse(request.body)
+        const change = await self.runtime.setBlock(command.worldId, command.position, command.blockId)
+        await self.realtime.publishChange(change)
+        self.app.info("block.changed", {worldId: change.worldId, revision: change.revision})
+        return Response.ok(change)
+
+export def registerBlockModule(app: BackendApp, runtime: WorldRuntime, realtime: RealtimeHub):
+    const controller = BlockController(app, runtime, realtime)
+
+    async def catalog(request: HttpRequest) -> Response:
+        return await controller.catalog(request)
+
+    async def change(request: HttpRequest) -> Response:
+        return await controller.change(request)
+
+    app.get("/api/blocks", catalog)
+    app.post("/api/blocks", change)

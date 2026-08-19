@@ -1,0 +1,19 @@
+import {BackendApp, BackendOptions, backend} from "@openvoxel/backend"
+import {WorldRuntime} from "@openvoxel/world-runtime"
+import {RealtimeHub} from "./adapters/realtime-hub.vel"
+import {handleApplicationError} from "./error-handler.vel"
+import {registerBlockModule} from "./modules/block.vel"
+import {registerChunkModule} from "./modules/chunk.vel"
+import {registerRealtimeModule} from "./modules/realtime.vel"
+import {registerSystemModule} from "./modules/system.vel"
+import {registerWorldModule} from "./modules/world.vel"
+
+export async def createOpenVoxelServer(runtime: WorldRuntime, options: BackendOptions) -> BackendApp:
+    const app = await backend(options, handleApplicationError)
+    const realtime = RealtimeHub(app.warn)
+    registerSystemModule(app)
+    registerWorldModule(app, runtime)
+    registerChunkModule(app, runtime)
+    registerBlockModule(app, runtime, realtime)
+    registerRealtimeModule(app, runtime, realtime)
+    return app

@@ -1,0 +1,33 @@
+import {BackendApp, HttpRequest, Response} from "@openvoxel/backend"
+import {CreateWorld} from "@openvoxel/domain"
+import {WorldQuery} from "@openvoxel/protocol"
+import {WorldNotFoundError, WorldRuntime} from "@openvoxel/world-runtime"
+
+class WorldController:
+    constructor(private const app: BackendApp, private const runtime: WorldRuntime):
+        pass
+
+    async def create(request: HttpRequest) -> Response:
+        const command = CreateWorld.parse(request.body)
+        const manifest = await self.runtime.createWorld(command)
+        self.app.info("world.created", {worldId: manifest.id, seed: manifest.seed})
+        return Response.created(manifest)
+
+    async def find(request: HttpRequest) -> Response:
+        const query = WorldQuery.parse(request.body)
+        const manifest = await self.runtime.findWorld(query.worldId)
+        if manifest == null:
+            throw WorldNotFoundError(query.worldId)
+        return Response.ok(manifest)
+
+export def registerWorldModule(app: BackendApp, runtime: WorldRuntime):
+    const controller = WorldController(app, runtime)
+
+    async def create(request: HttpRequest) -> Response:
+        return await controller.create(request)
+
+    async def find(request: HttpRequest) -> Response:
+        return await controller.find(request)
+
+    app.post("/api/worlds", create)
+    app.post("/api/worlds/find", find)

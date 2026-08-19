@@ -1,0 +1,44 @@
+{
+  "name": "openvoxel",
+  "description": "A teaching voxel world built from first principles with VelarScript.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/blocks",
+    "packages/config",
+    "packages/domain",
+    "packages/backend",
+    "packages/protocol",
+    "packages/world-runtime",
+    "packages/npm/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "generate": "npm run generate --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present",
+    "format:check": "npm run format:check --workspaces --if-present",
+    "dev": "npm run dev --workspace @openvoxel/server",
+    "start": "npm run start --workspace @openvoxel/server",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/domain",
+    "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/domain",
+    "benchmark:columns": "npm run benchmark:columns --workspace @openvoxel/domain",
+    "validate": "npm run generate && npm run format:check && npm run check && npm test && npm run build"
+  },
+  "dependencies": {
+    "@openvoxel/backend": "0.1.0",
+    "@openvoxel/domain": "0.1.0",
+    "@openvoxel/protocol": "0.1.0",
+    "@openvoxel/world-runtime": "0.1.0"
+  },
+  "devDependencies": {
+    "@openvoxel/fast-check": "0.1.0",
+    "@velarscript/cli": "0.10.4"
+  }
+}

@@ -1,0 +1,274 @@
+schemaVersion: 1
+catalogVersion: openvoxel:base-v1
+
+blocks:
+  - id: 0
+    key: openvoxel:air
+    translationKey: block.openvoxel.air
+    tags: [replaceable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: none}
+
+  - id: 1
+    key: openvoxel:grass
+    translationKey: block.openvoxel.grass
+    tags: [terrain, soil]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render:
+      shape: cube
+      layer: opaque
+      material: terrain
+      textures: {top: block/grass_top, bottom: block/dirt, side: block/grass_side}
+      tint: biome_grass_top
+
+  - id: 2
+    key: openvoxel:dirt
+    translationKey: block.openvoxel.dirt
+    tags: [terrain, soil]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/dirt}}
+
+  - id: 3
+    key: openvoxel:stone
+    translationKey: block.openvoxel.stone
+    tags: [terrain, natural_rock]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/stone}}
+
+  - id: 4
+    key: openvoxel:water
+    translationKey: block.openvoxel.water
+    tags: [fluid, water]
+    simulation: {collision: none, occlusion: none, fluid: water}
+    render: {shape: cube, layer: translucent, material: water, textures: {all: block/water}, animation: water}
+
+  - id: 5
+    key: openvoxel:magma
+    translationKey: block.openvoxel.magma
+    tags: [fluid, magma, damaging]
+    simulation: {collision: none, occlusion: none, fluid: magma}
+    render: {shape: cube, layer: translucent, material: magma, textures: {all: block/magma}, animation: magma}
+
+  - id: 6
+    key: openvoxel:sand
+    translationKey: block.openvoxel.sand
+    tags: [terrain, soil, gravity]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/sand}}
+
+  - id: 7
+    key: openvoxel:sandstone
+    translationKey: block.openvoxel.sandstone
+    tags: [terrain, natural_rock]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/sandstone}}
+
+  - id: 8
+    key: openvoxel:granite
+    translationKey: block.openvoxel.granite
+    tags: [terrain, natural_rock]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/granite}}
+
+  - id: 9
+    key: openvoxel:basalt
+    translationKey: block.openvoxel.basalt
+    tags: [terrain, natural_rock]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/basalt}}
+
+  - id: 10
+    key: openvoxel:gravel
+    translationKey: block.openvoxel.gravel
+    tags: [terrain, gravity]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/gravel}}
+
+  - id: 11
+    key: openvoxel:limestone
+    translationKey: block.openvoxel.limestone
+    tags: [terrain, natural_rock]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/limestone}}
+
+  - id: 12
+    key: openvoxel:clay
+    translationKey: block.openvoxel.clay
+    tags: [terrain, soil]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/clay}}
+
+  - id: 13
+    key: openvoxel:ice
+    translationKey: block.openvoxel.ice
+    tags: [terrain, ice]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: translucent, material: ice, textures: {all: block/ice}}
+
+  - id: 14
+    key: openvoxel:snow
+    translationKey: block.openvoxel.snow
+    tags: [terrain, replaceable, snow]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: terrain, textures: {all: block/snow}}
+
+  - id: 15
+    key: openvoxel:coal_ore
+    translationKey: block.openvoxel.coal_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/coal_ore}}
+
+  - id: 16
+    key: openvoxel:copper_ore
+    translationKey: block.openvoxel.copper_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: metal, textures: {all: block/copper_ore}}
+
+  - id: 17
+    key: openvoxel:iron_ore
+    translationKey: block.openvoxel.iron_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: metal, textures: {all: block/iron_ore}}
+
+  - id: 18
+    key: openvoxel:saltpeter_ore
+    translationKey: block.openvoxel.saltpeter_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/saltpeter_ore}}
+
+  - id: 19
+    key: openvoxel:sulphur_ore
+    translationKey: block.openvoxel.sulphur_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {all: block/sulphur_ore}}
+
+  - id: 20
+    key: openvoxel:diamond_ore
+    translationKey: block.openvoxel.diamond_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: metal, textures: {all: block/diamond_ore}}
+
+  - id: 21
+    key: openvoxel:germanium_ore
+    translationKey: block.openvoxel.germanium_ore
+    tags: [terrain, ore]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: metal, textures: {all: block/germanium_ore}}
+
+  - id: 22
+    key: openvoxel:oak_log
+    translationKey: block.openvoxel.oak_log
+    tags: [wood, flammable]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {top: block/oak_log_top, bottom: block/oak_log_top, side: block/oak_log_side}}
+
+  - id: 23
+    key: openvoxel:oak_leaves
+    translationKey: block.openvoxel.oak_leaves
+    tags: [leaves, flammable]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: leaves, textures: {all: block/oak_leaves}, tint: biome_foliage}
+
+  - id: 24
+    key: openvoxel:birch_log
+    translationKey: block.openvoxel.birch_log
+    tags: [wood, flammable]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {top: block/birch_log_top, bottom: block/birch_log_top, side: block/birch_log_side}}
+
+  - id: 25
+    key: openvoxel:birch_leaves
+    translationKey: block.openvoxel.birch_leaves
+    tags: [leaves, flammable]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: leaves, textures: {all: block/birch_leaves}, tint: biome_foliage}
+
+  - id: 26
+    key: openvoxel:spruce_log
+    translationKey: block.openvoxel.spruce_log
+    tags: [wood, flammable]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {top: block/spruce_log_top, bottom: block/spruce_log_top, side: block/spruce_log_side}}
+
+  - id: 27
+    key: openvoxel:spruce_leaves
+    translationKey: block.openvoxel.spruce_leaves
+    tags: [leaves, flammable]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: leaves, textures: {all: block/spruce_leaves}, tint: biome_foliage}
+
+  - id: 28
+    key: openvoxel:mimosa_log
+    translationKey: block.openvoxel.mimosa_log
+    tags: [wood, flammable]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {top: block/mimosa_log_top, bottom: block/mimosa_log_top, side: block/mimosa_log_side}}
+
+  - id: 29
+    key: openvoxel:mimosa_leaves
+    translationKey: block.openvoxel.mimosa_leaves
+    tags: [leaves, flammable]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: leaves, textures: {all: block/mimosa_leaves}, tint: biome_foliage}
+
+  - id: 30
+    key: openvoxel:poplar_log
+    translationKey: block.openvoxel.poplar_log
+    tags: [wood, flammable]
+    simulation: {collision: full_cube, occlusion: full_cube, fluid: none}
+    render: {shape: cube, layer: opaque, material: terrain, textures: {top: block/poplar_log_top, bottom: block/poplar_log_top, side: block/poplar_log_side}}
+
+  - id: 31
+    key: openvoxel:poplar_leaves
+    translationKey: block.openvoxel.poplar_leaves
+    tags: [leaves, flammable]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: cube, layer: cutout, material: leaves, textures: {all: block/poplar_leaves}, tint: biome_foliage}
+
+  - id: 32
+    key: openvoxel:tall_grass
+    translationKey: block.openvoxel.tall_grass
+    tags: [plant, replaceable, flammable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cross, layer: cutout, material: cross, textures: {all: block/tall_grass}, tint: biome_grass}
+
+  - id: 33
+    key: openvoxel:red_flower
+    translationKey: block.openvoxel.red_flower
+    tags: [plant, replaceable, flammable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cross, layer: cutout, material: cross, textures: {all: block/red_flower}}
+
+  - id: 34
+    key: openvoxel:purple_flower
+    translationKey: block.openvoxel.purple_flower
+    tags: [plant, replaceable, flammable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cross, layer: cutout, material: cross, textures: {all: block/purple_flower}}
+
+  - id: 35
+    key: openvoxel:white_flower
+    translationKey: block.openvoxel.white_flower
+    tags: [plant, replaceable, flammable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cross, layer: cutout, material: cross, textures: {all: block/white_flower}}
+
+  - id: 36
+    key: openvoxel:dry_bush
+    translationKey: block.openvoxel.dry_bush
+    tags: [plant, replaceable, flammable]
+    simulation: {collision: none, occlusion: none, fluid: none}
+    render: {shape: cross, layer: cutout, material: cross, textures: {all: block/dry_bush}}
+
+  - id: 37
+    key: openvoxel:cactus
+    translationKey: block.openvoxel.cactus
+    tags: [plant, damaging]
+    simulation: {collision: full_cube, occlusion: none, fluid: none}
+    render: {shape: model, layer: cutout, material: model, model: block/cactus}

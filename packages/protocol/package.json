@@ -1,0 +1,23 @@
+{
+  "name": "@openvoxel/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "velar": {
+    "entry": "src/index.vel"
+  },
+  "scripts": {
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "test": "velar test",
+    "build": "velar build"
+  },
+  "dependencies": {
+    "@openvoxel/blocks": "0.1.0",
+    "@openvoxel/domain": "0.1.0"
+  }
+}

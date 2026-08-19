@@ -1,0 +1,109 @@
+import {BackendOptions} from "@openvoxel/backend"
+import {parseYaml} from "@openvoxel/config"
+import {get} from "velar/env"
+import {readText} from "velar/fs"
+
+export type ServerLimitsConfiguration:
+    bodyBytes: number
+    messageBytes: number
+    queuedMessages: number
+    queuedBytes: number
+    pendingSendBytes: number
+    connections: number
+
+export type ServerConfiguration:
+    host: string
+    port: number
+    logger: bool
+    limits: ServerLimitsConfiguration
+
+export type DatabaseConfiguration:
+    path: string
+    busyTimeoutMilliseconds: number
+    queueCapacity: number
+    maxRows: number
+    maxResultBytes: number
+
+export type OpenVoxelConfiguration:
+    configVersion: number
+    server: ServerConfiguration
+    database: DatabaseConfiguration
+
+def requireInteger(value: number, minimum: number, maximum: number, label: string):
+    assert value.isInteger() and value >= minimum and value <= maximum else f"{label} must be an integer from {minimum} through {maximum}"
+
+export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration) -> OpenVoxelConfiguration:
+    assert configuration.configVersion == 1 else "Unsupported OpenVoxel configuration version"
+    assert not configuration.server.host.isBlank() else "Server host cannot be blank"
+    requireInteger(configuration.server.port, 1, 0xffff, "Server port")
+    requireInteger(configuration.server.limits.bodyBytes, 1, 16 * 1024 * 1024, "HTTP body limit")
+    requireInteger(configuration.server.limits.messageBytes, 1, 64 * 1024 * 1024, "WebSocket message limit")
+    requireInteger(configuration.server.limits.queuedMessages, 1, 10000, "WebSocket queued message limit")
+    requireInteger(configuration.server.limits.queuedBytes, 1, 64 * 1024 * 1024, "WebSocket queued byte limit")
+    requireInteger(configuration.server.limits.pendingSendBytes, 1, 64 * 1024 * 1024, "WebSocket pending send limit")
+    requireInteger(configuration.server.limits.connections, 1, 100000, "WebSocket connection limit")
+    assert not configuration.database.path.isBlank() else "SQLite path cannot be blank"
+    requireInteger(configuration.database.busyTimeoutMilliseconds, 1, 60000, "SQLite busy timeout")
+    requireInteger(configuration.database.queueCapacity, 1, 1024, "SQLite queue capacity")
+    requireInteger(configuration.database.maxRows, 1, 1000000, "SQLite row limit")
+    requireInteger(configuration.database.maxResultBytes, 1, 128 * 1024 * 1024, "SQLite result byte limit")
+    return configuration
+
+export def parseOpenVoxelConfiguration(source: string) -> OpenVoxelConfiguration:
+    return validateOpenVoxelConfiguration(OpenVoxelConfiguration.parse(parseYaml(source)))
+
+export async def loadOpenVoxelConfiguration(path: string) -> OpenVoxelConfiguration:
+    assert not path.isBlank() else "Configuration path cannot be blank"
+    return parseOpenVoxelConfiguration(await readText(path, 64 * 1024))
+
+def integerOverride(name: string, fallback: number, minimum: number, maximum: number) -> number:
+    const raw = get(name)
+    if raw == null:
+        return fallback
+    const parsed = number(raw)
+    assert parsed != null else f"{name} must be a decimal integer"
+    requireInteger(parsed, minimum, maximum, name)
+    return parsed
+
+def booleanOverride(name: string, fallback: bool) -> bool:
+    const raw = get(name)
+    if raw == null:
+        return fallback
+    const normalized = raw.trim().lower()
+    if normalized == "true" or normalized == "1":
+        return true
+    if normalized == "false" or normalized == "0":
+        return false
+    throw Error(f"{name} must be true, false, 1, or 0")
+
+export def withEnvironmentOverrides(configuration: OpenVoxelConfiguration) -> OpenVoxelConfiguration:
+    const host = get("OPENVOXEL_HOST") ?? configuration.server.host
+    const databasePath = get("OPENVOXEL_DB") ?? configuration.database.path
+    return validateOpenVoxelConfiguration({
+        configVersion: configuration.configVersion,
+        server: {
+            host,
+            port: integerOverride("OPENVOXEL_PORT", configuration.server.port, 1, 0xffff),
+            logger: booleanOverride("OPENVOXEL_LOGGER", configuration.server.logger),
+            limits: configuration.server.limits,
+        },
+        database: {
+            path: databasePath,
+            busyTimeoutMilliseconds: configuration.database.busyTimeoutMilliseconds,
+            queueCapacity: configuration.database.queueCapacity,
+            maxRows: configuration.database.maxRows,
+            maxResultBytes: configuration.database.maxResultBytes,
+        },
+    })
+
+export def backendOptions(configuration: OpenVoxelConfiguration, logger: bool? = null) -> BackendOptions:
+    const limits = configuration.server.limits
+    return {
+        logger: logger ?? configuration.server.logger,
+        bodyLimit: limits.bodyBytes,
+        maxMessageBytes: limits.messageBytes,
+        maxQueuedMessages: limits.queuedMessages,
+        maxQueuedBytes: limits.queuedBytes,
+        maxPendingSendBytes: limits.pendingSendBytes,
+        maxConnections: limits.connections,
+    }

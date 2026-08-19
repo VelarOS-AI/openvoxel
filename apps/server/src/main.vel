@@ -1,0 +1,21 @@
+import {get} from "velar/env"
+import {onShutdown} from "velar/host"
+import {appName, createOpenVoxelServer} from "./app.vel"
+import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
+import {backendOptions, loadOpenVoxelConfiguration, withEnvironmentOverrides} from "./config.vel"
+import {WorldRuntime} from "@openvoxel/world-runtime"
+
+const configurationPath = get("OPENVOXEL_CONFIG") ?? "config/server.yml"
+const configuration = withEnvironmentOverrides(await loadOpenVoxelConfiguration(configurationPath))
+const store = await sqliteWorldStore(configuration.database)
+const runtime = WorldRuntime(store)
+const server = await createOpenVoxelServer(runtime, backendOptions(configuration))
+const address = await server.listen(configuration.server.host, configuration.server.port)
+
+async def shutdown():
+    await server.close()
+    await runtime.close()
+
+onShutdown(shutdown)
+server.info("server.started", {host: address.host, port: address.port, databasePath: configuration.database.path, configurationPath})
+print(f"{appName} is running at http://{address.host}:{address.port}")

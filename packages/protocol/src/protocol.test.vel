@@ -1,0 +1,47 @@
+import {expect} from "velar/test"
+import {TerrainSample, emptyChunk, sampleTerrain, stoneBlock} from "@openvoxel/domain"
+import {BlockMutation, ChunkQuery, GenerationSampleResponse, WorldScoped, blockCatalogResponse, chunkBatchResponse, chunkResponse, generationSampleResponse} from "./http.vel"
+import {BlockChangedEvent, SocketBlockCommand} from "./realtime.vel"
+
+test "chunk response projects fixed storage into a transport list":
+    const chunk = emptyChunk({x: -1, y: 2, z: 3}, 16)
+    chunk.set({x: 15, y: 0, z: 1}, stoneBlock)
+    const response = chunkResponse("protocol", chunk)
+    expect(response.worldId).toBe("protocol")
+    expect(response.blocks.size).toBe(4096)
+    expect(response.blocks[31]).toBe(stoneBlock)
+    expect(response.revision).toBe(1)
+
+test "generation metadata is projected without leaking runtime objects":
+    const catalog = blockCatalogResponse()
+    expect(catalog.schemaVersion).toBe(1)
+    expect(catalog.catalogVersion).toBe("openvoxel:base-v1")
+    expect(catalog.contentHash.size).toBe(64)
+    expect(catalog.generator).toBe("openvoxel:survival-v1")
+    expect(catalog.seaLevel).toBe(64)
+    expect(catalog.blocks.size).toBe(38)
+
+    const sample = generationSampleResponse("protocol", sampleTerrain("protocol-seed", {x: 0, z: 0}))
+    expect(sample.worldId).toBe("protocol")
+    expect(sample.temperature >= 0 and sample.temperature <= 15).toBe(true)
+    expect(sample.humidity >= 0 and sample.humidity <= 15).toBe(true)
+    expect(GenerationSampleResponse.is(sample)).toBe(true)
+    expect(TerrainSample.is(sample)).toBe(true)
+
+test "derived protocol records preserve inherited runtime contracts":
+    const query = ChunkQuery.parse({worldId: "protocol", position: {x: 1, y: 2, z: 3}})
+    expect(WorldScoped.is(query)).toBe(true)
+
+    const command = SocketBlockCommand.parse({operation: "set-block", worldId: "protocol", position: {x: 4, y: 5, z: 6}, blockId: stoneBlock})
+    expect(BlockMutation.is(command)).toBe(true)
+
+    const event = BlockChangedEvent.parse({event: "block-changed", worldId: "protocol", position: {x: 7, y: 8, z: 9}, previousBlockId: 0, blockId: stoneBlock, revision: 1})
+    expect(BlockMutation.is(event)).toBe(true)
+
+test "chunk batch response preserves request ordering":
+    const first = emptyChunk({x: 2, y: 3, z: 4}, 16)
+    const second = emptyChunk({x: -2, y: 1, z: 0}, 16)
+    const response = chunkBatchResponse("protocol", [first, second])
+    expect(response.chunks.size).toBe(2)
+    expect(response.chunks[0].position.x).toBe(2)
+    expect(response.chunks[1].position.x).toBe(-2)

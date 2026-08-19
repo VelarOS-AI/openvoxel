@@ -1,0 +1,17 @@
+import {expect} from "velar/test"
+import {BlockRenderLayer, BlockRenderShape} from "./schema.vel"
+import {airBlock, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockDefinition, blockRegistry, grassBlock, isFluidBlock, isNaturalRock, requireBlockId, stoneBlock, waterBlock} from "./generated.vel"
+
+test "generated block registry preserves identity gameplay and rendering data":
+    expect(blockCatalogSchemaVersion).toBe(1)
+    expect(blockCatalogVersion).toBe("openvoxel:base-v1")
+    expect(blockCatalogHash.size).toBe(64)
+    expect(blockCatalog().size).toBe(38)
+    expect(airBlock).toBe(0)
+    expect(stoneBlock).toBe(3)
+    expect(blockDefinition(grassBlock).render.shape).toBe(BlockRenderShape.cube)
+    expect(blockDefinition(grassBlock).render.layer).toBe(BlockRenderLayer.opaque)
+    expect(blockRegistry.idForKey("openvoxel:water")).toBe(waterBlock)
+    expect(isFluidBlock(waterBlock)).toBe(true)
+    expect(isNaturalRock(stoneBlock)).toBe(true)
+    expect(() => requireBlockId(65535)).toThrow()

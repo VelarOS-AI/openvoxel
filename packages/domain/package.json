@@ -1,0 +1,28 @@
+{
+  "name": "@openvoxel/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "velar": {
+    "entry": "src/index.vel"
+  },
+  "scripts": {
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "test": "velar test",
+    "build": "velar build",
+    "benchmark": "velar run benchmark.vel",
+    "benchmark:caves": "velar run benchmark-caves.vel",
+    "benchmark:columns": "velar run benchmark-columns.vel"
+  },
+  "dependencies": {
+    "@openvoxel/blocks": "0.1.0"
+  },
+  "devDependencies": {
+    "@openvoxel/fast-check": "0.1.0"
+  }
+}

@@ -1,0 +1,65 @@
+/// Integer coordinate conversion is shared by local and online runtimes.
+
+export type Coordinate2:
+    x: number
+    z: number
+
+export type Coordinate3 extends Coordinate2:
+    y: number
+
+export type ChunkPosition = Coordinate3
+export type LocalPosition = Coordinate3
+export type BlockPosition = Coordinate3
+
+export type LocatedBlock:
+    chunk: ChunkPosition
+    local: LocalPosition
+
+export const maximumWorldCoordinate = 33554431
+
+def requireCoordinate(value: number, label: string):
+    assert value.isInteger() else f"{label} must be an integer"
+    assert value.abs() <= maximumWorldCoordinate else f"{label} exceeds the supported world boundary"
+
+export def requireChunkEdge(edge: number):
+    assert edge.isInteger() else "Chunk edge must be an integer"
+    assert edge >= 4 and edge <= 64 else "Chunk edge must be between 4 and 64"
+
+export def requireCoordinate2(position: Coordinate2, label: string = "Coordinate"):
+    requireCoordinate(position.x, f"{label} x")
+    requireCoordinate(position.z, f"{label} z")
+
+export def requireCoordinate3(position: Coordinate3, label: string = "Coordinate"):
+    requireCoordinate(position.x, f"{label} x")
+    requireCoordinate(position.y, f"{label} y")
+    requireCoordinate(position.z, f"{label} z")
+
+export def requireChunkPosition(position: ChunkPosition):
+    requireCoordinate3(position, "Chunk")
+
+export def chunkCoordinate(value: number, edge: number) -> number:
+    requireCoordinate(value, "World coordinate")
+    requireChunkEdge(edge)
+    return (value / edge).floor()
+
+export def localCoordinate(value: number, edge: number) -> number:
+    const chunk = chunkCoordinate(value, edge)
+    return value - chunk * edge
+
+export def locateBlock(position: BlockPosition, edge: number) -> LocatedBlock:
+    return {
+        chunk: {
+            x: chunkCoordinate(position.x, edge),
+            y: chunkCoordinate(position.y, edge),
+            z: chunkCoordinate(position.z, edge),
+        },
+        local: {
+            x: localCoordinate(position.x, edge),
+            y: localCoordinate(position.y, edge),
+            z: localCoordinate(position.z, edge),
+        },
+    }
+
+export def chunkKey(position: ChunkPosition) -> string:
+    requireChunkPosition(position)
+    return f"{position.x}:{position.y}:{position.z}"

@@ -1,0 +1,28 @@
+import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/domain"
+
+export type BlockOverride:
+    position: LocalPosition
+    blockId: number
+
+export type ChunkDelta:
+    position: ChunkPosition
+    revision: number
+    overrides: List<BlockOverride>
+
+export type BlockOverrideCommit:
+    previousOverrideBlockId: number?
+    revision: number
+    changed: bool
+
+export type WorldManifestStore:
+    save: (manifest: WorldManifest) -> Promise<null>
+    find: (worldId: string) -> Promise<WorldManifest?>
+
+export type WorldDeltaStore:
+    findChunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<ChunkDelta>>
+    commitBlock: (worldId: string, chunk: ChunkPosition, local: LocalPosition, blockId: number?) -> Promise<BlockOverrideCommit>
+
+export type WorldStore:
+    manifests: WorldManifestStore
+    deltas: WorldDeltaStore
+    close: () -> Promise<null>

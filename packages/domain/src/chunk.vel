@@ -1,0 +1,48 @@
+import {UInt16Buffer, uint16Buffer} from "velar/binary"
+import {airBlock, requireBlockId} from "@openvoxel/blocks"
+import {ChunkPosition, LocalPosition, requireChunkEdge, requireChunkPosition} from "./coordinates.vel"
+
+export def chunkVolume(edge: number) -> number:
+    requireChunkEdge(edge)
+    return edge * edge * edge
+
+export def blockIndex(local: LocalPosition, edge: number) -> number:
+    requireChunkEdge(edge)
+    assert local.x.isInteger() and local.y.isInteger() and local.z.isInteger() else "Local coordinates must be integers"
+    assert local.x >= 0 and local.x < edge else "Local x is outside the chunk"
+    assert local.y >= 0 and local.y < edge else "Local y is outside the chunk"
+    assert local.z >= 0 and local.z < edge else "Local z is outside the chunk"
+    return local.x + edge * (local.z + edge * local.y)
+
+export class Chunk:
+    constructor(const position: ChunkPosition, const edge: number, const blocks: UInt16Buffer, let revision: number = 0):
+        requireChunkPosition(position)
+        requireChunkEdge(edge)
+        assert blocks.size == chunkVolume(edge) else "Chunk block storage has the wrong size"
+        assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
+
+    def get(local: LocalPosition) -> number:
+        return self.blocks[blockIndex(local, self.edge)]
+
+    def set(local: LocalPosition, blockId: number) -> number:
+        requireBlockId(blockId)
+        const index = blockIndex(local, self.edge)
+        const previous = self.blocks[index]
+        if previous != blockId:
+            self.blocks[index] = blockId
+            self.revision += 1
+        return previous
+
+export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airBlock) -> Chunk:
+    requireBlockId(fill)
+    const blocks = uint16Buffer(chunkVolume(edge))
+    if fill != airBlock:
+        for index in range(blocks.size):
+            blocks[index] = fill
+    return Chunk(position, edge, blocks)
+
+export def chunkChecksum(chunk: Chunk) -> number:
+    let checksum = 0x6d2b79f5
+    for index in range(chunk.blocks.size):
+        checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunk.blocks[index]) & 0xffffffff
+    return checksum >>> 0
