@@ -20,7 +20,8 @@
     "benchmark:columns": "velar run benchmark-columns.vel"
   },
   "dependencies": {
-    "@openvoxel/blocks": "0.1.0"
+    "@openvoxel/blocks": "0.1.0",
+    "@velarscript/noise": "0.1.0"
   },
   "devDependencies": {
     "@openvoxel/fast-check": "0.1.0"

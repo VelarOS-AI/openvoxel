@@ -1,6 +1,6 @@
 import {BackendApp, SocketConnection} from "@openvoxel/backend"
 import {Bytes} from "velar/binary"
-import {encode, parse} from "velar/msgpack"
+import {encode, parse} from "@velarscript/msgpack"
 import {SocketBlockCommand} from "@openvoxel/protocol"
 import {WorldRuntime} from "@openvoxel/world-runtime"
 import {RealtimeHub} from "../adapters/realtime-hub.vel"

@@ -1,7 +1,7 @@
 import {HttpMethod} from "@openvoxel/backend"
 import {Bytes} from "velar/binary"
 import {http} from "velar/http"
-import {encode, parse} from "velar/msgpack"
+import {encode, parse} from "@velarscript/msgpack"
 import {expect} from "velar/test"
 import {connect} from "velar/websocket"
 import {createOpenVoxelServer} from "./server.vel"

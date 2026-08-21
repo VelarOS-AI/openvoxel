@@ -19,6 +19,7 @@
     "@openvoxel/domain": "0.1.0",
     "@openvoxel/protocol": "0.1.0",
     "@openvoxel/world-runtime": "0.1.0",
+    "@velarscript/msgpack": "0.1.0",
     "@velarscript/node": "0.10.4"
   }
 }

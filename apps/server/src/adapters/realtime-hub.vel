@@ -1,5 +1,5 @@
 import {Bytes} from "velar/binary"
-import {encode} from "velar/msgpack"
+import {encode} from "@velarscript/msgpack"
 import {SocketConnection} from "@openvoxel/backend"
 import {BlockChangedEvent} from "@openvoxel/protocol"
 import {BlockChange} from "@openvoxel/world-runtime"

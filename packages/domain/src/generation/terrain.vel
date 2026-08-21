@@ -1,4 +1,4 @@
-import {simplex2, simplex3} from "velar/noise"
+import {simplex2, simplex3} from "@velarscript/noise"
 import {random} from "velar/random"
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
 import {airBlock, basaltBlock, clayBlock, dirtBlock, graniteBlock, grassBlock, gravelBlock, iceBlock, limestoneBlock, sandBlock, sandstoneBlock, stoneBlock, waterBlock} from "@openvoxel/blocks"
