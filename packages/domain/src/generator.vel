@@ -7,14 +7,11 @@ import {ColumnCache, GenerationFields, TerrainSample, baseTerrainBlock, columnPl
 
 const airBlock = blockId("openvoxel:air")
 
-def chunkMinimumX(chunk: Chunk) -> number:
-    return chunk.position.x * chunk.edge
+def chunkMinimumX(chunk: Chunk) -> number: return chunk.position.x * chunk.edge
 
-def chunkMinimumY(chunk: Chunk) -> number:
-    return chunk.position.y * chunk.edge
+def chunkMinimumY(chunk: Chunk) -> number: return chunk.position.y * chunk.edge
 
-def chunkMinimumZ(chunk: Chunk) -> number:
-    return chunk.position.z * chunk.edge
+def chunkMinimumZ(chunk: Chunk) -> number: return chunk.position.z * chunk.edge
 
 def insideY(chunk: Chunk, y: number) -> bool:
     const minimumY = chunkMinimumY(chunk)
@@ -40,14 +37,11 @@ def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
     const topBlock = surfaceBlock(sample, topY)
     const underBlock = subsurfaceBlock(sample, topY)
     let thickness = 4
-    if sample.mountainFactor > 0.9:
-        thickness = 2
-    else if sample.humidity > 11:
-        thickness = 6
+    if sample.mountainFactor > 0.9: thickness = 2
+    else if sample.humidity > 11: thickness = 6
     for depth in range(thickness):
         const worldY = topY - depth
-        if not insideY(chunk, worldY):
-            continue
+        if not insideY(chunk, worldY): continue
         const index = indexAt(chunk, sample.position.x, worldY, sample.position.z)
         if chunk.blocks[index] != airBlock and not isFluidBlock(chunk.blocks[index]):
             chunk.blocks[index] = depth == 0 ? topBlock : underBlock
@@ -70,15 +64,13 @@ export def worldGenerator(manifest: WorldManifest) -> WorldGenerator:
     const columns = columnPlanner(fields, edge)
     const caves = cavePlanner(fields, seed)
 
-    def sample(position: Coordinate2) -> TerrainSample:
-        return sampleTerrainWithFields(fields, position)
+    def sample(position: Coordinate2) -> TerrainSample: return sampleTerrainWithFields(fields, position)
 
     def generate(position: ChunkPosition) -> Chunk:
         const chunk = emptyChunk(position, edge)
         const minimumY = position.y * edge
         const maximumY = minimumY + edge - 1
-        if maximumY < minimumWorldY or minimumY > maximumWorldY:
-            return chunk
+        if maximumY < minimumWorldY or minimumY > maximumWorldY: return chunk
 
         const cache = columns.columns(position.x, position.z)
         generateBaseTerrain(chunk, fields, cache)

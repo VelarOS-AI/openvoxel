@@ -2,12 +2,10 @@ import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosi
 import {ChunkDelta, WorldStore} from "./contracts.vel"
 
 export class WorldNotFoundError extends Error:
-    constructor(const worldId: string):
-        super(f"World '{worldId}' was not found")
+    constructor(const worldId: string): super(f"World '{worldId}' was not found")
 
 export class WorldAlreadyExistsError extends Error:
-    constructor(const worldId: string):
-        super(f"World '{worldId}' already exists")
+    constructor(const worldId: string): super(f"World '{worldId}' already exists")
 
 export type BlockChange:
     worldId: string
@@ -33,8 +31,7 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
 
     def generatorFor(manifest: WorldManifest) -> WorldGenerator:
         const existing = generators.get(manifest.id)
-        if existing != null:
-            return existing
+        if existing != null: return existing
         const generator = worldGenerator(manifest)
         generators.set(manifest.id, generator)
         return generator
@@ -42,24 +39,20 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
     async def createWorld(command: CreateWorld) -> WorldManifest:
         const manifest = createWorldManifest(command)
         const existing = await store.manifests.find(manifest.id)
-        if existing != null:
-            throw WorldAlreadyExistsError(manifest.id)
+        if existing != null: throw WorldAlreadyExistsError(manifest.id)
         await store.manifests.save(manifest)
         return manifest
 
-    async def findWorld(worldId: string) -> WorldManifest?:
-        return await store.manifests.find(worldId)
+    async def findWorld(worldId: string) -> WorldManifest?: return await store.manifests.find(worldId)
 
     async def requireWorld(worldId: string) -> WorldManifest:
         const manifest = await findWorld(worldId)
-        if manifest == null:
-            throw WorldNotFoundError(worldId)
+        if manifest == null: throw WorldNotFoundError(worldId)
         return manifest
 
     def applyDelta(chunk: Chunk, delta: ChunkDelta):
         assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
-        for entry in delta.overrides:
-            setChunkBlock(chunk, entry.position, entry.blockId)
+        for entry in delta.overrides: setChunkBlock(chunk, entry.position, entry.blockId)
         chunk.revision = delta.revision
 
     async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
@@ -69,14 +62,12 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
         const generator = generatorFor(manifest)
         const stored = await store.deltas.findChunks(worldId, positions)
         const deltas: Map<string, ChunkDelta> = Map()
-        for delta in stored:
-            deltas.set(chunkKey(delta.position), delta)
+        for delta in stored: deltas.set(chunkKey(delta.position), delta)
         const output: List<Chunk> = []
         for position in positions:
             const chunk = generator.generate(position)
             const delta = deltas.get(chunkKey(position))
-            if delta != null:
-                applyDelta(chunk, delta)
+            if delta != null: applyDelta(chunk, delta)
             output.append(chunk)
         return output
 
@@ -107,7 +98,6 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
             revision: commit.revision,
         }
 
-    async def close():
-        await store.close()
+    async def close(): await store.close()
 
     return {createWorld, findWorld, requireWorld, chunk, chunks, terrainSample, setBlock, close}

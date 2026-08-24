@@ -29,19 +29,16 @@ export def createOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
     app = use(app, middleware.requestId())
     app = use(app, middleware.securityHeaders())
     app = use(app, middleware.concurrency(256))
-    if application.options.logger:
-        app = use(app, middleware.accessLog(application.access))
+    if application.options.logger: app = use(app, middleware.accessLog(application.access))
 
     return app
 
 def ownedOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
     const app = createOpenVoxelApp(application)
 
-    async def startup():
-        mountOpenVoxelApplication(application)
+    async def startup(): mountOpenVoxelApplication(application)
 
-    async def shutdown():
-        unmountOpenVoxelApplication()
+    async def shutdown(): unmountOpenVoxelApplication()
 
     return lifecycle(app, startup=startup, shutdown=shutdown)
 

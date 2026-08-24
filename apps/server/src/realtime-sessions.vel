@@ -17,21 +17,16 @@ export def realtimeSessions(maximum: number) -> RealtimeSessions:
     let draining = false
 
     async def run(_cancellation: Cancellation, id: number, connection: WebSocketConnection, handler: RealtimeHandler):
-        try:
-            await handler(connection)
-        finally:
-            owners.remove(id)
+        try: await handler(connection)
+        finally: owners.remove(id)
 
     def start(connection: WebSocketConnection, handler: RealtimeHandler) -> bool:
-        if draining or owners.size >= maximum:
-            return false
+        if draining or owners.size >= maximum: return false
         const id = nextId
         nextId += 1
-        if nextId > 9007199254740991:
-            nextId = 1
+        if nextId > 9007199254740991: nextId = 1
         assert not owners.has(id) else "Realtime session identifier space is exhausted"
-        async def work(cancellation: Cancellation):
-            await run(cancellation, id, connection, handler)
+        async def work(cancellation: Cancellation): await run(cancellation, id, connection, handler)
 
         const owner = task(work)
         owners.set(id, owner)
@@ -40,8 +35,7 @@ export def realtimeSessions(maximum: number) -> RealtimeSessions:
     async def drain():
         draining = true
         const pending: List<Promise<null>> = []
-        for owner in owners.values():
-            pending.append(owner.result())
+        for owner in owners.values(): pending.append(owner.result())
         await Promise.all(pending)
 
     return {start, drain}

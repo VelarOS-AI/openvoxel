@@ -9,8 +9,7 @@ export type BlockRenderResources:
 
 def sortedValues(values: Set<string>) -> readonly List<string>:
     const result: List<string> = []
-    for value in values:
-        result.append(value)
+    for value in values: result.append(value)
     return result.sorted()
 
 export def collectBlockRenderResources(blocks: readonly List<readonly BlockDefinition>) -> BlockRenderResources:
@@ -23,30 +22,21 @@ export def collectBlockRenderResources(blocks: readonly List<readonly BlockDefin
     for definition in blocks:
         const render = definition.render
         match render.shape:
-            case BlockRenderShape.empty:
-                pass
+            case BlockRenderShape.empty: pass
             case BlockRenderShape.model:
                 materials.add(render.material)
                 models.add(render.model)
-                if render.tint != null:
-                    tints.add(render.tint)
-                if render.animation != null:
-                    animations.add(render.animation)
+                if render.tint != null: tints.add(render.tint)
+                if render.animation != null: animations.add(render.animation)
             case _:
                 materials.add(render.material)
                 const blockTextures = render.textures
-                if blockTextures.all != null:
-                    textures.add(blockTextures.all)
-                if blockTextures.top != null:
-                    textures.add(blockTextures.top)
-                if blockTextures.bottom != null:
-                    textures.add(blockTextures.bottom)
-                if blockTextures.side != null:
-                    textures.add(blockTextures.side)
-                if render.tint != null:
-                    tints.add(render.tint)
-                if render.animation != null:
-                    animations.add(render.animation)
+                if blockTextures.all != null: textures.add(blockTextures.all)
+                if blockTextures.top != null: textures.add(blockTextures.top)
+                if blockTextures.bottom != null: textures.add(blockTextures.bottom)
+                if blockTextures.side != null: textures.add(blockTextures.side)
+                if render.tint != null: tints.add(render.tint)
+                if render.animation != null: animations.add(render.animation)
 
     return {
         materials: sortedValues(materials),

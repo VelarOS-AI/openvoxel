@@ -12,11 +12,9 @@ export type RealtimeHub:
 export def realtimeHub(warning: (message: string, context: unknown) -> null) -> RealtimeHub:
     const connections: Set<WebSocketConnection> = Set()
 
-    def join(connection: WebSocketConnection):
-        connections.add(connection)
+    def join(connection: WebSocketConnection): connections.add(connection)
 
-    def leave(connection: WebSocketConnection):
-        connections.remove(connection)
+    def leave(connection: WebSocketConnection): connections.remove(connection)
 
     async def publishChange(change: BlockChange):
         const event: BlockChangedEvent = {
@@ -30,12 +28,10 @@ export def realtimeHub(warning: (message: string, context: unknown) -> null) -> 
         const message: Bytes = encode(event)
         const failed: List<WebSocketConnection> = []
         for connection in connections.copy():
-            try:
-                await connection.send(message)
+            try: await connection.send(message)
             catch error:
                 failed.append(connection)
                 warning("realtime.subscriber.failed", {code: error.code, message: error.message})
-        for connection in failed:
-            connections.remove(connection)
+        for connection in failed: connections.remove(connection)
 
     return {join, leave, publishChange}

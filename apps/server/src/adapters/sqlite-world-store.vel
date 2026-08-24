@@ -199,8 +199,7 @@ async def openDatabase(options: SqliteWorldStoreOptions) -> SqliteConnection:
 
 def hasColumn(columns: List<SchemaColumnRow>, name: string) -> bool:
     for column in columns:
-        if column.name == name:
-            return true
+        if column.name == name: return true
     return false
 
 async def migrate(executor: DatabaseExecutor):
@@ -241,8 +240,7 @@ async def validateStoredCatalog(executor: DatabaseExecutor):
         throw WorldBlockCatalogMismatchError(mismatch.id, mismatch.blockCatalogVersion, mismatch.blockIdMapHash)
     const storedBlocks = await all(executor, readStoredBlockIds)
     for row in storedBlocks:
-        try:
-            requireBlockId(row.blockId)
+        try: requireBlockId(row.blockId)
         catch error:
             throw Error(f"Stored block id {row.blockId} is incompatible with block catalog {blockCatalogVersion}: {error.message}")
 
@@ -258,17 +256,14 @@ async def initialize(database: SqliteConnection):
     await validateStoredCatalog(executor)
 
 def sameOverride(left: number?, right: number?) -> bool:
-    if left == null:
-        return right == null
-    if right == null:
-        return false
+    if left == null: return right == null
+    if right == null: return false
     return left == right
 
 export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> WorldStore:
     const options = validateOptions(configuration)
     const database = await openDatabase(options)
-    try:
-        await initialize(database)
+    try: await initialize(database)
     catch error:
         await database.close()
         throw error
@@ -280,13 +275,11 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
 
     async def findManifest(worldId: string) -> WorldManifest?:
         const row = await one(databaseExecutor, findWorldOperation(worldId))
-        if row == null:
-            return null
+        if row == null: return null
         return validateWorldManifest(row)
 
     async def findChunks(worldId: string, positions: List<ChunkPosition>) -> List<ChunkDelta>:
-        if positions.size == 0:
-            return []
+        if positions.size == 0: return []
 
         const coordinateRows: List<List<unknown>> = []
         for position in positions:
@@ -345,8 +338,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
                 deltas.append({position, revision: row.revision, overrides})
                 deltaIndex = deltas.size - 1
                 indices.set(key, deltaIndex)
-            else:
-                deltaIndex = existingIndex
+            else: deltaIndex = existingIndex
             if row.localX != null and row.localY != null and row.localZ != null and row.blockId != null:
                 requireBlockId(row.blockId)
                 deltas[deltaIndex].overrides.append({
@@ -356,8 +348,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
         return deltas
 
     async def commitBlock(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockId: number?) -> BlockOverrideCommit:
-        if blockId != null:
-            requireBlockId(blockId)
+        if blockId != null: requireBlockId(blockId)
 
         async def transactionOperation(transaction: SqliteTransaction) -> BlockOverrideCommit:
             const executor = transaction.executor()
@@ -370,16 +361,13 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
 
             const nextRevision = revision + 1
             await execute(executor, saveChunkStateOperation(worldId, chunk, nextRevision))
-            if blockId == null:
-                await execute(executor, removeBlockOverrideOperation(worldId, chunk, local))
-            else:
-                await execute(executor, saveBlockOverrideOperation(worldId, chunk, local, blockId))
+            if blockId == null: await execute(executor, removeBlockOverrideOperation(worldId, chunk, local))
+            else: await execute(executor, saveBlockOverrideOperation(worldId, chunk, local, blockId))
             return {previousOverrideBlockId, revision: nextRevision, changed: true}
 
         return await database.transaction(transactionOperation)
 
-    async def close():
-        await database.close()
+    async def close(): await database.close()
 
     return {
         manifests: {save: saveManifest, find: findManifest},

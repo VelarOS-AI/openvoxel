@@ -36,6 +36,6 @@
     "@openvoxel/world-runtime": "0.1.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.14.3"
+    "@velarscript/cli": "0.14.4"
   }
 }

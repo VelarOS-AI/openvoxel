@@ -28,8 +28,7 @@ def coordinateRoundTrip(position: Coordinate3) -> bool:
 def countBlock(chunk: Chunk, blockId: number) -> number:
     let count = 0
     for index in range(chunk.blocks.size):
-        if chunk.blocks[index] == blockId:
-            count += 1
+        if chunk.blocks[index] == blockId: count += 1
     return count
 
 test "negative world coordinates map to stable chunks":
@@ -46,8 +45,7 @@ test "negative world coordinates map to stable chunks":
     expect(chunkCoordinate(16, 16)).toBe(1)
     expect(localCoordinate(16, 16)).toBe(0)
 
-test "coordinate decomposition round trips for generated values":
-    checkWorldCoordinates(coordinateRoundTrip)
+test "coordinate decomposition round trips for generated values": checkWorldCoordinates(coordinateRoundTrip)
 
 test "three dimensional coordinates inherit the horizontal coordinate contract":
     const position = Coordinate3.parse({x: 4, y: 8, z: 12})
@@ -107,8 +105,7 @@ test "world manifests reject a different persisted block id mapping":
             blockCatalogVersion: manifest.blockCatalogVersion,
             blockIdMapHash: "different-id-map",
         })
-    catch error:
-        rejected = error is WorldBlockCatalogMismatchError
+    catch error: rejected = error is WorldBlockCatalogMismatchError
     expect(rejected).toBe(true)
 
 test "world generation covers oceans caves fluids and all mineral families":

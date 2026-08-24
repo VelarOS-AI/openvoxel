@@ -34,8 +34,7 @@ export def requireCoordinate3(position: Coordinate3, label: string = "Coordinate
     requireCoordinate(position.y, f"{label} y")
     requireCoordinate(position.z, f"{label} z")
 
-export def requireChunkPosition(position: ChunkPosition):
-    requireCoordinate3(position, "Chunk")
+export def requireChunkPosition(position: ChunkPosition): requireCoordinate3(position, "Chunk")
 
 export def chunkCoordinate(value: number, edge: number) -> number:
     requireCoordinate(value, "World coordinate")

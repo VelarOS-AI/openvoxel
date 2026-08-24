@@ -12,20 +12,14 @@ export const blockCatalogVersion = catalogSource.catalogVersion
 export const blockCatalogHash = artifact.contentHash
 export const blockIdMapHash = artifact.idMapHash
 
-export def blockCatalog() -> readonly List<readonly BlockDefinition>:
-    return blockRegistry.catalog()
+export def blockCatalog() -> readonly List<readonly BlockDefinition>: return blockRegistry.catalog()
 
-export def blockId(key: string) -> number:
-    return blockRegistry.idForKey(key)
+export def blockId(key: string) -> number: return blockRegistry.idForKey(key)
 
-export def requireBlockId(blockId: number):
-    blockRegistry.requireById(blockId)
+export def requireBlockId(blockId: number): blockRegistry.requireById(blockId)
 
-export def blockDefinition(blockId: number) -> readonly BlockDefinition:
-    return blockRegistry.requireById(blockId)
+export def blockDefinition(blockId: number) -> readonly BlockDefinition: return blockRegistry.requireById(blockId)
 
-export def isFluidBlock(blockId: number) -> bool:
-    return blockDefinition(blockId).simulation.fluid != BlockFluid.empty
+export def isFluidBlock(blockId: number) -> bool: return blockDefinition(blockId).simulation.fluid != BlockFluid.empty
 
-export def isNaturalRock(blockId: number) -> bool:
-    return blockRegistry.hasTag(blockId, "natural_rock")
+export def isNaturalRock(blockId: number) -> bool: return blockRegistry.hasTag(blockId, "natural_rock")

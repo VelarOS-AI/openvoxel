@@ -15,8 +15,7 @@ type BlockIdMapping:
     id: number
     key: string
 
-def digest(value: string) -> string:
-    return createHash("sha256").update(value).digest("hex")
+def digest(value: string) -> string: return createHash("sha256").update(value).digest("hex")
 
 export def generateCatalogArtifact(sourceText: string) -> string:
     const source = BlockCatalogSource.parse(parseYaml(sourceText))
@@ -24,8 +23,7 @@ export def generateCatalogArtifact(sourceText: string) -> string:
     const canonical = Json.stableStringify(source)
     const contentHash = digest(canonical)
     const mappings: List<BlockIdMapping> = []
-    for definition in registry.catalog():
-        mappings.append({id: definition.id, key: definition.key})
+    for definition in registry.catalog(): mappings.append({id: definition.id, key: definition.key})
     const idMapHash = digest(Json.stableStringify(mappings.sorted(by=mapping => mapping.id)))
     const artifact: BlockCatalogArtifact = {
         artifactVersion: 1,

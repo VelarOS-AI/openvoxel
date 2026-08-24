@@ -1,26 +1,21 @@
 import {BlockCatalogSource, BlockDefinition, BlockFluid, BlockRenderShape} from "./schema.vel"
 
 export class InvalidBlockIdError extends Error:
-    constructor(const blockId: number):
-        super(f"Block id {blockId} must be an integer from 0 through 65535")
+    constructor(const blockId: number): super(f"Block id {blockId} must be an integer from 0 through 65535")
 
 export class UnknownBlockIdError extends Error:
-    constructor(const blockId: number):
-        super(f"Unknown block id {blockId}")
+    constructor(const blockId: number): super(f"Unknown block id {blockId}")
 
 export class RetiredBlockIdError extends Error:
-    constructor(const blockId: number):
-        super(f"Retired block id {blockId}")
+    constructor(const blockId: number): super(f"Retired block id {blockId}")
 
 def requireTextureKey(value: string?, label: string):
-    if value != null:
-        assert not value.isBlank() else f"{label} cannot be blank"
+    if value != null: assert not value.isBlank() else f"{label} cannot be blank"
 
 def validateRender(definition: readonly BlockDefinition):
     const render = definition.render
     match render.shape:
-        case BlockRenderShape.empty:
-            assert definition.id == 0 else "Only the air block may omit rendering"
+        case BlockRenderShape.empty: assert definition.id == 0 else "Only the air block may omit rendering"
         case BlockRenderShape.model:
             assert not render.material.isBlank() else f"Model block {definition.key} requires a material key"
             assert not render.model.isBlank() else f"Model block {definition.key} requires a model key"
@@ -50,8 +45,7 @@ def validateDefinition(definition: readonly BlockDefinition):
     validateRender(definition)
 
 export def requireBlockStorageId(blockId: number):
-    if not blockId.isInteger() or blockId < 0 or blockId > 0xffff:
-        throw InvalidBlockIdError(blockId)
+    if not blockId.isInteger() or blockId < 0 or blockId > 0xffff: throw InvalidBlockIdError(blockId)
 
 /// Immutable catalog data plus the small lookup functions built from it. The
 /// Maps stay inside the factory closure instead of becoming a mutable service
@@ -85,16 +79,13 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
         byKey.set(definition.key, definition)
         tagsById.set(definition.id, Set(definition.tags))
 
-    def catalog() -> readonly List<readonly BlockDefinition>:
-        return source.blocks
+    def catalog() -> readonly List<readonly BlockDefinition>: return source.blocks
 
     def requireById(blockId: number) -> readonly BlockDefinition:
         requireBlockStorageId(blockId)
-        if blockId in retiredIds:
-            throw RetiredBlockIdError(blockId)
+        if blockId in retiredIds: throw RetiredBlockIdError(blockId)
         const definition = byId.get(blockId)
-        if definition == null:
-            throw UnknownBlockIdError(blockId)
+        if definition == null: throw UnknownBlockIdError(blockId)
         return definition
 
     def requireByKey(key: string) -> readonly BlockDefinition:
@@ -102,8 +93,7 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
         assert definition != null else f"Unknown block key {key}"
         return definition
 
-    def idForKey(key: string) -> number:
-        return requireByKey(key).id
+    def idForKey(key: string) -> number: return requireByKey(key).id
 
     def hasTag(blockId: number, tag: string) -> bool:
         requireById(blockId)

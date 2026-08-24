@@ -1,7 +1,6 @@
 import {ServeResponse, json, text} from "velar/serve"
 
-def envelope(code: string, data: unknown, message: string) -> unknown:
-    return {code, data, message}
+def envelope(code: string, data: unknown, message: string) -> unknown: return {code, data, message}
 
 export def apiResponse(status: number, code: string, data: unknown, message: string, headers: Map<string, string> = Map()) -> ServeResponse:
     return json(envelope(code, data, message), status=status, headers=headers)
@@ -15,5 +14,4 @@ export def created(data: unknown, headers: Map<string, string> = Map()) -> Serve
 export def failure(status: number, code: string, data: unknown, message: string, headers: Map<string, string> = Map()) -> ServeResponse:
     return apiResponse(status, code, data, message, headers)
 
-export def notModified(headers: Map<string, string>) -> ServeResponse:
-    return text("", status=304, headers=headers)
+export def notModified(headers: Map<string, string>) -> ServeResponse: return text("", status=304, headers=headers)

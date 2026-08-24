@@ -191,8 +191,7 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
 
 export def chunkResponse(worldId: string, chunk: Chunk) -> ChunkResponse:
     const blocks: List<number> = []
-    for index in range(chunk.blocks.size):
-        blocks.append(chunk.blocks[index])
+    for index in range(chunk.blocks.size): blocks.append(chunk.blocks[index])
     return {
         worldId,
         position: chunk.position,
@@ -203,8 +202,7 @@ export def chunkResponse(worldId: string, chunk: Chunk) -> ChunkResponse:
 
 export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatchResponse:
     const responses: List<ChunkResponse> = []
-    for chunk in chunks:
-        responses.append(chunkResponse(worldId, chunk))
+    for chunk in chunks: responses.append(chunkResponse(worldId, chunk))
     return {worldId, chunks: responses}
 
 export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
@@ -233,8 +231,7 @@ const sharedBlockCatalogResponse: BlockCatalogResponse = {
     blocks: blockCatalog(),
 }
 
-export def blockCatalogResponse() -> readonly BlockCatalogResponse:
-    return sharedBlockCatalogResponse
+export def blockCatalogResponse() -> readonly BlockCatalogResponse: return sharedBlockCatalogResponse
 
 export def worldBootstrapResponse(manifest: readonly WorldManifest) -> WorldBootstrapResponse:
     return {

@@ -57,14 +57,11 @@ const caveCellSize = 16
 const caveSearchRadius = 48
 const cavePlanCacheCapacity = 256
 
-def chunkMinimumX(chunk: Chunk) -> number:
-    return chunk.position.x * chunk.edge
+def chunkMinimumX(chunk: Chunk) -> number: return chunk.position.x * chunk.edge
 
-def chunkMinimumY(chunk: Chunk) -> number:
-    return chunk.position.y * chunk.edge
+def chunkMinimumY(chunk: Chunk) -> number: return chunk.position.y * chunk.edge
 
-def chunkMinimumZ(chunk: Chunk) -> number:
-    return chunk.position.z * chunk.edge
+def chunkMinimumZ(chunk: Chunk) -> number: return chunk.position.z * chunk.edge
 
 def inside(chunk: Chunk, position: Coordinate3) -> bool:
     const minimumX = chunkMinimumX(chunk)
@@ -79,13 +76,11 @@ def worldIndex(chunk: Chunk, position: Coordinate3) -> number:
     return localX + chunk.edge * (localZ + chunk.edge * localY)
 
 def getWorldBlock(chunk: Chunk, position: Coordinate3) -> number:
-    if not inside(chunk, position):
-        return airBlock
+    if not inside(chunk, position): return airBlock
     return chunk.blocks[worldIndex(chunk, position)]
 
 def setWorldBlock(chunk: Chunk, position: Coordinate3, blockId: number):
-    if inside(chunk, position):
-        chunk.blocks[worldIndex(chunk, position)] = blockId
+    if inside(chunk, position): chunk.blocks[worldIndex(chunk, position)] = blockId
 
 def isCarvable(blockId: number) -> bool:
     return isNaturalRock(blockId) or blockId == dirtBlock or blockId == grassBlock or blockId == sandBlock or blockId == clayBlock or blockId == gravelBlock
@@ -113,8 +108,7 @@ def paintCaveSphere(chunk: Chunk, centerX: number, centerY: number, centerZ: num
                     const localZ = z - chunkZ
                     const index = localX + chunk.edge * (localZ + chunk.edge * localY)
                     const current = chunk.blocks[index]
-                    if isCarvable(current):
-                        chunk.blocks[index] = airBlock
+                    if isCarvable(current): chunk.blocks[index] = airBlock
 
 def caveBoundsIntersects(chunk: Chunk, bounds: CaveBounds) -> bool:
     const minimumX = chunkMinimumX(chunk)
@@ -143,8 +137,7 @@ def appendCavePath(spheres: List<number>, stream: Random, start: Coordinate3, ce
     const steps = stream.int(34, 76)
     for step in range(steps):
         let radius = 1.35 + stream.number() * 1.25
-        if step > 12 and step % 19 == 0:
-            radius += 1.25
+        if step > 12 and step % 19 == 0: radius += 1.25
         spheres.append(x)
         spheres.append(y)
         spheres.append(z)
@@ -154,12 +147,10 @@ def appendCavePath(spheres: List<number>, stream: Random, start: Coordinate3, ce
         x += Math.cos(angle) * 2
         y += vertical * 2
         z += Math.sin(angle) * 2
-        if (x - center.x).abs() > 34 or (z - center.z).abs() > 34 or y < 5 or y > maximumWorldY - 9:
-            break
+        if (x - center.x).abs() > 34 or (z - center.z).abs() > 34 or y < 5 or y > maximumWorldY - 9: break
 
 def finishCavePlan(spheres: List<number>) -> CavePlan:
-    if spheres.size == 0:
-        return {bounds: null, spheres}
+    if spheres.size == 0: return {bounds: null, spheres}
 
     let minimumX = Math.infinity
     let maximumX = -Math.infinity
@@ -191,25 +182,21 @@ export def cavePlanner(fields: GenerationFields, seed: string, capacity: number 
     const plans: Map<string, CavePlan> = Map()
     let builds = 0
 
-    def cachedPlanCount() -> number:
-        return plans.size
+    def cachedPlanCount() -> number: return plans.size
 
-    def planBuildCount() -> number:
-        return builds
+    def planBuildCount() -> number: return builds
 
     def build(cellX: number, cellZ: number) -> CavePlan:
         const owner = root.fork(f"{cellX}:{cellZ}")
         const spheres: List<number> = []
-        if not owner.bool(0.5):
-            return finishCavePlan(spheres)
+        if not owner.bool(0.5): return finishCavePlan(spheres)
 
         const centerX = cellX * caveCellSize + caveCellSize / 2
         const centerZ = cellZ * caveCellSize + caveCellSize / 2
         const startX = cellX * caveCellSize + owner.int(0, caveCellSize)
         const startZ = cellZ * caveCellSize + owner.int(0, caveCellSize)
         const topY = findSurfaceY(fields, {x: startX, z: startZ})
-        if topY <= 13:
-            return finishCavePlan(spheres)
+        if topY <= 13: return finishCavePlan(spheres)
 
         const startY = owner.int(8, Math.max(9, Math.min(topY - 4, 59)))
         const start = {x: startX, y: startY, z: startZ}
@@ -229,8 +216,7 @@ export def cavePlanner(fields: GenerationFields, seed: string, capacity: number 
 
         const built = build(cellX, cellZ)
         builds += 1
-        if plans.size >= capacity:
-            plans.remove(plans.keys()[0])
+        if plans.size >= capacity: plans.remove(plans.keys()[0])
         plans.set(ownerKey, built)
         return built
 
@@ -248,28 +234,23 @@ export def carveCaves(chunk: Chunk, planner: CavePlanner):
     for cellX in range(firstCellX, lastCellX + 1):
         for cellZ in range(firstCellZ, lastCellZ + 1):
             const plan = planner.plan(cellX, cellZ)
-            if plan.bounds == null or not caveBoundsIntersects(chunk, plan.bounds):
-                continue
+            if plan.bounds == null or not caveBoundsIntersects(chunk, plan.bounds): continue
             for offset in range(0, plan.spheres.size, 4):
                 const x = plan.spheres[offset]
                 const y = plan.spheres[offset + 1]
                 const z = plan.spheres[offset + 2]
                 const radius = plan.spheres[offset + 3]
-                if caveSphereIntersects(chunk, x, y, z, radius):
-                    paintCaveSphere(chunk, x, y, z, radius)
+                if caveSphereIntersects(chunk, x, y, z, radius): paintCaveSphere(chunk, x, y, z, radius)
 
 def acceptsOreSource(blockId: number, source: string) -> bool:
-    if source == "basalt":
-        return blockId == basaltBlock
-    if source == "sandstone":
-        return blockId == sandstoneBlock
+    if source == "basalt": return blockId == basaltBlock
+    if source == "sandstone": return blockId == sandstoneBlock
     return isNaturalRock(blockId)
 
 def paintOreCell(chunk: Chunk, position: Coordinate3, oreBlock: number, source: string):
     if inside(chunk, position):
         const current = getWorldBlock(chunk, position)
-        if acceptsOreSource(current, source):
-            setWorldBlock(chunk, position, oreBlock)
+        if acceptsOreSource(current, source): setWorldBlock(chunk, position, oreBlock)
 
 def paintFluidPocket(chunk: Chunk, center: Coordinate3, radius: number, fluidBlock: number):
     const minimumX = Math.max(chunkMinimumX(chunk), center.x - radius)
@@ -285,12 +266,10 @@ def paintFluidPocket(chunk: Chunk, center: Coordinate3, radius: number, fluidBlo
                 const dx = x - center.x
                 const dy = y - center.y
                 const dz = z - center.z
-                if dx * dx + dy * dy + dz * dz > radiusSquared:
-                    continue
+                if dx * dx + dy * dy + dz * dz > radiusSquared: continue
                 const position = {x, y, z}
                 const current = getWorldBlock(chunk, position)
-                if isNaturalRock(current):
-                    setWorldBlock(chunk, position, y <= center.y ? fluidBlock : airBlock)
+                if isNaturalRock(current): setWorldBlock(chunk, position, y <= center.y ? fluidBlock : airBlock)
 
 export def generateFluidPockets(chunk: Chunk, seed: string):
     const firstCellX = ((chunkMinimumX(chunk) - 5) / 16).floor()
@@ -334,21 +313,18 @@ def runOreVein(chunk: Chunk, stream: Random, start: Coordinate3, oreBlock: numbe
         let dx = stream.int(-1, 2)
         let dy = stream.int(-1, 2)
         let dz = stream.int(-1, 2)
-        if dx == 0 and dy == 0 and dz == 0:
-            dx = 1
+        if dx == 0 and dy == 0 and dz == 0: dx = 1
         x += dx
         y += dy
         z += dz
 
 def tryOre(chunk: Chunk, root: Random, cell: Coordinate3, label: string, oreBlock: number, source: string, chance: number, minimumY: number, maximumY: number, minimumSteps: number, maximumSteps: number):
     const stream = root.fork(f"{label}:{cell.x}:{cell.y}:{cell.z}")
-    if not stream.bool(chance):
-        return
+    if not stream.bool(chance): return
     const startX = cell.x * 16 + stream.int(0, 16)
     const startY = cell.y * 16 + stream.int(0, 16)
     const startZ = cell.z * 16 + stream.int(0, 16)
-    if startY < minimumY or startY > maximumY:
-        return
+    if startY < minimumY or startY > maximumY: return
     runOreVein(chunk, stream, {x: startX, y: startY, z: startZ}, oreBlock, source, minimumSteps, maximumSteps)
 
 export def generateMinerals(chunk: Chunk, seed: string):
@@ -376,16 +352,14 @@ def treeBlocks(sample: TerrainSample, stream: Random) -> List<number>?:
         if sample.temperature >= 2 and sample.temperature <= 14 and stream.bool(0.04):
             return [mimosaLogBlock, mimosaLeavesBlock]
         return null
-    if sample.temperature <= 6:
-        return [spruceLogBlock, spruceLeavesBlock]
+    if sample.temperature <= 6: return [spruceLogBlock, spruceLeavesBlock]
     if sample.humidity >= 11 and sample.temperature >= 4 and sample.temperature <= 12 and stream.bool(0.4):
         return [poplarLogBlock, poplarLeavesBlock]
     if sample.temperature >= 5 and sample.temperature <= 11 and stream.bool(0.35):
         return [birchLogBlock, birchLeavesBlock]
     if sample.temperature >= 2 and sample.temperature <= 14 and sample.humidity <= 6 and stream.bool(0.12):
         return [mimosaLogBlock, mimosaLeavesBlock]
-    if sample.temperature >= 4 and sample.humidity >= 6:
-        return [oakLogBlock, oakLeavesBlock]
+    if sample.temperature >= 4 and sample.humidity >= 6: return [oakLogBlock, oakLeavesBlock]
     return null
 
 def paintTree(chunk: Chunk, ground: Coordinate3, height: number, logBlock: number, leavesBlock: number):
@@ -399,11 +373,9 @@ def paintTree(chunk: Chunk, ground: Coordinate3, height: number, logBlock: numbe
         const radius = dy >= 1 ? 1 : 2
         for dx in range(-radius, radius + 1):
             for dz in range(-radius, radius + 1):
-                if dx.abs() + dz.abs() > radius + 1:
-                    continue
+                if dx.abs() + dz.abs() > radius + 1: continue
                 const position = {x: ground.x + dx, y: crownY + dy, z: ground.z + dz}
-                if getWorldBlock(chunk, position) == airBlock:
-                    setWorldBlock(chunk, position, leavesBlock)
+                if getWorldBlock(chunk, position) == airBlock: setWorldBlock(chunk, position, leavesBlock)
 
 def generateTrees(chunk: Chunk, fields: GenerationFields, root: Random):
     const cellSize = 4
@@ -421,14 +393,11 @@ def generateTrees(chunk: Chunk, fields: GenerationFields, root: Random):
             if sample.biome == "ocean" or sample.biome == "shore" or sample.biome == "desert" or sample.biome == "mountains":
                 continue
             const chance = 0.04 + 0.42 * sample.forestDensity
-            if not stream.bool(chance):
-                continue
+            if not stream.bool(chance): continue
             const topY = findSurfaceY(fields, position)
-            if topY <= seaLevel or temperatureAtHeight(sample.temperature, topY) <= 0:
-                continue
+            if topY <= seaLevel or temperatureAtHeight(sample.temperature, topY) <= 0: continue
             const blocks = treeBlocks(sample, stream)
-            if blocks == null:
-                continue
+            if blocks == null: continue
             paintTree(chunk, {x, y: topY, z}, stream.int(4, 8), blocks[0], blocks[1])
 
 def generateCacti(chunk: Chunk, fields: GenerationFields, root: Random):
@@ -440,20 +409,17 @@ def generateCacti(chunk: Chunk, fields: GenerationFields, root: Random):
     for cellX in range(firstCellX, lastCellX + 1):
         for cellZ in range(firstCellZ, lastCellZ + 1):
             const stream = root.fork(f"cactus:{cellX}:{cellZ}")
-            if not stream.bool(0.16):
-                continue
+            if not stream.bool(0.16): continue
             const x = cellX * cellSize + stream.int(0, cellSize)
             const z = cellZ * cellSize + stream.int(0, cellSize)
             const position = {x, z}
             const sample = sampleTerrainWithFields(fields, position)
-            if sample.biome != "desert":
-                continue
+            if sample.biome != "desert": continue
             const topY = findSurfaceY(fields, position)
             const height = stream.int(2, 5)
             for offset in range(1, height + 1):
                 const blockPosition = {x, y: topY + offset, z}
-                if getWorldBlock(chunk, blockPosition) == airBlock:
-                    setWorldBlock(chunk, blockPosition, cactusBlock)
+                if getWorldBlock(chunk, blockPosition) == airBlock: setWorldBlock(chunk, blockPosition, cactusBlock)
 
 def generateGroundPlants(chunk: Chunk, cache: ColumnCache, root: Random):
     const minimumX = chunkMinimumX(chunk)
@@ -468,8 +434,7 @@ def generateGroundPlants(chunk: Chunk, cache: ColumnCache, root: Random):
             const plantY = topY + 1
             const position = {x, y: plantY, z}
             if temperatureAtHeight(sample.temperature, topY) <= 0 and surfaceBlock(sample, topY) != sandBlock:
-                if getWorldBlock(chunk, position) == airBlock:
-                    setWorldBlock(chunk, position, snowBlock)
+                if getWorldBlock(chunk, position) == airBlock: setWorldBlock(chunk, position, snowBlock)
                 continue
             const stream = root.fork(f"plant:{x}:{z}")
             if sample.biome == "desert":
@@ -477,17 +442,12 @@ def generateGroundPlants(chunk: Chunk, cache: ColumnCache, root: Random):
                     setWorldBlock(chunk, position, dryBushBlock)
                 continue
             const chance = 0.05 + 0.22 * Math.clamp(sample.humidity / 15, 0, 1)
-            if not stream.bool(chance) or getWorldBlock(chunk, position) != airBlock:
-                continue
+            if not stream.bool(chance) or getWorldBlock(chunk, position) != airBlock: continue
             const choice = stream.int(0, 20)
-            if choice == 0:
-                setWorldBlock(chunk, position, redFlowerBlock)
-            else if choice == 1:
-                setWorldBlock(chunk, position, purpleFlowerBlock)
-            else if choice == 2:
-                setWorldBlock(chunk, position, whiteFlowerBlock)
-            else:
-                setWorldBlock(chunk, position, tallGrassBlock)
+            if choice == 0: setWorldBlock(chunk, position, redFlowerBlock)
+            else if choice == 1: setWorldBlock(chunk, position, purpleFlowerBlock)
+            else if choice == 2: setWorldBlock(chunk, position, whiteFlowerBlock)
+            else: setWorldBlock(chunk, position, tallGrassBlock)
 
 export def generateVegetation(chunk: Chunk, fields: GenerationFields, seed: string, cache: ColumnCache):
     const vegetationRoot = random(seed).fork("vegetation")

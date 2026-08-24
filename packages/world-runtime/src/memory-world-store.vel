@@ -8,21 +8,17 @@ export def memoryWorldStore() -> WorldStore:
     const worlds: Map<string, WorldManifest> = Map()
     const chunks: Map<string, ChunkDelta> = Map()
 
-    def deltaKey(worldId: string, position: ChunkPosition) -> string:
-        return f"{worldId}:{chunkKey(position)}"
+    def deltaKey(worldId: string, position: ChunkPosition) -> string: return f"{worldId}:{chunkKey(position)}"
 
-    async def saveManifest(manifest: WorldManifest):
-        worlds.set(manifest.id, manifest)
+    async def saveManifest(manifest: WorldManifest): worlds.set(manifest.id, manifest)
 
-    async def findManifest(worldId: string) -> WorldManifest?:
-        return worlds.get(worldId)
+    async def findManifest(worldId: string) -> WorldManifest?: return worlds.get(worldId)
 
     async def findChunks(worldId: string, positions: List<ChunkPosition>) -> List<ChunkDelta>:
         const found: List<ChunkDelta> = []
         for position in positions:
             const delta = chunks.get(deltaKey(worldId, position))
-            if delta != null:
-                found.append(delta)
+            if delta != null: found.append(delta)
         return found
 
     async def commitBlock(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockId: number?) -> BlockOverrideCommit:
@@ -31,27 +27,22 @@ export def memoryWorldStore() -> WorldStore:
         let previousOverrideBlockId: number? = null
         if current != null:
             for entry in current.overrides:
-                if sameLocal(entry.position, local):
-                    previousOverrideBlockId = entry.blockId
+                if sameLocal(entry.position, local): previousOverrideBlockId = entry.blockId
 
         const revision = current == null ? 0 : current.revision
-        if previousOverrideBlockId == blockId:
-            return {previousOverrideBlockId, revision, changed: false}
+        if previousOverrideBlockId == blockId: return {previousOverrideBlockId, revision, changed: false}
 
         const overrides: List<BlockOverride> = []
         if current != null:
             for entry in current.overrides:
-                if not sameLocal(entry.position, local):
-                    overrides.append(entry)
-        if blockId != null:
-            overrides.append({position: local, blockId})
+                if not sameLocal(entry.position, local): overrides.append(entry)
+        if blockId != null: overrides.append({position: local, blockId})
 
         const nextRevision = revision + 1
         chunks.set(key, {position: chunk, revision: nextRevision, overrides})
         return {previousOverrideBlockId, revision: nextRevision, changed: true}
 
-    async def close():
-        pass
+    async def close(): pass
 
     return {
         manifests: {save: saveManifest, find: findManifest},

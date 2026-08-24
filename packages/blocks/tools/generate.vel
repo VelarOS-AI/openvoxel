@@ -5,8 +5,7 @@ const sourceText = await readText("data/blocks.yml", 1024 * 1024)
 const output = generateCatalogArtifact(sourceText)
 
 const generatedDirectory = "generated"
-if not await exists(generatedDirectory):
-    await makeDirectory(generatedDirectory)
+if not await exists(generatedDirectory): await makeDirectory(generatedDirectory)
 const generatedPath = "generated/block-catalog.json"
 if not await exists(generatedPath) or await readText(generatedPath, 2 * 1024 * 1024) != output:
     await writeText(generatedPath, output)

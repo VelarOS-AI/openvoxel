@@ -18,10 +18,8 @@ export async def handleApplicationError(value: unknown, request: Request) -> Ser
     if not (value is Error):
         return failure(500, "InternalError", {method: request.method, path: request.path}, "The request could not be completed")
     const error = value
-    if error is WorldNotFoundError:
-        return failure(404, error.code, {worldId: error.worldId}, error.message)
-    if error is WorldAlreadyExistsError:
-        return failure(409, error.code, {worldId: error.worldId}, error.message)
+    if error is WorldNotFoundError: return failure(404, error.code, {worldId: error.worldId}, error.message)
+    if error is WorldAlreadyExistsError: return failure(409, error.code, {worldId: error.worldId}, error.message)
     if error is WorldBlockCatalogMismatchError:
         return failure(409, error.code, {
             worldId: error.worldId,
@@ -30,12 +28,9 @@ export async def handleApplicationError(value: unknown, request: Request) -> Ser
             expectedCatalogVersion: error.expectedCatalogVersion,
             expectedIdMapHash: error.expectedIdMapHash,
         }, error.message)
-    if error is InvalidBlockIdError:
-        return failure(400, error.code, {blockId: error.blockId}, error.message)
-    if error is UnknownBlockIdError:
-        return failure(400, error.code, {blockId: error.blockId}, error.message)
-    if error is RetiredBlockIdError:
-        return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is InvalidBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is UnknownBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is RetiredBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
     if error is RequestBodyTooLargeError:
         return failure(413, "PayloadTooLarge", {method: request.method, path: request.path}, error.message)
     const publicError = publicApplicationError(error)

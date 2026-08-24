@@ -94,17 +94,13 @@ export def createGenerationFields(seed: string) -> GenerationFields:
         riverOffsetZ: offsets.number() * 6000 - 3000,
     }
 
-def saturate(value: number) -> number:
-    return Math.clamp(value, 0, 1)
+def saturate(value: number) -> number: return Math.clamp(value, 0, 1)
 
-def lerp(start: number, end: number, amount: number) -> number:
-    return start + (end - start) * amount
+def lerp(start: number, end: number, amount: number) -> number: return start + (end - start) * amount
 
-def squish(value: number, zero: number, one: number) -> number:
-    return saturate((value - zero) / (one - zero))
+def squish(value: number, zero: number, one: number) -> number: return saturate((value - zero) / (one - zero))
 
-def normalized(value: number) -> number:
-    return saturate(value * 0.5 + 0.5)
+def normalized(value: number) -> number: return saturate(value * 0.5 + 0.5)
 
 def octave2(field: Noise2, x: number, z: number, frequency: number, octaves: number, lacunarity: number = 2, persistence: number = 0.5) -> number:
     let amplitude = 1
@@ -119,8 +115,7 @@ def octave2(field: Noise2, x: number, z: number, frequency: number, octaves: num
     return total / weight
 
 def signedSquareRoot(value: number) -> number:
-    if value < 0:
-        return -Math.sqrt(-value)
+    if value < 0: return -Math.sqrt(-value)
     return Math.sqrt(value)
 
 def mountainRangeFactor(fields: GenerationFields, position: Coordinate2) -> number:
@@ -213,18 +208,12 @@ def calculateShape(fields: GenerationFields, position: Coordinate2) -> TerrainSh
     }
 
 def biomeName(temperature: number, humidity: number, shoreDistance: number, mountain: number, surfaceY: number) -> string:
-    if surfaceY <= seaLevel - 2:
-        return "ocean"
-    if shoreDistance.abs() < 16:
-        return "shore"
-    if temperature <= 2 or surfaceY >= 120:
-        return "tundra"
-    if mountain >= 0.9:
-        return "mountains"
-    if temperature >= 10 and humidity <= 5:
-        return "desert"
-    if humidity >= 10:
-        return "forest"
+    if surfaceY <= seaLevel - 2: return "ocean"
+    if shoreDistance.abs() < 16: return "shore"
+    if temperature <= 2 or surfaceY >= 120: return "tundra"
+    if mountain >= 0.9: return "mountains"
+    if temperature >= 10 and humidity <= 5: return "desert"
+    if humidity >= 10: return "forest"
     return "plains"
 
 export def sampleTerrainWithFields(fields: GenerationFields, position: Coordinate2) -> TerrainSample:
@@ -250,8 +239,7 @@ export def sampleTerrain(seed: string, position: Coordinate2) -> TerrainSample:
     return sampleTerrainWithFields(createGenerationFields(seed), position)
 
 export def terrainDensity(fields: GenerationFields, sample: TerrainSample, y: number) -> number:
-    if y <= 4:
-        return 64
+    if y <= 4: return 64
     const vertical = sample.surfaceY - y
     const turbulenceWeight = lerp(0.04, 1, squish(sample.mountainFactor, 0.84, 1))
     const turbulence = 18 * turbulenceWeight * saturate(vertical) * fields.turbulence(
@@ -264,8 +252,7 @@ export def terrainDensity(fields: GenerationFields, sample: TerrainSample, y: nu
 export def findSurfaceForSample(fields: GenerationFields, sample: TerrainSample) -> number:
     let y = Math.min(maximumWorldY, sample.surfaceY + 24)
     while y > minimumWorldY:
-        if terrainDensity(fields, sample, y) >= 0:
-            return y
+        if terrainDensity(fields, sample, y) >= 0: return y
         y -= 1
     return minimumWorldY
 
@@ -297,11 +284,9 @@ export def columnPlanner(fields: GenerationFields, edge: number, capacity: numbe
     const caches: Map<string, ColumnCache> = Map()
     let builds = 0
 
-    def cachedColumnCount() -> number:
-        return caches.size
+    def cachedColumnCount() -> number: return caches.size
 
-    def columnBuildCount() -> number:
-        return builds
+    def columnBuildCount() -> number: return builds
 
     def columns(chunkX: number, chunkZ: number) -> ColumnCache:
         const key = f"{chunkX}:{chunkZ}"
@@ -313,58 +298,42 @@ export def columnPlanner(fields: GenerationFields, edge: number, capacity: numbe
 
         const cache = createColumnCache(fields, {x: chunkX * edge, z: chunkZ * edge}, edge)
         builds += 1
-        if caches.size >= capacity:
-            caches.remove(caches.keys()[0])
+        if caches.size >= capacity: caches.remove(caches.keys()[0])
         caches.set(key, cache)
         return cache
 
     return {cachedColumnCount, columnBuildCount, columns}
 
 export def temperatureAtHeight(temperature: number, y: number) -> number:
-    if y > seaLevel:
-        return temperature - (0.0008 * (y - seaLevel) * (y - seaLevel)).round()
+    if y > seaLevel: return temperature - (0.0008 * (y - seaLevel) * (y - seaLevel)).round()
     return temperature + (0.1 * (seaLevel - y)).round()
 
 export def surfaceBlock(sample: TerrainSample, topY: number) -> number:
-    if sample.biome == "ocean":
-        return sample.humidity > 10 ? clayBlock : sandBlock
-    if sample.biome == "shore" or sample.biome == "desert":
-        return sandBlock
-    if topY <= seaLevel + 1 and sample.humidity > 10:
-        return clayBlock
-    if sample.biome == "mountains":
-        return sample.humidity < 6 ? gravelBlock : stoneBlock
+    if sample.biome == "ocean": return sample.humidity > 10 ? clayBlock : sandBlock
+    if sample.biome == "shore" or sample.biome == "desert": return sandBlock
+    if topY <= seaLevel + 1 and sample.humidity > 10: return clayBlock
+    if sample.biome == "mountains": return sample.humidity < 6 ? gravelBlock : stoneBlock
     return grassBlock
 
 export def subsurfaceBlock(sample: TerrainSample, topY: number) -> number:
     const surface = surfaceBlock(sample, topY)
-    if surface == sandBlock:
-        return sandstoneBlock
-    if surface == clayBlock:
-        return clayBlock
-    if surface == gravelBlock or surface == stoneBlock:
-        return stoneBlock
+    if surface == sandBlock: return sandstoneBlock
+    if surface == clayBlock: return clayBlock
+    if surface == gravelBlock or surface == stoneBlock: return stoneBlock
     return dirtBlock
 
 export def baseTerrainBlock(fields: GenerationFields, sample: TerrainSample, y: number) -> number:
-    if y < minimumWorldY or y > maximumWorldY:
-        return airBlock
+    if y < minimumWorldY or y > maximumWorldY: return airBlock
     if terrainDensity(fields, sample, y) < 0:
         if y <= seaLevel:
-            if y == seaLevel and temperatureAtHeight(sample.temperature, y) <= 0:
-                return iceBlock
+            if y == seaLevel and temperatureAtHeight(sample.temperature, y) <= 0: return iceBlock
             return waterBlock
         return airBlock
-    if y <= 4:
-        return basaltBlock
+    if y <= 4: return basaltBlock
     const strata = fields.strata(sample.position.x * 0.045, y * 0.06, sample.position.z * 0.045)
-    if y < 32:
-        return basaltBlock
+    if y < 32: return basaltBlock
     if sample.biome == "desert" or sample.biome == "shore":
-        if y >= sample.surfaceY - 18:
-            return sandstoneBlock
-    if strata > 0.58:
-        return limestoneBlock
-    if strata < -0.58:
-        return graniteBlock
+        if y >= sample.surfaceY - 18: return sandstoneBlock
+    if strata > 0.58: return limestoneBlock
+    if strata < -0.58: return graniteBlock
     return stoneBlock

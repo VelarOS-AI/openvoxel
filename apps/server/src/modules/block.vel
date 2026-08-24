@@ -15,12 +15,10 @@ def catalogHeaders() -> Map<string, string>:
     ])
 
 def matchesEtag(value: string?, expected: string) -> bool:
-    if value == null:
-        return false
+    if value == null: return false
     for candidate in value.split(","):
         const normalized = candidate.trim()
-        if normalized == "*" or normalized == expected or normalized == f"W/{expected}":
-            return true
+        if normalized == "*" or normalized == expected or normalized == f"W/{expected}": return true
     return false
 
 export server blockRoutes:

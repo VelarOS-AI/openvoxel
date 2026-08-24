@@ -53,8 +53,7 @@ type RouteFailureData:
 type WorldFailureData:
     worldId: string
 
-async def envelope(response: TestResponse) -> ApiResponse:
-    return ApiResponse.parse(await response.json())
+async def envelope(response: TestResponse) -> ApiResponse: return ApiResponse.parse(await response.json())
 
 def providerOverride(application: OpenVoxelApplication) -> Map<Provider, unknown>:
     const overrides: Map<Provider, unknown> = Map()
@@ -234,20 +233,17 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
             blockId: stoneBlock,
         }))
         const unsupportedMessage = await sender.next()
-        if not (unsupportedMessage is Bytes):
-            throw Error("Expected a binary unsupported-operation event")
+        if not (unsupportedMessage is Bytes): throw Error("Expected a binary unsupported-operation event")
         expect(parse(unsupportedMessage, SocketErrorEvent).code).toBe("UnsupportedRealtimeOperation")
 
         await sender.send(encode({operation: "set-block"}))
         const malformedMessage = await sender.next()
-        if not (malformedMessage is Bytes):
-            throw Error("Expected a binary invalid-request event")
+        if not (malformedMessage is Bytes): throw Error("Expected a binary invalid-request event")
         expect(parse(malformedMessage, SocketErrorEvent).code).toBe("InvalidRequest")
 
         await sender.send("set-block")
         const textMessage = await sender.next()
-        if not (textMessage is Bytes):
-            throw Error("Expected a binary text-message error event")
+        if not (textMessage is Bytes): throw Error("Expected a binary text-message error event")
         expect(parse(textMessage, SocketErrorEvent).code).toBe("TextMessageUnsupported")
 
         await sender.send(encode({
@@ -257,8 +253,7 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
             blockId: 65535,
         }))
         const invalidMessage = await sender.next()
-        if not (invalidMessage is Bytes):
-            throw Error("Expected a binary realtime error event")
+        if not (invalidMessage is Bytes): throw Error("Expected a binary realtime error event")
         expect(parse(invalidMessage, SocketErrorEvent).code).toBe("UnknownBlockIdError")
 
         await sender.send(encode({
@@ -268,16 +263,14 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
             blockId: stoneBlock,
         }))
         const message = await sender.next()
-        if not (message is Bytes):
-            throw Error("Expected a binary block change event")
+        if not (message is Bytes): throw Error("Expected a binary block change event")
         const event = parse(message, BlockChangedEvent)
         expect(event.position).toEqual({x: 0, y: 30, z: 0})
         expect(event.blockId).toBe(stoneBlock)
         expect(event.revision).toBe(1)
 
         const observedMessage = await observer.next()
-        if not (observedMessage is Bytes):
-            throw Error("Expected the second client to receive the block change")
+        if not (observedMessage is Bytes): throw Error("Expected the second client to receive the block change")
         const observed = parse(observedMessage, BlockChangedEvent)
         expect(observed.worldId).toBe(world.id)
         expect(observed.revision).toBe(event.revision)
@@ -285,5 +278,4 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
         const after = await application.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
         expect(after.revision).toBe(1)
         expect(after.blocks[3584]).toBe(stoneBlock)
-    finally:
-        await server.stop()
+    finally: await server.stop()

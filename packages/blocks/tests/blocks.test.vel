@@ -18,8 +18,7 @@ test "generated block registry preserves identity gameplay and rendering data":
     expect(stoneBlock).toBe(3)
     const grassRender = blockDefinition(grassBlock).render
     expect(grassRender.shape).toBe(BlockRenderShape.cube)
-    if grassRender.shape != BlockRenderShape.cube:
-        throw Error("Expected grass to use cube rendering")
+    if grassRender.shape != BlockRenderShape.cube: throw Error("Expected grass to use cube rendering")
     expect(grassRender.layer).toBe(BlockRenderLayer.opaque)
     expect(blockId("openvoxel:water")).toBe(waterBlock)
     expect(isFluidBlock(waterBlock)).toBe(true)

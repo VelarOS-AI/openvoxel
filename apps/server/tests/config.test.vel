@@ -52,8 +52,6 @@ test "server YAML configuration rejects paths disguised as CORS origins":
 test "configuration load failures name the resolved application path":
     const missing = resolveServerPath("missing-application.yml")
     let message = ""
-    try:
-        await loadOpenVoxelConfiguration("missing-application.yml")
-    catch error:
-        message = error.message
+    try: await loadOpenVoxelConfiguration("missing-application.yml")
+    catch error: message = error.message
     expect(message.has(missing)).toBe(true)

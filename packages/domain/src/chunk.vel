@@ -29,8 +29,7 @@ export def chunk(position: ChunkPosition, edge: number, blocks: UInt16Buffer, re
     assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
     return {position, edge, blocks, revision}
 
-export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number:
-    return chunk.blocks[blockIndex(local, chunk.edge)]
+export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number: return chunk.blocks[blockIndex(local, chunk.edge)]
 
 export def setChunkBlock(chunk: Chunk, local: LocalPosition, nextBlockId: number) -> number:
     requireBlockId(nextBlockId)
@@ -45,8 +44,7 @@ export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airB
     requireBlockId(fill)
     const blocks = uint16Buffer(chunkVolume(edge))
     if fill != airBlock:
-        for index in range(blocks.size):
-            blocks[index] = fill
+        for index in range(blocks.size): blocks[index] = fill
     return chunk(position, edge, blocks)
 
 export def chunkChecksum(chunk: Chunk) -> number:

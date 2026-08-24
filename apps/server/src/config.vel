@@ -6,8 +6,7 @@ import {OpenVoxelServerOptions} from "./application.vel"
 
 export def serverApplicationRoot() -> string:
     const configured = get("OPENVOXEL_ROOT")
-    if configured == null:
-        return resolve([])
+    if configured == null: return resolve([])
     assert isAbsolute(configured) else "OPENVOXEL_ROOT must be an absolute path"
     return resolve([configured])
 
@@ -71,14 +70,12 @@ export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration)
 
 export def resolveServerPath(path: string) -> string:
     assert not path.isBlank() else "Path cannot be blank"
-    if isAbsolute(path):
-        return path
+    if isAbsolute(path): return path
     return resolve([serverApplicationRoot(), path])
 
 export async def loadOpenVoxelConfiguration(path: string? = null) -> OpenVoxelConfiguration:
     try:
-        if path == null:
-            return validateOpenVoxelConfiguration(await configuration(OpenVoxelConfiguration))
+        if path == null: return validateOpenVoxelConfiguration(await configuration(OpenVoxelConfiguration))
         assert not path.isBlank() else "Configuration path cannot be blank"
         const resolved = resolveServerPath(path)
         return validateOpenVoxelConfiguration(await configuration(OpenVoxelConfiguration, path=resolved))
@@ -88,8 +85,7 @@ export async def loadOpenVoxelConfiguration(path: string? = null) -> OpenVoxelCo
 
 def integerOverride(name: string, fallback: number, minimum: number, maximum: number) -> number:
     const raw = get(name)
-    if raw == null:
-        return fallback
+    if raw == null: return fallback
     const parsed = number(raw)
     assert parsed != null else f"{name} must be a decimal integer"
     requireInteger(parsed, minimum, maximum, name)
@@ -97,13 +93,10 @@ def integerOverride(name: string, fallback: number, minimum: number, maximum: nu
 
 def booleanOverride(name: string, fallback: bool) -> bool:
     const raw = get(name)
-    if raw == null:
-        return fallback
+    if raw == null: return fallback
     const normalized = raw.trim().lower()
-    if normalized == "true" or normalized == "1":
-        return true
-    if normalized == "false" or normalized == "0":
-        return false
+    if normalized == "true" or normalized == "1": return true
+    if normalized == "false" or normalized == "0": return false
     throw Error(f"{name} must be true, false, 1, or 0")
 
 export def withEnvironmentOverrides(configuration: OpenVoxelConfiguration) -> OpenVoxelConfiguration:

@@ -36,17 +36,13 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
     let closing: Task<null>? = null
 
     def log(level: string, message: string, context: unknown):
-        if options.logger:
-            print(Json.stringify({level, message, context}))
+        if options.logger: print(Json.stringify({level, message, context}))
 
-    def info(message: string, context: unknown):
-        log("info", message, context)
+    def info(message: string, context: unknown): log("info", message, context)
 
-    def warn(message: string, context: unknown):
-        log("warn", message, context)
+    def warn(message: string, context: unknown): log("warn", message, context)
 
-    def access(entry: AccessLogEntry):
-        info("http.request", entry)
+    def access(entry: AccessLogEntry): info("http.request", entry)
 
     const realtime = realtimeHub(warn)
     const sessions = realtimeSessions(options.maxConnections)
@@ -83,8 +79,7 @@ async def resolveOpenVoxelApplication(_values: Record<unknown>) -> OpenVoxelAppl
     assert mountedApplication != null else "OpenVoxel application is not mounted"
     return mountedApplication
 
-async def releaseOpenVoxelApplication(application: OpenVoxelApplication):
-    await application.close()
+async def releaseOpenVoxelApplication(application: OpenVoxelApplication): await application.close()
 
 export const openVoxelApplicationProvider = provide(
     inputs = {},

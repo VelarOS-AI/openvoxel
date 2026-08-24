@@ -22,13 +22,11 @@ const seed = "openvoxel-benchmark"
 const positions: List<ChunkPosition> = []
 for y in range(2, 6):
     for x in range(-6, 6):
-        for z in range(-2, 2):
-            positions.append({x, y, z})
+        for z in range(-2, 2): positions.append({x, y, z})
 
 def rockChunk(position: ChunkPosition) -> Chunk:
     const chunk = emptyChunk(position, 16)
-    for index in range(chunk.blocks.size):
-        chunk.blocks[index] = stoneBlock
+    for index in range(chunk.blocks.size): chunk.blocks[index] = stoneBlock
     return chunk
 
 def measure(capacity: number) -> CaveBenchmarkResult:

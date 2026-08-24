@@ -27,19 +27,15 @@ export async def handleRealtimeConnection(application: OpenVoxelApplication, con
     try:
         let message = await connection.next()
         while message != null:
-            if message is Bytes:
-                await handleMessage(application, connection, message)
+            if message is Bytes: await handleMessage(application, connection, message)
             else:
                 await connection.send(encode({event: "error", code: "TextMessageUnsupported", message: "Realtime commands must use MessagePack"}))
             message = await connection.next()
-    catch error:
-        application.warn("realtime.connection.failed", {code: error.code, message: error.message})
+    catch error: application.warn("realtime.connection.failed", {code: error.code, message: error.message})
     finally:
         application.realtime.leave(connection)
-        try:
-            await connection.close(1000, "Connection finished")
-        catch error:
-            application.warn("realtime.connection.close.failed", {code: error.code, message: error.message})
+        try: await connection.close(1000, "Connection finished")
+        catch error: application.warn("realtime.connection.close.failed", {code: error.code, message: error.message})
 
 export async def acceptRealtimeConnections(server: WebSocketServer, application: OpenVoxelApplication):
     try:

@@ -8,8 +8,7 @@ import {chunkChecksum, createWorldManifest, worldGenerator} from "../src/index.v
 const manifest = createWorldManifest({id: "benchmark", name: "Benchmark", seed: "openvoxel-benchmark"})
 const generator = worldGenerator(manifest)
 
-for warmup in range(8):
-    generator.generate({x: warmup - 4, y: 4, z: 0})
+for warmup in range(8): generator.generate({x: warmup - 4, y: 4, z: 0})
 
 const started = monotonic()
 let checksum = 0
