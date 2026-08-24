@@ -26,4 +26,4 @@ OpenVoxel 的世界模型、网络协议、存储结构、生成算法、表结�
 
 因此 OpenVoxel 是 VelarScript 的教学项目和证据来源，但不是扩张标准库的后门。
 
-当前实例是后端边界：ServeApp 与 WebSocket 宿主由 `@velarscript/node` 提供；严格 YAML、函数式数据库操作和 SQLite 资源能力分别由 `@velarscript-labs/yaml`、`@velarscript-labs/database`、`@velarscript-labs/sqlite` 提供。OpenVoxel 只拥有应用路由、错误信封、配置类型、世界协议、表结构、迁移 SQL、稀疏覆盖事务和服务组合，不把游戏语义写回通用库。
+当前实例是后端边界：项目显式激活 `@velarscript/server`，由它组合 `@velarscript/node` 的 ServeApp、WebSocket 与宿主能力，并负责根 `application.*` 的严格有界加载；函数式数据库操作和 SQLite 资源能力仍分别由 `@velarscript-labs/database`、`@velarscript-labs/sqlite` 提供。`@velarscript/server` 只抽象连接的建立、注入与释放生命周期，不拥有具体驱动、模型、查询或迁移。OpenVoxel 只拥有应用路由、错误信封、配置类型、世界协议、表结构、迁移 SQL、稀疏覆盖事务和服务组合，不把游戏语义写回通用库。

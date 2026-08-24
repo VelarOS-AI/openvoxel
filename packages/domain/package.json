@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@openvoxel/blocks": "0.1.0",
-    "@velarscript-labs/noise": "0.1.1"
+    "@velarscript-labs/noise": "0.1.2"
   },
   "devDependencies": {
     "fast-check": "4.9.0"

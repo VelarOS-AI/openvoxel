@@ -29,7 +29,7 @@
 
 ## 浏览器与错误语义
 
-浏览器允许来源进入 `apps/server/config/server.yml`。服务端仅允许配置中的 origin，HTTP 允许 `content-type` 与 `if-none-match` 请求头并暴露 `etag` 与协议版本响应头；WebSocket upgrade 也校验同一 origin 白名单。两种传输都不启用凭据型跨域。
+浏览器允许来源进入 `apps/server/application.yml`。服务端仅允许配置中的 origin，HTTP 允许 `content-type` 与 `if-none-match` 请求头并暴露 `etag` 与协议版本响应头；WebSocket upgrade 也校验同一 origin 白名单。两种传输都不启用凭据型跨域。
 
 客户端只能按稳定 `code` 分支，不能匹配 `message`。VelarScript 解析、JSON 解码和收窄错误统一为 `InvalidRequest`；超限请求归一为 `PayloadTooLarge`，不得把原生宿主内部错误名变成公共协议。未知服务器错误统一为 `InternalError` 且隐藏内部细节。
 

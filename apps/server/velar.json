@@ -3,14 +3,5 @@
   "entry": "src/main.vel",
   "outDir": "dist",
   "publicDir": "public",
-  "extensions": ["@velarscript/node"],
-  "node": {
-    "app": "start",
-    "host": "127.0.0.1",
-    "port": 3000,
-    "maxBodyBytes": 65536,
-    "build": {
-      "sourceMaps": false
-    }
-  }
+  "extensions": ["@velarscript/server"]
 }

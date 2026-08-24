@@ -4,7 +4,7 @@
 
 ## 裁决
 
-OpenVoxel 的人工配置统一使用 YAML。VelarScript Libraries 中的 `@velarscript-labs/yaml` 提供严格、唯一键、别名与字节数有界的通用解析边界；具体模块仍必须使用自己的 VelarScript runtime type 验证解析结果，不能让无类型 YAML 数据穿过应用边界。OpenVoxel 不再维护同义配置包装包。
+OpenVoxel 的人工配置统一使用 YAML。服务应用配置由显式激活的 `@velarscript/server` 扩展负责严格、唯一键、别名与字节数有界的 YAML/JSON 加载，并立即通过 `OpenVoxelConfiguration` runtime type 验证；`@velarscript-labs/yaml` 只保留给 `packages/blocks` 的方块目录生成工具。OpenVoxel 不再维护服务端同义配置解析包装层，也不能让无类型 YAML 数据穿过应用边界。
 
 `packages/blocks/data/blocks.yml` 是内置方块目录的唯一人工权威源。构建工具在 Node 环境中读取并验证它，生成静态的 `packages/blocks/generated/block-catalog.json`；生成物不是 VelarScript 源码。`@openvoxel/blocks` 通过自己的只读 `block-catalog-data` 子路径发布这份 JSON，类型校验和注册表逻辑仍由 `src/` 的手写代码拥有。服务端世界生成读取该产物，客户端未来通过服务端目录协议或该 JSON 子路径消费同一契约；不得再维护客户端枚举、服务端属性表或独立 UV 表。
 
@@ -26,7 +26,7 @@ YAML 中的方块定义分为三部分：
 
 ## 服务器配置
 
-`apps/server/config/server.yml` 拥有监听地址、浏览器 CORS origin 白名单、HTTP/WebSocket 限额、SQLite 文件路径与连接结果限额。配置文件随服务包分发；所有相对路径以 `@openvoxel/server` 应用目录解析。VelarScript Node 启动器和 npm workspace 脚本将该目录设为进程工作目录；绕过这两个入口直接运行构建物时，部署方必须用绝对的 `OPENVOXEL_ROOT` 声明应用目录。`OPENVOXEL_CONFIG` 可以选择另一份 YAML；`OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER` 和 `OPENVOXEL_DB` 只作为部署覆盖层。机密值只允许环境或外部 secret store 注入，不进入 YAML。
+`apps/server/application.yml` 拥有监听地址、浏览器 CORS origin 白名单、HTTP/WebSocket 限额、SQLite 文件路径与连接结果限额。`@velarscript/server` 只按约定读取应用根目录的 `application.yml`；未显式激活该扩展时，这套配置不会生效。配置文件随服务包分发；所有相对路径以 `@openvoxel/server` 应用目录解析。VelarScript Server 启动器和 npm workspace 脚本将该目录设为进程工作目录；绕过这两个入口直接运行构建物时，部署方必须用绝对的 `OPENVOXEL_ROOT` 声明应用目录。`OPENVOXEL_CONFIG` 可以选择另一份显式 YAML/JSON 配置；`OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER` 和 `OPENVOXEL_DB` 只作为部署覆盖层。机密值只允许环境或外部 secret store 注入，不进入应用配置。
 
 协议版本、世界格式版本、生成器算法版本、SQL 表结构、外键约束和 WAL 模式不是部署偏好，仍由代码与架构裁决拥有。JSON 形式的 `package.json` 与 `velar.json` 是 npm 和 VelarScript 工具链清单，也不迁移为 YAML。
 

@@ -1,5 +1,6 @@
-import {DatabaseExecutor, all, command, execute, one, query, requireOne} from "@velarscript-labs/database"
-import {SqliteConnection, SqliteTransaction, openSqlite} from "@velarscript-labs/sqlite"
+import {DatabaseCommand, DatabaseExecutor, DatabaseQuery, all, command, execute, one, query, requireOne, sqlConcat, trustedSql} from "@velarscript-labs/database"
+import {SqlPredicate, deleteCommand, insertCommand, insertStatement, selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlColumnNotEqual, sqlEqual, sqlLeftJoin, sqlNamedField, sqlOr, sqlTable, sqlTupleIn} from "@velarscript-labs/sql"
+import {SqliteConnection, SqliteJournalMode, SqliteTransaction, openSqlite, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {ChunkPosition, LocalPosition, WorldBlockCatalogMismatchError, WorldManifest, blockCatalogVersion, blockIdMapHash, chunkKey, requireBlockId, validateWorldManifest} from "@openvoxel/domain"
 import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "@openvoxel/world-runtime"
 
@@ -53,51 +54,131 @@ export type SqliteWorldStoreOptions:
 export const sqliteSchemaVersion = 2
 const legacyBlockCatalogVersion = "openvoxel:base-v1"
 const legacyBlockIdMapHash = "5977c76e2a584b8a8584fdc01c184aa8e2b38baae530c31995c6453093d6c736"
+const worldsTable = sqlTable("worlds")
+const chunkStatesTable = sqlTable("chunk_states")
+const blockOverridesTable = sqlTable("block_overrides")
 
-// These are OpenVoxel operations, not database-library models. Each one owns
-// its SQL, row shape, cardinality, and affected-row invariant in one place.
-const readSchemaVersion = query("PRAGMA user_version", DatabaseVersionRow, maximumRows=1)
-const readWorldColumns = query("PRAGMA table_info(worlds)", SchemaColumnRow, maximumRows=64)
-const findCatalogMismatch = query(
-    "SELECT id, block_catalog_version AS blockCatalogVersion, block_id_map_hash AS blockIdMapHash FROM worlds WHERE block_catalog_version != ? OR block_id_map_hash != ? ORDER BY id LIMIT 1",
-    WorldCatalogRow,
-    maximumRows = 1,
+// These remain OpenVoxel operations: Labs owns safe composition and binding,
+// while this adapter owns schema names, migrations, row shapes, and cardinality.
+const readSchemaVersion = query(trustedSql("PRAGMA user_version"), DatabaseVersionRow, maximumRows=1)
+const readWorldColumns = query(trustedSql("PRAGMA table_info(worlds)"), SchemaColumnRow, maximumRows=64)
+const readStoredBlockIds = selectQuery(
+    blockOverridesTable,
+    [sqlNamedField("block_id", alias="blockId")],
+    StoredBlockRow,
+    orderBy = [sqlAscending(sqlColumn("block_id"))],
+    distinct = true,
+    maximumRows = 1000000,
 )
-const readStoredBlockIds = query("SELECT DISTINCT block_id AS blockId FROM block_overrides ORDER BY block_id", StoredBlockRow, maximumRows=1000000)
-const insertWorld = command(
-    "INSERT INTO worlds (id, name, seed, format_version, chunk_edge, generator, block_catalog_version, block_id_map_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    minimumAffected = 1,
-    maximumAffected = 1,
-)
-const findWorld = query(
-    "SELECT id, name, seed, format_version AS formatVersion, chunk_edge AS chunkEdge, generator, block_catalog_version AS blockCatalogVersion, block_id_map_hash AS blockIdMapHash FROM worlds WHERE id = ?",
-    WorldRow,
-    maximumRows = 1,
-)
-const findChunkState = query(
-    "SELECT revision FROM chunk_states WHERE world_id = ? AND chunk_x = ? AND chunk_y = ? AND chunk_z = ?",
-    ChunkStateRow,
-    maximumRows = 1,
-)
-const findBlockOverride = query(
-    "SELECT block_id AS blockId FROM block_overrides WHERE world_id = ? AND chunk_x = ? AND chunk_y = ? AND chunk_z = ? AND local_x = ? AND local_y = ? AND local_z = ?",
-    OverrideRow,
-    maximumRows = 1,
-)
-const saveChunkState = command(
-    "INSERT INTO chunk_states (world_id, chunk_x, chunk_y, chunk_z, revision) VALUES (?, ?, ?, ?, ?) ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z) DO UPDATE SET revision = excluded.revision",
-    minimumAffected = 1,
-    maximumAffected = 1,
-)
-const removeBlockOverride = command(
-    "DELETE FROM block_overrides WHERE world_id = ? AND chunk_x = ? AND chunk_y = ? AND chunk_z = ? AND local_x = ? AND local_y = ? AND local_z = ?",
-    maximumAffected = 1,
-)
-const saveBlockOverride = command(
-    "INSERT INTO block_overrides (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z, block_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) DO UPDATE SET block_id = excluded.block_id",
-    minimumAffected = 1,
-    maximumAffected = 1,
-)
+
+def findCatalogMismatchOperation() -> DatabaseQuery<WorldCatalogRow>:
+    return selectQuery(
+        worldsTable,
+        [
+            sqlNamedField("id"),
+            sqlNamedField("block_catalog_version", alias="blockCatalogVersion"),
+            sqlNamedField("block_id_map_hash", alias="blockIdMapHash"),
+        ],
+        WorldCatalogRow,
+        where = sqlOr([
+            sqlColumnNotEqual("block_catalog_version", blockCatalogVersion),
+            sqlColumnNotEqual("block_id_map_hash", blockIdMapHash),
+        ]),
+        orderBy = [sqlAscending(sqlColumn("id"))],
+        limit = 1,
+        maximumRows = 1,
+    )
+
+def insertWorldOperation(world: WorldManifest) -> DatabaseCommand:
+    return insertCommand(
+        worldsTable,
+        ["id", "name", "seed", "format_version", "chunk_edge", "generator", "block_catalog_version", "block_id_map_hash"],
+        [[world.id, world.name, world.seed, world.formatVersion, world.chunkEdge, world.generator, world.blockCatalogVersion, world.blockIdMapHash]],
+        minimumAffected = 1,
+        maximumAffected = 1,
+    )
+
+def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
+    return selectQuery(
+        worldsTable,
+        [
+            sqlNamedField("id"),
+            sqlNamedField("name"),
+            sqlNamedField("seed"),
+            sqlNamedField("format_version", alias="formatVersion"),
+            sqlNamedField("chunk_edge", alias="chunkEdge"),
+            sqlNamedField("generator"),
+            sqlNamedField("block_catalog_version", alias="blockCatalogVersion"),
+            sqlNamedField("block_id_map_hash", alias="blockIdMapHash"),
+        ],
+        WorldRow,
+        where = sqlColumnEqual("id", worldId),
+        limit = 1,
+        maximumRows = 1,
+    )
+
+def chunkPredicate(worldId: string, chunk: ChunkPosition) -> SqlPredicate:
+    return sqlAnd([
+        sqlColumnEqual("world_id", worldId),
+        sqlColumnEqual("chunk_x", chunk.x),
+        sqlColumnEqual("chunk_y", chunk.y),
+        sqlColumnEqual("chunk_z", chunk.z),
+    ])
+
+def overridePredicate(worldId: string, chunk: ChunkPosition, local: LocalPosition) -> SqlPredicate:
+    return sqlAnd([
+        chunkPredicate(worldId, chunk),
+        sqlColumnEqual("local_x", local.x),
+        sqlColumnEqual("local_y", local.y),
+        sqlColumnEqual("local_z", local.z),
+    ])
+
+def findChunkStateOperation(worldId: string, chunk: ChunkPosition) -> DatabaseQuery<ChunkStateRow>:
+    return selectQuery(
+        chunkStatesTable,
+        [sqlNamedField("revision")],
+        ChunkStateRow,
+        where = chunkPredicate(worldId, chunk),
+        limit = 1,
+        maximumRows = 1,
+    )
+
+def findBlockOverrideOperation(worldId: string, chunk: ChunkPosition, local: LocalPosition) -> DatabaseQuery<OverrideRow>:
+    return selectQuery(
+        blockOverridesTable,
+        [sqlNamedField("block_id", alias="blockId")],
+        OverrideRow,
+        where = overridePredicate(worldId, chunk, local),
+        limit = 1,
+        maximumRows = 1,
+    )
+
+def saveChunkStateOperation(worldId: string, chunk: ChunkPosition, revision: number) -> DatabaseCommand:
+    return command(sqlConcat([
+        insertStatement(
+            chunkStatesTable,
+            ["world_id", "chunk_x", "chunk_y", "chunk_z", "revision"],
+            [[worldId, chunk.x, chunk.y, chunk.z, revision]],
+        ),
+        trustedSql(" ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z) DO UPDATE SET revision = excluded.revision"),
+    ]), minimumAffected = 1, maximumAffected = 1)
+
+def removeBlockOverrideOperation(worldId: string, chunk: ChunkPosition, local: LocalPosition) -> DatabaseCommand:
+    return deleteCommand(
+        blockOverridesTable,
+        overridePredicate(worldId, chunk, local),
+        maximumAffected = 1,
+    )
+
+def saveBlockOverrideOperation(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockId: number) -> DatabaseCommand:
+    return command(sqlConcat([
+        insertStatement(
+            blockOverridesTable,
+            ["world_id", "chunk_x", "chunk_y", "chunk_z", "local_x", "local_y", "local_z", "block_id"],
+            [[worldId, chunk.x, chunk.y, chunk.z, local.x, local.y, local.z, blockId]],
+        ),
+        trustedSql(" ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) DO UPDATE SET block_id = excluded.block_id"),
+    ]), minimumAffected = 1, maximumAffected = 1)
 
 def validateOptions(options: SqliteWorldStoreOptions) -> SqliteWorldStoreOptions:
     assert not options.path.isBlank() else "SQLite path cannot be blank"
@@ -113,6 +194,7 @@ async def openDatabase(options: SqliteWorldStoreOptions) -> SqliteConnection:
         queueCapacity: options.queueCapacity,
         maxRows: options.maxRows,
         maxResultBytes: options.maxResultBytes,
+        journalMode: SqliteJournalMode.wal,
     })
 
 def hasColumn(columns: List<SchemaColumnRow>, name: string) -> bool:
@@ -125,21 +207,36 @@ async def migrate(executor: DatabaseExecutor):
     const versionRow = await requireOne(executor, readSchemaVersion, message="SQLite did not return its schema version")
     assert versionRow.user_version <= sqliteSchemaVersion else f"SQLite schema version {versionRow.user_version} is newer than supported version {sqliteSchemaVersion}"
     await execute(executor, command(
-        f"CREATE TABLE IF NOT EXISTS worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, block_catalog_version TEXT NOT NULL DEFAULT '{blockCatalogVersion}', block_id_map_hash TEXT NOT NULL DEFAULT '{blockIdMapHash}')",
+        sqlConcat([
+            trustedSql("CREATE TABLE IF NOT EXISTS worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, block_catalog_version TEXT NOT NULL DEFAULT "),
+            sqliteLiteral(blockCatalogVersion),
+            trustedSql(", block_id_map_hash TEXT NOT NULL DEFAULT "),
+            sqliteLiteral(blockIdMapHash),
+            trustedSql(")"),
+        ]),
     ))
     const columns = await all(executor, readWorldColumns)
     if not hasColumn(columns, "block_catalog_version"):
         await execute(executor, command(
-            f"ALTER TABLE worlds ADD COLUMN block_catalog_version TEXT NOT NULL DEFAULT '{legacyBlockCatalogVersion}'",
+            sqlConcat([
+                trustedSql("ALTER TABLE worlds ADD COLUMN block_catalog_version TEXT NOT NULL DEFAULT "),
+                sqliteLiteral(legacyBlockCatalogVersion),
+            ]),
         ))
     if not hasColumn(columns, "block_id_map_hash"):
         await execute(executor, command(
-            f"ALTER TABLE worlds ADD COLUMN block_id_map_hash TEXT NOT NULL DEFAULT '{legacyBlockIdMapHash}'",
+            sqlConcat([
+                trustedSql("ALTER TABLE worlds ADD COLUMN block_id_map_hash TEXT NOT NULL DEFAULT "),
+                sqliteLiteral(legacyBlockIdMapHash),
+            ]),
         ))
-    await execute(executor, command(f"PRAGMA user_version = {sqliteSchemaVersion}"))
+    await execute(executor, command(sqlConcat([
+        trustedSql("PRAGMA user_version = "),
+        sqliteLiteral(sqliteSchemaVersion),
+    ])))
 
 async def validateStoredCatalog(executor: DatabaseExecutor):
-    const mismatch = await one(executor, findCatalogMismatch, [blockCatalogVersion, blockIdMapHash])
+    const mismatch = await one(executor, findCatalogMismatchOperation())
     if mismatch != null:
         throw WorldBlockCatalogMismatchError(mismatch.id, mismatch.blockCatalogVersion, mismatch.blockIdMapHash)
     const storedBlocks = await all(executor, readStoredBlockIds)
@@ -151,14 +248,12 @@ async def validateStoredCatalog(executor: DatabaseExecutor):
 
 async def initialize(database: SqliteConnection):
     const executor = database.executor()
-    await execute(executor, command("PRAGMA foreign_keys = ON"))
-    await execute(executor, command("PRAGMA journal_mode = WAL"))
     await migrate(executor)
     await execute(executor, command(
-        "CREATE TABLE IF NOT EXISTS chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z), FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE)",
+        trustedSql("CREATE TABLE IF NOT EXISTS chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z), FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE)"),
     ))
     await execute(executor, command(
-        "CREATE TABLE IF NOT EXISTS block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_id INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z), FOREIGN KEY (world_id, chunk_x, chunk_y, chunk_z) REFERENCES chunk_states(world_id, chunk_x, chunk_y, chunk_z) ON DELETE CASCADE)",
+        trustedSql("CREATE TABLE IF NOT EXISTS block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_id INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z), FOREIGN KEY (world_id, chunk_x, chunk_y, chunk_z) REFERENCES chunk_states(world_id, chunk_x, chunk_y, chunk_z) ON DELETE CASCADE)"),
     ))
     await validateStoredCatalog(executor)
 
@@ -168,14 +263,6 @@ def sameOverride(left: number?, right: number?) -> bool:
     if right == null:
         return false
     return left == right
-
-def chunkParameters(worldId: string, chunk: ChunkPosition, local: LocalPosition? = null) -> List<unknown>:
-    const parameters: List<unknown> = [worldId, chunk.x, chunk.y, chunk.z]
-    if local != null:
-        parameters.append(local.x)
-        parameters.append(local.y)
-        parameters.append(local.z)
-    return parameters
 
 export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> WorldStore:
     const options = validateOptions(configuration)
@@ -189,10 +276,10 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
 
     async def saveManifest(manifest: WorldManifest):
         const world = validateWorldManifest(manifest)
-        await execute(databaseExecutor, insertWorld, [world.id, world.name, world.seed, world.formatVersion, world.chunkEdge, world.generator, world.blockCatalogVersion, world.blockIdMapHash])
+        await execute(databaseExecutor, insertWorldOperation(world))
 
     async def findManifest(worldId: string) -> WorldManifest?:
-        const row = await one(databaseExecutor, findWorld, [worldId])
+        const row = await one(databaseExecutor, findWorldOperation(worldId))
         if row == null:
             return null
         return validateWorldManifest(row)
@@ -201,23 +288,50 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
         if positions.size == 0:
             return []
 
-        let coordinates = ""
-        const parameters: List<unknown> = [worldId]
-        for index in range(positions.size):
-            if index > 0:
-                coordinates += ", "
-            coordinates += "(?, ?, ?)"
-            const position = positions[index]
-            parameters.append(position.x)
-            parameters.append(position.y)
-            parameters.append(position.z)
-
-        const findChunkDeltas = query(
-            f"SELECT state.chunk_x AS chunkX, state.chunk_y AS chunkY, state.chunk_z AS chunkZ, state.revision, override.local_x AS localX, override.local_y AS localY, override.local_z AS localZ, override.block_id AS blockId FROM chunk_states AS state LEFT JOIN block_overrides AS override ON override.world_id = state.world_id AND override.chunk_x = state.chunk_x AND override.chunk_y = state.chunk_y AND override.chunk_z = state.chunk_z WHERE state.world_id = ? AND (state.chunk_x, state.chunk_y, state.chunk_z) IN ({coordinates}) ORDER BY state.chunk_x, state.chunk_y, state.chunk_z, override.local_y, override.local_z, override.local_x",
+        const coordinateRows: List<List<unknown>> = []
+        for position in positions:
+            const coordinate: List<unknown> = [position.x, position.y, position.z]
+            coordinateRows.append(coordinate)
+        const stateTable = sqlTable("chunk_states", alias="state")
+        const overrideTable = sqlTable("block_overrides", alias="override")
+        const findChunkDeltas = selectQuery(
+            stateTable,
+            [
+                sqlNamedField("chunk_x", alias="chunkX", qualifier="state"),
+                sqlNamedField("chunk_y", alias="chunkY", qualifier="state"),
+                sqlNamedField("chunk_z", alias="chunkZ", qualifier="state"),
+                sqlNamedField("revision", qualifier="state"),
+                sqlNamedField("local_x", alias="localX", qualifier="override"),
+                sqlNamedField("local_y", alias="localY", qualifier="override"),
+                sqlNamedField("local_z", alias="localZ", qualifier="override"),
+                sqlNamedField("block_id", alias="blockId", qualifier="override"),
+            ],
             ChunkDeltaRow,
+            joins = [sqlLeftJoin(overrideTable, sqlAnd([
+                sqlEqual(sqlColumn("world_id", qualifier="override"), sqlColumn("world_id", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_x", qualifier="override"), sqlColumn("chunk_x", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_y", qualifier="override"), sqlColumn("chunk_y", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_z", qualifier="override"), sqlColumn("chunk_z", qualifier="state")),
+            ]))],
+            where = sqlAnd([
+                sqlColumnEqual("world_id", worldId, qualifier="state"),
+                sqlTupleIn([
+                    sqlColumn("chunk_x", qualifier="state"),
+                    sqlColumn("chunk_y", qualifier="state"),
+                    sqlColumn("chunk_z", qualifier="state"),
+                ], coordinateRows),
+            ]),
+            orderBy = [
+                sqlAscending(sqlColumn("chunk_x", qualifier="state")),
+                sqlAscending(sqlColumn("chunk_y", qualifier="state")),
+                sqlAscending(sqlColumn("chunk_z", qualifier="state")),
+                sqlAscending(sqlColumn("local_y", qualifier="override")),
+                sqlAscending(sqlColumn("local_z", qualifier="override")),
+                sqlAscending(sqlColumn("local_x", qualifier="override")),
+            ],
             maximumRows = 1000000,
         )
-        const rows = await all(databaseExecutor, findChunkDeltas, parameters)
+        const rows = await all(databaseExecutor, findChunkDeltas)
 
         const deltas: List<ChunkDelta> = []
         const indices: Map<string, number> = Map()
@@ -247,25 +361,19 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
 
         async def transactionOperation(transaction: SqliteTransaction) -> BlockOverrideCommit:
             const executor = transaction.executor()
-            const stateParameters = chunkParameters(worldId, chunk)
-            const overrideParameters = chunkParameters(worldId, chunk, local)
-            const state = await one(executor, findChunkState, stateParameters)
-            const storedOverride = await one(executor, findBlockOverride, overrideParameters)
+            const state = await one(executor, findChunkStateOperation(worldId, chunk))
+            const storedOverride = await one(executor, findBlockOverrideOperation(worldId, chunk, local))
             const previousOverrideBlockId = storedOverride == null ? null : storedOverride.blockId
             const revision = state == null ? 0 : state.revision
             if sameOverride(previousOverrideBlockId, blockId):
                 return {previousOverrideBlockId, revision, changed: false}
 
             const nextRevision = revision + 1
-            const stateWriteParameters = stateParameters.copy()
-            stateWriteParameters.append(nextRevision)
-            await execute(executor, saveChunkState, stateWriteParameters)
+            await execute(executor, saveChunkStateOperation(worldId, chunk, nextRevision))
             if blockId == null:
-                await execute(executor, removeBlockOverride, overrideParameters)
+                await execute(executor, removeBlockOverrideOperation(worldId, chunk, local))
             else:
-                const overrideWriteParameters = overrideParameters.copy()
-                overrideWriteParameters.append(blockId)
-                await execute(executor, saveBlockOverride, overrideWriteParameters)
+                await execute(executor, saveBlockOverrideOperation(worldId, chunk, local, blockId))
             return {previousOverrideBlockId, revision: nextRevision, changed: true}
 
         return await database.transaction(transactionOperation)

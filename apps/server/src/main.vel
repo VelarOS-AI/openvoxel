@@ -7,15 +7,13 @@ import {blockCatalogHash, blockCatalogVersion, blockIdMapHash} from "@openvoxel/
 import {worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelServices} from "./services.vel"
 
-const configurationPath = resolveServerPath(get("OPENVOXEL_CONFIG") ?? "config/server.yml")
-const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configurationPath)))
+const configuredPath = get("OPENVOXEL_CONFIG")
+const configurationPath = resolveServerPath(configuredPath ?? "application.yml")
+const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configuredPath)))
 const store = await sqliteWorldStore(configuration.database)
 const services = openVoxelServices(worldRuntime(store), serverOptions(configuration))
 
-// The application YAML remains the deployment authority. The Node launcher
-// arguments mirror its checked defaults so dev, serve, and build share one
-// startup shape without introducing a second runtime configuration source.
-export async def start(_host: string, _port: number, _maxBodyBytes: number) -> WebSocketServer:
+export async def start() -> WebSocketServer:
     const server = await startOpenVoxelServer(services)
     services.info("server.configuration", {
         databasePath: configuration.database.path,

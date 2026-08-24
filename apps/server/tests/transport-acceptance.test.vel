@@ -56,7 +56,7 @@ async def envelope(response: TestResponse) -> ApiResponse:
     return ApiResponse.parse(await response.json())
 
 async def testServices() -> OpenVoxelServices:
-    const configuration = await loadOpenVoxelConfiguration("config/server.yml")
+    const configuration = await loadOpenVoxelConfiguration("application.yml")
     const configured = serverOptions(configuration, logger=false)
     const options: OpenVoxelServerOptions = {
         host: "127.0.0.1",

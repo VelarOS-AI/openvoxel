@@ -1,7 +1,6 @@
-import {parseYaml} from "@velarscript-labs/yaml"
 import {get} from "velar/env"
-import {readText} from "velar/fs"
 import {isAbsolute, resolve} from "velar/path"
+import {configuration} from "velar/server"
 import {parse as parseUrl} from "velar/url"
 import {OpenVoxelServerOptions} from "./services.vel"
 
@@ -70,24 +69,22 @@ export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration)
     requireInteger(configuration.database.maxResultBytes, 1, 128 * 1024 * 1024, "SQLite result byte limit")
     return configuration
 
-export def parseOpenVoxelConfiguration(source: string) -> OpenVoxelConfiguration:
-    return validateOpenVoxelConfiguration(OpenVoxelConfiguration.parse(parseYaml(source)))
-
 export def resolveServerPath(path: string) -> string:
     assert not path.isBlank() else "Path cannot be blank"
     if isAbsolute(path):
         return path
     return resolve([serverApplicationRoot(), path])
 
-export async def loadOpenVoxelConfiguration(path: string) -> OpenVoxelConfiguration:
-    assert not path.isBlank() else "Configuration path cannot be blank"
-    const resolved = resolveServerPath(path)
-    let source = ""
+export async def loadOpenVoxelConfiguration(path: string? = null) -> OpenVoxelConfiguration:
     try:
-        source = await readText(resolved, 64 * 1024)
+        if path == null:
+            return validateOpenVoxelConfiguration(await configuration(OpenVoxelConfiguration))
+        assert not path.isBlank() else "Configuration path cannot be blank"
+        const resolved = resolveServerPath(path)
+        return validateOpenVoxelConfiguration(await configuration(OpenVoxelConfiguration, path=resolved))
     catch error:
-        throw Error(f"Cannot load OpenVoxel configuration at {resolved}: {error.message}")
-    return parseOpenVoxelConfiguration(source)
+        const displayPath = path == null ? resolveServerPath("application.yml") : resolveServerPath(path)
+        throw Error(f"Cannot load OpenVoxel configuration at {displayPath}: {error.message}")
 
 def integerOverride(name: string, fallback: number, minimum: number, maximum: number) -> number:
     const raw = get(name)

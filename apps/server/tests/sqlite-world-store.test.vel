@@ -1,5 +1,6 @@
 import {exists, removeFile} from "velar/fs"
-import {openSqlite} from "@velarscript-labs/sqlite"
+import {sqlConcat, sqlTuple, trustedSql, trustedSqlTemplate} from "@velarscript-labs/database"
+import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {expect} from "velar/test"
 import {WorldBlockCatalogMismatchError, blockCatalogVersion, blockId, blockIdMapHash, chunkBlock} from "@openvoxel/domain"
 import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
@@ -38,14 +39,17 @@ async def removeDatabase(path: string):
 
 async def tableCount(path: string, table: string) -> number:
     using database = await openSqlite(path)
-    const row = await database.one(f"SELECT COUNT(*) AS count FROM {table}", CountRow)
+    const row = await database.one(sqlConcat([
+        trustedSql("SELECT COUNT(*) AS count FROM "),
+        sqliteIdentifier(table),
+    ]), CountRow)
     assert row != null else f"Expected count for {table}"
     return row.count
 
 async def legacyChunkTableCount(path: string) -> number:
     using database = await openSqlite(path)
     const row = await database.one(
-        "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'chunks'",
+        trustedSql("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'chunks'"),
         CountRow,
     )
     assert row != null else "Expected SQLite schema count"
@@ -53,20 +57,20 @@ async def legacyChunkTableCount(path: string) -> number:
 
 async def singleStoredBlockId(path: string) -> number:
     using database = await openSqlite(path)
-    const row = await database.one("SELECT block_id AS blockId FROM block_overrides", BlockRow)
+    const row = await database.one(trustedSql("SELECT block_id AS blockId FROM block_overrides"), BlockRow)
     assert row != null else "Expected one stored block override"
     return row.blockId
 
 async def schemaVersion(path: string) -> number:
     using database = await openSqlite(path)
-    const row = await database.one("PRAGMA user_version", SchemaVersionRow)
+    const row = await database.one(trustedSql("PRAGMA user_version"), SchemaVersionRow)
     assert row != null else "Expected SQLite schema version"
     return row.user_version
 
 async def storedCatalogIdentity(path: string) -> WorldCatalogIdentityRow:
     using database = await openSqlite(path)
     const row = await database.one(
-        "SELECT block_catalog_version AS blockCatalogVersion, block_id_map_hash AS blockIdMapHash FROM worlds LIMIT 1",
+        trustedSql("SELECT block_catalog_version AS blockCatalogVersion, block_id_map_hash AS blockIdMapHash FROM worlds LIMIT 1"),
         WorldCatalogIdentityRow,
     )
     assert row != null else "Expected stored block catalog identity"
@@ -92,6 +96,27 @@ test "SQLite adapter does not persist generated chunks":
         expect(await tableCount(databasePath, "chunk_states")).toBe(0)
         expect(await tableCount(databasePath, "block_overrides")).toBe(0)
         expect(await legacyChunkTableCount(databasePath)).toBe(0)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter stores attack-shaped world text only as bound data":
+    const databasePath = "openvoxel-sql-injection-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const store = await sqliteWorldStore(testDatabase(databasePath))
+        const runtime = worldRuntime(store)
+        const attack = "Ada'); DROP TABLE worlds; --"
+        try:
+            await runtime.createWorld({id: "injection-safe", name: attack, seed: attack})
+            const manifest = await runtime.requireWorld("injection-safe")
+            expect(manifest.name).toBe(attack)
+            expect(manifest.seed).toBe(attack)
+        finally:
+            await runtime.close()
+
+        expect(await tableCount(databasePath, "worlds")).toBe(1)
+        const reopened = await sqliteWorldStore(testDatabase(databasePath))
+        await reopened.close()
     finally:
         await removeDatabase(databasePath)
 
@@ -178,12 +203,12 @@ test "SQLite adapter migrates legacy worlds and backfills the current block id m
     try:
         using legacy = await openSqlite(databasePath)
         await legacy.execute(
-            "CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL)",
+            trustedSql("CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL)"),
         )
-        await legacy.execute(
-            "INSERT INTO worlds (id, name, seed, format_version, chunk_edge, generator) VALUES (?, ?, ?, ?, ?, ?)",
-            ["legacy", "Legacy", "legacy-seed", 1, 16, "openvoxel:survival-v1"],
-        )
+        await legacy.execute(sqlConcat([
+            trustedSql("INSERT INTO worlds (id, name, seed, format_version, chunk_edge, generator) VALUES "),
+            sqlTuple(["legacy", "Legacy", "legacy-seed", 1, 16, "openvoxel:survival-v1"]),
+        ]))
 
         const store = await sqliteWorldStore(testDatabase(databasePath))
         const runtime = worldRuntime(store)
@@ -213,7 +238,11 @@ test "SQLite adapter rejects a world created with a different block id mapping":
             await firstRuntime.close()
 
         using database = await openSqlite(databasePath)
-        await database.execute("UPDATE worlds SET block_id_map_hash = ? WHERE id = ?", ["different-id-map", "mismatch"])
+        await database.execute(trustedSqlTemplate([
+            "UPDATE worlds SET block_id_map_hash = ",
+            " WHERE id = ",
+            "",
+        ], ["different-id-map", "mismatch"]))
 
         let rejected = false
         try:
@@ -238,7 +267,10 @@ test "SQLite adapter rejects unknown persisted block ids during startup":
             await firstRuntime.close()
 
         using database = await openSqlite(databasePath)
-        await database.execute("UPDATE block_overrides SET block_id = 65535")
+        await database.execute(trustedSqlTemplate([
+            "UPDATE block_overrides SET block_id = ",
+            "",
+        ], [65535]))
 
         let rejected = false
         try:
@@ -255,7 +287,10 @@ test "SQLite adapter rejects databases created by a newer server schema":
     await removeDatabase(databasePath)
     try:
         using database = await openSqlite(databasePath)
-        await database.execute("PRAGMA user_version = 999")
+        await database.execute(sqlConcat([
+            trustedSql("PRAGMA user_version = "),
+            sqliteLiteral(999),
+        ]))
 
         let rejected = false
         try:

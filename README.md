@@ -14,7 +14,7 @@ npm run validate
 npm start
 ```
 
-服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/config/server.yml`](apps/server/config/server.yml) 管理；相对配置路径和数据库路径都以服务应用目录解析。VelarScript 启动器与 npm workspace 脚本会把该目录设为工作目录；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定它。可以用 `OPENVOXEL_CONFIG` 选择另一份配置，并用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入 YAML。
+服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由根配置 [`apps/server/application.yml`](apps/server/application.yml) 管理；这是框架唯一按约定发现的应用配置文件名。相对配置路径和数据库路径都以服务应用目录解析。VelarScript 启动器与 npm workspace 脚本会把该目录设为工作目录；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定它。可以用 `OPENVOXEL_CONFIG` 选择另一份显式 YAML/JSON 配置，并用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
 ```sh
 curl http://127.0.0.1:3000/api/health
@@ -63,7 +63,7 @@ flowchart LR
 - `packages/protocol`：HTTP 和 MessagePack WebSocket 的应用协议、稳定路由常量与客户端接入契约。
 - `packages/world-runtime`：创建世界、查询 Chunk、修改方块等用例和存储端口。
 - `apps/server`：system、world、chunk、block、realtime 模块，以及拥有表结构、迁移 SQL 和稀疏世界规则的 SQLite 适配器与组合根。
-- `@velarscript-labs/yaml`、`@velarscript-labs/database` 和 `@velarscript-labs/sqlite` 来自官方维护但不属于语言标准库的 VelarScript Libraries；OpenVoxel 不复制它们的通用边界，也不把游戏业务搬进这些库。
+- `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定和抽象连接生命周期；`@velarscript-labs/yaml` 仅用于方块目录生成，`@velarscript-labs/database` 与 `@velarscript-labs/sqlite` 仍是非标准的 VelarScript Libraries。OpenVoxel 不复制通用边界，也不把游戏业务搬进这些库。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
 
 目录按职责固定：手写运行时代码进入 `src/`，测试进入 `tests/`，测试辅助件进入 `tests/support/`，性能基准进入 `benchmarks/`，人工数据进入 `data/`，生成物进入 `generated/`，生成与检查脚本进入 `tools/`。`src/` 不放测试和生成物，`generated/` 禁止生成 `.vel`；`npm run structure:check` 和完整门禁会持续检查这两条规则。

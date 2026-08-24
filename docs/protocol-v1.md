@@ -111,6 +111,6 @@
 
 ## 浏览器跨域
 
-浏览器 origin 白名单由 `apps/server/config/server.yml` 的 `server.cors.allowedOrigins` 配置。预检允许 GET/POST、`content-type` 和 `if-none-match`；响应向浏览器暴露 `etag` 和 `x-openvoxel-protocol-version`。WebSocket upgrade 使用同一 origin 白名单，且两种传输都不使用跨域凭据。生产部署必须把开发 origin 换成实际站点的明确 origin。
+浏览器 origin 白名单由 `apps/server/application.yml` 的 `server.cors.allowedOrigins` 配置。预检允许 GET/POST、`content-type` 和 `if-none-match`；响应向浏览器暴露 `etag` 和 `x-openvoxel-protocol-version`。WebSocket upgrade 使用同一 origin 白名单，且两种传输都不使用跨域凭据。生产部署必须把开发 origin 换成实际站点的明确 origin。
 
 第一阶段没有鉴权、玩家会话和冲突合并；revision 已预留给后续乐观并发控制。

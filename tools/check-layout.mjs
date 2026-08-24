@@ -9,6 +9,7 @@ const npmToolchainPackages = new Set([
   "@velarscript/core",
   "@velarscript/desktop",
   "@velarscript/node",
+  "@velarscript/server",
   "@velarscript/web",
 ]);
 const labsScope = "@velarscript-labs/";
