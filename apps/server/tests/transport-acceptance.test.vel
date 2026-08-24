@@ -1,11 +1,12 @@
 import {Bytes} from "velar/binary"
 import {TestResponse, client} from "velar/server-test"
+import {Provider} from "velar/serve"
 import {connect} from "velar/websocket"
 import {encode, parse} from "@velarscript-labs/msgpack"
 import {expect} from "velar/test"
 import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
 import {createOpenVoxelApp, startOpenVoxelServer} from "../src/server.vel"
-import {OpenVoxelServerOptions, OpenVoxelServices, openVoxelServices} from "../src/services.vel"
+import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, openVoxelApplicationProvider} from "../src/application.vel"
 import {WorldManifest, blockId} from "@openvoxel/domain"
 import {ApiResponse, BlockCatalogResponse, BlockChangedEvent, ChunkBatchResponse, ChunkResponse, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, WorldBootstrapResponse} from "@openvoxel/protocol"
 import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
@@ -55,7 +56,13 @@ type WorldFailureData:
 async def envelope(response: TestResponse) -> ApiResponse:
     return ApiResponse.parse(await response.json())
 
-async def testServices() -> OpenVoxelServices:
+def providerOverride(application: OpenVoxelApplication) -> Map<Provider, unknown>:
+    const overrides: Map<Provider, unknown> = Map()
+    const value: unknown = application
+    overrides.set(Provider.parse(openVoxelApplicationProvider), value)
+    return overrides
+
+async def testApplication() -> OpenVoxelApplication:
     const configuration = await loadOpenVoxelConfiguration("application.yml")
     const configured = serverOptions(configuration, logger=false)
     const options: OpenVoxelServerOptions = {
@@ -70,11 +77,14 @@ async def testServices() -> OpenVoxelServices:
         maxPendingSendBytes: configured.maxPendingSendBytes,
         maxConnections: configured.maxConnections,
     }
-    return openVoxelServices(worldRuntime(memoryWorldStore()), options)
+    return openVoxelApplication(worldRuntime(memoryWorldStore()), options)
 
 test "native HTTP modules complete the backend vertical slice":
-    const services = await testServices()
-    const api = await client(createOpenVoxelApp(services))
+    const application = await testApplication()
+    const api = await client(
+        createOpenVoxelApp(application),
+        providerOverride(application),
+    )
     try:
         const healthResponse = await api.get("/api/health")
         expect(healthResponse.status).toBe(200)
@@ -197,15 +207,16 @@ test "native HTTP modules complete the backend vertical slice":
         expect(deniedPreflight.status).toBe(403)
     finally:
         await api.close()
+        await application.close()
 
 test "native shared-port WebSocket transport preserves MessagePack realtime behavior":
-    const services = await testServices()
-    const world = await services.runtime.createWorld({
+    const application = await testApplication()
+    const world = await application.runtime.createWorld({
         id: "realtime",
         name: "Realtime",
         seed: "realtime-seed",
     })
-    const server = await startOpenVoxelServer(services)
+    const server = await startOpenVoxelServer(application)
     try:
         const deniedStatus = await rejectedWebSocketStatus(
             f"ws://127.0.0.1:{server.port}/api/events",
@@ -271,7 +282,7 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
         expect(observed.worldId).toBe(world.id)
         expect(observed.revision).toBe(event.revision)
 
-        const after = await services.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
+        const after = await application.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
         expect(after.revision).toBe(1)
         expect(after.blocks[3584]).toBe(stoneBlock)
     finally:

@@ -1,0 +1,95 @@
+import {WorldRuntime} from "@openvoxel/world-runtime"
+import {Cancellation, Task, task} from "velar/task"
+import {provide} from "velar/serve"
+import {RealtimeHub, realtimeHub} from "./adapters/realtime-hub.vel"
+import {RealtimeSessions, realtimeSessions} from "./realtime-sessions.vel"
+
+export type OpenVoxelServerOptions:
+    host: string
+    port: number
+    logger: bool
+    bodyLimit: number
+    corsAllowedOrigins: List<string>
+    maxMessageBytes: number
+    maxQueuedMessages: number
+    maxQueuedBytes: number
+    maxPendingSendBytes: number
+    maxConnections: number
+
+type AccessLogEntry:
+    method: string
+    path: string
+    status: number
+    durationMs: number
+
+export type OpenVoxelApplication:
+    runtime: WorldRuntime
+    options: OpenVoxelServerOptions
+    realtime: RealtimeHub
+    sessions: RealtimeSessions
+    info: (message: string, context: unknown) -> null
+    warn: (message: string, context: unknown) -> null
+    access: (entry: AccessLogEntry) -> null
+    close: () -> Promise<null>
+
+export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerOptions) -> OpenVoxelApplication:
+    let closing: Task<null>? = null
+
+    def log(level: string, message: string, context: unknown):
+        if options.logger:
+            print(Json.stringify({level, message, context}))
+
+    def info(message: string, context: unknown):
+        log("info", message, context)
+
+    def warn(message: string, context: unknown):
+        log("warn", message, context)
+
+    def access(entry: AccessLogEntry):
+        info("http.request", entry)
+
+    const realtime = realtimeHub(warn)
+    const sessions = realtimeSessions(options.maxConnections)
+
+    async def closeApplication(_cancellation: Cancellation):
+        await sessions.drain()
+        await runtime.close()
+
+    async def close():
+        const existing = closing
+        if existing != null:
+            await existing.result()
+            return
+        const owner = task(closeApplication)
+        closing = owner
+        await owner.result()
+
+    return {runtime, options, realtime, sessions, info, warn, access, close}
+
+// ServeApp currently exposes Provider overrides only to server-test. Keep the
+// one production mount at this transport boundary; route modules depend only
+// on the typed Provider below and tests bind it through the public test API.
+let mountedApplication: OpenVoxelApplication? = null
+
+export def mountOpenVoxelApplication(application: OpenVoxelApplication):
+    assert mountedApplication == null else "Only one OpenVoxel application can be mounted in a process"
+    mountedApplication = application
+
+export def unmountOpenVoxelApplication():
+    assert mountedApplication != null else "OpenVoxel application is not mounted"
+    mountedApplication = null
+
+async def resolveOpenVoxelApplication(_values: Record<unknown>) -> OpenVoxelApplication:
+    assert mountedApplication != null else "OpenVoxel application is not mounted"
+    return mountedApplication
+
+async def releaseOpenVoxelApplication(application: OpenVoxelApplication):
+    await application.close()
+
+export const openVoxelApplicationProvider = provide(
+    inputs = {},
+    resolve = resolveOpenVoxelApplication,
+    scope = "app",
+    release = releaseOpenVoxelApplication,
+    eager = true,
+)

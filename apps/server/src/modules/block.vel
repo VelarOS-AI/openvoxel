@@ -1,7 +1,7 @@
 import {Request, input} from "velar/serve"
 import {SetBlockRequest, blockCatalogResponse, protocolVersion} from "@openvoxel/protocol"
 import {notModified, ok} from "../responses.vel"
-import {openVoxelServicesProvider} from "../services.vel"
+import {openVoxelApplicationProvider} from "../application.vel"
 
 const catalogPayload = blockCatalogResponse()
 const catalogEtag = f`"{catalogPayload.contentHash}"`
@@ -32,9 +32,9 @@ export server blockRoutes:
         return ok(catalogPayload, headers)
 
     /// Persists one block override and broadcasts the resulting revision.
-    @post(p"/api/blocks", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/blocks", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const command = await request.parse(SetBlockRequest)
-        const change = await services.runtime.setBlock(command.worldId, command.position, command.blockId)
-        await services.realtime.publishChange(change)
-        services.info("block.changed", {worldId: change.worldId, revision: change.revision})
+        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockId)
+        await application.realtime.publishChange(change)
+        application.info("block.changed", {worldId: change.worldId, revision: change.revision})
         return ok(change)

@@ -3,27 +3,27 @@ import {CreateWorld} from "@openvoxel/domain"
 import {WorldQuery, protocolVersion, worldBootstrapResponse} from "@openvoxel/protocol"
 import {WorldNotFoundError} from "@openvoxel/world-runtime"
 import {created, ok} from "../responses.vel"
-import {openVoxelServicesProvider} from "../services.vel"
+import {openVoxelApplicationProvider} from "../application.vel"
 
 export server worldRoutes:
     /// Creates one deterministic world manifest.
-    @post(p"/api/worlds", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/worlds", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const command = await request.parse(CreateWorld)
-        const manifest = await services.runtime.createWorld(command)
-        services.info("world.created", {worldId: manifest.id, seed: manifest.seed})
+        const manifest = await application.runtime.createWorld(command)
+        application.info("world.created", {worldId: manifest.id, seed: manifest.seed})
         return created(manifest)
 
     /// Finds a world manifest by identifier.
-    @post(p"/api/worlds/find", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/worlds/find", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const query = await request.parse(WorldQuery)
-        const manifest = await services.runtime.findWorld(query.worldId)
+        const manifest = await application.runtime.findWorld(query.worldId)
         if manifest == null:
             throw WorldNotFoundError(query.worldId)
         return ok(manifest)
 
     /// Returns the world bootstrap contract consumed before chunk loading.
-    @get(p"/api/worlds/{worldId:string}/bootstrap", services=input.dependency(openVoxelServicesProvider)):
-        const manifest = await services.runtime.requireWorld(worldId)
+    @get(p"/api/worlds/{worldId:string}/bootstrap", application=input.dependency(openVoxelApplicationProvider)):
+        const manifest = await application.runtime.requireWorld(worldId)
         return ok(
             worldBootstrapResponse(manifest),
             Map([

@@ -1,7 +1,7 @@
 import {input} from "velar/serve"
 import {clientContractResponse, protocolVersion} from "@openvoxel/protocol"
 import {ok} from "../responses.vel"
-import {openVoxelServicesProvider} from "../services.vel"
+import {openVoxelApplicationProvider} from "../application.vel"
 
 export server systemRoutes:
     /// Reports service readiness and the active protocol version.
@@ -12,11 +12,11 @@ export server systemRoutes:
         )
 
     /// Publishes the client transport and world-data contract.
-    @get(p"/api/client-contract", services=input.dependency(openVoxelServicesProvider)):
+    @get(p"/api/client-contract", application=input.dependency(openVoxelApplicationProvider)):
         return ok(
             clientContractResponse({
-                requestBodyBytes: services.options.bodyLimit,
-                realtimeMessageBytes: services.options.maxMessageBytes,
+                requestBodyBytes: application.options.bodyLimit,
+                realtimeMessageBytes: application.options.maxMessageBytes,
             }),
             Map([
                 ["cache-control", "no-store"],

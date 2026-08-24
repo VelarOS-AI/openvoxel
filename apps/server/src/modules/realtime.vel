@@ -3,50 +3,51 @@ import {WebSocketConnection, WebSocketServer} from "velar/websocket"
 import {encode, parse} from "@velarscript-labs/msgpack"
 import {SocketBlockCommand} from "@openvoxel/protocol"
 import {publicApplicationError} from "../error-handler.vel"
-import {OpenVoxelServices} from "../services.vel"
+import {OpenVoxelApplication} from "../application.vel"
 
 async def sendError(connection: WebSocketConnection, error: Error):
     const publicError = publicApplicationError(error)
     await connection.send(encode({event: "error", code: publicError.code, message: publicError.message}))
 
-async def handleMessage(services: OpenVoxelServices, connection: WebSocketConnection, message: Bytes):
+async def handleMessage(application: OpenVoxelApplication, connection: WebSocketConnection, message: Bytes):
     try:
         const command = parse(message, SocketBlockCommand)
         if command.operation != "set-block":
             await connection.send(encode({event: "error", code: "UnsupportedRealtimeOperation", message: f"Unsupported realtime operation {command.operation}"}))
             return
-        const change = await services.runtime.setBlock(command.worldId, command.position, command.blockId)
-        await services.realtime.publishChange(change)
-        services.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
+        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockId)
+        await application.realtime.publishChange(change)
+        application.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
     catch error:
-        services.warn("realtime.command.failed", {code: error.code, message: error.message})
+        application.warn("realtime.command.failed", {code: error.code, message: error.message})
         await sendError(connection, error)
 
-export async def handleRealtimeConnection(services: OpenVoxelServices, connection: WebSocketConnection):
-    if not services.beginRealtime():
-        await connection.close(1013, "Realtime capacity is unavailable")
-        return
-    services.realtime.join(connection)
+export async def handleRealtimeConnection(application: OpenVoxelApplication, connection: WebSocketConnection):
+    application.realtime.join(connection)
     try:
         let message = await connection.next()
         while message != null:
             if message is Bytes:
-                await handleMessage(services, connection, message)
+                await handleMessage(application, connection, message)
             else:
                 await connection.send(encode({event: "error", code: "TextMessageUnsupported", message: "Realtime commands must use MessagePack"}))
             message = await connection.next()
     catch error:
-        services.warn("realtime.connection.failed", {code: error.code, message: error.message})
+        application.warn("realtime.connection.failed", {code: error.code, message: error.message})
     finally:
-        services.realtime.leave(connection)
-        services.endRealtime()
-        await connection.close(1000, "Connection finished")
+        application.realtime.leave(connection)
+        try:
+            await connection.close(1000, "Connection finished")
+        catch error:
+            application.warn("realtime.connection.close.failed", {code: error.code, message: error.message})
 
-export async def acceptRealtimeConnections(server: WebSocketServer, services: OpenVoxelServices):
+export async def acceptRealtimeConnections(server: WebSocketServer, application: OpenVoxelApplication):
     try:
         let connection = await server.next()
         while connection != null:
-            async handleRealtimeConnection(services, connection)
+            if not application.sessions.start(connection, current => handleRealtimeConnection(application, current)):
+                await connection.close(1013, "Realtime capacity is unavailable")
             connection = await server.next()
     catch error:
-        services.warn("realtime.accept.failed", {code: error.code, message: error.message})
+        application.warn("realtime.accept.failed", {code: error.code, message: error.message})
+        await server.stop()

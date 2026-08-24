@@ -1,23 +1,23 @@
 import {Request, input} from "velar/serve"
 import {ChunkBatchQuery, ChunkQuery, GenerationSampleQuery, chunkBatchResponse, chunkResponse, generationSampleResponse} from "@openvoxel/protocol"
 import {ok} from "../responses.vel"
-import {openVoxelServicesProvider} from "../services.vel"
+import {openVoxelApplicationProvider} from "../application.vel"
 
 export server chunkRoutes:
     /// Resolves one generated chunk with persisted sparse overrides applied.
-    @post(p"/api/chunks/query", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/chunks/query", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const query = await request.parse(ChunkQuery)
-        const chunk = await services.runtime.chunk(query.worldId, query.position)
+        const chunk = await application.runtime.chunk(query.worldId, query.position)
         return ok(chunkResponse(query.worldId, chunk))
 
     /// Resolves a bounded batch of generated chunks.
-    @post(p"/api/chunks/batch", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/chunks/batch", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const query = await request.parse(ChunkBatchQuery)
-        const chunks = await services.runtime.chunks(query.worldId, query.positions)
+        const chunks = await application.runtime.chunks(query.worldId, query.positions)
         return ok(chunkBatchResponse(query.worldId, chunks))
 
     /// Samples deterministic terrain diagnostics for one horizontal coordinate.
-    @post(p"/api/generation/sample", request: Request, services=input.dependency(openVoxelServicesProvider)):
+    @post(p"/api/generation/sample", request: Request, application=input.dependency(openVoxelApplicationProvider)):
         const query = await request.parse(GenerationSampleQuery)
-        const sample = await services.runtime.terrainSample(query.worldId, query.position)
+        const sample = await application.runtime.terrainSample(query.worldId, query.position)
         return ok(generationSampleResponse(query.worldId, sample))

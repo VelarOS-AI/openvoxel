@@ -8,7 +8,7 @@ import {blockRoutes} from "./modules/block.vel"
 import {chunkRoutes} from "./modules/chunk.vel"
 import {systemRoutes} from "./modules/system.vel"
 import {worldRoutes} from "./modules/world.vel"
-import {OpenVoxelServices, activateOpenVoxelServices, deactivateOpenVoxelServices} from "./services.vel"
+import {OpenVoxelApplication, mountOpenVoxelApplication, unmountOpenVoxelApplication} from "./application.vel"
 
 server openVoxelRoutes:
     ...systemRoutes
@@ -19,45 +19,50 @@ server openVoxelRoutes:
     @notFound(request: Request):
         return failure(404, "RouteNotFound", {method: request.method, path: request.path}, "Route not found")
 
-export def createOpenVoxelApp(services: OpenVoxelServices) -> ServeApp:
-    let app = bodyLimit(openVoxelRoutes, services.options.bodyLimit)
+export def createOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
+    let app = bodyLimit(openVoxelRoutes, application.options.bodyLimit)
     app = use(app, middleware.errors(handleApplicationError))
     app = use(app, middleware.cors(
-        origins = services.options.corsAllowedOrigins,
+        origins = application.options.corsAllowedOrigins,
         headers = ["content-type", "if-none-match"],
     ))
     app = use(app, middleware.requestId())
     app = use(app, middleware.securityHeaders())
     app = use(app, middleware.concurrency(256))
-    if services.options.logger:
-        app = use(app, middleware.accessLog(services.access))
+    if application.options.logger:
+        app = use(app, middleware.accessLog(application.access))
+
+    return app
+
+def ownedOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
+    const app = createOpenVoxelApp(application)
 
     async def startup():
-        activateOpenVoxelServices(services)
+        mountOpenVoxelApplication(application)
 
     async def shutdown():
-        await deactivateOpenVoxelServices(services)
+        unmountOpenVoxelApplication()
 
     return lifecycle(app, startup=startup, shutdown=shutdown)
 
-export async def startOpenVoxelServer(services: OpenVoxelServices) -> WebSocketServer:
+export async def startOpenVoxelServer(application: OpenVoxelApplication) -> WebSocketServer:
     try:
         const server = await listen({
-            host: services.options.host,
-            port: services.options.port,
-            http: createOpenVoxelApp(services),
+            host: application.options.host,
+            port: application.options.port,
+            http: ownedOpenVoxelApp(application),
             path: realtimeEventsPath,
-            origins: services.options.corsAllowedOrigins,
-            maxBodyBytes: services.options.bodyLimit,
-            maxMessageBytes: services.options.maxMessageBytes,
-            maxQueuedMessages: services.options.maxQueuedMessages,
-            maxQueuedBytes: services.options.maxQueuedBytes,
-            maxPendingSendBytes: services.options.maxPendingSendBytes,
-            maxConnections: services.options.maxConnections,
+            origins: application.options.corsAllowedOrigins,
+            maxBodyBytes: application.options.bodyLimit,
+            maxMessageBytes: application.options.maxMessageBytes,
+            maxQueuedMessages: application.options.maxQueuedMessages,
+            maxQueuedBytes: application.options.maxQueuedBytes,
+            maxPendingSendBytes: application.options.maxPendingSendBytes,
+            maxConnections: application.options.maxConnections,
         })
-        async acceptRealtimeConnections(server, services)
-        services.info("server.started", {host: services.options.host, port: server.port})
+        async acceptRealtimeConnections(server, application)
+        application.info("server.started", {host: application.options.host, port: server.port})
         return server
     catch error:
-        await services.close()
+        await application.close()
         throw error
