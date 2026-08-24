@@ -43,7 +43,7 @@
     "@velarscript-labs/yaml": "0.1.1"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.14.0",
-    "@velarscript/node": "0.14.0"
+    "@velarscript/cli": "0.14.3",
+    "@velarscript/node": "0.14.3"
   }
 }
