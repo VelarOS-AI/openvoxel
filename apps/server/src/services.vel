@@ -1,0 +1,95 @@
+import {WorldRuntime} from "@openvoxel/world-runtime"
+import {provide} from "velar/serve"
+import {RealtimeHub, realtimeHub} from "./adapters/realtime-hub.vel"
+
+export type OpenVoxelServerOptions:
+    host: string
+    port: number
+    logger: bool
+    bodyLimit: number
+    corsAllowedOrigins: List<string>
+    maxMessageBytes: number
+    maxQueuedMessages: number
+    maxQueuedBytes: number
+    maxPendingSendBytes: number
+    maxConnections: number
+
+type AccessLogEntry:
+    method: string
+    path: string
+    status: number
+    durationMs: number
+
+export type OpenVoxelServices:
+    runtime: WorldRuntime
+    options: OpenVoxelServerOptions
+    realtime: RealtimeHub
+    info: (message: string, context: unknown) -> null
+    warn: (message: string, context: unknown) -> null
+    access: (entry: AccessLogEntry) -> null
+    beginRealtime: () -> bool
+    endRealtime: () -> null
+    close: () -> Promise<null>
+
+export def openVoxelServices(runtime: WorldRuntime, options: OpenVoxelServerOptions) -> OpenVoxelServices:
+    let realtimeHandlers = 0
+    let closing = false
+    let closed = false
+
+    def log(level: string, message: string, context: unknown):
+        if options.logger:
+            print(Json.stringify({level, message, context}))
+
+    def info(message: string, context: unknown):
+        log("info", message, context)
+
+    def warn(message: string, context: unknown):
+        log("warn", message, context)
+
+    def access(entry: AccessLogEntry):
+        info("http.request", entry)
+
+    def beginRealtime() -> bool:
+        if closing or realtimeHandlers >= options.maxConnections:
+            return false
+        realtimeHandlers += 1
+        return true
+
+    def endRealtime():
+        assert realtimeHandlers > 0 else "Realtime handler accounting underflowed"
+        realtimeHandlers -= 1
+
+    async def close():
+        if closing:
+            while not closed:
+                await Promise.sleep(10ms)
+            return
+        closing = true
+        while realtimeHandlers > 0:
+            await Promise.sleep(10ms)
+        try:
+            await runtime.close()
+        finally:
+            closed = true
+
+    const realtime = realtimeHub(warn)
+    return {runtime, options, realtime, info, warn, access, beginRealtime, endRealtime, close}
+
+let activeServices: OpenVoxelServices? = null
+
+export def requireActiveServices() -> OpenVoxelServices:
+    assert activeServices != null else "OpenVoxel services are not active"
+    return activeServices
+
+export def activateOpenVoxelServices(services: OpenVoxelServices):
+    assert activeServices == null else "Only one OpenVoxel server can be active in a process"
+    activeServices = services
+
+export async def deactivateOpenVoxelServices(services: OpenVoxelServices):
+    assert activeServices != null else "OpenVoxel services are already inactive"
+    activeServices = null
+    await services.close()
+
+/// Static route tables resolve this single application-scoped capability. The
+/// lifecycle above remains the only owner of the active process instance.
+export const openVoxelServicesProvider = provide(inputs={}, resolve=async values => requireActiveServices(), scope="app")

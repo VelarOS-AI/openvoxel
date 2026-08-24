@@ -1,8 +1,10 @@
 import {requireChunkEdge} from "./coordinates.vel"
+import {blockCatalogVersion, blockIdMapHash} from "@openvoxel/blocks"
 
 export const worldFormatVersion = 1
 export const initialChunkEdge = 16
 export const defaultGenerator = "openvoxel:survival-v1"
+export const maximumChunkBatchSize = 64
 
 export type CreateWorld:
     id: string
@@ -13,6 +15,18 @@ export type WorldManifest extends CreateWorld:
     formatVersion: number
     chunkEdge: number
     generator: string
+    blockCatalogVersion: string
+    blockIdMapHash: string
+
+export class WorldBlockCatalogMismatchError extends Error:
+    constructor(
+        const worldId: string,
+        const actualCatalogVersion: string,
+        const actualIdMapHash: string,
+        const expectedCatalogVersion: string = blockCatalogVersion,
+        const expectedIdMapHash: string = blockIdMapHash,
+    ):
+        super(f"World '{worldId}' uses block catalog {actualCatalogVersion}/{actualIdMapHash}; this server requires {expectedCatalogVersion}/{expectedIdMapHash}")
 
 def requireBoundedText(value: string, label: string, maximum: number):
     assert not value.isBlank() else f"{label} cannot be blank"
@@ -26,6 +40,8 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     requireChunkEdge(manifest.chunkEdge)
     assert manifest.chunkEdge == initialChunkEdge else "World format v1 requires a chunk edge of 16"
     assert manifest.generator == defaultGenerator else "Unsupported world generator"
+    if manifest.blockCatalogVersion != blockCatalogVersion or manifest.blockIdMapHash != blockIdMapHash:
+        throw WorldBlockCatalogMismatchError(manifest.id, manifest.blockCatalogVersion, manifest.blockIdMapHash)
     return manifest
 
 export def createWorldManifest(command: CreateWorld) -> WorldManifest:
@@ -36,4 +52,6 @@ export def createWorldManifest(command: CreateWorld) -> WorldManifest:
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
+        blockCatalogVersion,
+        blockIdMapHash,
     })

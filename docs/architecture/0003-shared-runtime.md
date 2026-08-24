@@ -2,7 +2,7 @@
 
 状态：已接受
 
-`@openvoxel/world-runtime` 是客户端面对的统一应用接口。它只依赖 `@openvoxel/domain` 和由 `WorldManifestStore`、`WorldDeltaStore` 组成的 `WorldStore` 端口，不知道 SQLite、IndexedDB、HTTP 或 WebSocket。清单存储拥有世界种子和生成器版本；差异存储只拥有修改过的方块和 Chunk revision。
+`@openvoxel/world-runtime` 是客户端面对的统一应用接口。它只依赖 `@openvoxel/domain` 和由 `WorldManifestStore`、`WorldDeltaStore` 组成的 `WorldStore` 端口，不知道 SQLite、IndexedDB、HTTP 或 WebSocket。清单存储拥有世界种子、生成器版本与方块 ID 映射身份；差异存储只拥有修改过的方块和 Chunk revision。
 
 当前 Node 组合使用 SQLite：
 
@@ -13,7 +13,11 @@ WorldRuntime
        ↓
 WorldManifestStore + WorldDeltaStore
        ↓
-SQLite
+OpenVoxel operations + schema
+       ↓
+@velarscript-labs/database executor
+       ↓
+@velarscript-labs/sqlite
 ```
 
 未来浏览器单机组合复用同一个 `WorldRuntime`，只替换存储和调用适配器：

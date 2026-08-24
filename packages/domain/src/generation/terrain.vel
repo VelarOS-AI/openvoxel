@@ -1,8 +1,22 @@
-import {simplex2, simplex3} from "@velarscript/noise"
+import {simplex2, simplex3} from "@velarscript-labs/noise"
 import {random} from "velar/random"
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {airBlock, basaltBlock, clayBlock, dirtBlock, graniteBlock, grassBlock, gravelBlock, iceBlock, limestoneBlock, sandBlock, sandstoneBlock, stoneBlock, waterBlock} from "@openvoxel/blocks"
+import {blockId} from "@openvoxel/blocks"
 import {Coordinate2, requireCoordinate2} from "../coordinates.vel"
+
+const airBlock = blockId("openvoxel:air")
+const basaltBlock = blockId("openvoxel:basalt")
+const clayBlock = blockId("openvoxel:clay")
+const dirtBlock = blockId("openvoxel:dirt")
+const graniteBlock = blockId("openvoxel:granite")
+const grassBlock = blockId("openvoxel:grass")
+const gravelBlock = blockId("openvoxel:gravel")
+const iceBlock = blockId("openvoxel:ice")
+const limestoneBlock = blockId("openvoxel:limestone")
+const sandBlock = blockId("openvoxel:sand")
+const sandstoneBlock = blockId("openvoxel:sandstone")
+const stoneBlock = blockId("openvoxel:stone")
+const waterBlock = blockId("openvoxel:water")
 
 export const minimumWorldY = 0
 export const maximumWorldY = 255
@@ -270,37 +284,41 @@ export def createColumnCache(fields: GenerationFields, minimum: Coordinate2, edg
             surfaceHeights[index] = findSurfaceForSample(fields, sample)
     return {edge, samples, surfaceHeights}
 
-/// Keeps immutable horizontal terrain-column results near one generator. The
-/// cache key deliberately excludes Y because every vertical Chunk at the same
-/// X/Z uses the same samples and exact surface heights.
-export class ColumnPlanner:
-    private const caches: Map<string, ColumnCache> = Map()
-    private let builds: number = 0
+/// The cache is generator-local state kept inside this factory closure. The
+/// key deliberately excludes Y because vertical Chunks share the same columns.
+export type ColumnPlanner:
+    cachedColumnCount: () -> number
+    columnBuildCount: () -> number
+    columns: (chunkX: number, chunkZ: number) -> ColumnCache
 
-    constructor(private const fields: GenerationFields, private const edge: number, private const capacity: number = columnCacheCapacity):
-        assert edge.isInteger() and edge > 0 else "Column planner edge must be a positive integer"
-        assert capacity.isInteger() and capacity > 0 else "Column cache capacity must be a positive integer"
+export def columnPlanner(fields: GenerationFields, edge: number, capacity: number = columnCacheCapacity) -> ColumnPlanner:
+    assert edge.isInteger() and edge > 0 else "Column planner edge must be a positive integer"
+    assert capacity.isInteger() and capacity > 0 else "Column cache capacity must be a positive integer"
+    const caches: Map<string, ColumnCache> = Map()
+    let builds = 0
 
-    get cachedColumnCount() -> number:
-        return self.caches.size
+    def cachedColumnCount() -> number:
+        return caches.size
 
-    get columnBuildCount() -> number:
-        return self.builds
+    def columnBuildCount() -> number:
+        return builds
 
     def columns(chunkX: number, chunkZ: number) -> ColumnCache:
         const key = f"{chunkX}:{chunkZ}"
-        const existing = self.caches.get(key)
+        const existing = caches.get(key)
         if existing != null:
-            self.caches.remove(key)
-            self.caches.set(key, existing)
+            caches.remove(key)
+            caches.set(key, existing)
             return existing
 
-        const cache = createColumnCache(self.fields, {x: chunkX * self.edge, z: chunkZ * self.edge}, self.edge)
-        self.builds += 1
-        if self.caches.size >= self.capacity:
-            self.caches.remove(self.caches.keys()[0])
-        self.caches.set(key, cache)
+        const cache = createColumnCache(fields, {x: chunkX * edge, z: chunkZ * edge}, edge)
+        builds += 1
+        if caches.size >= capacity:
+            caches.remove(caches.keys()[0])
+        caches.set(key, cache)
         return cache
+
+    return {cachedColumnCount, columnBuildCount, columns}
 
 export def temperatureAtHeight(temperature: number, y: number) -> number:
     if y > seaLevel:

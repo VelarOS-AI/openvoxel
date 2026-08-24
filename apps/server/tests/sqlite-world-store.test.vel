@@ -1,0 +1,268 @@
+import {exists, removeFile} from "velar/fs"
+import {openSqlite} from "@velarscript-labs/sqlite"
+import {expect} from "velar/test"
+import {WorldBlockCatalogMismatchError, blockCatalogVersion, blockId, blockIdMapHash, chunkBlock} from "@openvoxel/domain"
+import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
+import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
+
+const dirtBlock = blockId("openvoxel:dirt")
+const stoneBlock = blockId("openvoxel:stone")
+
+type CountRow:
+    count: number
+
+type BlockRow:
+    blockId: number
+
+type SchemaVersionRow:
+    user_version: number
+
+type WorldCatalogIdentityRow:
+    blockCatalogVersion: string
+    blockIdMapHash: string
+
+def testDatabase(path: string) -> SqliteWorldStoreOptions:
+    return {
+        path,
+        busyTimeoutMilliseconds: 2000,
+        queueCapacity: 64,
+        maxRows: 262144,
+        maxResultBytes: 64 * 1024 * 1024,
+    }
+
+async def removeDatabase(path: string):
+    const files = [path, f"{path}-wal", f"{path}-shm"]
+    for file in files:
+        if await exists(file):
+            await removeFile(file)
+
+async def tableCount(path: string, table: string) -> number:
+    using database = await openSqlite(path)
+    const row = await database.one(f"SELECT COUNT(*) AS count FROM {table}", CountRow)
+    assert row != null else f"Expected count for {table}"
+    return row.count
+
+async def legacyChunkTableCount(path: string) -> number:
+    using database = await openSqlite(path)
+    const row = await database.one(
+        "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'chunks'",
+        CountRow,
+    )
+    assert row != null else "Expected SQLite schema count"
+    return row.count
+
+async def singleStoredBlockId(path: string) -> number:
+    using database = await openSqlite(path)
+    const row = await database.one("SELECT block_id AS blockId FROM block_overrides", BlockRow)
+    assert row != null else "Expected one stored block override"
+    return row.blockId
+
+async def schemaVersion(path: string) -> number:
+    using database = await openSqlite(path)
+    const row = await database.one("PRAGMA user_version", SchemaVersionRow)
+    assert row != null else "Expected SQLite schema version"
+    return row.user_version
+
+async def storedCatalogIdentity(path: string) -> WorldCatalogIdentityRow:
+    using database = await openSqlite(path)
+    const row = await database.one(
+        "SELECT block_catalog_version AS blockCatalogVersion, block_id_map_hash AS blockIdMapHash FROM worlds LIMIT 1",
+        WorldCatalogIdentityRow,
+    )
+    assert row != null else "Expected stored block catalog identity"
+    return row
+
+test "SQLite adapter does not persist generated chunks":
+    const databasePath = "openvoxel-generated-chunks-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const store = await sqliteWorldStore(testDatabase(databasePath))
+        const runtime = worldRuntime(store)
+        try:
+            await runtime.createWorld({id: "generated-only", name: "Generated Only", seed: "openvoxel"})
+            const chunks = await runtime.chunks("generated-only", [
+                {x: 0, y: 0, z: 0},
+                {x: -1, y: 1, z: 2},
+                {x: 8, y: 3, z: -5},
+            ])
+            expect(chunks.size).toBe(3)
+        finally:
+            await runtime.close()
+
+        expect(await tableCount(databasePath, "chunk_states")).toBe(0)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(0)
+        expect(await legacyChunkTableCount(databasePath)).toBe(0)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter restores sparse overrides and removes a reverted override":
+    const databasePath = "openvoxel-block-overrides-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const firstStore = await sqliteWorldStore(testDatabase(databasePath))
+        const firstRuntime = worldRuntime(firstStore)
+        let baseBlockId = 0
+        let replacementBlockId = 0
+        try:
+            await firstRuntime.createWorld({id: "persistent", name: "Persistent", seed: "sqlite-seed"})
+            const before = await firstRuntime.chunk("persistent", {x: -1, y: 1, z: 2})
+            baseBlockId = chunkBlock(before, {x: 15, y: 14, z: 0})
+            replacementBlockId = baseBlockId == stoneBlock ? dirtBlock : stoneBlock
+            const change = await firstRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, replacementBlockId)
+            expect(change.previousBlockId).toBe(baseBlockId)
+            expect(change.revision).toBe(1)
+            const repeated = await firstRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, replacementBlockId)
+            expect(repeated.revision).toBe(1)
+        finally:
+            await firstRuntime.close()
+
+        expect(await tableCount(databasePath, "chunk_states")).toBe(1)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(1)
+        expect(await singleStoredBlockId(databasePath)).toBe(replacementBlockId)
+
+        const reopenedStore = await sqliteWorldStore(testDatabase(databasePath))
+        const reopenedRuntime = worldRuntime(reopenedStore)
+        try:
+            const manifest = await reopenedRuntime.requireWorld("persistent")
+            const restored = await reopenedRuntime.chunk("persistent", {x: -1, y: 1, z: 2})
+            expect(manifest.seed).toBe("sqlite-seed")
+            expect(restored.revision).toBe(1)
+            expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockId)
+
+            const reverted = await reopenedRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, baseBlockId)
+            expect(reverted.previousBlockId).toBe(replacementBlockId)
+            expect(reverted.revision).toBe(2)
+        finally:
+            await reopenedRuntime.close()
+
+        expect(await tableCount(databasePath, "chunk_states")).toBe(1)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(0)
+        expect(await legacyChunkTableCount(databasePath)).toBe(0)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter serializes concurrent block transactions":
+    const databasePath = "openvoxel-concurrent-overrides-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const store = await sqliteWorldStore(testDatabase(databasePath))
+        const runtime = worldRuntime(store)
+        try:
+            await runtime.createWorld({id: "concurrent", name: "Concurrent", seed: "openvoxel"})
+            const before = await runtime.chunk("concurrent", {x: 0, y: 1, z: 0})
+            const tasks: List<Promise<BlockChange>> = []
+            const replacements: List<number> = []
+            for x in range(16):
+                const baseBlockId = chunkBlock(before, {x, y: 14, z: 0})
+                const replacementBlockId = baseBlockId == stoneBlock ? dirtBlock : stoneBlock
+                replacements.append(replacementBlockId)
+                tasks.append(runtime.setBlock("concurrent", {x, y: 30, z: 0}, replacementBlockId))
+
+            const changes = await Promise.all(tasks)
+            expect(changes.size).toBe(16)
+            const after = await runtime.chunk("concurrent", {x: 0, y: 1, z: 0})
+            expect(after.revision).toBe(16)
+            for x in range(16):
+                expect(chunkBlock(after, {x, y: 14, z: 0})).toBe(replacements[x])
+        finally:
+            await runtime.close()
+
+        expect(await tableCount(databasePath, "chunk_states")).toBe(1)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(16)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter migrates legacy worlds and backfills the current block id mapping":
+    const databasePath = "openvoxel-legacy-catalog-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        using legacy = await openSqlite(databasePath)
+        await legacy.execute(
+            "CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL)",
+        )
+        await legacy.execute(
+            "INSERT INTO worlds (id, name, seed, format_version, chunk_edge, generator) VALUES (?, ?, ?, ?, ?, ?)",
+            ["legacy", "Legacy", "legacy-seed", 1, 16, "openvoxel:survival-v1"],
+        )
+
+        const store = await sqliteWorldStore(testDatabase(databasePath))
+        const runtime = worldRuntime(store)
+        try:
+            const manifest = await runtime.requireWorld("legacy")
+            expect(manifest.blockCatalogVersion).toBe(blockCatalogVersion)
+            expect(manifest.blockIdMapHash).toBe(blockIdMapHash)
+        finally:
+            await runtime.close()
+
+        expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion)
+        const identity = await storedCatalogIdentity(databasePath)
+        expect(identity.blockCatalogVersion).toBe(blockCatalogVersion)
+        expect(identity.blockIdMapHash).toBe(blockIdMapHash)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter rejects a world created with a different block id mapping":
+    const databasePath = "openvoxel-catalog-mismatch-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const firstStore = await sqliteWorldStore(testDatabase(databasePath))
+        const firstRuntime = worldRuntime(firstStore)
+        try:
+            await firstRuntime.createWorld({id: "mismatch", name: "Mismatch", seed: "openvoxel"})
+        finally:
+            await firstRuntime.close()
+
+        using database = await openSqlite(databasePath)
+        await database.execute("UPDATE worlds SET block_id_map_hash = ? WHERE id = ?", ["different-id-map", "mismatch"])
+
+        let rejected = false
+        try:
+            const incompatible = await sqliteWorldStore(testDatabase(databasePath))
+            await incompatible.close()
+        catch error:
+            rejected = error is WorldBlockCatalogMismatchError
+        expect(rejected).toBe(true)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter rejects unknown persisted block ids during startup":
+    const databasePath = "openvoxel-unknown-block-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const firstStore = await sqliteWorldStore(testDatabase(databasePath))
+        const firstRuntime = worldRuntime(firstStore)
+        try:
+            await firstRuntime.createWorld({id: "unknown", name: "Unknown", seed: "openvoxel"})
+            await firstRuntime.setBlock("unknown", {x: 0, y: 30, z: 0}, dirtBlock)
+        finally:
+            await firstRuntime.close()
+
+        using database = await openSqlite(databasePath)
+        await database.execute("UPDATE block_overrides SET block_id = 65535")
+
+        let rejected = false
+        try:
+            const incompatible = await sqliteWorldStore(testDatabase(databasePath))
+            await incompatible.close()
+        catch error:
+            rejected = error.message.has("Stored block id 65535")
+        expect(rejected).toBe(true)
+    finally:
+        await removeDatabase(databasePath)
+
+test "SQLite adapter rejects databases created by a newer server schema":
+    const databasePath = "openvoxel-newer-schema-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        using database = await openSqlite(databasePath)
+        await database.execute("PRAGMA user_version = 999")
+
+        let rejected = false
+        try:
+            const incompatible = await sqliteWorldStore(testDatabase(databasePath))
+            await incompatible.close()
+        catch error:
+            rejected = error.message.has("newer than supported")
+        expect(rejected).toBe(true)
+    finally:
+        await removeDatabase(databasePath)

@@ -1,0 +1,60 @@
+/// Focused baseline for the bounded cave-plan cache. A capacity of one models
+/// repeated owner reconstruction; the production capacity demonstrates reuse
+/// across adjacent and vertically stacked chunks without changing checksums.
+
+import {monotonic} from "velar/time"
+import {blockId} from "@openvoxel/blocks"
+import {Chunk, chunkChecksum, emptyChunk} from "../src/chunk.vel"
+import {ChunkPosition} from "../src/coordinates.vel"
+import {carveCaves, cavePlanner} from "../src/generation/features.vel"
+import {createGenerationFields} from "../src/generation/terrain.vel"
+
+const stoneBlock = blockId("openvoxel:stone")
+
+type CaveBenchmarkResult:
+    averageMs: number
+    checksum: number
+    chunks: number
+    planBuilds: number
+    totalMs: number
+
+const seed = "openvoxel-benchmark"
+const positions: List<ChunkPosition> = []
+for y in range(2, 6):
+    for x in range(-6, 6):
+        for z in range(-2, 2):
+            positions.append({x, y, z})
+
+def rockChunk(position: ChunkPosition) -> Chunk:
+    const chunk = emptyChunk(position, 16)
+    for index in range(chunk.blocks.size):
+        chunk.blocks[index] = stoneBlock
+    return chunk
+
+def measure(capacity: number) -> CaveBenchmarkResult:
+    const planner = cavePlanner(createGenerationFields(seed), seed, capacity)
+    const started = monotonic()
+    let checksum = 0
+    for position in positions:
+        const chunk = rockChunk(position)
+        carveCaves(chunk, planner)
+        checksum = (checksum ^ chunkChecksum(chunk)) >>> 0
+    const totalMs = monotonic() - started
+    return {
+        averageMs: totalMs / positions.size,
+        checksum,
+        chunks: positions.size,
+        planBuilds: planner.planBuildCount(),
+        totalMs,
+    }
+
+// Warm both paths before reporting so compiler and runtime startup do not favor
+// the second measurement.
+measure(1)
+measure(256)
+
+const replayed = measure(1)
+const cached = measure(256)
+assert replayed.checksum == cached.checksum else "Cave plan caching changed generated blocks"
+print(f"caves replayed chunks={replayed.chunks} totalMs={replayed.totalMs.round()} averageMs={replayed.averageMs} planBuilds={replayed.planBuilds} checksum={replayed.checksum}")
+print(f"caves cached chunks={cached.chunks} totalMs={cached.totalMs.round()} averageMs={cached.averageMs} planBuilds={cached.planBuilds} checksum={cached.checksum}")

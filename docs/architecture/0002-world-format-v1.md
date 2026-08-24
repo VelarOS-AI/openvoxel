@@ -21,6 +21,7 @@
 
 - `formatVersion` 控制磁盘和领域格式，目前为 1。
 - `generator` 固定为 `openvoxel:survival-v1`。生成器名字携带算法版本，算法语义变化必须使用新名字，不能悄悄改变已有世界。
+- `blockCatalogVersion` 与 `blockIdMapHash` 固定世界中 UInt16 数字所代表的方块 key；目录不匹配时拒绝加载，不能猜测或静默替换。
 - v1 的可生成世界高度为 `0..255`，海平面为 64；这是世界边界，不改变 Chunk 仍为 16³ 的事实。
 - 每个 Chunk 独立维护 `revision`；只有方块值真实变化时才递增。
 - 持久化只记录相对生成结果的方块覆盖；方块恢复为生成值时删除该覆盖。

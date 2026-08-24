@@ -1,8 +1,45 @@
 import {Random, random} from "velar/random"
 import {Chunk} from "../chunk.vel"
-import {airBlock, basaltBlock, birchLeavesBlock, birchLogBlock, cactusBlock, clayBlock, coalOreBlock, copperOreBlock, diamondOreBlock, dirtBlock, dryBushBlock, germaniumOreBlock, grassBlock, gravelBlock, ironOreBlock, isNaturalRock, limestoneBlock, magmaBlock, mimosaLeavesBlock, mimosaLogBlock, oakLeavesBlock, oakLogBlock, poplarLeavesBlock, poplarLogBlock, purpleFlowerBlock, redFlowerBlock, saltpeterOreBlock, sandBlock, sandstoneBlock, snowBlock, spruceLeavesBlock, spruceLogBlock, stoneBlock, sulphurOreBlock, tallGrassBlock, waterBlock, whiteFlowerBlock} from "@openvoxel/blocks"
+import {blockId, isNaturalRock} from "@openvoxel/blocks"
 import {Coordinate2, Coordinate3} from "../coordinates.vel"
 import {ColumnCache, GenerationFields, TerrainSample, findSurfaceY, maximumWorldY, minimumWorldY, sampleTerrainWithFields, seaLevel, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+
+const airBlock = blockId("openvoxel:air")
+const basaltBlock = blockId("openvoxel:basalt")
+const birchLeavesBlock = blockId("openvoxel:birch_leaves")
+const birchLogBlock = blockId("openvoxel:birch_log")
+const cactusBlock = blockId("openvoxel:cactus")
+const clayBlock = blockId("openvoxel:clay")
+const coalOreBlock = blockId("openvoxel:coal_ore")
+const copperOreBlock = blockId("openvoxel:copper_ore")
+const diamondOreBlock = blockId("openvoxel:diamond_ore")
+const dirtBlock = blockId("openvoxel:dirt")
+const dryBushBlock = blockId("openvoxel:dry_bush")
+const germaniumOreBlock = blockId("openvoxel:germanium_ore")
+const grassBlock = blockId("openvoxel:grass")
+const gravelBlock = blockId("openvoxel:gravel")
+const ironOreBlock = blockId("openvoxel:iron_ore")
+const limestoneBlock = blockId("openvoxel:limestone")
+const magmaBlock = blockId("openvoxel:magma")
+const mimosaLeavesBlock = blockId("openvoxel:mimosa_leaves")
+const mimosaLogBlock = blockId("openvoxel:mimosa_log")
+const oakLeavesBlock = blockId("openvoxel:oak_leaves")
+const oakLogBlock = blockId("openvoxel:oak_log")
+const poplarLeavesBlock = blockId("openvoxel:poplar_leaves")
+const poplarLogBlock = blockId("openvoxel:poplar_log")
+const purpleFlowerBlock = blockId("openvoxel:purple_flower")
+const redFlowerBlock = blockId("openvoxel:red_flower")
+const saltpeterOreBlock = blockId("openvoxel:saltpeter_ore")
+const sandBlock = blockId("openvoxel:sand")
+const sandstoneBlock = blockId("openvoxel:sandstone")
+const snowBlock = blockId("openvoxel:snow")
+const spruceLeavesBlock = blockId("openvoxel:spruce_leaves")
+const spruceLogBlock = blockId("openvoxel:spruce_log")
+const stoneBlock = blockId("openvoxel:stone")
+const sulphurOreBlock = blockId("openvoxel:sulphur_ore")
+const tallGrassBlock = blockId("openvoxel:tall_grass")
+const waterBlock = blockId("openvoxel:water")
+const whiteFlowerBlock = blockId("openvoxel:white_flower")
 
 type CaveBounds:
     minimumX: number
@@ -143,23 +180,25 @@ def finishCavePlan(spheres: List<number>) -> CavePlan:
         maximumZ = Math.max(maximumZ, (z + radius).ceil())
     return {bounds: {minimumX, maximumX, minimumY, maximumY, minimumZ, maximumZ}, spheres}
 
-export class CavePlanner:
-    private const root: Random
-    private const plans: Map<string, CavePlan> = Map()
-    private let builds: number = 0
+export type CavePlanner:
+    cachedPlanCount: () -> number
+    planBuildCount: () -> number
+    plan: (cellX: number, cellZ: number) -> CavePlan
 
-    constructor(private const fields: GenerationFields, seed: string, private const capacity: number = cavePlanCacheCapacity):
-        assert capacity > 0 else "Cave plan cache capacity must be positive"
-        self.root = random(seed).fork("caves")
+export def cavePlanner(fields: GenerationFields, seed: string, capacity: number = cavePlanCacheCapacity) -> CavePlanner:
+    assert capacity.isInteger() and capacity > 0 else "Cave plan cache capacity must be a positive integer"
+    const root = random(seed).fork("caves")
+    const plans: Map<string, CavePlan> = Map()
+    let builds = 0
 
-    get cachedPlanCount() -> number:
-        return self.plans.size
+    def cachedPlanCount() -> number:
+        return plans.size
 
-    get planBuildCount() -> number:
-        return self.builds
+    def planBuildCount() -> number:
+        return builds
 
     def build(cellX: number, cellZ: number) -> CavePlan:
-        const owner = self.root.fork(f"{cellX}:{cellZ}")
+        const owner = root.fork(f"{cellX}:{cellZ}")
         const spheres: List<number> = []
         if not owner.bool(0.5):
             return finishCavePlan(spheres)
@@ -168,7 +207,7 @@ export class CavePlanner:
         const centerZ = cellZ * caveCellSize + caveCellSize / 2
         const startX = cellX * caveCellSize + owner.int(0, caveCellSize)
         const startZ = cellZ * caveCellSize + owner.int(0, caveCellSize)
-        const topY = findSurfaceY(self.fields, {x: startX, z: startZ})
+        const topY = findSurfaceY(fields, {x: startX, z: startZ})
         if topY <= 13:
             return finishCavePlan(spheres)
 
@@ -182,18 +221,20 @@ export class CavePlanner:
 
     def plan(cellX: number, cellZ: number) -> CavePlan:
         const ownerKey = f"{cellX}:{cellZ}"
-        const existing = self.plans.get(ownerKey)
+        const existing = plans.get(ownerKey)
         if existing != null:
-            self.plans.remove(ownerKey)
-            self.plans.set(ownerKey, existing)
+            plans.remove(ownerKey)
+            plans.set(ownerKey, existing)
             return existing
 
-        const plan = self.build(cellX, cellZ)
-        self.builds += 1
-        if self.plans.size >= self.capacity:
-            self.plans.remove(self.plans.keys()[0])
-        self.plans.set(ownerKey, plan)
-        return plan
+        const built = build(cellX, cellZ)
+        builds += 1
+        if plans.size >= capacity:
+            plans.remove(plans.keys()[0])
+        plans.set(ownerKey, built)
+        return built
+
+    return {cachedPlanCount, planBuildCount, plan}
 
 export def carveCaves(chunk: Chunk, planner: CavePlanner):
     const minimumX = chunkMinimumX(chunk)

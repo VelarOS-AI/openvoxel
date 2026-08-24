@@ -6,12 +6,9 @@
   "type": "module",
   "workspaces": [
     "packages/blocks",
-    "packages/config",
     "packages/domain",
-    "packages/backend",
     "packages/protocol",
     "packages/world-runtime",
-    "packages/npm/*",
     "apps/*"
   ],
   "engines": {
@@ -19,6 +16,8 @@
   },
   "scripts": {
     "generate": "npm run generate --workspaces --if-present",
+    "generate:check": "npm run generate:check --workspaces --if-present",
+    "structure:check": "node tools/check-layout.mjs",
     "check": "npm run check --workspaces --if-present",
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
@@ -29,16 +28,14 @@
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/domain",
     "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/domain",
     "benchmark:columns": "npm run benchmark:columns --workspace @openvoxel/domain",
-    "validate": "npm run generate && npm run format:check && npm run check && npm test && npm run build"
+    "validate": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check && npm run check && npm test && npm run build"
   },
   "dependencies": {
-    "@openvoxel/backend": "0.1.0",
     "@openvoxel/domain": "0.1.0",
     "@openvoxel/protocol": "0.1.0",
     "@openvoxel/world-runtime": "0.1.0"
   },
   "devDependencies": {
-    "@openvoxel/fast-check": "0.1.0",
-    "@velarscript/cli": "0.10.4"
+    "@velarscript/cli": "0.13.0"
   }
 }

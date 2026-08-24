@@ -1,21 +1,28 @@
 import {get} from "velar/env"
-import {onShutdown} from "velar/host"
-import {appName, createOpenVoxelServer} from "./app.vel"
+import {WebSocketServer} from "velar/websocket"
+import {appName, startOpenVoxelServer} from "./app.vel"
 import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
-import {backendOptions, loadOpenVoxelConfiguration, withEnvironmentOverrides} from "./config.vel"
-import {WorldRuntime} from "@openvoxel/world-runtime"
+import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
+import {blockCatalogHash, blockCatalogVersion, blockIdMapHash} from "@openvoxel/domain"
+import {worldRuntime} from "@openvoxel/world-runtime"
+import {openVoxelServices} from "./services.vel"
 
-const configurationPath = get("OPENVOXEL_CONFIG") ?? "config/server.yml"
-const configuration = withEnvironmentOverrides(await loadOpenVoxelConfiguration(configurationPath))
+const configurationPath = resolveServerPath(get("OPENVOXEL_CONFIG") ?? "config/server.yml")
+const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configurationPath)))
 const store = await sqliteWorldStore(configuration.database)
-const runtime = WorldRuntime(store)
-const server = await createOpenVoxelServer(runtime, backendOptions(configuration))
-const address = await server.listen(configuration.server.host, configuration.server.port)
+const services = openVoxelServices(worldRuntime(store), serverOptions(configuration))
 
-async def shutdown():
-    await server.close()
-    await runtime.close()
-
-onShutdown(shutdown)
-server.info("server.started", {host: address.host, port: address.port, databasePath: configuration.database.path, configurationPath})
-print(f"{appName} is running at http://{address.host}:{address.port}")
+// The application YAML remains the deployment authority. The Node launcher
+// arguments mirror its checked defaults so dev, serve, and build share one
+// startup shape without introducing a second runtime configuration source.
+export async def start(_host: string, _port: number, _maxBodyBytes: number) -> WebSocketServer:
+    const server = await startOpenVoxelServer(services)
+    services.info("server.configuration", {
+        databasePath: configuration.database.path,
+        configurationPath,
+        blockCatalogVersion,
+        blockIdMapHash: blockIdMapHash.slice(0, 12),
+        blockCatalogHash: blockCatalogHash.slice(0, 12),
+    })
+    print(f"{appName} is running at http://{configuration.server.host}:{server.port}")
+    return server

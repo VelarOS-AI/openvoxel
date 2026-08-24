@@ -1,6 +1,8 @@
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {airBlock, requireBlockId} from "@openvoxel/blocks"
+import {blockId, requireBlockId} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, requireChunkEdge, requireChunkPosition} from "./coordinates.vel"
+
+const airBlock = blockId("openvoxel:air")
 
 export def chunkVolume(edge: number) -> number:
     requireChunkEdge(edge)
@@ -14,24 +16,30 @@ export def blockIndex(local: LocalPosition, edge: number) -> number:
     assert local.z >= 0 and local.z < edge else "Local z is outside the chunk"
     return local.x + edge * (local.z + edge * local.y)
 
-export class Chunk:
-    constructor(const position: ChunkPosition, const edge: number, const blocks: UInt16Buffer, let revision: number = 0):
-        requireChunkPosition(position)
-        requireChunkEdge(edge)
-        assert blocks.size == chunkVolume(edge) else "Chunk block storage has the wrong size"
-        assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
+export type Chunk:
+    position: ChunkPosition
+    edge: number
+    blocks: UInt16Buffer
+    revision: number
 
-    def get(local: LocalPosition) -> number:
-        return self.blocks[blockIndex(local, self.edge)]
+export def chunk(position: ChunkPosition, edge: number, blocks: UInt16Buffer, revision: number = 0) -> Chunk:
+    requireChunkPosition(position)
+    requireChunkEdge(edge)
+    assert blocks.size == chunkVolume(edge) else "Chunk block storage has the wrong size"
+    assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
+    return {position, edge, blocks, revision}
 
-    def set(local: LocalPosition, blockId: number) -> number:
-        requireBlockId(blockId)
-        const index = blockIndex(local, self.edge)
-        const previous = self.blocks[index]
-        if previous != blockId:
-            self.blocks[index] = blockId
-            self.revision += 1
-        return previous
+export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number:
+    return chunk.blocks[blockIndex(local, chunk.edge)]
+
+export def setChunkBlock(chunk: Chunk, local: LocalPosition, nextBlockId: number) -> number:
+    requireBlockId(nextBlockId)
+    const index = blockIndex(local, chunk.edge)
+    const previous = chunk.blocks[index]
+    if previous != nextBlockId:
+        chunk.blocks[index] = nextBlockId
+        chunk.revision += 1
+    return previous
 
 export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airBlock) -> Chunk:
     requireBlockId(fill)
@@ -39,7 +47,7 @@ export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airB
     if fill != airBlock:
         for index in range(blocks.size):
             blocks[index] = fill
-    return Chunk(position, edge, blocks)
+    return chunk(position, edge, blocks)
 
 export def chunkChecksum(chunk: Chunk) -> number:
     let checksum = 0x6d2b79f5

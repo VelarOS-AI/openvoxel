@@ -6,7 +6,7 @@
 
 生成世界是由 `seed + generator + ChunkPosition` 唯一决定的可重建数据，完整 Chunk 永远不写入数据库。持久化只保存：
 
-- 世界清单中的种子、格式版本、Chunk 边长和生成器版本。
+- 世界清单中的种子、格式版本、Chunk 边长、生成器版本、方块目录版本和 ID 映射哈希。
 - 相对生成结果发生变化的方块覆盖。
 - 修改过的 Chunk 的单调 revision。
 
@@ -27,7 +27,11 @@
 
 `chunk_states` 以世界 ID 和 Chunk 坐标为复合主键，只保存 revision。`block_overrides` 在此基础上增加局部坐标复合主键，只保存方块 ID。数据库没有完整 Chunk BLOB 表。
 
-SQLite 适配器拥有一个长生命周期连接。批量 Chunk 查询使用一个带坐标集合的联表查询返回全部相关 revision 和覆盖；单方块变更使用一个事务原子比较、更新覆盖并推进 revision。同一连接的操作通过应用层 `async-mutex` 窄桥排队，避免 HTTP 并发请求插入活动事务；这项并发能力不进入 VelarScript 标准库。领域坐标始终作为对象传递，只有 SQL 映射边界把它展开为列。
+SQLite 适配器拥有一个长生命周期连接。批量 Chunk 查询使用一个带坐标集合的联表查询返回全部相关 revision 和覆盖；单方块变更使用一个事务原子比较、更新覆盖并推进 revision。`@velarscript-labs/sqlite` 在 Worker 边界串行化同一连接的操作，并让事务回调独占一个作用域句柄；事务回调误用外层连接会立即失败而不是死锁。OpenVoxel 不再维护额外互斥锁。
+
+SQLite 与业务之间使用 `@velarscript-labs/database` 的通用处理层。OpenVoxel 把每项操作声明为参数化 command 或带 runtime row type 的 query，显式写出单项行数上限和受影响行数约束；驱动只暴露 `execute/one/all` 执行器。它不是 ORM，不拥有实体、关系、schema 推导、查询构造或迁移语言。世界表、目录兼容、动态 Chunk 坐标查询和 revision 事务全部留在应用适配器。领域坐标始终作为对象传递，只有 SQL 映射边界把它展开为列。
+
+SQLite 使用 `PRAGMA user_version` 管理应用 schema。版本 2 为世界表增加方块目录身份；版本 0/1 的既有世界按已发布的 `openvoxel:base-v1` 映射回填。服务启动时先拒绝更高 schema、目录身份不匹配和未知/已退役的持久化方块 ID，再开始监听网络。
 
 ## 取舍
 

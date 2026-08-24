@@ -1,0 +1,20 @@
+import {expect} from "velar/test"
+import {emptyChunk} from "../../src/chunk.vel"
+import {carveCaves, cavePlanner} from "../../src/generation/features.vel"
+import {createGenerationFields} from "../../src/generation/terrain.vel"
+
+test "cave plans are reused across adjacent and vertical chunks":
+    const seed = "cave-plan-cache"
+    const planner = cavePlanner(createGenerationFields(seed), seed)
+
+    carveCaves(emptyChunk({x: 0, y: 3, z: 0}, 16), planner)
+    expect(planner.planBuildCount()).toBe(49)
+    expect(planner.cachedPlanCount()).toBe(49)
+
+    carveCaves(emptyChunk({x: 0, y: 4, z: 0}, 16), planner)
+    expect(planner.planBuildCount()).toBe(49)
+    expect(planner.cachedPlanCount()).toBe(49)
+
+    carveCaves(emptyChunk({x: 1, y: 4, z: 0}, 16), planner)
+    expect(planner.planBuildCount()).toBe(56)
+    expect(planner.cachedPlanCount()).toBe(56)

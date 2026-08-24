@@ -1,0 +1,278 @@
+import {Bytes} from "velar/binary"
+import {TestResponse, client} from "velar/server-test"
+import {connect} from "velar/websocket"
+import {encode, parse} from "@velarscript-labs/msgpack"
+import {expect} from "velar/test"
+import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
+import {createOpenVoxelApp, startOpenVoxelServer} from "../src/server.vel"
+import {OpenVoxelServerOptions, OpenVoxelServices, openVoxelServices} from "../src/services.vel"
+import {WorldManifest, blockId} from "@openvoxel/domain"
+import {ApiResponse, BlockCatalogResponse, BlockChangedEvent, ChunkBatchResponse, ChunkResponse, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, WorldBootstrapResponse} from "@openvoxel/protocol"
+import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+
+extern js()`
+    import WebSocket from "ws"
+
+    export function rejectedWebSocketStatus(url, origin) {
+        return new Promise((resolveStatus, rejectStatus) => {
+            const socket = new WebSocket(url, {origin})
+            let settled = false
+            const finish = action => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                action()
+            }
+            const timer = setTimeout(() => finish(() => rejectStatus(new Error("WebSocket rejection did not settle"))), 5000)
+            socket.once("unexpected-response", (_request, response) => finish(() => {
+                response.resume()
+                resolveStatus(response.statusCode ?? 0)
+            }))
+            socket.once("open", () => finish(() => {
+                socket.close()
+                rejectStatus(new Error("WebSocket Origin was unexpectedly accepted"))
+            }))
+            socket.once("error", error => finish(() => rejectStatus(error)))
+        })
+    }
+`:
+    export def rejectedWebSocketStatus(url: string, origin: string) -> Promise<number>
+
+const stoneBlock = blockId("openvoxel:stone")
+
+type HealthResponse:
+    status: string
+    service: string
+    protocolVersion: number
+
+type RouteFailureData:
+    method: string
+    path: string
+
+type WorldFailureData:
+    worldId: string
+
+async def envelope(response: TestResponse) -> ApiResponse:
+    return ApiResponse.parse(await response.json())
+
+async def testServices() -> OpenVoxelServices:
+    const configuration = await loadOpenVoxelConfiguration("config/server.yml")
+    const configured = serverOptions(configuration, logger=false)
+    const options: OpenVoxelServerOptions = {
+        host: "127.0.0.1",
+        port: 0,
+        logger: false,
+        bodyLimit: configured.bodyLimit,
+        corsAllowedOrigins: configured.corsAllowedOrigins,
+        maxMessageBytes: configured.maxMessageBytes,
+        maxQueuedMessages: configured.maxQueuedMessages,
+        maxQueuedBytes: configured.maxQueuedBytes,
+        maxPendingSendBytes: configured.maxPendingSendBytes,
+        maxConnections: configured.maxConnections,
+    }
+    return openVoxelServices(worldRuntime(memoryWorldStore()), options)
+
+test "native HTTP modules complete the backend vertical slice":
+    const services = await testServices()
+    const api = await client(createOpenVoxelApp(services))
+    try:
+        const healthResponse = await api.get("/api/health")
+        expect(healthResponse.status).toBe(200)
+        const health = HealthResponse.parse((await envelope(healthResponse)).data)
+        expect(health.status).toBe("ready")
+        expect(health.protocolVersion).toBe(1)
+        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("1")
+
+        const contractResponse = await api.get("/api/client-contract")
+        const contract = ClientContractResponse.parse((await envelope(contractResponse)).data)
+        expect(contract.contractVersion).toBe(1)
+        expect(contract.http.routes.queryChunk.path).toBe("/api/chunks/query")
+        expect(contract.chunks.indexOrder).toBe("x + edge * (z + edge * y)")
+        expect(contract.blockCatalog.catalogVersion).toBe("openvoxel:base-v1")
+        expect(contract.limits.requestBodyBytes).toBe(65536)
+        expect(contractResponse.headers.get("cache-control")).toBe("no-store")
+
+        const worldResponse = await api.post("/api/worlds", {json: {
+            id: "transport",
+            name: "Transport",
+            seed: "transport-seed",
+        }})
+        expect(worldResponse.status).toBe(201)
+        const worldEnvelope = await envelope(worldResponse)
+        expect(worldEnvelope.code).toBe("CREATED")
+        const world = WorldManifest.parse(worldEnvelope.data)
+        expect(world.chunkEdge).toBe(16)
+        expect(world.generator).toBe("openvoxel:survival-v1")
+        expect(world.blockIdMapHash.size).toBe(64)
+
+        const duplicateResponse = await api.post("/api/worlds", {json: {
+            id: "transport",
+            name: "Transport",
+            seed: "transport-seed",
+        }})
+        expect(duplicateResponse.status).toBe(409)
+        const duplicate = await envelope(duplicateResponse)
+        expect(duplicate.code).toBe("WorldAlreadyExistsError")
+        expect(WorldFailureData.parse(duplicate.data).worldId).toBe(world.id)
+
+        const catalogResponse = await api.get("/api/blocks")
+        const catalog = BlockCatalogResponse.parse((await envelope(catalogResponse)).data)
+        expect(catalog.schemaVersion).toBe(1)
+        expect(catalog.catalogVersion).toBe("openvoxel:base-v1")
+        expect(catalog.idMapHash).toBe(world.blockIdMapHash)
+        expect(catalog.contentHash.size).toBe(64)
+        expect(catalog.blocks.size).toBe(38)
+        expect(catalog.resources.textures.size).toBe(42)
+        expect(catalog.resources.models).toEqual(["block/cactus"])
+        const catalogEtag = catalogResponse.headers.get("etag")
+        expect(catalogEtag).toBe(f`"{catalog.contentHash}"`)
+        const cachedCatalogResponse = await api.get("/api/blocks", {headers: Map([["if-none-match", catalogEtag ?? ""]])})
+        expect(cachedCatalogResponse.status).toBe(304)
+        expect(cachedCatalogResponse.headers.get("etag")).toBe(catalogEtag)
+
+        const bootstrapResponse = await api.get(f"/api/worlds/{world.id}/bootstrap")
+        const bootstrap = WorldBootstrapResponse.parse((await envelope(bootstrapResponse)).data)
+        expect(bootstrap.protocolVersion).toBe(1)
+        expect(bootstrap.clientContractVersion).toBe(1)
+        expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
+        expect(bootstrap.blockIdMapHash).toBe(world.blockIdMapHash)
+        expect(bootstrap.blockCatalogContentHash).toBe(catalog.contentHash)
+        expect(bootstrap.maximumChunkBatchSize).toBe(64)
+
+        const unknownBlockResponse = await api.post("/api/blocks", {json: {
+            worldId: world.id,
+            position: {x: 0, y: 30, z: 0},
+            blockId: 65535,
+        }})
+        expect(unknownBlockResponse.status).toBe(400)
+        expect((await envelope(unknownBlockResponse)).code).toBe("UnknownBlockIdError")
+
+        const invalidBlockResponse = await api.post("/api/blocks", {json: {worldId: world.id}})
+        expect(invalidBlockResponse.status).toBe(400)
+        expect((await envelope(invalidBlockResponse)).code).toBe("InvalidRequest")
+
+        const sampleResponse = await api.post("/api/generation/sample", {json: {
+            worldId: world.id,
+            position: {x: 0, z: 0},
+        }})
+        const sample = GenerationSampleResponse.parse((await envelope(sampleResponse)).data)
+        expect(sample.position).toEqual({x: 0, z: 0})
+        expect(sample.surfaceY).toBe(100)
+        expect(sample.biome).toBe("tundra")
+
+        const beforeResponse = await api.post("/api/chunks/query", {json: {
+            worldId: world.id,
+            position: {x: 0, y: 1, z: 0},
+        }})
+        const before = ChunkResponse.parse((await envelope(beforeResponse)).data)
+        expect(before.blocks.size).toBe(4096)
+
+        const batchResponse = await api.post("/api/chunks/batch", {json: {
+            worldId: world.id,
+            positions: [{x: 0, y: 3, z: 0}, {x: 0, y: 4, z: 0}],
+        }})
+        const batch = ChunkBatchResponse.parse((await envelope(batchResponse)).data)
+        expect(batch.chunks.size).toBe(2)
+        expect(batch.chunks[0].position.y).toBe(3)
+        expect(batch.chunks[1].position.y).toBe(4)
+
+        const missing = await api.get("/api/missing")
+        expect(missing.status).toBe(404)
+        const missingEnvelope = await envelope(missing)
+        expect(missingEnvelope.code).toBe("RouteNotFound")
+        expect(RouteFailureData.parse(missingEnvelope.data).path).toBe("/api/missing")
+
+        const preflight = await api.request("OPTIONS", "/api/blocks", {headers: Map([
+            ["origin", "http://127.0.0.1:5173"],
+            ["access-control-request-method", "GET"],
+            ["access-control-request-headers", "if-none-match"],
+        ])})
+        expect(preflight.status).toBe(204)
+        expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5173")
+
+        const deniedPreflight = await api.request("OPTIONS", "/api/blocks", {headers: Map([
+            ["origin", "https://untrusted.example"],
+            ["access-control-request-method", "GET"],
+        ])})
+        expect(deniedPreflight.status).toBe(403)
+    finally:
+        await api.close()
+
+test "native shared-port WebSocket transport preserves MessagePack realtime behavior":
+    const services = await testServices()
+    const world = await services.runtime.createWorld({
+        id: "realtime",
+        name: "Realtime",
+        seed: "realtime-seed",
+    })
+    const server = await startOpenVoxelServer(services)
+    try:
+        const deniedStatus = await rejectedWebSocketStatus(
+            f"ws://127.0.0.1:{server.port}/api/events",
+            "https://untrusted.example",
+        )
+        expect(deniedStatus).toBe(403)
+
+        using sender = await connect(f"ws://127.0.0.1:{server.port}/api/events")
+        using observer = await connect(f"ws://127.0.0.1:{server.port}/api/events")
+
+        await sender.send(encode({
+            operation: "delete-world",
+            worldId: world.id,
+            position: {x: 0, y: 30, z: 0},
+            blockId: stoneBlock,
+        }))
+        const unsupportedMessage = await sender.next()
+        if not (unsupportedMessage is Bytes):
+            throw Error("Expected a binary unsupported-operation event")
+        expect(parse(unsupportedMessage, SocketErrorEvent).code).toBe("UnsupportedRealtimeOperation")
+
+        await sender.send(encode({operation: "set-block"}))
+        const malformedMessage = await sender.next()
+        if not (malformedMessage is Bytes):
+            throw Error("Expected a binary invalid-request event")
+        expect(parse(malformedMessage, SocketErrorEvent).code).toBe("InvalidRequest")
+
+        await sender.send("set-block")
+        const textMessage = await sender.next()
+        if not (textMessage is Bytes):
+            throw Error("Expected a binary text-message error event")
+        expect(parse(textMessage, SocketErrorEvent).code).toBe("TextMessageUnsupported")
+
+        await sender.send(encode({
+            operation: "set-block",
+            worldId: world.id,
+            position: {x: 0, y: 30, z: 0},
+            blockId: 65535,
+        }))
+        const invalidMessage = await sender.next()
+        if not (invalidMessage is Bytes):
+            throw Error("Expected a binary realtime error event")
+        expect(parse(invalidMessage, SocketErrorEvent).code).toBe("UnknownBlockIdError")
+
+        await sender.send(encode({
+            operation: "set-block",
+            worldId: world.id,
+            position: {x: 0, y: 30, z: 0},
+            blockId: stoneBlock,
+        }))
+        const message = await sender.next()
+        if not (message is Bytes):
+            throw Error("Expected a binary block change event")
+        const event = parse(message, BlockChangedEvent)
+        expect(event.position).toEqual({x: 0, y: 30, z: 0})
+        expect(event.blockId).toBe(stoneBlock)
+        expect(event.revision).toBe(1)
+
+        const observedMessage = await observer.next()
+        if not (observedMessage is Bytes):
+            throw Error("Expected the second client to receive the block change")
+        const observed = parse(observedMessage, BlockChangedEvent)
+        expect(observed.worldId).toBe(world.id)
+        expect(observed.revision).toBe(event.revision)
+
+        const after = await services.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
+        expect(after.revision).toBe(1)
+        expect(after.blocks[3584]).toBe(stoneBlock)
+    finally:
+        await server.stop()

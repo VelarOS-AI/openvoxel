@@ -1,46 +1,52 @@
-import {BackendApp, SocketConnection} from "@openvoxel/backend"
 import {Bytes} from "velar/binary"
-import {encode, parse} from "@velarscript/msgpack"
+import {WebSocketConnection, WebSocketServer} from "velar/websocket"
+import {encode, parse} from "@velarscript-labs/msgpack"
 import {SocketBlockCommand} from "@openvoxel/protocol"
-import {WorldRuntime} from "@openvoxel/world-runtime"
-import {RealtimeHub} from "../adapters/realtime-hub.vel"
+import {publicApplicationError} from "../error-handler.vel"
+import {OpenVoxelServices} from "../services.vel"
 
-class RealtimeController:
-    constructor(private const app: BackendApp, private const runtime: WorldRuntime, private const realtime: RealtimeHub):
-        pass
+async def sendError(connection: WebSocketConnection, error: Error):
+    const publicError = publicApplicationError(error)
+    await connection.send(encode({event: "error", code: publicError.code, message: publicError.message}))
 
-    async def sendError(connection: SocketConnection, error: Error):
-        await connection.send(encode({event: "error", code: error.code, message: error.message}))
+async def handleMessage(services: OpenVoxelServices, connection: WebSocketConnection, message: Bytes):
+    try:
+        const command = parse(message, SocketBlockCommand)
+        if command.operation != "set-block":
+            await connection.send(encode({event: "error", code: "UnsupportedRealtimeOperation", message: f"Unsupported realtime operation {command.operation}"}))
+            return
+        const change = await services.runtime.setBlock(command.worldId, command.position, command.blockId)
+        await services.realtime.publishChange(change)
+        services.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
+    catch error:
+        services.warn("realtime.command.failed", {code: error.code, message: error.message})
+        await sendError(connection, error)
 
-    async def handleMessage(connection: SocketConnection, message: Bytes):
-        try:
-            const command = parse(message, SocketBlockCommand)
-            assert command.operation == "set-block" else "Unsupported realtime operation"
-            const change = await self.runtime.setBlock(command.worldId, command.position, command.blockId)
-            await self.realtime.publishChange(change)
-            self.app.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
-        catch error:
-            self.app.warn("realtime.command.failed", {code: error.code, message: error.message})
-            await self.sendError(connection, error)
+export async def handleRealtimeConnection(services: OpenVoxelServices, connection: WebSocketConnection):
+    if not services.beginRealtime():
+        await connection.close(1013, "Realtime capacity is unavailable")
+        return
+    services.realtime.join(connection)
+    try:
+        let message = await connection.next()
+        while message != null:
+            if message is Bytes:
+                await handleMessage(services, connection, message)
+            else:
+                await connection.send(encode({event: "error", code: "TextMessageUnsupported", message: "Realtime commands must use MessagePack"}))
+            message = await connection.next()
+    catch error:
+        services.warn("realtime.connection.failed", {code: error.code, message: error.message})
+    finally:
+        services.realtime.leave(connection)
+        services.endRealtime()
+        await connection.close(1000, "Connection finished")
 
-    async def connect(connection: SocketConnection):
-        self.realtime.join(connection)
-        try:
-            let message = await connection.next()
-            while message != null:
-                if message is Bytes:
-                    await self.handleMessage(connection, message)
-                else:
-                    await connection.send(encode({event: "error", code: "TextMessageUnsupported", message: "Realtime commands must use MessagePack"}))
-                message = await connection.next()
-        finally:
-            self.realtime.leave(connection)
-            await connection.close(1000, "Connection finished")
-
-export def registerRealtimeModule(app: BackendApp, runtime: WorldRuntime, realtime: RealtimeHub):
-    const controller = RealtimeController(app, runtime, realtime)
-
-    async def connect(connection: SocketConnection):
-        await controller.connect(connection)
-
-    app.websocket("/api/events", connect)
+export async def acceptRealtimeConnections(server: WebSocketServer, services: OpenVoxelServices):
+    try:
+        let connection = await server.next()
+        while connection != null:
+            async handleRealtimeConnection(services, connection)
+            connection = await server.next()
+    catch error:
+        services.warn("realtime.accept.failed", {code: error.code, message: error.message})

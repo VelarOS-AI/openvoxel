@@ -1,0 +1,59 @@
+import {expect} from "velar/test"
+import {BlockCatalogSource, BlockRenderLayer, BlockRenderShape} from "../src/schema.vel"
+import {createBlockRegistry} from "../src/registry.vel"
+import {blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockDefinition, blockId, blockIdMapHash, blockRegistry, isFluidBlock, isNaturalRock, requireBlockId} from "../src/catalog.vel"
+
+const airBlock = blockId("openvoxel:air")
+const grassBlock = blockId("openvoxel:grass")
+const stoneBlock = blockId("openvoxel:stone")
+const waterBlock = blockId("openvoxel:water")
+
+test "generated block registry preserves identity gameplay and rendering data":
+    expect(blockCatalogSchemaVersion).toBe(1)
+    expect(blockCatalogVersion).toBe("openvoxel:base-v1")
+    expect(blockCatalogHash).toBe("afb75bac9750dfa5d7677aacd3564d356f01596b439390eb1b88ad909a0afc43")
+    expect(blockIdMapHash).toBe("5977c76e2a584b8a8584fdc01c184aa8e2b38baae530c31995c6453093d6c736")
+    expect(blockCatalog().size).toBe(38)
+    expect(airBlock).toBe(0)
+    expect(stoneBlock).toBe(3)
+    const grassRender = blockDefinition(grassBlock).render
+    expect(grassRender.shape).toBe(BlockRenderShape.cube)
+    if grassRender.shape != BlockRenderShape.cube:
+        throw Error("Expected grass to use cube rendering")
+    expect(grassRender.layer).toBe(BlockRenderLayer.opaque)
+    expect(blockId("openvoxel:water")).toBe(waterBlock)
+    expect(isFluidBlock(waterBlock)).toBe(true)
+    expect(isNaturalRock(stoneBlock)).toBe(true)
+    expect(() => requireBlockId(65535)).toThrow()
+
+test "retired block ids remain reserved and cannot become active definitions":
+    const retiredSource = BlockCatalogSource.parse({
+        schemaVersion: 1,
+        catalogVersion: "openvoxel:test-v1",
+        retiredIds: [5],
+        blocks: [{
+            id: 0,
+            key: "openvoxel:air",
+            translationKey: "block.openvoxel.air",
+            tags: [],
+            simulation: {collision: "none", occlusion: "none", fluid: "none"},
+            render: {shape: "none"},
+        }],
+    })
+    const registry = createBlockRegistry(retiredSource)
+    expect(() => registry.requireById(5)).toThrow()
+
+    const reusedSource = BlockCatalogSource.parse({
+        schemaVersion: 1,
+        catalogVersion: "openvoxel:test-v1",
+        retiredIds: [5],
+        blocks: [retiredSource.blocks[0], {
+            id: 5,
+            key: "openvoxel:reused",
+            translationKey: "block.openvoxel.reused",
+            tags: [],
+            simulation: {collision: "full_cube", occlusion: "full_cube", fluid: "none"},
+            render: {shape: "cube", layer: "opaque", material: "terrain", textures: {all: "block/reused"}},
+        }],
+    })
+    expect(() => createBlockRegistry(reusedSource)).toThrow()

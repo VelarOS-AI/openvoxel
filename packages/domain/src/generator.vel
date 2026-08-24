@@ -1,9 +1,11 @@
 import {Chunk, emptyChunk} from "./chunk.vel"
-import {airBlock, isFluidBlock} from "@openvoxel/blocks"
+import {blockId, isFluidBlock} from "@openvoxel/blocks"
 import {ChunkPosition, Coordinate2} from "./coordinates.vel"
 import {WorldManifest, validateWorldManifest} from "./world.vel"
-import {CavePlanner, carveCaves, generateFluidPockets, generateMinerals, generateVegetation} from "./generation/features.vel"
-import {ColumnCache, ColumnPlanner, GenerationFields, TerrainSample, baseTerrainBlock, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./generation/terrain.vel"
+import {carveCaves, cavePlanner, generateFluidPockets, generateMinerals, generateVegetation} from "./generation/features.vel"
+import {ColumnCache, GenerationFields, TerrainSample, baseTerrainBlock, columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./generation/terrain.vel"
+
+const airBlock = blockId("openvoxel:air")
 
 def chunkMinimumX(chunk: Chunk) -> number:
     return chunk.position.x * chunk.edge
@@ -56,39 +58,38 @@ def generateSurface(chunk: Chunk, cache: ColumnCache):
             const index = localZ + chunk.edge * localX
             paintSurfaceColumn(chunk, cache.samples[index], cache.surfaceHeights[index])
 
-export class WorldGenerator:
-    private const seed: string
-    private const edge: number
-    private const fields: GenerationFields
-    private const columnPlanner: ColumnPlanner
-    private const cavePlanner: CavePlanner
+export type WorldGenerator:
+    sample: (position: Coordinate2) -> TerrainSample
+    generate: (position: ChunkPosition) -> Chunk
 
-    constructor(manifest: WorldManifest):
-        const world = validateWorldManifest(manifest)
-        self.seed = world.seed
-        self.edge = world.chunkEdge
-        self.fields = createGenerationFields(world.seed)
-        self.columnPlanner = ColumnPlanner(self.fields, world.chunkEdge)
-        self.cavePlanner = CavePlanner(self.fields, world.seed)
+export def worldGenerator(manifest: WorldManifest) -> WorldGenerator:
+    const world = validateWorldManifest(manifest)
+    const seed = world.seed
+    const edge = world.chunkEdge
+    const fields = createGenerationFields(seed)
+    const columns = columnPlanner(fields, edge)
+    const caves = cavePlanner(fields, seed)
 
     def sample(position: Coordinate2) -> TerrainSample:
-        return sampleTerrainWithFields(self.fields, position)
+        return sampleTerrainWithFields(fields, position)
 
     def generate(position: ChunkPosition) -> Chunk:
-        const chunk = emptyChunk(position, self.edge)
-        const minimumY = position.y * self.edge
-        const maximumY = minimumY + self.edge - 1
+        const chunk = emptyChunk(position, edge)
+        const minimumY = position.y * edge
+        const maximumY = minimumY + edge - 1
         if maximumY < minimumWorldY or minimumY > maximumWorldY:
             return chunk
 
-        const cache = self.columnPlanner.columns(position.x, position.z)
-        generateBaseTerrain(chunk, self.fields, cache)
-        carveCaves(chunk, self.cavePlanner)
-        generateFluidPockets(chunk, self.seed)
-        generateMinerals(chunk, self.seed)
+        const cache = columns.columns(position.x, position.z)
+        generateBaseTerrain(chunk, fields, cache)
+        carveCaves(chunk, caves)
+        generateFluidPockets(chunk, seed)
+        generateMinerals(chunk, seed)
         generateSurface(chunk, cache)
-        generateVegetation(chunk, self.fields, self.seed, cache)
+        generateVegetation(chunk, fields, seed, cache)
         return chunk
 
+    return {sample, generate}
+
 export def generateChunk(manifest: WorldManifest, position: ChunkPosition) -> Chunk:
-    return WorldGenerator(manifest).generate(position)
+    return worldGenerator(manifest).generate(position)

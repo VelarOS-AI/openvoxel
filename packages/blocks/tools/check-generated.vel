@@ -1,0 +1,7 @@
+import {readText} from "velar/fs"
+import {generateCatalogArtifact} from "./catalog-artifact.vel"
+
+const sourceText = await readText("data/blocks.yml", 1024 * 1024)
+const expected = generateCatalogArtifact(sourceText)
+const actual = await readText("generated/block-catalog.json", 2 * 1024 * 1024)
+assert actual == expected else "Generated block registry is stale; run npm run generate"

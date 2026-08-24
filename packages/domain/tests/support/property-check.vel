@@ -1,0 +1,21 @@
+import {Coordinate3} from "../../src/coordinates.vel"
+
+// fast-check exports a JavaScript member named `assert`, which is a VelarScript
+// keyword. Keep that naming mismatch inside this test-only checked boundary;
+// the coordinate range and deterministic seed remain OpenVoxel test policy.
+extern js()`
+    import fc from "fast-check"
+
+    const coordinate = fc.integer({min: -33554431, max: 33554431})
+
+    export function checkGeneratedCoordinates(callback, runs) {
+        fc.assert(
+            fc.property(coordinate, coordinate, coordinate, (x, y, z) => callback({x, y, z})),
+            {numRuns: runs, seed: 0x5eed},
+        )
+    }
+`:
+    export def checkGeneratedCoordinates(property: (position: Coordinate3) -> bool, runs: number) -> null
+
+export def checkWorldCoordinates(property: (position: Coordinate3) -> bool, runs: number = 1000):
+    checkGeneratedCoordinates(property, runs)

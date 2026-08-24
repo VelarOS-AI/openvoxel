@@ -1,6 +1,6 @@
 # ADR 0005：Fastify 后端与显式模块
 
-状态：已接受
+状态：已被 [ADR 0010](0010-native-velarscript-backend.md) 取代
 
 ## 背景
 

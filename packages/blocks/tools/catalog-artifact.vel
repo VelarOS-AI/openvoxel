@@ -1,0 +1,36 @@
+import {parseYaml} from "@velarscript-labs/yaml"
+import {BlockCatalogArtifact, BlockCatalogSource} from "../src/schema.vel"
+import {createBlockRegistry} from "../src/registry.vel"
+
+extern module "node:crypto":
+    export class Hash:
+        def update(data: string) -> Hash
+        def digest(encoding: string) -> string
+
+    export def createHash(algorithm: string) -> Hash
+
+import js {createHash} from "node:crypto"
+
+type BlockIdMapping:
+    id: number
+    key: string
+
+def digest(value: string) -> string:
+    return createHash("sha256").update(value).digest("hex")
+
+export def generateCatalogArtifact(sourceText: string) -> string:
+    const source = BlockCatalogSource.parse(parseYaml(sourceText))
+    const registry = createBlockRegistry(source)
+    const canonical = Json.stableStringify(source)
+    const contentHash = digest(canonical)
+    const mappings: List<BlockIdMapping> = []
+    for definition in registry.catalog():
+        mappings.append({id: definition.id, key: definition.key})
+    const idMapHash = digest(Json.stableStringify(mappings.sorted(by=mapping => mapping.id)))
+    const artifact: BlockCatalogArtifact = {
+        artifactVersion: 1,
+        contentHash,
+        idMapHash,
+        catalog: source,
+    }
+    return f"{Json.stableStringify(artifact, 2)}\n"

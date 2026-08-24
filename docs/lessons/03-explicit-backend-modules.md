@@ -1,15 +1,13 @@
-# 第三课：框架应该停在边界
+# 课程 03：显式原生后端模块
 
-OpenVoxel 使用 Fastify，但世界生成代码从不导入 Fastify。这个约束比选用哪个框架更重要。
+OpenVoxel 使用 VelarScript 原生 ServeApp，但世界生成代码仍然不知道 HTTP 或 WebSocket。这个约束比选用哪个服务宿主更重要。
 
-建议按以下顺序阅读：
+阅读顺序：
 
-1. `packages/npm/fastify/src/index.js` 只负责把成熟 npm 框架稳定成很窄的宿主接口。
-2. `packages/backend/src/bridge.vel` 是唯一的 JavaScript 声明边界。
-3. `packages/backend/src/index.vel` 把宿主接口转成类型化路由、统一异常和可测试生命周期。
-4. `apps/server/src/server.vel` 是组合根，只创建依赖并注册模块。
-5. `apps/server/src/modules` 中的控制器解析输入、调用用例，并用 `Response.ok` 等工厂构造输出。
+1. `apps/server/src/modules/*.vel` 用 `server` 声明静态、受检查的业务路由。
+2. `apps/server/src/server.vel` 只负责组合路由、中间件、生命周期和共享端口。
+3. `apps/server/src/services.vel` 用工厂闭包把 WorldRuntime、实时广播和部署限额收束为一个应用能力，并只导出一个应用级 provider。
+4. `apps/server/src/error-handler.vel` 把领域错误归一为稳定公共信封，不泄露宿主内部错误名。
+5. `apps/server/src/modules/realtime.vel` 消费有界的拉取式 WebSocket 队列，并继续复用同一个世界运行时。
 
-这里没有 `@Controller`。每一条路由都由普通函数显式注册，每一个依赖都从构造参数进入。读者不需要知道反射容器如何扫描声明，也能从入口一路追到 Chunk 生成和 SQLite。
-
-测试同样沿着边界分层：多数 HTTP 行为使用 Fastify 注入，不占端口；最终验收才启动真实 TCP 服务，并连接 MessagePack WebSocket。快速反馈与真实证据并不冲突。
+测试同样沿边界分层：多数 HTTP 行为通过 `velar/server-test` 验证真实 ServeApp 路由，不占端口；WebSocket 验收才启动真实共享端口。快速反馈与真实传输证据仍然是两层互补证明。

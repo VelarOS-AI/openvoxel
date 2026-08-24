@@ -1,7 +1,16 @@
-import {BackendOptions} from "@openvoxel/backend"
-import {parseYaml} from "@openvoxel/config"
+import {parseYaml} from "@velarscript-labs/yaml"
 import {get} from "velar/env"
 import {readText} from "velar/fs"
+import {isAbsolute, resolve} from "velar/path"
+import {parse as parseUrl} from "velar/url"
+import {OpenVoxelServerOptions} from "./services.vel"
+
+export def serverApplicationRoot() -> string:
+    const configured = get("OPENVOXEL_ROOT")
+    if configured == null:
+        return resolve([])
+    assert isAbsolute(configured) else "OPENVOXEL_ROOT must be an absolute path"
+    return resolve([configured])
 
 export type ServerLimitsConfiguration:
     bodyBytes: number
@@ -11,10 +20,14 @@ export type ServerLimitsConfiguration:
     pendingSendBytes: number
     connections: number
 
+export type ServerCorsConfiguration:
+    allowedOrigins: List<string>
+
 export type ServerConfiguration:
     host: string
     port: number
     logger: bool
+    cors: ServerCorsConfiguration
     limits: ServerLimitsConfiguration
 
 export type DatabaseConfiguration:
@@ -36,6 +49,14 @@ export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration)
     assert configuration.configVersion == 1 else "Unsupported OpenVoxel configuration version"
     assert not configuration.server.host.isBlank() else "Server host cannot be blank"
     requireInteger(configuration.server.port, 1, 0xffff, "Server port")
+    const origins: Set<string> = Set()
+    for origin in configuration.server.cors.allowedOrigins:
+        assert not origin.isBlank() else "CORS allowed origin cannot be blank"
+        if origin != "*":
+            const parsedOrigin = parseUrl(origin)
+            assert (parsedOrigin.protocol == "http:" or parsedOrigin.protocol == "https:") and parsedOrigin.origin == origin else f"CORS allowed origin must be * or an exact HTTP origin: {origin}"
+        assert not (origin in origins) else f"Duplicate CORS allowed origin {origin}"
+        origins.add(origin)
     requireInteger(configuration.server.limits.bodyBytes, 1, 16 * 1024 * 1024, "HTTP body limit")
     requireInteger(configuration.server.limits.messageBytes, 1, 64 * 1024 * 1024, "WebSocket message limit")
     requireInteger(configuration.server.limits.queuedMessages, 1, 10000, "WebSocket queued message limit")
@@ -52,9 +73,21 @@ export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration)
 export def parseOpenVoxelConfiguration(source: string) -> OpenVoxelConfiguration:
     return validateOpenVoxelConfiguration(OpenVoxelConfiguration.parse(parseYaml(source)))
 
+export def resolveServerPath(path: string) -> string:
+    assert not path.isBlank() else "Path cannot be blank"
+    if isAbsolute(path):
+        return path
+    return resolve([serverApplicationRoot(), path])
+
 export async def loadOpenVoxelConfiguration(path: string) -> OpenVoxelConfiguration:
     assert not path.isBlank() else "Configuration path cannot be blank"
-    return parseOpenVoxelConfiguration(await readText(path, 64 * 1024))
+    const resolved = resolveServerPath(path)
+    let source = ""
+    try:
+        source = await readText(resolved, 64 * 1024)
+    catch error:
+        throw Error(f"Cannot load OpenVoxel configuration at {resolved}: {error.message}")
+    return parseOpenVoxelConfiguration(source)
 
 def integerOverride(name: string, fallback: number, minimum: number, maximum: number) -> number:
     const raw = get(name)
@@ -85,6 +118,7 @@ export def withEnvironmentOverrides(configuration: OpenVoxelConfiguration) -> Op
             host,
             port: integerOverride("OPENVOXEL_PORT", configuration.server.port, 1, 0xffff),
             logger: booleanOverride("OPENVOXEL_LOGGER", configuration.server.logger),
+            cors: configuration.server.cors,
             limits: configuration.server.limits,
         },
         database: {
@@ -96,11 +130,27 @@ export def withEnvironmentOverrides(configuration: OpenVoxelConfiguration) -> Op
         },
     })
 
-export def backendOptions(configuration: OpenVoxelConfiguration, logger: bool? = null) -> BackendOptions:
+export def withResolvedRuntimePaths(configuration: OpenVoxelConfiguration) -> OpenVoxelConfiguration:
+    return validateOpenVoxelConfiguration({
+        configVersion: configuration.configVersion,
+        server: configuration.server,
+        database: {
+            path: resolveServerPath(configuration.database.path),
+            busyTimeoutMilliseconds: configuration.database.busyTimeoutMilliseconds,
+            queueCapacity: configuration.database.queueCapacity,
+            maxRows: configuration.database.maxRows,
+            maxResultBytes: configuration.database.maxResultBytes,
+        },
+    })
+
+export def serverOptions(configuration: OpenVoxelConfiguration, logger: bool? = null) -> OpenVoxelServerOptions:
     const limits = configuration.server.limits
     return {
+        host: configuration.server.host,
+        port: configuration.server.port,
         logger: logger ?? configuration.server.logger,
         bodyLimit: limits.bodyBytes,
+        corsAllowedOrigins: configuration.server.cors.allowedOrigins,
         maxMessageBytes: limits.messageBytes,
         maxQueuedMessages: limits.queuedMessages,
         maxQueuedBytes: limits.queuedBytes,

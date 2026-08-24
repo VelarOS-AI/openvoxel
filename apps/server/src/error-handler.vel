@@ -1,11 +1,44 @@
-import {Response} from "@openvoxel/backend"
+import {Request, RequestBodyTooLargeError, ServeResponse} from "velar/serve"
+import {InvalidBlockIdError, RetiredBlockIdError, UnknownBlockIdError, WorldBlockCatalogMismatchError} from "@openvoxel/domain"
 import {WorldAlreadyExistsError, WorldNotFoundError} from "@openvoxel/world-runtime"
+import {failure} from "./responses.vel"
 
-export async def handleApplicationError(error: Error) -> Response:
+export type PublicApplicationError:
+    code: string
+    message: string
+
+export def publicApplicationError(error: Error) -> PublicApplicationError:
+    if (error is WorldNotFoundError) or (error is WorldAlreadyExistsError) or (error is WorldBlockCatalogMismatchError) or (error is InvalidBlockIdError) or (error is UnknownBlockIdError) or (error is RetiredBlockIdError):
+        return {code: error.code, message: error.message}
+    if error.code == "TypeError" or error.code == "RangeError" or error.code == "SyntaxError" or error.code == "AssertionError" or error.code == "ValidationError" or error.code == "NarrowingError":
+        return {code: "InvalidRequest", message: error.message}
+    return {code: "InternalError", message: "The request could not be completed"}
+
+export async def handleApplicationError(value: unknown, request: Request) -> ServeResponse:
+    if not (value is Error):
+        return failure(500, "InternalError", {method: request.method, path: request.path}, "The request could not be completed")
+    const error = value
     if error is WorldNotFoundError:
-        return Response.of(404, error.code, {worldId: error.worldId}, error.message)
+        return failure(404, error.code, {worldId: error.worldId}, error.message)
     if error is WorldAlreadyExistsError:
-        return Response.of(409, error.code, {worldId: error.worldId}, error.message)
-    if error.code == "TypeError" or error.code == "RangeError" or error.code == "AssertionError" or error.code == "ValidationError" or error.code == "NarrowingError":
-        return Response.failure(400, error.code, error.message)
-    return Response.failure(500, "InternalError", "The request could not be completed")
+        return failure(409, error.code, {worldId: error.worldId}, error.message)
+    if error is WorldBlockCatalogMismatchError:
+        return failure(409, error.code, {
+            worldId: error.worldId,
+            actualCatalogVersion: error.actualCatalogVersion,
+            actualIdMapHash: error.actualIdMapHash,
+            expectedCatalogVersion: error.expectedCatalogVersion,
+            expectedIdMapHash: error.expectedIdMapHash,
+        }, error.message)
+    if error is InvalidBlockIdError:
+        return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is UnknownBlockIdError:
+        return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is RetiredBlockIdError:
+        return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is RequestBodyTooLargeError:
+        return failure(413, "PayloadTooLarge", {method: request.method, path: request.path}, error.message)
+    const publicError = publicApplicationError(error)
+    if publicError.code == "InvalidRequest":
+        return failure(400, publicError.code, {method: request.method, path: request.path}, publicError.message)
+    return failure(500, publicError.code, {method: request.method, path: request.path}, publicError.message)

@@ -1,0 +1,53 @@
+import {expect} from "velar/test"
+import {blockId, chunkBlock, chunkChecksum} from "@openvoxel/domain"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldRuntime} from "../src/world-runtime.vel"
+
+const dirtBlock = blockId("openvoxel:dirt")
+const stoneBlock = blockId("openvoxel:stone")
+
+test "world runtime creates generates modifies and restores":
+    const store = memoryWorldStore()
+    const firstRuntime = worldRuntime(store)
+    const manifest = await firstRuntime.createWorld({id: "lesson-one", name: "Lesson One", seed: "first-seed"})
+    expect(manifest.chunkEdge).toBe(16)
+
+    const generated = await firstRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
+    const generatedChecksum = chunkChecksum(generated)
+    const baseBlockId = chunkBlock(generated, {x: 15, y: 14, z: 0})
+    const replacementBlockId = baseBlockId == stoneBlock ? dirtBlock : stoneBlock
+    const change = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockId)
+    expect(change.chunk).toEqual({x: -1, y: 1, z: 0})
+    expect(change.local).toEqual({x: 15, y: 14, z: 0})
+    expect(change.previousBlockId).toBe(baseBlockId)
+    expect(change.revision).toBe(1)
+
+    const repeated = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockId)
+    expect(repeated.revision).toBe(change.revision)
+
+    const restartedRuntime = worldRuntime(store)
+    const restored = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
+    expect(restored.revision).toBe(change.revision)
+    expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockId)
+    expect(chunkChecksum(restored) == generatedChecksum).toBe(false)
+
+    const reverted = await restartedRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, baseBlockId)
+    expect(reverted.previousBlockId).toBe(replacementBlockId)
+    expect(reverted.revision).toBe(2)
+    const regenerated = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
+    expect(regenerated.revision).toBe(2)
+    expect(chunkChecksum(regenerated)).toBe(generatedChecksum)
+
+test "world runtime exposes deterministic samples and bounded chunk batches":
+    const runtime = worldRuntime(memoryWorldStore())
+    const manifest = await runtime.createWorld({id: "generation", name: "Generation", seed: "openvoxel"})
+    const sample = await runtime.terrainSample(manifest.id, {x: 0, z: 0})
+    expect(sample.surfaceY).toBe(99)
+    expect(sample.biome).toBe("tundra")
+    const chunks = await runtime.chunks(manifest.id, [
+        {x: 0, y: 3, z: 0},
+        {x: 0, y: 4, z: 0},
+    ])
+    expect(chunks.size).toBe(2)
+    expect(chunks[0].position.y).toBe(3)
+    expect(chunks[1].position.y).toBe(4)

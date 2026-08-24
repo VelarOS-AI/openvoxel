@@ -1,20 +1,22 @@
 import {Bytes} from "velar/binary"
-import {encode} from "@velarscript/msgpack"
-import {SocketConnection} from "@openvoxel/backend"
+import {encode} from "@velarscript-labs/msgpack"
+import {WebSocketConnection} from "velar/websocket"
 import {BlockChangedEvent} from "@openvoxel/protocol"
 import {BlockChange} from "@openvoxel/world-runtime"
 
-export class RealtimeHub:
-    private let connections: Set<SocketConnection> = Set()
+export type RealtimeHub:
+    join: (connection: WebSocketConnection) -> null
+    leave: (connection: WebSocketConnection) -> null
+    publishChange: (change: BlockChange) -> Promise<null>
 
-    constructor(private const warning: (message: string, context: unknown) -> null):
-        pass
+export def realtimeHub(warning: (message: string, context: unknown) -> null) -> RealtimeHub:
+    const connections: Set<WebSocketConnection> = Set()
 
-    def join(connection: SocketConnection):
-        self.connections.add(connection)
+    def join(connection: WebSocketConnection):
+        connections.add(connection)
 
-    def leave(connection: SocketConnection):
-        self.connections.remove(connection)
+    def leave(connection: WebSocketConnection):
+        connections.remove(connection)
 
     async def publishChange(change: BlockChange):
         const event: BlockChangedEvent = {
@@ -26,12 +28,14 @@ export class RealtimeHub:
             revision: change.revision,
         }
         const message: Bytes = encode(event)
-        const failed: List<SocketConnection> = []
-        for connection in self.connections.copy():
+        const failed: List<WebSocketConnection> = []
+        for connection in connections.copy():
             try:
                 await connection.send(message)
             catch error:
                 failed.append(connection)
-                self.warning("realtime.subscriber.failed", {code: error.code, message: error.message})
+                warning("realtime.subscriber.failed", {code: error.code, message: error.message})
         for connection in failed:
-            self.connections.remove(connection)
+            connections.remove(connection)
+
+    return {join, leave, publishChange}

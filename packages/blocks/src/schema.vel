@@ -33,24 +33,51 @@ export type BlockSimulation:
     occlusion: BlockOcclusion
     fluid: BlockFluid
 
-export type BlockRender:
-    shape: BlockRenderShape
-    layer: BlockRenderLayer?
-    material: string?
-    textures: BlockTextures?
-    model: string?
+export type EmptyBlockRender:
+    shape: BlockRenderShape.empty
+
+export type CubeBlockRender:
+    shape: BlockRenderShape.cube
+    layer: BlockRenderLayer
+    material: string
+    textures: BlockTextures
     tint: string?
     animation: string?
 
+export type CrossBlockRender:
+    shape: BlockRenderShape.cross
+    layer: BlockRenderLayer
+    material: string
+    textures: BlockTextures
+    tint: string?
+    animation: string?
+
+export type ModelBlockRender:
+    shape: BlockRenderShape.model
+    layer: BlockRenderLayer
+    material: string
+    model: string
+    tint: string?
+    animation: string?
+
+export type BlockRender = EmptyBlockRender | CubeBlockRender | CrossBlockRender | ModelBlockRender
+
 export type BlockDefinition:
-    id: number
-    key: string
-    translationKey: string
-    tags: List<string>
-    simulation: BlockSimulation
-    render: BlockRender
+    readonly id: number
+    readonly key: string
+    readonly translationKey: string
+    readonly tags: List<string>
+    readonly simulation: BlockSimulation
+    readonly render: BlockRender
 
 export type BlockCatalogSource:
-    schemaVersion: number
-    catalogVersion: string
-    blocks: List<BlockDefinition>
+    readonly schemaVersion: number
+    readonly catalogVersion: string
+    readonly retiredIds: List<number>
+    readonly blocks: List<BlockDefinition>
+
+export type BlockCatalogArtifact:
+    readonly artifactVersion: number
+    readonly contentHash: string
+    readonly idMapHash: string
+    readonly catalog: BlockCatalogSource

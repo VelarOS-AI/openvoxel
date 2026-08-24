@@ -7,7 +7,16 @@
     "src"
   ],
   "velar": {
-    "entry": "src/index.vel"
+    "entry": "src/index.vel",
+    "targets": [
+      "core",
+      "node",
+      "web",
+      "desktop"
+    ],
+    "requires": {
+      "capabilities": []
+    }
   },
   "scripts": {
     "check": "velar check",
@@ -15,15 +24,15 @@
     "format:check": "velar format --check",
     "test": "velar test",
     "build": "velar build",
-    "benchmark": "velar run benchmark.vel",
-    "benchmark:caves": "velar run benchmark-caves.vel",
-    "benchmark:columns": "velar run benchmark-columns.vel"
+    "benchmark": "velar run benchmarks/world-generation.vel",
+    "benchmark:caves": "velar run benchmarks/caves.vel",
+    "benchmark:columns": "velar run benchmarks/columns.vel"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.1.0",
-    "@velarscript/noise": "0.1.0"
+    "@velarscript-labs/noise": "0.1.1"
   },
   "devDependencies": {
-    "@openvoxel/fast-check": "0.1.0"
+    "fast-check": "4.9.0"
   }
 }

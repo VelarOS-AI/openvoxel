@@ -1,0 +1,27 @@
+import {expect} from "velar/test"
+import {columnPlanner, createGenerationFields} from "../../src/generation/terrain.vel"
+
+test "column caches are reused across vertical chunks":
+    const planner = columnPlanner(createGenerationFields("column-cache"), 16, 4)
+
+    const first = planner.columns(2, -3)
+    const vertical = planner.columns(2, -3)
+
+    expect(planner.columnBuildCount()).toBe(1)
+    expect(planner.cachedColumnCount()).toBe(1)
+    expect(vertical.surfaceHeights[0]).toBe(first.surfaceHeights[0])
+    expect(vertical.samples[0].biome).toBe(first.samples[0].biome)
+
+test "column cache eviction follows recent horizontal use":
+    const planner = columnPlanner(createGenerationFields("column-cache-lru"), 16, 2)
+
+    planner.columns(0, 0)
+    planner.columns(1, 0)
+    planner.columns(0, 0)
+    planner.columns(2, 0)
+    expect(planner.columnBuildCount()).toBe(3)
+    expect(planner.cachedColumnCount()).toBe(2)
+
+    planner.columns(1, 0)
+    expect(planner.columnBuildCount()).toBe(4)
+    expect(planner.cachedColumnCount()).toBe(2)

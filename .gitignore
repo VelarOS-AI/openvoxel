@@ -1,5 +1,6 @@
 node_modules/
 dist/
+generated/
 .velar/
 .DS_Store
 *.sqlite

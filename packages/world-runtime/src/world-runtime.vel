@@ -1,4 +1,4 @@
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkKey, createWorldManifest, locateBlock, requireBlockId} from "@openvoxel/domain"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkBlock, chunkKey, createWorldManifest, locateBlock, maximumChunkBatchSize, requireBlockId, setChunkBlock, worldGenerator} from "@openvoxel/domain"
 import {ChunkDelta, WorldStore} from "./contracts.vel"
 
 export class WorldNotFoundError extends Error:
@@ -18,77 +18,84 @@ export type BlockChange:
     blockId: number
     revision: number
 
-export class WorldRuntime:
-    private const generators: Map<string, WorldGenerator> = Map()
+export type WorldRuntime:
+    createWorld: (command: CreateWorld) -> Promise<WorldManifest>
+    findWorld: (worldId: string) -> Promise<WorldManifest?>
+    requireWorld: (worldId: string) -> Promise<WorldManifest>
+    chunk: (worldId: string, position: ChunkPosition) -> Promise<Chunk>
+    chunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<Chunk>>
+    terrainSample: (worldId: string, position: Coordinate2) -> Promise<TerrainSample>
+    setBlock: (worldId: string, position: BlockPosition, blockId: number) -> Promise<BlockChange>
+    close: () -> Promise<null>
 
-    constructor(private const store: WorldStore):
-        pass
+export def worldRuntime(store: WorldStore) -> WorldRuntime:
+    const generators: Map<string, WorldGenerator> = Map()
 
     def generatorFor(manifest: WorldManifest) -> WorldGenerator:
-        const existing = self.generators.get(manifest.id)
+        const existing = generators.get(manifest.id)
         if existing != null:
             return existing
-        const generator = WorldGenerator(manifest)
-        self.generators.set(manifest.id, generator)
+        const generator = worldGenerator(manifest)
+        generators.set(manifest.id, generator)
         return generator
 
     async def createWorld(command: CreateWorld) -> WorldManifest:
         const manifest = createWorldManifest(command)
-        const existing = await self.store.manifests.find(manifest.id)
+        const existing = await store.manifests.find(manifest.id)
         if existing != null:
             throw WorldAlreadyExistsError(manifest.id)
-        await self.store.manifests.save(manifest)
+        await store.manifests.save(manifest)
         return manifest
 
     async def findWorld(worldId: string) -> WorldManifest?:
-        return await self.store.manifests.find(worldId)
+        return await store.manifests.find(worldId)
 
     async def requireWorld(worldId: string) -> WorldManifest:
-        const manifest = await self.findWorld(worldId)
+        const manifest = await findWorld(worldId)
         if manifest == null:
             throw WorldNotFoundError(worldId)
         return manifest
 
-    async def chunk(worldId: string, position: ChunkPosition) -> Chunk:
-        const chunks = await self.chunks(worldId, [position])
-        return chunks[0]
-
     def applyDelta(chunk: Chunk, delta: ChunkDelta):
         assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
         for entry in delta.overrides:
-            chunk.set(entry.position, entry.blockId)
+            setChunkBlock(chunk, entry.position, entry.blockId)
         chunk.revision = delta.revision
 
     async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
         assert positions.size > 0 else "A chunk batch cannot be empty"
-        assert positions.size <= 64 else "A chunk batch cannot contain more than 64 positions"
-        const manifest = await self.requireWorld(worldId)
-        const generator = self.generatorFor(manifest)
-        const stored = await self.store.deltas.findChunks(worldId, positions)
+        assert positions.size <= maximumChunkBatchSize else f"A chunk batch cannot contain more than {maximumChunkBatchSize} positions"
+        const manifest = await requireWorld(worldId)
+        const generator = generatorFor(manifest)
+        const stored = await store.deltas.findChunks(worldId, positions)
         const deltas: Map<string, ChunkDelta> = Map()
         for delta in stored:
             deltas.set(chunkKey(delta.position), delta)
-        const chunks: List<Chunk> = []
+        const output: List<Chunk> = []
         for position in positions:
             const chunk = generator.generate(position)
             const delta = deltas.get(chunkKey(position))
             if delta != null:
-                self.applyDelta(chunk, delta)
-            chunks.append(chunk)
-        return chunks
+                applyDelta(chunk, delta)
+            output.append(chunk)
+        return output
+
+    async def chunk(worldId: string, position: ChunkPosition) -> Chunk:
+        const found = await chunks(worldId, [position])
+        return found[0]
 
     async def terrainSample(worldId: string, position: Coordinate2) -> TerrainSample:
-        const manifest = await self.requireWorld(worldId)
-        return self.generatorFor(manifest).sample(position)
+        const manifest = await requireWorld(worldId)
+        return generatorFor(manifest).sample(position)
 
     async def setBlock(worldId: string, position: BlockPosition, blockId: number) -> BlockChange:
         requireBlockId(blockId)
-        const manifest = await self.requireWorld(worldId)
+        const manifest = await requireWorld(worldId)
         const located = locateBlock(position, manifest.chunkEdge)
-        const generated = self.generatorFor(manifest).generate(located.chunk)
-        const baseBlockId = generated.get(located.local)
+        const generated = generatorFor(manifest).generate(located.chunk)
+        const baseBlockId = chunkBlock(generated, located.local)
         const overrideBlockId = blockId == baseBlockId ? null : blockId
-        const commit = await self.store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockId)
+        const commit = await store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockId)
         const previousBlockId = commit.previousOverrideBlockId ?? baseBlockId
         return {
             worldId,
@@ -101,4 +108,6 @@ export class WorldRuntime:
         }
 
     async def close():
-        await self.store.close()
+        await store.close()
+
+    return {createWorld, findWorld, requireWorld, chunk, chunks, terrainSample, setBlock, close}
