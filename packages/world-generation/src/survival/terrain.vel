@@ -1,22 +1,9 @@
 import {simplex2, simplex3} from "@velarscript-labs/noise"
 import {random} from "velar/random"
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
-import {Coordinate2, requireCoordinate2} from "../coordinates.vel"
-
-const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
-const basaltBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.basalt)
-const clayBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.clay)
-const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
-const graniteBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.granite)
-const grassBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
-const gravelBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.gravel)
-const iceBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.ice)
-const limestoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.limestone)
-const sandBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
-const sandstoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sandstone)
-const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
-const waterBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
+import {Coordinate2, requireCoordinate2} from "@openvoxel/world"
+import {TerrainSample} from "../terrain-sample.vel"
+import {survivalBlocks} from "./block-palette.vel"
 
 export const minimumWorldY = 0
 export const maximumWorldY = 255
@@ -46,16 +33,6 @@ export type GenerationFields:
     humidityOffsetZ: number
     riverOffsetX: number
     riverOffsetZ: number
-
-export type TerrainSample:
-    position: Coordinate2
-    surfaceY: number
-    temperature: number
-    humidity: number
-    shoreDistance: number
-    mountainFactor: number
-    forestDensity: number
-    biome: string
 
 export type ColumnCache:
     edge: number
@@ -309,31 +286,31 @@ export def temperatureAtHeight(temperature: number, y: number) -> number:
     return temperature + (0.1 * (seaLevel - y)).round()
 
 export def surfaceBlock(sample: TerrainSample, topY: number) -> number:
-    if sample.biome == "ocean": return sample.humidity > 10 ? clayBlock : sandBlock
-    if sample.biome == "shore" or sample.biome == "desert": return sandBlock
-    if topY <= seaLevel + 1 and sample.humidity > 10: return clayBlock
-    if sample.biome == "mountains": return sample.humidity < 6 ? gravelBlock : stoneBlock
-    return grassBlock
+    if sample.biome == "ocean": return sample.humidity > 10 ? survivalBlocks.clay : survivalBlocks.sand
+    if sample.biome == "shore" or sample.biome == "desert": return survivalBlocks.sand
+    if topY <= seaLevel + 1 and sample.humidity > 10: return survivalBlocks.clay
+    if sample.biome == "mountains": return sample.humidity < 6 ? survivalBlocks.gravel : survivalBlocks.stone
+    return survivalBlocks.grass
 
 export def subsurfaceBlock(sample: TerrainSample, topY: number) -> number:
     const surface = surfaceBlock(sample, topY)
-    if surface == sandBlock: return sandstoneBlock
-    if surface == clayBlock: return clayBlock
-    if surface == gravelBlock or surface == stoneBlock: return stoneBlock
-    return dirtBlock
+    if surface == survivalBlocks.sand: return survivalBlocks.sandstone
+    if surface == survivalBlocks.clay: return survivalBlocks.clay
+    if surface == survivalBlocks.gravel or surface == survivalBlocks.stone: return survivalBlocks.stone
+    return survivalBlocks.dirt
 
 export def baseTerrainBlock(fields: GenerationFields, sample: TerrainSample, y: number) -> number:
-    if y < minimumWorldY or y > maximumWorldY: return airBlock
+    if y < minimumWorldY or y > maximumWorldY: return survivalBlocks.air
     if terrainDensity(fields, sample, y) < 0:
         if y <= seaLevel:
-            if y == seaLevel and temperatureAtHeight(sample.temperature, y) <= 0: return iceBlock
-            return waterBlock
-        return airBlock
-    if y <= 4: return basaltBlock
+            if y == seaLevel and temperatureAtHeight(sample.temperature, y) <= 0: return survivalBlocks.ice
+            return survivalBlocks.water
+        return survivalBlocks.air
+    if y <= 4: return survivalBlocks.basalt
     const strata = fields.strata(sample.position.x * 0.045, y * 0.06, sample.position.z * 0.045)
-    if y < 32: return basaltBlock
+    if y < 32: return survivalBlocks.basalt
     if sample.biome == "desert" or sample.biome == "shore":
-        if y >= sample.surfaceY - 18: return sandstoneBlock
-    if strata > 0.58: return limestoneBlock
-    if strata < -0.58: return graniteBlock
-    return stoneBlock
+        if y >= sample.surfaceY - 18: return survivalBlocks.sandstone
+    if strata > 0.58: return survivalBlocks.limestone
+    if strata < -0.58: return survivalBlocks.granite
+    return survivalBlocks.stone

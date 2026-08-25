@@ -1,5 +1,5 @@
 import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/domain"
+import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
 import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "./contracts.vel"
 
 def sameLocal(left: LocalPosition, right: LocalPosition) -> bool:

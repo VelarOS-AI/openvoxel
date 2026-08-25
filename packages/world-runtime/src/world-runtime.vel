@@ -1,6 +1,9 @@
 import {BlockCatalogContribution, WorldBlockRegistry, WorldBlockRegistrySnapshot, baseBlockCatalogSource, baseWorldBlockRegistrySnapshot, blockCatalogHash, createWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkBlock, chunkKey, createWorldManifest, locateBlock, maximumChunkBatchSize, setChunkBlock, worldGenerator} from "@openvoxel/domain"
+import {TerrainSample, WorldGenerator, worldGenerator} from "@openvoxel/world-generation"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, LocalPosition, WorldManifest, chunkBlock, chunkKey, locateBlock, setChunkBlock} from "@openvoxel/world"
 import {ChunkDelta, WorldStore} from "./contracts.vel"
+import {CreateWorld, createWorldManifest} from "./world-creation.vel"
+import {maximumChunkBatchSize} from "./runtime-limits.vel"
 
 export class WorldNotFoundError extends Error:
     constructor(const worldId: string): super(f"World '{worldId}' was not found")

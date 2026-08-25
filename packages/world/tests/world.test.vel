@@ -1,0 +1,69 @@
+import {expect} from "velar/test"
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {Chunk, blockIndex, chunkBlock, emptyChunk, setChunkBlock} from "../src/chunk/chunk.vel"
+import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/spatial/coordinates.vel"
+import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
+import {checkWorldCoordinates} from "./support/property-check.vel"
+
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+
+def coordinateRoundTrip(position: Coordinate3) -> bool:
+    const located = locateBlock(position, initialChunkEdge)
+    return located.chunk.x * initialChunkEdge + located.local.x == position.x and located.chunk.y * initialChunkEdge + located.local.y == position.y and located.chunk.z * initialChunkEdge + located.local.z == position.z
+
+def manifest() -> WorldManifest:
+    return validateWorldManifest({
+        id: "world-model",
+        name: "World Model",
+        seed: "openvoxel",
+        formatVersion: worldFormatVersion,
+        chunkEdge: initialChunkEdge,
+        generator: builtinIdentities.generators.survival,
+        blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
+    })
+
+test "negative world coordinates map to stable chunks":
+    expect(chunkCoordinate(-17, 16)).toBe(-2)
+    expect(localCoordinate(-17, 16)).toBe(15)
+    expect(chunkCoordinate(-16, 16)).toBe(-1)
+    expect(localCoordinate(-16, 16)).toBe(0)
+    expect(chunkCoordinate(-1, 16)).toBe(-1)
+    expect(localCoordinate(-1, 16)).toBe(15)
+    expect(chunkCoordinate(0, 16)).toBe(0)
+    expect(localCoordinate(0, 16)).toBe(0)
+    expect(chunkCoordinate(15, 16)).toBe(0)
+    expect(localCoordinate(15, 16)).toBe(15)
+    expect(chunkCoordinate(16, 16)).toBe(1)
+    expect(localCoordinate(16, 16)).toBe(0)
+
+test "coordinate decomposition round trips for generated values": checkWorldCoordinates(coordinateRoundTrip)
+
+test "three dimensional coordinates inherit the horizontal coordinate contract":
+    const position = Coordinate3.parse({x: 4, y: 8, z: 12})
+    expect(Coordinate2.is(position)).toBe(true)
+    expect(position.y).toBe(8)
+
+test "chunk storage uses x z y order without collisions":
+    expect(blockIndex({x: 0, y: 0, z: 0}, 16)).toBe(0)
+    expect(blockIndex({x: 15, y: 0, z: 0}, 16)).toBe(15)
+    expect(blockIndex({x: 0, y: 0, z: 1}, 16)).toBe(16)
+    expect(blockIndex({x: 0, y: 1, z: 0}, 16)).toBe(256)
+    expect(blockIndex({x: 15, y: 15, z: 15}, 16)).toBe(4095)
+
+test "three dimensional lookup crosses chunk boundaries":
+    const located = locateBlock({x: -1, y: 16, z: 32}, 16)
+    expect(located.chunk).toEqual({x: -1, y: 1, z: 2})
+    expect(located.local).toEqual({x: 15, y: 0, z: 0})
+
+test "world manifests carry their complete runtime registry":
+    const world = manifest()
+    expect(world.blockRegistry.states.size).toBe(183)
+    expect(world.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
+
+test "chunk palettes store UInt32 runtime ids behind UInt16 local indices":
+    const chunk: Chunk = emptyChunk({x: 0, y: 0, z: 0}, 16, airBlock)
+    const modRuntimeId = 0x1000000
+    setChunkBlock(chunk, {x: 1, y: 2, z: 3}, modRuntimeId)
+    expect(chunk.palette).toEqual([airBlock, modRuntimeId])
+    expect(chunkBlock(chunk, {x: 1, y: 2, z: 3})).toBe(modRuntimeId)
+    expect(chunk.indices[561]).toBe(1)

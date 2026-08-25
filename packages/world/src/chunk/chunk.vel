@@ -1,8 +1,6 @@
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {builtinIdentities, defaultBlockStateRuntimeId, requireBlockStateRuntimeId} from "@openvoxel/blocks"
-import {ChunkPosition, LocalPosition, requireChunkEdge, requireChunkPosition} from "./coordinates.vel"
-
-const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+import {requireBlockStateRuntimeId} from "@openvoxel/blocks"
+import {ChunkPosition, LocalPosition, requireChunkEdge, requireChunkPosition} from "../spatial/coordinates.vel"
 
 export def chunkVolume(edge: number) -> number:
     requireChunkEdge(edge)
@@ -24,7 +22,10 @@ export type Chunk:
     paletteIndex: Map<number, number>
     revision: number
 
-def requireStorageIndex(chunk: Chunk, index: number):
+/// paletteIndex 是由 palette 重建的进程内加速索引，不属于 Chunk 的存储或网络格式。
+/// 对外投影只使用 position、edge、palette、indices 和 revision。
+
+def requireStorageIndex(chunk: readonly Chunk, index: number):
     assert index.isInteger() and index >= 0 and index < chunk.indices.size else "Chunk storage index is outside the chunk"
 
 export def chunk(
@@ -48,11 +49,11 @@ export def chunk(
         assert paletteEntry < palette.size else f"Chunk palette index {paletteEntry} is outside the palette"
     return {position, edge, palette, indices, paletteIndex, revision}
 
-export def chunkBlockAtIndex(chunk: Chunk, index: number) -> number:
+export def chunkBlockAtIndex(chunk: readonly Chunk, index: number) -> number:
     requireStorageIndex(chunk, index)
     return chunk.palette[chunk.indices[index]]
 
-export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number:
+export def chunkBlock(chunk: readonly Chunk, local: LocalPosition) -> number:
     return chunkBlockAtIndex(chunk, blockIndex(local, chunk.edge))
 
 def paletteEntryFor(chunk: Chunk, runtimeId: number) -> number:
@@ -65,8 +66,8 @@ def paletteEntryFor(chunk: Chunk, runtimeId: number) -> number:
     chunk.paletteIndex.set(runtimeId, index)
     return index
 
-/// Generation paints semantic runtime ids without changing the persisted
-/// revision. Runtime mutations use setChunkBlock instead.
+/// 世界生成阶段写入语义 runtimeId，但不改变持久化 revision。
+/// 玩家或系统造成的正式修改必须使用 setChunkBlock。
 export def paintChunkBlockAtIndex(chunk: Chunk, index: number, runtimeId: number):
     requireStorageIndex(chunk, index)
     chunk.indices[index] = paletteEntryFor(chunk, runtimeId)
@@ -79,11 +80,12 @@ export def setChunkBlock(chunk: Chunk, local: LocalPosition, runtimeId: number) 
         chunk.revision += 1
     return previous
 
-export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airBlockState) -> Chunk:
+/// 空 Chunk 本身不知道哪个方块代表空气；调用方必须从当前内容目录提供填充值。
+export def emptyChunk(position: ChunkPosition, edge: number, fill: number) -> Chunk:
     requireBlockStateRuntimeId(fill)
     return chunk(position, edge, [fill], uint16Buffer(chunkVolume(edge)))
 
-export def chunkChecksum(chunk: Chunk) -> number:
+export def chunkChecksum(chunk: readonly Chunk) -> number:
     let checksum = 0x6d2b79f5
     for index in range(chunk.indices.size):
         checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunkBlockAtIndex(chunk, index)) & 0xffffffff

@@ -1,5 +1,5 @@
 {
-  "name": "@openvoxel/domain",
+  "name": "@openvoxel/world-generation",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -30,9 +30,7 @@
   },
   "dependencies": {
     "@openvoxel/blocks": "0.1.0",
-    "@velarscript-labs/noise": "0.1.2"
-  },
-  "devDependencies": {
-    "fast-check": "4.9.0"
+    "@openvoxel/world": "0.1.0",
+    "@velarscript-labs/noise": "0.1.5"
   }
 }

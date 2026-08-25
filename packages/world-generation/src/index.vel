@@ -1,0 +1,7 @@
+/// 生成器公共契约和身份注册入口。
+export {WorldGenerator} from "./contracts.vel"
+export {defaultGenerator, generateChunk, worldGenerator} from "./generator-registry.vel"
+export {TerrainSample} from "./terrain-sample.vel"
+
+/// 当前内建生存生成器公开的查询结果和世界范围。
+export {maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "./survival/terrain.vel"

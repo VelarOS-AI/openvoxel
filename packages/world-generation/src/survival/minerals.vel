@@ -1,0 +1,61 @@
+import {Random, random} from "velar/random"
+import {isNaturalRock} from "@openvoxel/blocks"
+import {Chunk, Coordinate3} from "@openvoxel/world"
+import {survivalBlocks} from "./block-palette.vel"
+import {chunkMinimumX, chunkMinimumY, chunkMinimumZ, generatedBlock, insideChunk, paintGeneratedBlock} from "./chunk-brush.vel"
+
+def acceptsOreSource(runtimeId: number, source: string) -> bool:
+    if source == "basalt": return runtimeId == survivalBlocks.basalt
+    if source == "sandstone": return runtimeId == survivalBlocks.sandstone
+    return isNaturalRock(runtimeId)
+
+def paintOreCell(chunk: Chunk, position: Coordinate3, oreBlock: number, source: string):
+    if insideChunk(chunk, position):
+        const current = generatedBlock(chunk, position)
+        if acceptsOreSource(current, source): paintGeneratedBlock(chunk, position, oreBlock)
+
+def runOreVein(chunk: Chunk, stream: Random, start: Coordinate3, oreBlock: number, source: string, minimumSteps: number, maximumSteps: number):
+    let x = start.x
+    let y = start.y
+    let z = start.z
+    const steps = stream.int(minimumSteps, maximumSteps + 1)
+    for step in range(steps):
+        paintOreCell(chunk, {x, y, z}, oreBlock, source)
+        if step % 3 == 0 and stream.bool(0.45):
+            paintOreCell(chunk, {x: x + stream.int(-1, 2), y: y + stream.int(-1, 2), z: z + stream.int(-1, 2)}, oreBlock, source)
+        let dx = stream.int(-1, 2)
+        let dy = stream.int(-1, 2)
+        let dz = stream.int(-1, 2)
+        if dx == 0 and dy == 0 and dz == 0: dx = 1
+        x += dx
+        y += dy
+        z += dz
+
+def tryOre(chunk: Chunk, root: Random, cell: Coordinate3, label: string, oreBlock: number, source: string, chance: number, minimumY: number, maximumY: number, minimumSteps: number, maximumSteps: number):
+    const stream = root.fork(f"{label}:{cell.x}:{cell.y}:{cell.z}")
+    if not stream.bool(chance): return
+    const startX = cell.x * 16 + stream.int(0, 16)
+    const startY = cell.y * 16 + stream.int(0, 16)
+    const startZ = cell.z * 16 + stream.int(0, 16)
+    if startY < minimumY or startY > maximumY: return
+    runOreVein(chunk, stream, {x: startX, y: startY, z: startZ}, oreBlock, source, minimumSteps, maximumSteps)
+
+export def generateMinerals(chunk: Chunk, seed: string):
+    const firstCellX = ((chunkMinimumX(chunk) - 16) / 16).floor()
+    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge - 1 + 16) / 16).floor()
+    const firstCellY = ((chunkMinimumY(chunk) - 16) / 16).floor()
+    const lastCellY = ((chunkMinimumY(chunk) + chunk.edge - 1 + 16) / 16).floor()
+    const firstCellZ = ((chunkMinimumZ(chunk) - 16) / 16).floor()
+    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge - 1 + 16) / 16).floor()
+    const oreRoot = random(seed).fork("ores")
+    for cellX in range(firstCellX, lastCellX + 1):
+        for cellZ in range(firstCellZ, lastCellZ + 1):
+            for cellY in range(firstCellY, lastCellY + 1):
+                const cell = {x: cellX, y: cellY, z: cellZ}
+                tryOre(chunk, oreRoot, cell, "coal", survivalBlocks.coalOre, "rock", 0.72, 5, 128, 5, 12)
+                tryOre(chunk, oreRoot, cell, "copper", survivalBlocks.copperOre, "rock", 0.38, 22, 68, 4, 9)
+                tryOre(chunk, oreRoot, cell, "iron", survivalBlocks.ironOre, "basalt", 0.42, 2, 44, 4, 9)
+                tryOre(chunk, oreRoot, cell, "saltpeter", survivalBlocks.saltpeterOre, "sandstone", 0.24, 48, 86, 6, 13)
+                tryOre(chunk, oreRoot, cell, "sulphur", survivalBlocks.sulphurOre, "basalt", 0.26, 2, 42, 4, 9)
+                tryOre(chunk, oreRoot, cell, "diamond", survivalBlocks.diamondOre, "basalt", 0.055, 2, 18, 3, 7)
+                tryOre(chunk, oreRoot, cell, "germanium", survivalBlocks.germaniumOre, "basalt", 0.16, 2, 56, 4, 9)

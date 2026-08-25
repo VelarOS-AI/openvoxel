@@ -1,8 +1,7 @@
-import {Coordinate3} from "../../src/coordinates.vel"
+import {Coordinate3} from "../../src/spatial/coordinates.vel"
 
-// fast-check exports a JavaScript member named `assert`, which is a VelarScript
-// keyword. Keep that naming mismatch inside this test-only checked boundary;
-// the coordinate range and deterministic seed remain OpenVoxel test policy.
+// fast-check 导出的 JavaScript 成员 `assert` 与 VelarScript 关键字重名。
+// 这个测试专用边界集中处理命名差异，同时固定坐标范围、次数和随机种子。
 extern js`
     import fc from "fast-check"
 

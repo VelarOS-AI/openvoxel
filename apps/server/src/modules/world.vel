@@ -1,7 +1,6 @@
 import {Request, input} from "velar/serve"
-import {CreateWorld} from "@openvoxel/domain"
 import {WorldQuery, protocolVersion, worldBootstrapResponse} from "@openvoxel/protocol"
-import {WorldNotFoundError} from "@openvoxel/world-runtime"
+import {CreateWorld, WorldNotFoundError} from "@openvoxel/world-runtime"
 import {created, ok} from "../responses.vel"
 import {openVoxelApplicationProvider} from "../application.vel"
 

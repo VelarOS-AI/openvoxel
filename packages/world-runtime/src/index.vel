@@ -1,3 +1,5 @@
 export {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldDeltaStore, WorldManifestStore, WorldStore} from "./contracts.vel"
 export {memoryWorldStore} from "./memory-world-store.vel"
+export {CreateWorld, createWorldManifest} from "./world-creation.vel"
+export {maximumChunkBatchSize} from "./runtime-limits.vel"
 export {BlockChange, WorldAlreadyExistsError, WorldBlockCatalogProvider, WorldBlockCatalogSet, WorldNotFoundError, WorldRuntime, fixedWorldBlockCatalogProvider, worldRuntime} from "./world-runtime.vel"

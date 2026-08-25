@@ -19,14 +19,15 @@
   },
   "dependencies": {
     "@openvoxel/blocks": "0.1.0",
-    "@openvoxel/domain": "0.1.0",
     "@openvoxel/protocol": "0.1.0",
+    "@openvoxel/world": "0.1.0",
+    "@openvoxel/world-generation": "0.1.0",
     "@openvoxel/world-runtime": "0.1.0",
-    "@velarscript/server": "0.14.9",
-    "@velarscript-labs/database": "0.3.1",
-    "@velarscript-labs/msgpack": "0.1.4",
-    "@velarscript-labs/sql": "0.1.1",
-    "@velarscript-labs/sqlite": "0.3.1"
+    "@velarscript/server": "0.15.0",
+    "@velarscript-labs/database": "0.3.2",
+    "@velarscript-labs/msgpack": "0.1.5",
+    "@velarscript-labs/sql": "0.1.2",
+    "@velarscript-labs/sqlite": "0.3.2"
   },
   "devDependencies": {
     "ws": "8.21.1"

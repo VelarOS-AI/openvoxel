@@ -1,4 +1,5 @@
-/// Integer coordinate conversion is shared by local and online runtimes.
+/// 世界空间模型只处理整数坐标和 Chunk 寻址，不读取存储、网络或生成器状态。
+/// 本地客户端、服务端和离线工具因此可以共享完全相同的负坐标换算规则。
 
 export type Coordinate2:
     x: number

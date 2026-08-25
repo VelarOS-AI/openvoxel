@@ -1,5 +1,5 @@
 import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/domain"
+import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/world"
 
 export type BlockOverride:
     position: LocalPosition

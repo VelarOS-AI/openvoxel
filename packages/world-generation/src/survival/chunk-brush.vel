@@ -1,0 +1,29 @@
+import {Chunk, Coordinate3, chunkBlockAtIndex, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {survivalBlocks} from "./block-palette.vel"
+
+/// 生成特征始终用世界坐标描述，写入时裁剪到当前目标 Chunk。
+/// 这样一个特征可以跨越边界，但生成过程不读取或修改相邻 Chunk。
+export def chunkMinimumX(chunk: readonly Chunk) -> number: return chunk.position.x * chunk.edge
+
+export def chunkMinimumY(chunk: readonly Chunk) -> number: return chunk.position.y * chunk.edge
+
+export def chunkMinimumZ(chunk: readonly Chunk) -> number: return chunk.position.z * chunk.edge
+
+export def insideChunk(chunk: readonly Chunk, position: readonly Coordinate3) -> bool:
+    const minimumX = chunkMinimumX(chunk)
+    const minimumY = chunkMinimumY(chunk)
+    const minimumZ = chunkMinimumZ(chunk)
+    return position.x >= minimumX and position.x < minimumX + chunk.edge and position.y >= minimumY and position.y < minimumY + chunk.edge and position.z >= minimumZ and position.z < minimumZ + chunk.edge
+
+def worldIndex(chunk: readonly Chunk, position: readonly Coordinate3) -> number:
+    const localX = position.x - chunkMinimumX(chunk)
+    const localY = position.y - chunkMinimumY(chunk)
+    const localZ = position.z - chunkMinimumZ(chunk)
+    return localX + chunk.edge * (localZ + chunk.edge * localY)
+
+export def generatedBlock(chunk: readonly Chunk, position: readonly Coordinate3) -> number:
+    if not insideChunk(chunk, position): return survivalBlocks.air
+    return chunkBlockAtIndex(chunk, worldIndex(chunk, position))
+
+export def paintGeneratedBlock(chunk: Chunk, position: readonly Coordinate3, runtimeId: number):
+    if insideChunk(chunk, position): paintChunkBlockAtIndex(chunk, worldIndex(chunk, position), runtimeId)

@@ -1,0 +1,8 @@
+import {Chunk, ChunkPosition, Coordinate2} from "@openvoxel/world"
+import {TerrainSample} from "./terrain-sample.vel"
+
+/// 世界生成器是纯确定性服务：同一个生成器身份、种子和坐标必须得到相同结果。
+/// 接口不知道 Chunk 从哪里请求，也不负责保存玩家修改。
+export type WorldGenerator:
+    sample: (position: Coordinate2) -> TerrainSample
+    generate: (position: ChunkPosition) -> Chunk

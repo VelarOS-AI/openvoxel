@@ -3,7 +3,7 @@ import {sqlConcat, trustedSql, trustedSqlTemplate} from "@velarscript-labs/datab
 import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {expect} from "velar/test"
 import {WorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
-import {chunkBlock} from "@openvoxel/domain"
+import {chunkBlock} from "@openvoxel/world"
 import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
 

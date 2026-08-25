@@ -1,0 +1,2 @@
+/// 这是一次应用查询允许请求的最大 Chunk 数量，不是世界格式或 Chunk 模型约束。
+export const maximumChunkBatchSize = 64

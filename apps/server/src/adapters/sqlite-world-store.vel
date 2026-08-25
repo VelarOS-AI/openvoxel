@@ -2,7 +2,7 @@ import {DatabaseCommand, DatabaseExecutor, DatabaseQuery, all, command, execute,
 import {SqlPredicate, deleteCommand, insertCommand, insertStatement, selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlEqual, sqlLeftJoin, sqlNamedField, sqlSet, sqlTable, sqlTupleIn, updateCommand} from "@velarscript-labs/sql"
 import {SqliteConnection, SqliteJournalMode, SqliteTransaction, openSqlite, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {WorldBlockRegistrySnapshot, requireBlockStateRuntimeId} from "@openvoxel/blocks"
-import {ChunkPosition, LocalPosition, WorldManifest, chunkKey, validateWorldManifest} from "@openvoxel/domain"
+import {ChunkPosition, LocalPosition, WorldManifest, chunkKey, validateWorldManifest} from "@openvoxel/world"
 import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "@openvoxel/world-runtime"
 
 type WorldRow:

@@ -1,14 +1,16 @@
 import {expect} from "velar/test"
-import {TerrainSample, defaultGenerator, emptyChunk, sampleTerrain, setChunkBlock} from "@openvoxel/domain"
+import {TerrainSample, defaultGenerator, sampleTerrain} from "@openvoxel/world-generation"
+import {emptyChunk, setChunkBlock} from "@openvoxel/world"
 import {blockCatalogVersion, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {BlockMutation, ChunkQuery, ClientContractResponse, GenerationSampleResponse, WorldBootstrapResponse, WorldScoped, blockCatalogResponse, chunkBatchResponse, chunkBlockIndexOrder, chunkResponse, clientContractResponse, generationSampleResponse, protocolVersion, worldBootstrapResponse} from "../src/http.vel"
-import {createWorldManifest} from "@openvoxel/domain"
+import {createWorldManifest} from "@openvoxel/world-runtime"
 import {BlockChangedEvent, SocketBlockCommand} from "../src/realtime.vel"
 
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 
 test "chunk response projects palette storage into transport lists":
-    const chunk = emptyChunk({x: -1, y: 2, z: 3}, 16)
+    const chunk = emptyChunk({x: -1, y: 2, z: 3}, 16, airBlock)
     setChunkBlock(chunk, {x: 15, y: 0, z: 1}, stoneBlock)
     const response = chunkResponse("protocol", chunk)
     expect(response.worldId).toBe("protocol")
@@ -85,8 +87,8 @@ test "derived protocol records preserve inherited runtime contracts":
     expect(BlockMutation.is(event)).toBe(true)
 
 test "chunk batch response preserves request ordering":
-    const first = emptyChunk({x: 2, y: 3, z: 4}, 16)
-    const second = emptyChunk({x: -2, y: 1, z: 0}, 16)
+    const first = emptyChunk({x: 2, y: 3, z: 4}, 16, airBlock)
+    const second = emptyChunk({x: -2, y: 1, z: 0}, 16, airBlock)
     const response = chunkBatchResponse("protocol", [first, second])
     expect(response.chunks.size).toBe(2)
     expect(response.chunks[0].position.x).toBe(2)

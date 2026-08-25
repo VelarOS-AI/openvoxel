@@ -1,0 +1,13 @@
+import {Coordinate2} from "@openvoxel/world"
+
+/// 地形采样是生成器向诊断接口和客户端公开的稳定只读结果。
+/// 它描述世界坐标处的基础地形，不包含已保存的方块覆盖。
+export type TerrainSample:
+    position: Coordinate2
+    surfaceY: number
+    temperature: number
+    humidity: number
+    shoreDistance: number
+    mountainFactor: number
+    forestDensity: number
+    biome: string

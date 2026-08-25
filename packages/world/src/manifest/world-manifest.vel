@@ -1,17 +1,15 @@
-import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, builtinIdentities, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {requireChunkEdge} from "./coordinates.vel"
+import {WorldBlockRegistrySnapshot, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
+import {requireChunkEdge} from "../spatial/coordinates.vel"
 
 export const worldFormatVersion = 1
 export const initialChunkEdge = 16
-export const defaultGenerator = builtinIdentities.generators.survival
-export const maximumChunkBatchSize = 64
 
-export type CreateWorld:
+/// 世界清单只保存能够决定世界身份和重建结果的稳定事实。
+/// 默认值选择、创建命令和存储流程由 world-runtime 负责。
+export type WorldManifest:
     id: string
     name: string
     seed: string
-
-export type WorldManifest extends CreateWorld:
     formatVersion: number
     chunkEdge: number
     generator: string
@@ -28,20 +26,6 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     assert manifest.formatVersion == worldFormatVersion else "Unsupported world format version"
     requireChunkEdge(manifest.chunkEdge)
     assert manifest.chunkEdge == initialChunkEdge else "World requires a chunk edge of 16"
-    assert manifest.generator == defaultGenerator else "Unsupported world generator"
+    requireBoundedText(manifest.generator, "World generator", 128)
     validateWorldBlockRegistrySnapshot(manifest.blockRegistry)
     return manifest
-
-export def createWorldManifest(
-    command: CreateWorld,
-    blockRegistry: readonly WorldBlockRegistrySnapshot = baseWorldBlockRegistrySnapshot,
-) -> WorldManifest:
-    return validateWorldManifest({
-        id: command.id.trim(),
-        name: command.name.trim(),
-        seed: command.seed.trim(),
-        formatVersion: worldFormatVersion,
-        chunkEdge: initialChunkEdge,
-        generator: defaultGenerator,
-        blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry),
-    })

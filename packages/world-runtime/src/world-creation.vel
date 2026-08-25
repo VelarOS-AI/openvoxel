@@ -1,0 +1,24 @@
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
+import {defaultGenerator} from "@openvoxel/world-generation"
+import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+
+/// 创建命令属于应用用例输入，不进入持久化世界模型。
+export type CreateWorld:
+    id: string
+    name: string
+    seed: string
+
+/// 创建策略在应用层选择默认 Chunk 尺寸、生成器和基础注册表。
+export def createWorldManifest(
+    command: CreateWorld,
+    blockRegistry: readonly WorldBlockRegistrySnapshot = baseWorldBlockRegistrySnapshot,
+) -> WorldManifest:
+    return validateWorldManifest({
+        id: command.id.trim(),
+        name: command.name.trim(),
+        seed: command.seed.trim(),
+        formatVersion: worldFormatVersion,
+        chunkEdge: initialChunkEdge,
+        generator: defaultGenerator,
+        blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry),
+    })

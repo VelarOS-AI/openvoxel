@@ -1,0 +1,117 @@
+import {Random, random} from "velar/random"
+import {Chunk, Coordinate3} from "@openvoxel/world"
+import {TerrainSample} from "../terrain-sample.vel"
+import {survivalBlocks} from "./block-palette.vel"
+import {chunkMinimumX, chunkMinimumZ, generatedBlock, paintGeneratedBlock} from "./chunk-brush.vel"
+import {ColumnCache, GenerationFields, findSurfaceY, sampleTerrainWithFields, seaLevel, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+
+def treeBlocks(sample: TerrainSample, stream: Random) -> List<number>?:
+    if sample.humidity < 4:
+        if sample.temperature >= 2 and sample.temperature <= 14 and stream.bool(0.04):
+            return [survivalBlocks.mimosaLog, survivalBlocks.mimosaLeaves]
+        return null
+    if sample.temperature <= 6: return [survivalBlocks.spruceLog, survivalBlocks.spruceLeaves]
+    if sample.humidity >= 11 and sample.temperature >= 4 and sample.temperature <= 12 and stream.bool(0.4):
+        return [survivalBlocks.poplarLog, survivalBlocks.poplarLeaves]
+    if sample.temperature >= 5 and sample.temperature <= 11 and stream.bool(0.35):
+        return [survivalBlocks.birchLog, survivalBlocks.birchLeaves]
+    if sample.temperature >= 2 and sample.temperature <= 14 and sample.humidity <= 6 and stream.bool(0.12):
+        return [survivalBlocks.mimosaLog, survivalBlocks.mimosaLeaves]
+    if sample.temperature >= 4 and sample.humidity >= 6: return [survivalBlocks.oakLog, survivalBlocks.oakLeaves]
+    return null
+
+def paintTree(chunk: Chunk, ground: Coordinate3, height: number, logBlock: number, leavesBlock: number):
+    for offset in range(height):
+        const position = {x: ground.x, y: ground.y + 1 + offset, z: ground.z}
+        const current = generatedBlock(chunk, position)
+        if current == survivalBlocks.air or current == leavesBlock or current == survivalBlocks.snow:
+            paintGeneratedBlock(chunk, position, logBlock)
+    const crownY = ground.y + height
+    for dy in range(-2, 2):
+        const radius = dy >= 1 ? 1 : 2
+        for dx in range(-radius, radius + 1):
+            for dz in range(-radius, radius + 1):
+                if dx.abs() + dz.abs() > radius + 1: continue
+                const position = {x: ground.x + dx, y: crownY + dy, z: ground.z + dz}
+                if generatedBlock(chunk, position) == survivalBlocks.air:
+                    paintGeneratedBlock(chunk, position, leavesBlock)
+
+def generateTrees(chunk: Chunk, fields: GenerationFields, root: Random):
+    const cellSize = 4
+    const firstCellX = ((chunkMinimumX(chunk) - 4) / cellSize).floor()
+    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge - 1 + 4) / cellSize).floor()
+    const firstCellZ = ((chunkMinimumZ(chunk) - 4) / cellSize).floor()
+    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge - 1 + 4) / cellSize).floor()
+    for cellX in range(firstCellX, lastCellX + 1):
+        for cellZ in range(firstCellZ, lastCellZ + 1):
+            const stream = root.fork(f"tree:{cellX}:{cellZ}")
+            const x = cellX * cellSize + stream.int(0, cellSize)
+            const z = cellZ * cellSize + stream.int(0, cellSize)
+            const position = {x, z}
+            const sample = sampleTerrainWithFields(fields, position)
+            if sample.biome == "ocean" or sample.biome == "shore" or sample.biome == "desert" or sample.biome == "mountains":
+                continue
+            const chance = 0.04 + 0.42 * sample.forestDensity
+            if not stream.bool(chance): continue
+            const topY = findSurfaceY(fields, position)
+            if topY <= seaLevel or temperatureAtHeight(sample.temperature, topY) <= 0: continue
+            const blocks = treeBlocks(sample, stream)
+            if blocks == null: continue
+            paintTree(chunk, {x, y: topY, z}, stream.int(4, 8), blocks[0], blocks[1])
+
+def generateCacti(chunk: Chunk, fields: GenerationFields, root: Random):
+    const cellSize = 8
+    const firstCellX = ((chunkMinimumX(chunk) - 1) / cellSize).floor()
+    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge) / cellSize).floor()
+    const firstCellZ = ((chunkMinimumZ(chunk) - 1) / cellSize).floor()
+    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge) / cellSize).floor()
+    for cellX in range(firstCellX, lastCellX + 1):
+        for cellZ in range(firstCellZ, lastCellZ + 1):
+            const stream = root.fork(f"cactus:{cellX}:{cellZ}")
+            if not stream.bool(0.16): continue
+            const x = cellX * cellSize + stream.int(0, cellSize)
+            const z = cellZ * cellSize + stream.int(0, cellSize)
+            const position = {x, z}
+            const sample = sampleTerrainWithFields(fields, position)
+            if sample.biome != "desert": continue
+            const topY = findSurfaceY(fields, position)
+            const height = stream.int(2, 5)
+            for offset in range(1, height + 1):
+                const blockPosition = {x, y: topY + offset, z}
+                if generatedBlock(chunk, blockPosition) == survivalBlocks.air:
+                    paintGeneratedBlock(chunk, blockPosition, survivalBlocks.cactus)
+
+def generateGroundPlants(chunk: Chunk, cache: ColumnCache, root: Random):
+    const minimumX = chunkMinimumX(chunk)
+    const minimumZ = chunkMinimumZ(chunk)
+    for localX in range(chunk.edge):
+        for localZ in range(chunk.edge):
+            const x = minimumX + localX
+            const z = minimumZ + localZ
+            const index = localZ + chunk.edge * localX
+            const sample = cache.samples[index]
+            const topY = cache.surfaceHeights[index]
+            const plantY = topY + 1
+            const position = {x, y: plantY, z}
+            if temperatureAtHeight(sample.temperature, topY) <= 0 and surfaceBlock(sample, topY) != survivalBlocks.sand:
+                if generatedBlock(chunk, position) == survivalBlocks.air:
+                    paintGeneratedBlock(chunk, position, survivalBlocks.snow)
+                continue
+            const stream = root.fork(f"plant:{x}:{z}")
+            if sample.biome == "desert":
+                if stream.bool(0.06) and generatedBlock(chunk, position) == survivalBlocks.air:
+                    paintGeneratedBlock(chunk, position, survivalBlocks.dryBush)
+                continue
+            const chance = 0.05 + 0.22 * Math.clamp(sample.humidity / 15, 0, 1)
+            if not stream.bool(chance) or generatedBlock(chunk, position) != survivalBlocks.air: continue
+            const choice = stream.int(0, 20)
+            if choice == 0: paintGeneratedBlock(chunk, position, survivalBlocks.redFlower)
+            else if choice == 1: paintGeneratedBlock(chunk, position, survivalBlocks.purpleFlower)
+            else if choice == 2: paintGeneratedBlock(chunk, position, survivalBlocks.whiteFlower)
+            else: paintGeneratedBlock(chunk, position, survivalBlocks.tallGrass)
+
+export def generateVegetation(chunk: Chunk, fields: GenerationFields, seed: string, cache: ColumnCache):
+    const vegetationRoot = random(seed).fork("vegetation")
+    generateTrees(chunk, fields, vegetationRoot)
+    generateCacti(chunk, fields, vegetationRoot)
+    generateGroundPlants(chunk, cache, vegetationRoot)

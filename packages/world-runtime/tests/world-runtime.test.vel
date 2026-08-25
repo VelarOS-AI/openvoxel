@@ -1,6 +1,6 @@
 import {expect} from "velar/test"
 import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, builtinIdentities, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
-import {WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/domain"
+import {WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
 import {WorldBlockCatalogSet, worldRuntime} from "../src/world-runtime.vel"
 

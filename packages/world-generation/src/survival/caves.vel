@@ -1,0 +1,183 @@
+import {Random, random} from "velar/random"
+import {isNaturalRock} from "@openvoxel/blocks"
+import {Chunk, Coordinate2, Coordinate3, chunkBlockAtIndex, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {survivalBlocks} from "./block-palette.vel"
+import {chunkMinimumX, chunkMinimumY, chunkMinimumZ} from "./chunk-brush.vel"
+import {GenerationFields, findSurfaceY, maximumWorldY, minimumWorldY} from "./terrain.vel"
+
+type CaveBounds:
+    minimumX: number
+    maximumX: number
+    minimumY: number
+    maximumY: number
+    minimumZ: number
+    maximumZ: number
+
+type CavePlan:
+    bounds: CaveBounds?
+    spheres: List<number>
+
+const caveCellSize = 16
+const caveSearchRadius = 48
+const cavePlanCacheCapacity = 256
+
+def isCarvable(runtimeId: number) -> bool:
+    return isNaturalRock(runtimeId) or runtimeId == survivalBlocks.dirt or runtimeId == survivalBlocks.grass or runtimeId == survivalBlocks.sand or runtimeId == survivalBlocks.clay or runtimeId == survivalBlocks.gravel
+
+def paintCaveSphere(chunk: Chunk, centerX: number, centerY: number, centerZ: number, radius: number):
+    const chunkX = chunkMinimumX(chunk)
+    const chunkY = chunkMinimumY(chunk)
+    const chunkZ = chunkMinimumZ(chunk)
+    const minimumX = Math.max(chunkX, (centerX - radius).floor())
+    const maximumX = Math.min(chunkX + chunk.edge - 1, (centerX + radius).ceil())
+    const minimumY = Math.max(chunkY, Math.max(minimumWorldY + 4, (centerY - radius).floor()))
+    const maximumY = Math.min(chunkY + chunk.edge - 1, (centerY + radius).ceil())
+    const minimumZ = Math.max(chunkZ, (centerZ - radius).floor())
+    const maximumZ = Math.min(chunkZ + chunk.edge - 1, (centerZ + radius).ceil())
+    const radiusSquared = radius * radius
+    for x in range(minimumX, maximumX + 1):
+        for z in range(minimumZ, maximumZ + 1):
+            for y in range(minimumY, maximumY + 1):
+                const dx = x + 0.5 - centerX
+                const dy = y + 0.5 - centerY
+                const dz = z + 0.5 - centerZ
+                if dx * dx + dy * dy + dz * dz <= radiusSquared:
+                    const localX = x - chunkX
+                    const localY = y - chunkY
+                    const localZ = z - chunkZ
+                    const index = localX + chunk.edge * (localZ + chunk.edge * localY)
+                    const current = chunkBlockAtIndex(chunk, index)
+                    if isCarvable(current): paintChunkBlockAtIndex(chunk, index, survivalBlocks.air)
+
+def caveBoundsIntersects(chunk: readonly Chunk, bounds: readonly CaveBounds) -> bool:
+    const minimumX = chunkMinimumX(chunk)
+    const maximumX = minimumX + chunk.edge - 1
+    const minimumY = chunkMinimumY(chunk)
+    const maximumY = minimumY + chunk.edge - 1
+    const minimumZ = chunkMinimumZ(chunk)
+    const maximumZ = minimumZ + chunk.edge - 1
+    return bounds.minimumX <= maximumX and bounds.maximumX >= minimumX and bounds.minimumY <= maximumY and bounds.maximumY >= minimumY and bounds.minimumZ <= maximumZ and bounds.maximumZ >= minimumZ
+
+def caveSphereIntersects(chunk: readonly Chunk, centerX: number, centerY: number, centerZ: number, radius: number) -> bool:
+    const minimumX = chunkMinimumX(chunk)
+    const maximumX = minimumX + chunk.edge - 1
+    const minimumY = chunkMinimumY(chunk)
+    const maximumY = minimumY + chunk.edge - 1
+    const minimumZ = chunkMinimumZ(chunk)
+    const maximumZ = minimumZ + chunk.edge - 1
+    return (centerX - radius).floor() <= maximumX and (centerX + radius).ceil() >= minimumX and (centerY - radius).floor() <= maximumY and (centerY + radius).ceil() >= minimumY and (centerZ - radius).floor() <= maximumZ and (centerZ + radius).ceil() >= minimumZ
+
+def appendCavePath(spheres: List<number>, stream: Random, start: Coordinate3, center: Coordinate2):
+    let x = start.x
+    let y = start.y
+    let z = start.z
+    let angle = stream.number() * 6.283185307179586
+    let vertical = stream.number() * 0.35 - 0.22
+    const steps = stream.int(34, 76)
+    for step in range(steps):
+        let radius = 1.35 + stream.number() * 1.25
+        if step > 12 and step % 19 == 0: radius += 1.25
+        spheres.append(x)
+        spheres.append(y)
+        spheres.append(z)
+        spheres.append(radius)
+        angle += (stream.number() - 0.5) * 0.3
+        vertical = Math.clamp(vertical + (stream.number() - 0.5) * 0.12, -0.42, 0.22)
+        x += Math.cos(angle) * 2
+        y += vertical * 2
+        z += Math.sin(angle) * 2
+        if (x - center.x).abs() > 34 or (z - center.z).abs() > 34 or y < 5 or y > maximumWorldY - 9: break
+
+def finishCavePlan(spheres: List<number>) -> CavePlan:
+    if spheres.size == 0: return {bounds: null, spheres}
+
+    let minimumX = Math.infinity
+    let maximumX = -Math.infinity
+    let minimumY = Math.infinity
+    let maximumY = -Math.infinity
+    let minimumZ = Math.infinity
+    let maximumZ = -Math.infinity
+    for offset in range(0, spheres.size, 4):
+        const x = spheres[offset]
+        const y = spheres[offset + 1]
+        const z = spheres[offset + 2]
+        const radius = spheres[offset + 3]
+        minimumX = Math.min(minimumX, (x - radius).floor())
+        maximumX = Math.max(maximumX, (x + radius).ceil())
+        minimumY = Math.min(minimumY, (y - radius).floor())
+        maximumY = Math.max(maximumY, (y + radius).ceil())
+        minimumZ = Math.min(minimumZ, (z - radius).floor())
+        maximumZ = Math.max(maximumZ, (z + radius).ceil())
+    return {bounds: {minimumX, maximumX, minimumY, maximumY, minimumZ, maximumZ}, spheres}
+
+/// CavePlanner 缓存由世界坐标单元拥有的洞穴计划；纵向相邻 Chunk 复用同一计划。
+export type CavePlanner:
+    cachedPlanCount: () -> number
+    planBuildCount: () -> number
+    plan: (cellX: number, cellZ: number) -> CavePlan
+
+export def cavePlanner(fields: GenerationFields, seed: string, capacity: number = cavePlanCacheCapacity) -> CavePlanner:
+    assert capacity.isInteger() and capacity > 0 else "Cave plan cache capacity must be a positive integer"
+    const root = random(seed).fork("caves")
+    const plans: Map<string, CavePlan> = Map()
+    let builds = 0
+
+    def cachedPlanCount() -> number: return plans.size
+
+    def planBuildCount() -> number: return builds
+
+    def build(cellX: number, cellZ: number) -> CavePlan:
+        const owner = root.fork(f"{cellX}:{cellZ}")
+        const spheres: List<number> = []
+        if not owner.bool(0.5): return finishCavePlan(spheres)
+
+        const centerX = cellX * caveCellSize + caveCellSize / 2
+        const centerZ = cellZ * caveCellSize + caveCellSize / 2
+        const startX = cellX * caveCellSize + owner.int(0, caveCellSize)
+        const startZ = cellZ * caveCellSize + owner.int(0, caveCellSize)
+        const topY = findSurfaceY(fields, {x: startX, z: startZ})
+        if topY <= 13: return finishCavePlan(spheres)
+
+        const startY = owner.int(8, Math.max(9, Math.min(topY - 4, 59)))
+        const start = {x: startX, y: startY, z: startZ}
+        const center = {x: centerX, z: centerZ}
+        appendCavePath(spheres, owner.fork("main"), start, center)
+        if owner.bool(0.16):
+            appendCavePath(spheres, owner.fork("branch"), {x: start.x, y: start.y - 2, z: start.z}, center)
+        return finishCavePlan(spheres)
+
+    def plan(cellX: number, cellZ: number) -> CavePlan:
+        const ownerKey = f"{cellX}:{cellZ}"
+        const existing = plans.get(ownerKey)
+        if existing != null:
+            plans.remove(ownerKey)
+            plans.set(ownerKey, existing)
+            return existing
+
+        const built = build(cellX, cellZ)
+        builds += 1
+        if plans.size >= capacity: plans.remove(plans.keys()[0])
+        plans.set(ownerKey, built)
+        return built
+
+    return {cachedPlanCount, planBuildCount, plan}
+
+export def carveCaves(chunk: Chunk, planner: CavePlanner):
+    const minimumX = chunkMinimumX(chunk)
+    const maximumX = minimumX + chunk.edge - 1
+    const minimumZ = chunkMinimumZ(chunk)
+    const maximumZ = minimumZ + chunk.edge - 1
+    const firstCellX = ((minimumX - caveSearchRadius) / caveCellSize).floor()
+    const lastCellX = ((maximumX + caveSearchRadius) / caveCellSize).floor()
+    const firstCellZ = ((minimumZ - caveSearchRadius) / caveCellSize).floor()
+    const lastCellZ = ((maximumZ + caveSearchRadius) / caveCellSize).floor()
+    for cellX in range(firstCellX, lastCellX + 1):
+        for cellZ in range(firstCellZ, lastCellZ + 1):
+            const plan = planner.plan(cellX, cellZ)
+            if plan.bounds == null or not caveBoundsIntersects(chunk, plan.bounds): continue
+            for offset in range(0, plan.spheres.size, 4):
+                const x = plan.spheres[offset]
+                const y = plan.spheres[offset + 1]
+                const z = plan.spheres[offset + 2]
+                const radius = plan.spheres[offset + 3]
+                if caveSphereIntersects(chunk, x, y, z, radius): paintCaveSphere(chunk, x, y, z, radius)

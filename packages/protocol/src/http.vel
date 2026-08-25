@@ -1,5 +1,7 @@
 import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources, packedBlockCatalog} from "@openvoxel/blocks"
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, TerrainSample, WorldManifest, defaultGenerator, maximumChunkBatchSize, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/domain"
+import {TerrainSample, defaultGenerator, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/world-generation"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, WorldManifest} from "@openvoxel/world"
+import {maximumChunkBatchSize} from "@openvoxel/world-runtime"
 import {batchChunksPath, blockCatalogPath, changeBlockPath, clientContractPath, createWorldPath, findWorldPath, generationSamplePath, healthPath, queryChunkPath, realtimeEventsPath, worldBootstrapPathTemplate} from "./routes.vel"
 
 export const protocolVersion = 3

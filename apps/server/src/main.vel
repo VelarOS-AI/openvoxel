@@ -7,13 +7,12 @@ import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnviro
 import {worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelApplication} from "./application.vel"
 
-const configuredPath = get("OPENVOXEL_CONFIG")
-const configurationPath = resolveServerPath(configuredPath ?? "application.yml")
-const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configuredPath)))
-const store = await sqliteWorldStore(configuration.database)
-const application = openVoxelApplication(worldRuntime(store), serverOptions(configuration))
-
 export async def start() -> WebSocketServer:
+    const configuredPath = get("OPENVOXEL_CONFIG")
+    const configurationPath = resolveServerPath(configuredPath ?? "application.yml")
+    const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configuredPath)))
+    const store = await sqliteWorldStore(configuration.database)
+    const application = openVoxelApplication(worldRuntime(store), serverOptions(configuration))
     const server = await startOpenVoxelServer(application)
     application.info("server.configuration", {
         databasePath: configuration.database.path,

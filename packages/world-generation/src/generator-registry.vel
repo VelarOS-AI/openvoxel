@@ -1,0 +1,17 @@
+import {builtinIdentities} from "@openvoxel/blocks"
+import {Chunk, ChunkPosition, WorldManifest, validateWorldManifest} from "@openvoxel/world"
+import {WorldGenerator} from "./contracts.vel"
+import {survivalWorldGenerator} from "./survival/generator.vel"
+
+/// 默认生成器身份仍来自 identities.yml；世界清单只保存选中的稳定身份。
+export const defaultGenerator = builtinIdentities.generators.survival
+
+/// 生成器注册入口负责把清单中的身份解析为实现。以后增加生成器时，只扩展这里，
+/// WorldManifest 和 world-runtime 都不需要认识具体算法模块。
+export def worldGenerator(manifest: readonly WorldManifest) -> WorldGenerator:
+    const world = validateWorldManifest(WorldManifest.parse(manifest))
+    assert world.generator == defaultGenerator else f"Unsupported world generator {world.generator}"
+    return survivalWorldGenerator(world.seed, world.chunkEdge)
+
+export def generateChunk(manifest: readonly WorldManifest, position: ChunkPosition) -> Chunk:
+    return worldGenerator(manifest).generate(position)

@@ -40,10 +40,10 @@
     "build": "velar build"
   },
   "dependencies": {
-    "@velarscript-labs/yaml": "0.1.1"
+    "@velarscript-labs/yaml": "0.1.4"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.14.9",
-    "@velarscript/node": "0.14.9"
+    "@velarscript/cli": "0.15.0",
+    "@velarscript/node": "0.15.0"
   }
 }

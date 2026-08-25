@@ -1,5 +1,5 @@
 import {expect} from "velar/test"
-import {columnPlanner, createGenerationFields} from "../../src/generation/terrain.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
 
 test "column caches are reused across vertical chunks":
     const planner = columnPlanner(createGenerationFields("column-cache"), 16, 4)

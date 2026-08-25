@@ -1,0 +1,109 @@
+import {expect} from "velar/test"
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {Chunk, WorldManifest, chunkBlock, chunkBlockAtIndex, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {defaultGenerator, generateChunk, worldGenerator} from "../src/generator-registry.vel"
+import {maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "../src/survival/terrain.vel"
+
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const coalOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.coalOre)
+const copperOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.copperOre)
+const diamondOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.diamondOre)
+const germaniumOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.germaniumOre)
+const ironOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.ironOre)
+const magmaBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.magma)
+const saltpeterOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.saltpeterOre)
+const sandBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
+const spruceLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.spruceLeaves)
+const sulphurOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sulphurOre)
+const waterBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
+
+def manifest(id: string) -> WorldManifest:
+    return validateWorldManifest({
+        id,
+        name: id,
+        seed: "openvoxel",
+        formatVersion: worldFormatVersion,
+        chunkEdge: initialChunkEdge,
+        generator: defaultGenerator,
+        blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
+    })
+
+def countBlock(chunk: readonly Chunk, runtimeId: number) -> number:
+    let count = 0
+    for index in range(chunk.indices.size):
+        if chunkBlockAtIndex(chunk, index) == runtimeId: count += 1
+    return count
+
+test "generator is deterministic across positive and negative chunks":
+    const world = manifest("deterministic")
+    const first = generateChunk(world, {x: -3, y: 0, z: 5})
+    const second = generateChunk(world, {x: -3, y: 0, z: 5})
+    const other = generateChunk(world, {x: -2, y: 0, z: 5})
+    expect(chunkChecksum(first)).toBe(chunkChecksum(second))
+    expect(chunkChecksum(first) == chunkChecksum(other)).toBe(false)
+    expect(first.indices.size).toBe(4096)
+
+test "generator registry owns implementation identity validation":
+    const unknown = WorldManifest.from(manifest("unknown-generator"), {generator: "example:unknown"})
+    expect(() => worldGenerator(unknown)).toThrow()
+
+test "survival generator exposes stable climate and world limits":
+    const sample = sampleTerrain("openvoxel", {x: 0, z: 0})
+    expect(seaLevel).toBe(64)
+    expect(minimumWorldY).toBe(0)
+    expect(maximumWorldY).toBe(255)
+    expect(sample.surfaceY).toBe(99)
+    expect(sample.temperature).toBe(0)
+    expect(sample.humidity).toBe(4)
+    expect(sample.biome).toBe("tundra")
+
+test "world generation covers oceans caves fluids and all mineral families":
+    const world = manifest("palette")
+    const ocean = generateChunk(world, {x: -12, y: 3, z: -12})
+    expect(countBlock(ocean, waterBlock) > 0).toBe(true)
+    expect(countBlock(ocean, sandBlock) > 0).toBe(true)
+
+    const magma = generateChunk(world, {x: -12, y: 0, z: -11})
+    const sulphur = generateChunk(world, {x: -12, y: 0, z: -10})
+    expect(countBlock(magma, magmaBlock) > 0).toBe(true)
+    expect(countBlock(sulphur, sulphurOreBlock) > 0).toBe(true)
+
+    const shallow = generateChunk(world, {x: -12, y: 0, z: -12})
+    expect(countBlock(shallow, airBlock) > 0).toBe(true)
+
+    const iron = generateChunk(world, {x: -12, y: 0, z: -12})
+    const coal = generateChunk(world, {x: -12, y: 1, z: -12})
+    const copper = generateChunk(world, {x: -12, y: 1, z: -12})
+    const diamond = generateChunk(world, {x: -12, y: 0, z: -11})
+    const germanium = generateChunk(world, {x: -12, y: 1, z: -10})
+    const saltpeter = generateChunk(world, {x: -11, y: 3, z: 4})
+    const undergroundWater = generateChunk(world, {x: -12, y: 1, z: 6})
+    expect(countBlock(iron, ironOreBlock) > 0).toBe(true)
+    expect(countBlock(coal, coalOreBlock) > 0).toBe(true)
+    expect(countBlock(copper, copperOreBlock) > 0).toBe(true)
+    expect(countBlock(diamond, diamondOreBlock) > 0).toBe(true)
+    expect(countBlock(germanium, germaniumOreBlock) > 0).toBe(true)
+    expect(countBlock(saltpeter, saltpeterOreBlock) > 0).toBe(true)
+    expect(countBlock(undergroundWater, waterBlock) > 0).toBe(true)
+
+test "feature owners continue tree crowns across cubic chunk seams":
+    const world = manifest("seam")
+    const left = generateChunk(world, {x: -1, y: 7, z: -4})
+    const right = generateChunk(world, {x: 0, y: 7, z: -4})
+    expect(chunkBlock(left, {x: 15, y: 0, z: 5})).toBe(spruceLeavesBlock)
+    expect(chunkBlock(right, {x: 0, y: 0, z: 5})).toBe(spruceLeavesBlock)
+    const repeated = generateChunk(world, {x: -1, y: 7, z: -4})
+    expect(chunkChecksum(repeated)).toBe(chunkChecksum(left))
+
+test "generator returns empty chunks outside the version one vertical range":
+    const world = manifest("bounds")
+    const below = generateChunk(world, {x: 0, y: -1, z: 0})
+    const above = generateChunk(world, {x: 0, y: 16, z: 0})
+    expect(countBlock(below, airBlock)).toBe(4096)
+    expect(countBlock(above, airBlock)).toBe(4096)
+
+test "survival generator golden chunks detect accidental algorithm drift":
+    const world = manifest("golden")
+    expect(chunkChecksum(generateChunk(world, {x: 0, y: 0, z: 0}))).toBe(2919264330)
+    expect(chunkChecksum(generateChunk(world, {x: 0, y: 3, z: 0}))).toBe(2665425008)
+    expect(chunkChecksum(generateChunk(world, {x: -10, y: 3, z: -10}))).toBe(2320878832)

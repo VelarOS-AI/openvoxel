@@ -1,11 +1,13 @@
-import {Chunk, chunkBlockAtIndex, emptyChunk, paintChunkBlockAtIndex} from "./chunk.vel"
-import {builtinIdentities, defaultBlockStateRuntimeId, isFluidBlock} from "@openvoxel/blocks"
-import {ChunkPosition, Coordinate2} from "./coordinates.vel"
-import {WorldManifest, validateWorldManifest} from "./world.vel"
-import {carveCaves, cavePlanner, generateFluidPockets, generateMinerals, generateVegetation} from "./generation/features.vel"
-import {ColumnCache, GenerationFields, TerrainSample, baseTerrainBlock, columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./generation/terrain.vel"
-
-const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+import {Chunk, ChunkPosition, Coordinate2, chunkBlockAtIndex, emptyChunk, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {isFluidBlock} from "@openvoxel/blocks"
+import {WorldGenerator} from "../contracts.vel"
+import {TerrainSample} from "../terrain-sample.vel"
+import {carveCaves, cavePlanner} from "./caves.vel"
+import {generateFluidPockets} from "./fluids.vel"
+import {generateMinerals} from "./minerals.vel"
+import {generateVegetation} from "./vegetation.vel"
+import {survivalBlocks} from "./block-palette.vel"
+import {ColumnCache, GenerationFields, baseTerrainBlock, columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./terrain.vel"
 
 def chunkMinimumX(chunk: Chunk) -> number: return chunk.position.x * chunk.edge
 
@@ -44,7 +46,7 @@ def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
         if not insideY(chunk, worldY): continue
         const index = indexAt(chunk, sample.position.x, worldY, sample.position.z)
         const current = chunkBlockAtIndex(chunk, index)
-        if current != airBlockState and not isFluidBlock(current):
+        if current != survivalBlocks.air and not isFluidBlock(current):
             paintChunkBlockAtIndex(chunk, index, depth == 0 ? topBlock : underBlock)
 
 def generateSurface(chunk: Chunk, cache: ColumnCache):
@@ -53,14 +55,9 @@ def generateSurface(chunk: Chunk, cache: ColumnCache):
             const index = localZ + chunk.edge * localX
             paintSurfaceColumn(chunk, cache.samples[index], cache.surfaceHeights[index])
 
-export type WorldGenerator:
-    sample: (position: Coordinate2) -> TerrainSample
-    generate: (position: ChunkPosition) -> Chunk
-
-export def worldGenerator(manifest: WorldManifest) -> WorldGenerator:
-    const world = validateWorldManifest(manifest)
-    const seed = world.seed
-    const edge = world.chunkEdge
+/// 构造内建生存生成器。生成器只接收已经验证过的种子和 Chunk 边长，
+/// 生成器身份选择由上层 registry 统一处理。
+export def survivalWorldGenerator(seed: string, edge: number) -> WorldGenerator:
     const fields = createGenerationFields(seed)
     const columns = columnPlanner(fields, edge)
     const caves = cavePlanner(fields, seed)
@@ -68,7 +65,7 @@ export def worldGenerator(manifest: WorldManifest) -> WorldGenerator:
     def sample(position: Coordinate2) -> TerrainSample: return sampleTerrainWithFields(fields, position)
 
     def generate(position: ChunkPosition) -> Chunk:
-        const chunk = emptyChunk(position, edge)
+        const chunk = emptyChunk(position, edge, survivalBlocks.air)
         const minimumY = position.y * edge
         const maximumY = minimumY + edge - 1
         if maximumY < minimumWorldY or minimumY > maximumWorldY: return chunk
@@ -83,6 +80,3 @@ export def worldGenerator(manifest: WorldManifest) -> WorldGenerator:
         return chunk
 
     return {sample, generate}
-
-export def generateChunk(manifest: WorldManifest, position: ChunkPosition) -> Chunk:
-    return worldGenerator(manifest).generate(position)

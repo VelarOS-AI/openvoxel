@@ -2,7 +2,8 @@ import {readText} from "velar/fs"
 import {generateCatalogArtifacts} from "./catalog-artifact.vel"
 import {readBlockCatalogInputs} from "./catalog-input.vel"
 
-const inputs = await readBlockCatalogInputs()
-const expected = generateCatalogArtifacts(inputs.manifestText, inputs.identitiesText, inputs.sourceTexts)
-const actualCatalog = await readText("generated/block-catalog.json", 4 * 1024 * 1024)
-assert actualCatalog == expected.catalogText else "Generated block catalog is stale; run npm run generate"
+@main:
+    const inputs = await readBlockCatalogInputs()
+    const expected = generateCatalogArtifacts(inputs.manifestText, inputs.identitiesText, inputs.sourceTexts)
+    const actualCatalog = await readText("generated/block-catalog.json", 4 * 1024 * 1024)
+    assert actualCatalog == expected.catalogText else "Generated block catalog is stale; run npm run generate"
