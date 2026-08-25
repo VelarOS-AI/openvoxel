@@ -1,0 +1,188 @@
+import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShape, BlockShapeKind, BlockStateProperty, BlockTypeSource} from "../definition/block.vel"
+import {BuiltinIdentities} from "../definition/identities.vel"
+
+/// 该模块集中执行单个方块及其组件的语义验证。
+/// YAML 结构验证由 runtime type 负责，例如字段是否存在、值是否为正确类型；
+/// 这里继续验证类型系统难以表达的跨字段关系，例如自定义形状必须带 key、
+/// 流体行为引用的属性必须真实存在，以及默认状态必须覆盖全部属性。
+
+/// 资源、方块和标签解析后都必须成为 namespace:path 形式的稳定身份。
+def requireNamespacedKey(value: string, label: string):
+    assert Text.matches(value, r"^[a-z][a-z0-9_.-]*:[a-z0-9][a-z0-9_./-]*$") else f"{label} must be a lowercase namespaced key"
+
+def requirePropertyName(value: string, label: string):
+    assert Text.matches(value, r"^[a-z][a-z0-9_]*$") else f"{label} must use lowercase letters, digits, and underscores"
+
+def requireUnitInterval(value: number, label: string):
+    assert value.isFinite() and value >= 0 and value <= 1 else f"{label} must be from 0 through 1"
+
+/// runtimeId 最终会进入 Chunk、世界快照和网络协议，因此统一限制为 UInt32。
+export def requireUInt32(value: number, label: string):
+    assert value.isInteger() and value >= 0 and value <= 0xffffffff else f"{label} must be an integer from 0 through 4294967295"
+
+/// custom 形状需要资源 key；内建 empty/fullCube 形状由 kind 本身完整表达。
+def requireShape(shape: BlockShape, label: string):
+    match shape.kind:
+        case BlockShapeKind.custom:
+            assert shape.key != null else f"{label} custom shape requires a key"
+            requireNamespacedKey(shape.key, f"{label} shape key")
+        case _: assert shape.key == null else f"{label} built-in shape cannot carry a custom key"
+
+def requirePhysics(physics: BlockPhysics, blockKey: string):
+    requireShape(physics.collision, f"Block {blockKey} collision")
+    requireShape(physics.selection, f"Block {blockKey} selection")
+    requireShape(physics.occlusion, f"Block {blockKey} occlusion")
+    assert physics.friction.isFinite() and physics.friction >= 0 else f"Block {blockKey} friction must be non-negative"
+    assert physics.speedFactor.isFinite() and physics.speedFactor >= 0 else f"Block {blockKey} speed factor must be non-negative"
+    assert physics.jumpFactor.isFinite() and physics.jumpFactor >= 0 else f"Block {blockKey} jump factor must be non-negative"
+
+def requireLight(light: BlockLight, blockKey: string):
+    assert light.emission.isInteger() and light.emission >= 0 and light.emission <= 15 else f"Block {blockKey} light emission must be an integer from 0 through 15"
+    assert light.opacity.isInteger() and light.opacity >= 0 and light.opacity <= 15 else f"Block {blockKey} light opacity must be an integer from 0 through 15"
+
+def requireOptionalResource(value: string?, label: string):
+    if value != null: requireNamespacedKey(value, label)
+
+/// 渲染组件要么完全不可见，要么具备模型、渲染层、材质和可用纹理组合。
+def requireRender(render: BlockRender, blockKey: string):
+    if render.model == null:
+        assert render.layer == null and render.material == null and render.textures == null and render.tint == null and render.animation == null else f"Non-rendered block {blockKey} cannot declare render resources"
+        return
+    requireNamespacedKey(render.model, f"Block {blockKey} model")
+    assert render.layer != null else f"Rendered block {blockKey} requires a render layer"
+    assert render.material != null else f"Rendered block {blockKey} requires a material"
+    requireNamespacedKey(render.material, f"Block {blockKey} material")
+    assert render.textures != null else f"Rendered block {blockKey} requires textures"
+    const textures = render.textures
+    requireOptionalResource(textures.all, f"Block {blockKey} all texture")
+    requireOptionalResource(textures.top, f"Block {blockKey} top texture")
+    requireOptionalResource(textures.bottom, f"Block {blockKey} bottom texture")
+    requireOptionalResource(textures.side, f"Block {blockKey} side texture")
+    const hasUniform = textures.all != null
+    const hasFaces = textures.top != null and textures.bottom != null and textures.side != null
+    assert hasUniform or hasFaces else f"Block {blockKey} requires a uniform texture or top, bottom, and side textures"
+    requireOptionalResource(render.tint, f"Block {blockKey} tint")
+    requireOptionalResource(render.animation, f"Block {blockKey} animation")
+
+def requireInteraction(interaction: BlockInteraction, blockKey: string):
+    assert interaction.hardness.isFinite() and interaction.hardness >= 0 else f"Block {blockKey} hardness must be non-negative"
+    assert interaction.blastResistance.isFinite() and interaction.blastResistance >= 0 else f"Block {blockKey} blast resistance must be non-negative"
+    requireOptionalResource(interaction.toolTag, f"Block {blockKey} tool tag")
+    requireNamespacedKey(interaction.drops, f"Block {blockKey} drops")
+    requireNamespacedKey(interaction.sounds, f"Block {blockKey} sounds")
+
+/// 验证身份树中由运行时直接使用的基础约束，以及内建内容的命名空间归属。
+/// 不可破坏方块必须使用统一的空掉落表，避免空气或流体意外产生物品。
+export def validateBuiltinIdentities(identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>):
+    const baseNamespace = identities.namespaces.base
+    assert Text.matches(baseNamespace, r"^[a-z][a-z0-9_.-]*$") else "Built-in namespace is invalid"
+    requireNamespacedKey(identities.generators.survival, "Survival generator identity")
+    requireNamespacedKey(identities.loot.empty, "Empty loot identity")
+    assert identities.generators.survival.startsWith(f"{baseNamespace}:") else "Survival generator identity is outside the base namespace"
+    for block in sourceBlocks:
+        assert block.key.startsWith(f"{baseNamespace}:") else f"Built-in block {block.key} is outside the base namespace"
+        if not block.interaction.breakable:
+            assert block.interaction.drops == identities.loot.empty else f"Unbreakable block {block.key} must use the configured empty loot identity"
+        for variant in block.variants:
+            if variant.interaction != null and not variant.interaction.breakable:
+                assert variant.interaction.drops == identities.loot.empty else f"Unbreakable block variant {block.key} must use the configured empty loot identity"
+
+/// 根据 kind 验证各行为自己的参数，并检查行为引用的方块属性是否存在。
+def requireBehavior(behavior: BlockBehavior, blockKey: string, propertyNames: Set<string>):
+    match behavior.kind:
+        case BlockBehaviorKind.gravity:
+            assert behavior.delayTicks.isInteger() and behavior.delayTicks > 0 else f"Block {blockKey} gravity delay must be a positive integer"
+        case BlockBehaviorKind.fluid:
+            requireNamespacedKey(behavior.fluidKey, f"Block {blockKey} fluid key")
+            assert behavior.levelProperty in propertyNames else f"Block {blockKey} fluid level property is not declared"
+            assert behavior.fallingProperty in propertyNames else f"Block {blockKey} fluid falling property is not declared"
+            assert behavior.tickRate.isInteger() and behavior.tickRate > 0 else f"Block {blockKey} fluid tick rate must be a positive integer"
+            assert behavior.viscosity.isFinite() and behavior.viscosity > 0 else f"Block {blockKey} fluid viscosity must be positive"
+        case BlockBehaviorKind.flammable:
+            requireUnitInterval(behavior.ignitionChance, f"Block {blockKey} ignition chance")
+            requireUnitInterval(behavior.spreadChance, f"Block {blockKey} spread chance")
+        case BlockBehaviorKind.contactDamage:
+            assert behavior.damage.isFinite() and behavior.damage > 0 else f"Block {blockKey} contact damage must be positive"
+            assert behavior.intervalTicks.isInteger() and behavior.intervalTicks > 0 else f"Block {blockKey} damage interval must be a positive integer"
+        case BlockBehaviorKind.randomTick:
+            requireNamespacedKey(behavior.handler, f"Block {blockKey} random tick handler")
+        case BlockBehaviorKind.scheduledTick:
+            requireNamespacedKey(behavior.handler, f"Block {blockKey} scheduled tick handler")
+            assert behavior.delayTicks.isInteger() and behavior.delayTicks > 0 else f"Block {blockKey} scheduled tick delay must be a positive integer"
+        case BlockBehaviorKind.placement: pass
+        case BlockBehaviorKind.support:
+            requireOptionalResource(behavior.supportingTag, f"Block {blockKey} supporting tag")
+
+/// 同一状态最多声明一次同类行为，避免两个流体或两个重力规则互相冲突。
+def requireBehaviors(behaviors: List<BlockBehavior>, blockKey: string, propertyNames: Set<string>):
+    const behaviorKinds: Set<BlockBehaviorKind> = Set()
+    for behavior in behaviors:
+        assert not (behavior.kind in behaviorKinds) else f"Block {blockKey} repeats behavior {behavior.kind}"
+        behaviorKinds.add(behavior.kind)
+        requireBehavior(behavior, blockKey, propertyNames)
+
+/// 检查属性名称、枚举集合和整数范围，保证后续状态展开是有限且确定的。
+def requireProperty(property: BlockPropertyDefinition, blockKey: string):
+    requirePropertyName(property.name, f"Block {blockKey} property name")
+    match property.kind:
+        case BlockPropertyKind.boolean: pass
+        case BlockPropertyKind.enumeration:
+            assert property.values.size >= 2 else f"Block {blockKey} enum property {property.name} requires at least two values"
+            const values: Set<string> = Set()
+            for value in property.values:
+                requirePropertyName(value, f"Block {blockKey} property {property.name} value")
+                assert not (value in values) else f"Block {blockKey} property {property.name} contains duplicate value {value}"
+                values.add(value)
+        case BlockPropertyKind.integer:
+            assert property.minimum.isInteger() and property.maximum.isInteger() and property.minimum <= property.maximum else f"Block {blockKey} integer property {property.name} has invalid bounds"
+            assert property.maximum - property.minimum <= 255 else f"Block {blockKey} integer property {property.name} is too wide"
+
+def propertyAccepts(definition: BlockPropertyDefinition, value: BlockPropertyValue) -> bool:
+    match definition.kind:
+        case BlockPropertyKind.boolean: return value is bool
+        case BlockPropertyKind.enumeration: return (value is string) and (value in definition.values)
+        case BlockPropertyKind.integer:
+            return (value is number) and value.isInteger() and value >= definition.minimum and value <= definition.maximum
+
+/// 验证一组具体属性值。complete=true 用于 defaultState，要求每个属性都出现；
+/// complete=false 用于 variant.when，允许只写需要匹配的部分属性。
+def requireStateProperties(blockKey: string, definitions: List<BlockPropertyDefinition>, values: List<BlockStateProperty>, complete: bool):
+    const seen: Set<string> = Set()
+    for value in values:
+        assert not (value.name in seen) else f"Block {blockKey} state repeats property {value.name}"
+        seen.add(value.name)
+        const definition = definitions.find(property => property.name == value.name)
+        assert definition != null else f"Block {blockKey} state names unknown property {value.name}"
+        assert propertyAccepts(definition, value.value) else f"Block {blockKey} state has invalid value for property {value.name}"
+    if complete: assert seen.size == definitions.size else f"Block {blockKey} default state must name every property"
+
+/// 验证一个方块家族以及所有状态变体的完整语义契约。
+/// 调用顺序按“身份和标签 → 属性和默认状态 → 基础组件 → 状态变体”展开，
+/// 因此报错会尽量靠近人工定义中真正有问题的部分。
+export def validateBlockType(block: BlockTypeSource):
+    requireNamespacedKey(block.key, "Block key")
+    assert Text.matches(block.translationKey, r"^[a-z][a-z0-9_.-]*$") else f"Block {block.key} translation key is invalid"
+    const tags: Set<string> = Set()
+    for tag in block.tags:
+        requireNamespacedKey(tag, f"Block {block.key} tag")
+        assert not (tag in tags) else f"Block {block.key} contains duplicate tag {tag}"
+        tags.add(tag)
+    const propertyNames: Set<string> = Set()
+    for property in block.properties:
+        requireProperty(property, block.key)
+        assert not (property.name in propertyNames) else f"Block {block.key} contains duplicate property {property.name}"
+        propertyNames.add(property.name)
+    requireStateProperties(block.key, block.properties, block.defaultState, true)
+    requirePhysics(block.physics, block.key)
+    requireLight(block.light, block.key)
+    requireRender(block.render, block.key)
+    requireInteraction(block.interaction, block.key)
+    requireBehaviors(block.behaviors, block.key, propertyNames)
+    for variant in block.variants:
+        assert variant.when.size > 0 else f"Block {block.key} variant requires at least one state condition"
+        requireStateProperties(block.key, block.properties, variant.when, false)
+        if variant.physics != null: requirePhysics(variant.physics, block.key)
+        if variant.light != null: requireLight(variant.light, block.key)
+        if variant.render != null: requireRender(variant.render, block.key)
+        if variant.interaction != null: requireInteraction(variant.interaction, block.key)
+        if variant.behaviors != null: requireBehaviors(variant.behaviors, block.key, propertyNames)

@@ -3,13 +3,13 @@
 /// across adjacent and vertically stacked chunks without changing checksums.
 
 import {monotonic} from "velar/time"
-import {blockId} from "@openvoxel/blocks"
+import {builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {Chunk, chunkChecksum, emptyChunk} from "../src/chunk.vel"
 import {ChunkPosition} from "../src/coordinates.vel"
 import {carveCaves, cavePlanner} from "../src/generation/features.vel"
 import {createGenerationFields} from "../src/generation/terrain.vel"
 
-const stoneBlock = blockId("openvoxel:stone")
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
 type CaveBenchmarkResult:
     averageMs: number
@@ -24,10 +24,7 @@ for y in range(2, 6):
     for x in range(-6, 6):
         for z in range(-2, 2): positions.append({x, y, z})
 
-def rockChunk(position: ChunkPosition) -> Chunk:
-    const chunk = emptyChunk(position, 16)
-    for index in range(chunk.blocks.size): chunk.blocks[index] = stoneBlock
-    return chunk
+def rockChunk(position: ChunkPosition) -> Chunk: return emptyChunk(position, 16, fill=stoneBlock)
 
 def measure(capacity: number) -> CaveBenchmarkResult:
     const planner = cavePlanner(createGenerationFields(seed), seed, capacity)

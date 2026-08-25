@@ -1,58 +1,92 @@
 import {expect} from "velar/test"
-import {BlockCatalogSource, BlockRenderLayer, BlockRenderShape} from "../src/schema.vel"
-import {createBlockRegistry} from "../src/registry.vel"
-import {blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockDefinition, blockId, blockIdMapHash, blockRegistry, isFluidBlock, isNaturalRock, requireBlockId} from "../src/catalog.vel"
+import {BlockBehaviorKind, BlockCatalogContribution, BlockCatalogSource, BlockDefinition, BlockRenderLayer, BlockStateDefinition, baseBlockCatalogSource, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, builtinIdentities, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
 
-const airBlock = blockId("openvoxel:air")
-const grassBlock = blockId("openvoxel:grass")
-const stoneBlock = blockId("openvoxel:stone")
-const waterBlock = blockId("openvoxel:water")
+const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const grassBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
+const stoneBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const waterBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
 
-test "generated block registry preserves identity gameplay and rendering data":
-    expect(blockCatalogSchemaVersion).toBe(1)
-    expect(blockCatalogVersion).toBe("openvoxel:base-v1")
-    expect(blockCatalogHash).toBe("afb75bac9750dfa5d7677aacd3564d356f01596b439390eb1b88ad909a0afc43")
-    expect(blockIdMapHash).toBe("5977c76e2a584b8a8584fdc01c184aa8e2b38baae530c31995c6453093d6c736")
+def contributionCatalog(blockKey: string) -> BlockCatalogSource:
+    const sourceState = BlockStateDefinition.parse(blockStateDefinition(stoneBlockState))
+    const state = BlockStateDefinition.from(sourceState, {
+        runtimeId: 0,
+        stateKey: blockKey,
+        blockKey,
+        properties: [],
+    })
+    const sourceBlock = BlockDefinition.parse(blockTypeDefinition(builtinIdentities.blocks.stone))
+    const block = BlockDefinition.from(sourceBlock, {
+        defaultStateRuntimeId: 0,
+        key: blockKey,
+        translationKey: f"block.{blockKey.replace(":", ".")}",
+        tags: [],
+        properties: [],
+        defaultState: [],
+    })
+    return {
+        schemaVersion: 3,
+        catalogVersion: f"{blockKey}:v1",
+        reservedRuntimeIds: [],
+        blocks: [block],
+        states: [state],
+    }
+
+def contribution(owner: string, blockKey: string) -> BlockCatalogContribution:
+    return {owner, catalog: contributionCatalog(blockKey), stateAliases: []}
+
+test "generated runtime catalog expands finite states with UInt32 identities":
+    expect(blockCatalogSchemaVersion).toBe(3)
+    expect(blockCatalogVersion).toBe(baseBlockCatalogSource.catalogVersion)
+    expect(blockCatalogHash).toBe("c51b21d7471c32c5e881772e1c48edcc2eb6eb3fec06fd782ce444712defb17e")
+    expect(blockStateMapHash).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
     expect(blockCatalog().size).toBe(38)
-    expect(airBlock).toBe(0)
-    expect(stoneBlock).toBe(3)
-    const grassRender = blockDefinition(grassBlock).render
-    expect(grassRender.shape).toBe(BlockRenderShape.cube)
-    if grassRender.shape != BlockRenderShape.cube: throw Error("Expected grass to use cube rendering")
-    expect(grassRender.layer).toBe(BlockRenderLayer.opaque)
-    expect(blockId("openvoxel:water")).toBe(waterBlock)
-    expect(isFluidBlock(waterBlock)).toBe(true)
-    expect(isNaturalRock(stoneBlock)).toBe(true)
-    expect(() => requireBlockId(65535)).toThrow()
+    expect(blockStateCatalog().size).toBe(183)
+    expect(airBlockState).toBe(0)
+    expect(stoneBlockState).toBe(147)
+    expect(grassBlockState).toBe(28)
+    expect(blockTypeDefinition(builtinIdentities.blocks.grass).render.layer).toBe(BlockRenderLayer.opaque)
+    expect(blockTypeDefinition(builtinIdentities.blocks.water).render.model).toBe(builtinIdentities.models.block.fluid)
+    expect(blockTypeDefinition(builtinIdentities.blocks.air).interaction.breakable).toBe(false)
+    expect(isFluidBlock(waterBlockState)).toBe(true)
+    expect(isNaturalRock(stoneBlockState)).toBe(true)
 
-test "retired block ids remain reserved and cannot become active definitions":
-    const retiredSource = BlockCatalogSource.parse({
-        schemaVersion: 1,
-        catalogVersion: "openvoxel:test-v1",
-        retiredIds: [5],
-        blocks: [{
-            id: 0,
-            key: "openvoxel:air",
-            translationKey: "block.openvoxel.air",
-            tags: [],
-            simulation: {collision: "none", occlusion: "none", fluid: "none"},
-            render: {shape: "none"},
-        }],
-    })
-    const registry = createBlockRegistry(retiredSource)
-    expect(() => registry.requireById(5)).toThrow()
+test "state registry resolves properties through explicit runtime ids":
+    const oakLog = defaultBlockStateRuntimeId(builtinIdentities.blocks.oakLog)
+    const oakLogX = blockStateRuntimeId(builtinIdentities.blocks.oakLog, [{name: "axis", value: "x"}])
+    expect(oakLog).toBe(98)
+    expect(oakLogX).toBe(97)
+    expect(withBlockStateProperty(oakLog, "axis", "x")).toBe(oakLogX)
+    expect(blockStateDefinition(oakLogX).stateKey).toBe(f"{builtinIdentities.blocks.oakLog}[axis=x]")
+    expect(hasBlockBehavior(oakLogX, BlockBehaviorKind.placement)).toBe(true)
+    requireBlockState(oakLogX)
+    expect(blockStateDefinition(oakLogX).runtimeId).toBe(oakLogX)
+    expect(() => requireBlockState(0xffffffff)).toThrow()
 
-    const reusedSource = BlockCatalogSource.parse({
-        schemaVersion: 1,
-        catalogVersion: "openvoxel:test-v1",
-        retiredIds: [5],
-        blocks: [retiredSource.blocks[0], {
-            id: 5,
-            key: "openvoxel:reused",
-            translationKey: "block.openvoxel.reused",
-            tags: [],
-            simulation: {collision: "full_cube", occlusion: "full_cube", fluid: "none"},
-            render: {shape: "cube", layer: "opaque", material: "terrain", textures: {all: "block/reused"}},
-        }],
-    })
-    expect(() => createBlockRegistry(reusedSource)).toThrow()
+test "world registry assigns Mod states above the built-in range and keeps missing mappings":
+    const farming = contribution("farming", "farming:tomato_crop")
+    const installed = createWorldBlockRegistry(baseBlockCatalogSource, [farming])
+    const tomatoRuntimeId = worldBlockStateRuntimeId(installed.snapshot, "farming:tomato_crop")
+    expect(tomatoRuntimeId).toBe(firstModBlockStateRuntimeId)
+    expect(tomatoRuntimeId > 0xffff).toBe(true)
+    expect(installed.registry.requireStateByRuntimeId(tomatoRuntimeId).blockKey).toBe("farming:tomato_crop")
+
+    const unavailable = createWorldBlockRegistry(baseBlockCatalogSource, [], installed.snapshot)
+    expect(unavailable.missingStates.size).toBe(1)
+    expect(unavailable.missingStates[0].runtimeId).toBe(tomatoRuntimeId)
+
+    const restored = createWorldBlockRegistry(baseBlockCatalogSource, [farming], unavailable.snapshot)
+    expect(worldBlockStateRuntimeId(restored.snapshot, "farming:tomato_crop")).toBe(tomatoRuntimeId)
+    expect(restored.missingStates.size).toBe(0)
+
+test "explicit Mod aliases move an existing world mapping to the renamed state":
+    const original = contribution("farming", "farming:tomato_crop")
+    const installed = createWorldBlockRegistry(baseBlockCatalogSource, [original])
+    const originalRuntimeId = worldBlockStateRuntimeId(installed.snapshot, "farming:tomato_crop")
+    const renamed: BlockCatalogContribution = {
+        owner: "farming",
+        catalog: contributionCatalog("farming:tomato_plant"),
+        stateAliases: [{from: "farming:tomato_crop", to: "farming:tomato_plant"}],
+    }
+    const updated = createWorldBlockRegistry(baseBlockCatalogSource, [renamed], installed.snapshot)
+    expect(worldBlockStateRuntimeId(updated.snapshot, "farming:tomato_plant")).toBe(originalRuntimeId)
+    expect(updated.missingStates.size).toBe(0)

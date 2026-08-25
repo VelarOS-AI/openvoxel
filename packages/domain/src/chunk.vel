@@ -1,8 +1,8 @@
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {blockId, requireBlockId} from "@openvoxel/blocks"
+import {builtinIdentities, defaultBlockStateRuntimeId, requireBlockStateRuntimeId} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, requireChunkEdge, requireChunkPosition} from "./coordinates.vel"
 
-const airBlock = blockId("openvoxel:air")
+const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 
 export def chunkVolume(edge: number) -> number:
     requireChunkEdge(edge)
@@ -19,36 +19,72 @@ export def blockIndex(local: LocalPosition, edge: number) -> number:
 export type Chunk:
     position: ChunkPosition
     edge: number
-    blocks: UInt16Buffer
+    palette: List<number>
+    indices: UInt16Buffer
+    paletteIndex: Map<number, number>
     revision: number
 
-export def chunk(position: ChunkPosition, edge: number, blocks: UInt16Buffer, revision: number = 0) -> Chunk:
+def requireStorageIndex(chunk: Chunk, index: number):
+    assert index.isInteger() and index >= 0 and index < chunk.indices.size else "Chunk storage index is outside the chunk"
+
+export def chunk(
+    position: ChunkPosition,
+    edge: number,
+    palette: List<number>,
+    indices: UInt16Buffer,
+    revision: number = 0,
+) -> Chunk:
     requireChunkPosition(position)
     requireChunkEdge(edge)
-    assert blocks.size == chunkVolume(edge) else "Chunk block storage has the wrong size"
+    assert indices.size == chunkVolume(edge) else "Chunk palette indices have the wrong size"
+    assert palette.size > 0 and palette.size <= 0x10000 else "Chunk palette must contain from 1 through 65536 runtime ids"
     assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
-    return {position, edge, blocks, revision}
+    const paletteIndex: Map<number, number> = Map()
+    for runtimeId, index in palette:
+        requireBlockStateRuntimeId(runtimeId)
+        assert paletteIndex.get(runtimeId) == null else f"Chunk palette repeats block state runtime id {runtimeId}"
+        paletteIndex.set(runtimeId, index)
+    for paletteEntry in indices.values():
+        assert paletteEntry < palette.size else f"Chunk palette index {paletteEntry} is outside the palette"
+    return {position, edge, palette, indices, paletteIndex, revision}
 
-export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number: return chunk.blocks[blockIndex(local, chunk.edge)]
+export def chunkBlockAtIndex(chunk: Chunk, index: number) -> number:
+    requireStorageIndex(chunk, index)
+    return chunk.palette[chunk.indices[index]]
 
-export def setChunkBlock(chunk: Chunk, local: LocalPosition, nextBlockId: number) -> number:
-    requireBlockId(nextBlockId)
+export def chunkBlock(chunk: Chunk, local: LocalPosition) -> number:
+    return chunkBlockAtIndex(chunk, blockIndex(local, chunk.edge))
+
+def paletteEntryFor(chunk: Chunk, runtimeId: number) -> number:
+    requireBlockStateRuntimeId(runtimeId)
+    const existing = chunk.paletteIndex.get(runtimeId)
+    if existing != null: return existing
+    assert chunk.palette.size < 0x10000 else "Chunk palette exhausted UInt16 local indices"
+    const index = chunk.palette.size
+    chunk.palette.append(runtimeId)
+    chunk.paletteIndex.set(runtimeId, index)
+    return index
+
+/// Generation paints semantic runtime ids without changing the persisted
+/// revision. Runtime mutations use setChunkBlock instead.
+export def paintChunkBlockAtIndex(chunk: Chunk, index: number, runtimeId: number):
+    requireStorageIndex(chunk, index)
+    chunk.indices[index] = paletteEntryFor(chunk, runtimeId)
+
+export def setChunkBlock(chunk: Chunk, local: LocalPosition, runtimeId: number) -> number:
     const index = blockIndex(local, chunk.edge)
-    const previous = chunk.blocks[index]
-    if previous != nextBlockId:
-        chunk.blocks[index] = nextBlockId
+    const previous = chunkBlockAtIndex(chunk, index)
+    if previous != runtimeId:
+        paintChunkBlockAtIndex(chunk, index, runtimeId)
         chunk.revision += 1
     return previous
 
-export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airBlock) -> Chunk:
-    requireBlockId(fill)
-    const blocks = uint16Buffer(chunkVolume(edge))
-    if fill != airBlock:
-        for index in range(blocks.size): blocks[index] = fill
-    return chunk(position, edge, blocks)
+export def emptyChunk(position: ChunkPosition, edge: number, fill: number = airBlockState) -> Chunk:
+    requireBlockStateRuntimeId(fill)
+    return chunk(position, edge, [fill], uint16Buffer(chunkVolume(edge)))
 
 export def chunkChecksum(chunk: Chunk) -> number:
     let checksum = 0x6d2b79f5
-    for index in range(chunk.blocks.size):
-        checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunk.blocks[index]) & 0xffffffff
+    for index in range(chunk.indices.size):
+        checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunkBlockAtIndex(chunk, index)) & 0xffffffff
     return checksum >>> 0

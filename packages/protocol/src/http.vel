@@ -1,9 +1,9 @@
-import {BlockDefinition, BlockRenderResources, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockIdMapHash, collectBlockRenderResources} from "@openvoxel/blocks"
+import {BlockDefinition, BlockRenderResources, BlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources} from "@openvoxel/blocks"
 import {BlockPosition, Chunk, ChunkPosition, Coordinate2, TerrainSample, WorldManifest, defaultGenerator, maximumChunkBatchSize, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/domain"
 import {batchChunksPath, blockCatalogPath, changeBlockPath, clientContractPath, createWorldPath, findWorldPath, generationSamplePath, healthPath, queryChunkPath, realtimeEventsPath, worldBootstrapPathTemplate} from "./routes.vel"
 
-export const protocolVersion = 1
-export const clientContractVersion = 1
+export const protocolVersion = 2
+export const clientContractVersion = 3
 export const httpEnvelopeVersion = 1
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
 
@@ -39,14 +39,15 @@ export type ClientRealtimeContract:
     events: readonly List<string>
 
 export type ClientChunkContract:
-    blockStorage: string
+    paletteEntries: string
+    localIndices: string
     indexOrder: string
     maximumBatchSize: number
 
 export type BlockCatalogIdentity:
     schemaVersion: number
     catalogVersion: string
-    idMapHash: string
+    stateMapHash: string
     contentHash: string
 
 export type ClientContractResponse:
@@ -82,7 +83,7 @@ export type GenerationSampleQuery extends WorldScoped:
 
 export type BlockMutation extends WorldScoped:
     position: BlockPosition
-    blockId: number
+    blockStateRuntimeId: number
 
 export type SetBlockRequest = BlockMutation
 
@@ -90,7 +91,8 @@ export type ChunkResponse extends WorldScoped:
     position: ChunkPosition
     edge: number
     revision: number
-    blocks: List<number>
+    palette: List<number>
+    indices: List<number>
 
 export type ChunkBatchResponse extends WorldScoped:
     chunks: List<ChunkResponse>
@@ -101,7 +103,7 @@ export type GenerationSampleResponse extends TerrainSample:
 export type BlockCatalogResponse:
     schemaVersion: number
     catalogVersion: string
-    idMapHash: string
+    stateMapHash: string
     contentHash: string
     generator: string
     minimumWorldY: number
@@ -109,6 +111,7 @@ export type BlockCatalogResponse:
     seaLevel: number
     resources: BlockRenderResources
     blocks: readonly List<readonly BlockDefinition>
+    states: readonly List<readonly BlockStateDefinition>
 
 export type WorldBootstrapResponse extends WorldManifest:
     clientContractVersion: number
@@ -118,6 +121,7 @@ export type WorldBootstrapResponse extends WorldManifest:
     realtimeEventsPath: string
     blockCatalogSchemaVersion: number
     blockCatalogContentHash: string
+    blockCatalogStateMapHash: string
     minimumWorldY: number
     maximumWorldY: number
     seaLevel: number
@@ -139,10 +143,10 @@ const routes: ClientApiRoutes = {
 const stableErrorCodes: readonly List<string> = [
     "WorldNotFoundError",
     "WorldAlreadyExistsError",
-    "WorldBlockCatalogMismatchError",
-    "InvalidBlockIdError",
-    "UnknownBlockIdError",
-    "RetiredBlockIdError",
+    "InvalidBlockStateRuntimeIdError",
+    "UnknownBlockStateRuntimeIdError",
+    "ReservedBlockStateRuntimeIdError",
+    "UnknownWorldBlockStateRuntimeIdError",
     "InvalidRequest",
     "RouteNotFound",
     "BadRequest",
@@ -157,7 +161,7 @@ export def blockCatalogIdentity() -> BlockCatalogIdentity:
     return {
         schemaVersion: blockCatalogSchemaVersion,
         catalogVersion: blockCatalogVersion,
-        idMapHash: blockIdMapHash,
+        stateMapHash: blockStateMapHash,
         contentHash: blockCatalogHash,
     }
 
@@ -168,6 +172,8 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
         protocolVersion,
         capabilities: [
             "block-catalog-etag",
+            "world-block-registry",
+            "chunk-palettes",
             "world-bootstrap",
             "chunk-batch",
             "realtime-block-updates",
@@ -181,7 +187,8 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
             events: ["block.changed", "error"],
         },
         chunks: {
-            blockStorage: "uint16-list",
+            paletteEntries: "uint32-runtime-id",
+            localIndices: "uint16-list",
             indexOrder: chunkBlockIndexOrder,
             maximumBatchSize: maximumChunkBatchSize,
         },
@@ -190,15 +197,8 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
     }
 
 export def chunkResponse(worldId: string, chunk: Chunk) -> ChunkResponse:
-    const blocks: List<number> = []
-    for index in range(chunk.blocks.size): blocks.append(chunk.blocks[index])
-    return {
-        worldId,
-        position: chunk.position,
-        edge: chunk.edge,
-        revision: chunk.revision,
-        blocks,
-    }
+    const indices = chunk.indices.values()
+    return ChunkResponse.from(chunk, {worldId, indices})
 
 export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatchResponse:
     const responses: List<ChunkResponse> = []
@@ -206,43 +206,26 @@ export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatc
     return {worldId, chunks: responses}
 
 export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
-    return {
-        worldId,
-        position: sample.position,
-        surfaceY: sample.surfaceY,
-        temperature: sample.temperature,
-        humidity: sample.humidity,
-        shoreDistance: sample.shoreDistance,
-        mountainFactor: sample.mountainFactor,
-        forestDensity: sample.forestDensity,
-        biome: sample.biome,
-    }
+    return GenerationSampleResponse.from(sample, {worldId})
 
 const sharedBlockCatalogResponse: BlockCatalogResponse = {
     schemaVersion: blockCatalogSchemaVersion,
     catalogVersion: blockCatalogVersion,
-    idMapHash: blockIdMapHash,
+    stateMapHash: blockStateMapHash,
     contentHash: blockCatalogHash,
     generator: defaultGenerator,
     minimumWorldY,
     maximumWorldY,
     seaLevel,
-    resources: collectBlockRenderResources(blockCatalog()),
+    resources: collectBlockRenderResources(blockStateCatalog()),
     blocks: blockCatalog(),
+    states: blockStateCatalog(),
 }
 
 export def blockCatalogResponse() -> readonly BlockCatalogResponse: return sharedBlockCatalogResponse
 
 export def worldBootstrapResponse(manifest: readonly WorldManifest) -> WorldBootstrapResponse:
-    return {
-        id: manifest.id,
-        name: manifest.name,
-        seed: manifest.seed,
-        formatVersion: manifest.formatVersion,
-        chunkEdge: manifest.chunkEdge,
-        generator: manifest.generator,
-        blockCatalogVersion: manifest.blockCatalogVersion,
-        blockIdMapHash: manifest.blockIdMapHash,
+    return WorldBootstrapResponse.from(manifest, {
         clientContractVersion,
         protocolVersion,
         clientContractPath,
@@ -250,8 +233,10 @@ export def worldBootstrapResponse(manifest: readonly WorldManifest) -> WorldBoot
         realtimeEventsPath,
         blockCatalogSchemaVersion,
         blockCatalogContentHash: blockCatalogHash,
+        blockCatalogStateMapHash: blockStateMapHash,
+        blockRegistry: WorldBlockRegistrySnapshot.parse(manifest.blockRegistry),
         minimumWorldY,
         maximumWorldY,
         seaLevel,
         maximumChunkBatchSize,
-    }
+    })

@@ -3,7 +3,7 @@ import {WebSocketServer} from "velar/websocket"
 import {appName, startOpenVoxelServer} from "./app.vel"
 import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
 import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
-import {blockCatalogHash, blockCatalogVersion, blockIdMapHash} from "@openvoxel/domain"
+import {blockCatalogHash, blockCatalogVersion, blockStateMapHash} from "@openvoxel/domain"
 import {worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelApplication} from "./application.vel"
 
@@ -19,7 +19,7 @@ export async def start() -> WebSocketServer:
         databasePath: configuration.database.path,
         configurationPath,
         blockCatalogVersion,
-        blockIdMapHash: blockIdMapHash.slice(0, 12),
+        blockStateMapHash: blockStateMapHash.slice(0, 12),
         blockCatalogHash: blockCatalogHash.slice(0, 12),
     })
     print(f"{appName} is running at http://{configuration.server.host}:{server.port}")

@@ -21,26 +21,27 @@ export def memoryWorldStore() -> WorldStore:
             if delta != null: found.append(delta)
         return found
 
-    async def commitBlock(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockId: number?) -> BlockOverrideCommit:
+    async def commitBlock(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockStateRuntimeId: number?) -> BlockOverrideCommit:
         const key = deltaKey(worldId, chunk)
         const current = chunks.get(key)
-        let previousOverrideBlockId: number? = null
+        let previousOverrideBlockStateRuntimeId: number? = null
         if current != null:
             for entry in current.overrides:
-                if sameLocal(entry.position, local): previousOverrideBlockId = entry.blockId
+                if sameLocal(entry.position, local): previousOverrideBlockStateRuntimeId = entry.blockStateRuntimeId
 
         const revision = current == null ? 0 : current.revision
-        if previousOverrideBlockId == blockId: return {previousOverrideBlockId, revision, changed: false}
+        if previousOverrideBlockStateRuntimeId == blockStateRuntimeId:
+            return {previousOverrideBlockStateRuntimeId, revision, changed: false}
 
         const overrides: List<BlockOverride> = []
         if current != null:
             for entry in current.overrides:
                 if not sameLocal(entry.position, local): overrides.append(entry)
-        if blockId != null: overrides.append({position: local, blockId})
+        if blockStateRuntimeId != null: overrides.append({position: local, blockStateRuntimeId})
 
         const nextRevision = revision + 1
         chunks.set(key, {position: chunk, revision: nextRevision, overrides})
-        return {previousOverrideBlockId, revision: nextRevision, changed: true}
+        return {previousOverrideBlockStateRuntimeId, revision: nextRevision, changed: true}
 
     async def close(): pass
 

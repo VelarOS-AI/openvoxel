@@ -1,0 +1,183 @@
+blocks:
+  - key: blocks.air
+    translationKey: translations.block.air
+    tags: [tags.replaceable]
+    properties: []
+    defaultState: []
+    physics:
+      collision: {kind: none}
+      selection: {kind: none}
+      occlusion: {kind: none}
+      replaceable: true
+      friction: 0
+      speedFactor: 1
+      jumpFactor: 1
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: null, cullFaces: false}
+    interaction: {breakable: false, hardness: 0, blastResistance: 0, drops: loot.empty, sounds: sounds.silent}
+    behaviors: []
+    variants: []
+
+  - key: blocks.grass
+    translationKey: translations.block.grass
+    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    properties: [{name: snowy, kind: boolean}]
+    defaultState: [{name: snowy, value: false}]
+    physics:
+      collision: {kind: full_cube}
+      selection: {kind: full_cube}
+      occlusion: {kind: full_cube}
+      replaceable: false
+      friction: 0.6
+      speedFactor: 1
+      jumpFactor: 1
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render:
+      model: models.block.cube
+      layer: opaque
+      material: materials.terrain
+      textures: {top: textures.block.grassTop, bottom: textures.block.dirt, side: textures.block.grassSide}
+      tint: tints.biomeGrassTop
+      cullFaces: true
+    interaction: {breakable: true, hardness: 0.6, blastResistance: 0.6, toolTag: tools.shovel, drops: loot.block.grass, sounds: sounds.grass}
+    behaviors: []
+    variants: []
+
+  - key: blocks.dirt
+    translationKey: translations.block.dirt
+    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.dirt}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.5, blastResistance: 0.5, toolTag: tools.shovel, drops: loot.block.dirt, sounds: sounds.gravel}
+    behaviors: []
+    variants: []
+
+  - key: blocks.stone
+    translationKey: translations.block.stone
+    tags: [tags.terrain, tags.naturalRock]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.stone}, cullFaces: true}
+    interaction: {breakable: true, hardness: 1.5, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.stone, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.sand
+    translationKey: translations.block.sand
+    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.sand}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.5, blastResistance: 0.5, toolTag: tools.shovel, drops: loot.block.sand, sounds: sounds.sand}
+    behaviors: [{kind: gravity, delayTicks: 2}]
+    variants: []
+
+  - key: blocks.sandstone
+    translationKey: translations.block.sandstone
+    tags: [tags.terrain, tags.naturalRock]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.sandstone}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.8, blastResistance: 4, toolTag: tools.pickaxe, drops: loot.block.sandstone, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.granite
+    translationKey: translations.block.granite
+    tags: [tags.terrain, tags.naturalRock]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.granite}, cullFaces: true}
+    interaction: {breakable: true, hardness: 1.5, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.granite, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.basalt
+    translationKey: translations.block.basalt
+    tags: [tags.terrain, tags.naturalRock]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.basalt}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 8, toolTag: tools.pickaxe, drops: loot.block.basalt, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.gravel
+    translationKey: translations.block.gravel
+    tags: [tags.terrain, tags.plantSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.gravel}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.6, blastResistance: 0.6, toolTag: tools.shovel, drops: loot.block.gravel, sounds: sounds.gravel}
+    behaviors: [{kind: gravity, delayTicks: 2}]
+    variants: []
+
+  - key: blocks.limestone
+    translationKey: translations.block.limestone
+    tags: [tags.terrain, tags.naturalRock]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.limestone}, cullFaces: true}
+    interaction: {breakable: true, hardness: 1.2, blastResistance: 5, toolTag: tools.pickaxe, drops: loot.block.limestone, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.clay
+    translationKey: translations.block.clay
+    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.clay}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.6, blastResistance: 0.6, toolTag: tools.shovel, drops: loot.block.clay, sounds: sounds.gravel}
+    behaviors: []
+    variants: []
+
+  - key: blocks.ice
+    translationKey: translations.block.ice
+    tags: [tags.terrain, tags.ice]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.98, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: translucent, material: materials.ice, textures: {all: textures.block.ice}, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.5, blastResistance: 0.5, toolTag: tools.pickaxe, drops: loot.block.ice, sounds: sounds.glass}
+    behaviors: []
+    variants: []
+
+  - key: blocks.snow
+    translationKey: translations.block.snow
+    tags: [tags.terrain, tags.replaceable, tags.snow]
+    properties: [{name: layers, kind: integer, minimum: 1, maximum: 8}]
+    defaultState: [{name: layers, value: 1}]
+    physics:
+      collision: {kind: custom, key: shapes.snowLayer}
+      selection: {kind: custom, key: shapes.snowLayer}
+      occlusion: {kind: none}
+      replaceable: true
+      friction: 0.6
+      speedFactor: 0.9
+      jumpFactor: 1
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.snowLayer, layer: cutout, material: materials.terrain, textures: {all: textures.block.snow}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0.1, blastResistance: 0.1, toolTag: tools.shovel, drops: loot.block.snow, sounds: sounds.snow}
+    behaviors: [{kind: support, face: below}]
+    variants: []

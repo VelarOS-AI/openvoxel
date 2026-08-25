@@ -15,7 +15,7 @@ async def handleMessage(application: OpenVoxelApplication, connection: WebSocket
         if command.operation != "set-block":
             await connection.send(encode({event: "error", code: "UnsupportedRealtimeOperation", message: f"Unsupported realtime operation {command.operation}"}))
             return
-        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockId)
+        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockStateRuntimeId)
         await application.realtime.publishChange(change)
         application.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
     catch error:

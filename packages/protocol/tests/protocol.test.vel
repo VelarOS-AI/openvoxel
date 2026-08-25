@@ -1,35 +1,41 @@
 import {expect} from "velar/test"
-import {TerrainSample, emptyChunk, sampleTerrain, setChunkBlock} from "@openvoxel/domain"
-import {blockId} from "@openvoxel/blocks"
+import {TerrainSample, defaultGenerator, emptyChunk, sampleTerrain, setChunkBlock} from "@openvoxel/domain"
+import {blockCatalogVersion, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {BlockMutation, ChunkQuery, ClientContractResponse, GenerationSampleResponse, WorldBootstrapResponse, WorldScoped, blockCatalogResponse, chunkBatchResponse, chunkBlockIndexOrder, chunkResponse, clientContractResponse, generationSampleResponse, protocolVersion, worldBootstrapResponse} from "../src/http.vel"
 import {createWorldManifest} from "@openvoxel/domain"
 import {BlockChangedEvent, SocketBlockCommand} from "../src/realtime.vel"
 
-const stoneBlock = blockId("openvoxel:stone")
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
-test "chunk response projects fixed storage into a transport list":
+test "chunk response projects palette storage into transport lists":
     const chunk = emptyChunk({x: -1, y: 2, z: 3}, 16)
     setChunkBlock(chunk, {x: 15, y: 0, z: 1}, stoneBlock)
     const response = chunkResponse("protocol", chunk)
     expect(response.worldId).toBe("protocol")
-    expect(response.blocks.size).toBe(4096)
-    expect(response.blocks[31]).toBe(stoneBlock)
+    expect(response.palette).toEqual([0, stoneBlock])
+    expect(response.indices.size).toBe(4096)
+    expect(response.indices[31]).toBe(1)
     expect(response.revision).toBe(1)
 
 test "generation metadata is projected without leaking runtime objects":
     const catalog = blockCatalogResponse()
-    expect(catalog.schemaVersion).toBe(1)
-    expect(catalog.catalogVersion).toBe("openvoxel:base-v1")
-    expect(catalog.idMapHash.size).toBe(64)
+    expect(catalog.schemaVersion).toBe(3)
+    expect(catalog.catalogVersion).toBe(blockCatalogVersion)
+    expect(catalog.stateMapHash.size).toBe(64)
     expect(catalog.contentHash.size).toBe(64)
-    expect(catalog.generator).toBe("openvoxel:survival-v1")
+    expect(catalog.generator).toBe(defaultGenerator)
     expect(catalog.seaLevel).toBe(64)
     expect(catalog.blocks.size).toBe(38)
-    expect(catalog.resources.materials).toEqual(["cross", "ice", "leaves", "magma", "metal", "model", "terrain", "water"])
-    expect(catalog.resources.textures.size).toBe(42)
-    expect(catalog.resources.models).toEqual(["block/cactus"])
-    expect(catalog.resources.tints).toEqual(["biome_foliage", "biome_grass", "biome_grass_top"])
-    expect(catalog.resources.animations).toEqual(["magma", "water"])
+    expect(catalog.states.size).toBe(183)
+    expect(catalog.resources.materials.size).toBe(8)
+    expect(catalog.resources.materials).toEqual(catalog.resources.materials.sorted())
+    expect(catalog.resources.textures.size).toBe(43)
+    expect(catalog.resources.models.size).toBe(6)
+    expect(catalog.resources.models).toEqual(catalog.resources.models.sorted())
+    expect(catalog.resources.tints.size).toBe(4)
+    expect(catalog.resources.tints).toEqual(catalog.resources.tints.sorted())
+    expect(catalog.resources.animations.size).toBe(2)
+    expect(catalog.resources.animations).toEqual(catalog.resources.animations.sorted())
 
     const sample = generationSampleResponse("protocol", sampleTerrain("protocol-seed", {x: 0, z: 0}))
     expect(sample.worldId).toBe("protocol")
@@ -42,35 +48,37 @@ test "generation metadata is projected without leaking runtime objects":
     const bootstrap = worldBootstrapResponse(manifest)
     expect(WorldBootstrapResponse.is(bootstrap)).toBe(true)
     expect(bootstrap.protocolVersion).toBe(protocolVersion)
-    expect(bootstrap.clientContractVersion).toBe(1)
+    expect(bootstrap.clientContractVersion).toBe(3)
     expect(bootstrap.clientContractPath).toBe("/api/client-contract")
     expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
     expect(bootstrap.realtimeEventsPath).toBe("/api/events")
-    expect(bootstrap.blockCatalogVersion).toBe(catalog.catalogVersion)
-    expect(bootstrap.blockIdMapHash).toBe(catalog.idMapHash)
+    expect(bootstrap.blockRegistry.states.size).toBe(catalog.states.size)
     expect(bootstrap.blockCatalogContentHash).toBe(catalog.contentHash)
+    expect(bootstrap.blockCatalogStateMapHash).toBe(catalog.stateMapHash)
     expect(bootstrap.maximumChunkBatchSize).toBe(64)
 
     const contract = clientContractResponse({requestBodyBytes: 65536, realtimeMessageBytes: 65536})
     expect(ClientContractResponse.is(contract)).toBe(true)
-    expect(contract.contractVersion).toBe(1)
+    expect(contract.contractVersion).toBe(3)
     expect(contract.http.routes.worldBootstrap.path).toBe("/api/worlds/:worldId/bootstrap")
     expect(contract.http.routes.blockCatalog.method).toBe("GET")
     expect(contract.realtime.encoding).toBe("messagepack")
     expect(contract.realtime.commands).toEqual(["set-block"])
     expect(contract.chunks.indexOrder).toBe(chunkBlockIndexOrder)
-    expect(contract.chunks.blockStorage).toBe("uint16-list")
+    expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
+    expect(contract.chunks.localIndices).toBe("uint16-list")
     expect(contract.blockCatalog.contentHash).toBe(catalog.contentHash)
+    expect(contract.blockCatalog.stateMapHash).toBe(catalog.stateMapHash)
     expect(contract.errorCodes).toContain("InvalidRequest")
 
 test "derived protocol records preserve inherited runtime contracts":
     const query = ChunkQuery.parse({worldId: "protocol", position: {x: 1, y: 2, z: 3}})
     expect(WorldScoped.is(query)).toBe(true)
 
-    const command = SocketBlockCommand.parse({operation: "set-block", worldId: "protocol", position: {x: 4, y: 5, z: 6}, blockId: stoneBlock})
+    const command = SocketBlockCommand.parse({operation: "set-block", worldId: "protocol", position: {x: 4, y: 5, z: 6}, blockStateRuntimeId: stoneBlock})
     expect(BlockMutation.is(command)).toBe(true)
 
-    const event = BlockChangedEvent.parse({event: "block-changed", worldId: "protocol", position: {x: 7, y: 8, z: 9}, previousBlockId: 0, blockId: stoneBlock, revision: 1})
+    const event = BlockChangedEvent.parse({event: "block-changed", worldId: "protocol", position: {x: 7, y: 8, z: 9}, previousBlockStateRuntimeId: 0, blockStateRuntimeId: stoneBlock, revision: 1})
     expect(BlockMutation.is(event)).toBe(true)
 
 test "chunk batch response preserves request ordering":

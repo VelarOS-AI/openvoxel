@@ -1,9 +1,9 @@
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, builtinIdentities, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {requireChunkEdge} from "./coordinates.vel"
-import {blockCatalogVersion, blockIdMapHash} from "@openvoxel/blocks"
 
 export const worldFormatVersion = 1
 export const initialChunkEdge = 16
-export const defaultGenerator = "openvoxel:survival-v1"
+export const defaultGenerator = builtinIdentities.generators.survival
 export const maximumChunkBatchSize = 64
 
 export type CreateWorld:
@@ -15,18 +15,7 @@ export type WorldManifest extends CreateWorld:
     formatVersion: number
     chunkEdge: number
     generator: string
-    blockCatalogVersion: string
-    blockIdMapHash: string
-
-export class WorldBlockCatalogMismatchError extends Error:
-    constructor(
-        const worldId: string,
-        const actualCatalogVersion: string,
-        const actualIdMapHash: string,
-        const expectedCatalogVersion: string = blockCatalogVersion,
-        const expectedIdMapHash: string = blockIdMapHash,
-    ):
-        super(f"World '{worldId}' uses block catalog {actualCatalogVersion}/{actualIdMapHash}; this server requires {expectedCatalogVersion}/{expectedIdMapHash}")
+    blockRegistry: WorldBlockRegistrySnapshot
 
 def requireBoundedText(value: string, label: string, maximum: number):
     assert not value.isBlank() else f"{label} cannot be blank"
@@ -38,13 +27,15 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     requireBoundedText(manifest.seed, "World seed", 128)
     assert manifest.formatVersion == worldFormatVersion else "Unsupported world format version"
     requireChunkEdge(manifest.chunkEdge)
-    assert manifest.chunkEdge == initialChunkEdge else "World format v1 requires a chunk edge of 16"
+    assert manifest.chunkEdge == initialChunkEdge else "World requires a chunk edge of 16"
     assert manifest.generator == defaultGenerator else "Unsupported world generator"
-    if manifest.blockCatalogVersion != blockCatalogVersion or manifest.blockIdMapHash != blockIdMapHash:
-        throw WorldBlockCatalogMismatchError(manifest.id, manifest.blockCatalogVersion, manifest.blockIdMapHash)
+    validateWorldBlockRegistrySnapshot(manifest.blockRegistry)
     return manifest
 
-export def createWorldManifest(command: CreateWorld) -> WorldManifest:
+export def createWorldManifest(
+    command: CreateWorld,
+    blockRegistry: readonly WorldBlockRegistrySnapshot = baseWorldBlockRegistrySnapshot,
+) -> WorldManifest:
     return validateWorldManifest({
         id: command.id.trim(),
         name: command.name.trim(),
@@ -52,6 +43,5 @@ export def createWorldManifest(command: CreateWorld) -> WorldManifest:
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
-        blockCatalogVersion,
-        blockIdMapHash,
+        blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry),
     })

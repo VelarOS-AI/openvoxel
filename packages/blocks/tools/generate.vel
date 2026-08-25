@@ -1,11 +1,12 @@
 import {exists, makeDirectory, readText, writeText} from "velar/fs"
-import {generateCatalogArtifact} from "./catalog-artifact.vel"
+import {generateCatalogArtifacts} from "./catalog-artifact.vel"
+import {readBlockCatalogInputs} from "./catalog-input.vel"
 
-const sourceText = await readText("data/blocks.yml", 1024 * 1024)
-const output = generateCatalogArtifact(sourceText)
+const inputs = await readBlockCatalogInputs()
+const output = generateCatalogArtifacts(inputs.manifestText, inputs.identitiesText, inputs.sourceTexts)
 
 const generatedDirectory = "generated"
 if not await exists(generatedDirectory): await makeDirectory(generatedDirectory)
-const generatedPath = "generated/block-catalog.json"
-if not await exists(generatedPath) or await readText(generatedPath, 2 * 1024 * 1024) != output:
-    await writeText(generatedPath, output)
+const catalogPath = "generated/block-catalog.json"
+if not await exists(catalogPath) or await readText(catalogPath, 4 * 1024 * 1024) != output.catalogText:
+    await writeText(catalogPath, output.catalogText)

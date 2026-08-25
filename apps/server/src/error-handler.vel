@@ -1,5 +1,5 @@
 import {Request, RequestBodyTooLargeError, ServeResponse} from "velar/serve"
-import {InvalidBlockIdError, RetiredBlockIdError, UnknownBlockIdError, WorldBlockCatalogMismatchError} from "@openvoxel/domain"
+import {InvalidBlockStateRuntimeIdError, ReservedBlockStateRuntimeIdError, UnknownBlockStateRuntimeIdError, UnknownWorldBlockStateRuntimeIdError} from "@openvoxel/domain"
 import {WorldAlreadyExistsError, WorldNotFoundError} from "@openvoxel/world-runtime"
 import {failure} from "./responses.vel"
 
@@ -8,7 +8,7 @@ export type PublicApplicationError:
     message: string
 
 export def publicApplicationError(error: Error) -> PublicApplicationError:
-    if (error is WorldNotFoundError) or (error is WorldAlreadyExistsError) or (error is WorldBlockCatalogMismatchError) or (error is InvalidBlockIdError) or (error is UnknownBlockIdError) or (error is RetiredBlockIdError):
+    if (error is WorldNotFoundError) or (error is WorldAlreadyExistsError) or (error is InvalidBlockStateRuntimeIdError) or (error is UnknownBlockStateRuntimeIdError) or (error is ReservedBlockStateRuntimeIdError) or (error is UnknownWorldBlockStateRuntimeIdError):
         return {code: error.code, message: error.message}
     if error.code == "TypeError" or error.code == "RangeError" or error.code == "SyntaxError" or error.code == "AssertionError" or error.code == "ValidationError" or error.code == "NarrowingError":
         return {code: "InvalidRequest", message: error.message}
@@ -20,17 +20,14 @@ export async def handleApplicationError(value: unknown, request: Request) -> Ser
     const error = value
     if error is WorldNotFoundError: return failure(404, error.code, {worldId: error.worldId}, error.message)
     if error is WorldAlreadyExistsError: return failure(409, error.code, {worldId: error.worldId}, error.message)
-    if error is WorldBlockCatalogMismatchError:
-        return failure(409, error.code, {
-            worldId: error.worldId,
-            actualCatalogVersion: error.actualCatalogVersion,
-            actualIdMapHash: error.actualIdMapHash,
-            expectedCatalogVersion: error.expectedCatalogVersion,
-            expectedIdMapHash: error.expectedIdMapHash,
-        }, error.message)
-    if error is InvalidBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
-    if error is UnknownBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
-    if error is RetiredBlockIdError: return failure(400, error.code, {blockId: error.blockId}, error.message)
+    if error is InvalidBlockStateRuntimeIdError:
+        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
+    if error is UnknownBlockStateRuntimeIdError:
+        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
+    if error is ReservedBlockStateRuntimeIdError:
+        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
+    if error is UnknownWorldBlockStateRuntimeIdError:
+        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
     if error is RequestBodyTooLargeError:
         return failure(413, "PayloadTooLarge", {method: request.method, path: request.path}, error.message)
     const publicError = publicApplicationError(error)

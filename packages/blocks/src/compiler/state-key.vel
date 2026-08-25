@@ -1,0 +1,17 @@
+import {BlockPropertyValue, BlockStateProperty} from "../definition/block.vel"
+
+/// 状态键是跨生成、存储、网络和运行时注册表共享的稳定语义身份。
+/// 属性始终按名称排序，因此 YAML 中的书写顺序不会造成状态漂移。
+/// 例如 water 的 falling=false、level=3 会得到：
+/// openvoxel:water[falling=false,level=3]。
+def propertyText(value: BlockPropertyValue) -> string:
+    if value is string: return value
+    if (value is bool): return value ? "true" : "false"
+    return str(value)
+
+export def canonicalStateKey(blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> string:
+    // 没有属性的方块直接使用方块 key，避免产生多余的空括号。
+    if properties.size == 0: return blockKey
+    // 排序发生在这里，所以调用者传入属性的先后顺序不会改变状态身份。
+    const parts = properties.sorted(by=property => property.name).map(property => f"{property.name}={propertyText(property.value)}")
+    return f"{blockKey}[{parts.join(",")}]"

@@ -1,34 +1,89 @@
 import {parseYaml} from "@velarscript-labs/yaml"
-import {BlockCatalogArtifact, BlockCatalogSource} from "../src/schema.vel"
-import {createBlockRegistry} from "../src/registry.vel"
+import {sha256Text} from "velar/hash"
+import {BlockSourceFile, BlockTypeSource} from "../src/definition/block.vel"
+import {BlockCatalogArtifact, BlockCatalogManifest, BlockStateMapSource, BlockStateMapping} from "../src/definition/catalog.vel"
+import {BuiltinIdentities, BuiltinIdentityDocument} from "../src/definition/identities.vel"
+import {collectBlockTypes, compileBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"
+import {IdentityResolution, IdentityLeafIndex, collectIdentityLeafPaths, resolveIdentityReferences} from "./identity-resolution.vel"
 
-extern module "node:crypto":
-    export class Hash:
-        def update(data: string) -> Hash
-        def digest(encoding: string) -> string
+type StateIdMapping:
+    runtimeId: number
+    stateKey: string
 
-    export def createHash(algorithm: string) -> Hash
+type ResolvedCatalogVersion:
+    catalogVersion: string
 
-import js {createHash} from "node:crypto"
+export type GeneratedCatalogArtifacts:
+    catalogText: string
 
-type BlockIdMapping:
-    id: number
-    key: string
+def createStateMap(blocks: List<BlockTypeSource>, identities: BuiltinIdentities) -> BlockStateMapSource:
+    // runtimeId 标识的是一个完整方块状态，而不是只标识方块类型。这里先展开
+    // 每个方块的全部属性组合，同时检查不同定义没有生成相同的 stateKey。
+    const activeKeys: Set<string> = Set()
+    for block in blocks:
+        for state in enumerateBlockStates(block):
+            assert not (state.stateKey in activeKeys) else f"Duplicate active block state {state.stateKey}"
+            activeKeys.add(state.stateKey)
 
-def digest(value: string) -> string: return createHash("sha256").update(value).digest("hex")
+    const mappings: List<BlockStateMapping> = []
+    const airKey = identities.blocks.air
+    assert airKey in activeKeys else f"Block catalog requires {airKey}"
 
-export def generateCatalogArtifact(sourceText: string) -> string:
-    const source = BlockCatalogSource.parse(parseYaml(sourceText))
-    const registry = createBlockRegistry(source)
-    const canonical = Json.stableStringify(source)
-    const contentHash = digest(canonical)
-    const mappings: List<BlockIdMapping> = []
-    for definition in registry.catalog(): mappings.append({id: definition.id, key: definition.key})
-    const idMapHash = digest(Json.stableStringify(mappings.sorted(by=mapping => mapping.id)))
+    // 空气固定占用 0，其他内建状态按 stateKey 排序后依次分配。这样输入文件的
+    // 书写顺序变化不会让 runtimeId 漂移；真正影响编号的是状态集合本身的变化。
+    mappings.append({runtimeId: 0, stateKey: airKey})
+    activeKeys.remove(airKey)
+    let nextRuntimeId = 1
+    for stateKey in activeKeys.values().sorted():
+        assert nextRuntimeId < 0x1000000 else "Built-in block states exhausted their runtime id range"
+        mappings.append({runtimeId: nextRuntimeId, stateKey})
+        nextRuntimeId += 1
+    return {formatVersion: 2, nextRuntimeId, reservedRuntimeIds: [], states: mappings}
+
+export def generateCatalogArtifacts(manifestText: string, identitiesText: string, sourceTexts: List<string>) -> GeneratedCatalogArtifacts:
+    // identities.yml 是所有命名空间、方块、标签和资源键的统一事实源。先把它
+    // 验证成强类型文档，后面的定义只通过打点路径引用其中的值。
+    const manifestSource = BlockCatalogManifest.parse(parseYaml(manifestText))
+    const identityDocument = BuiltinIdentityDocument.parse(parseYaml(identitiesText))
+    assert identityDocument.formatVersion == 2 else "Unsupported built-in identity format version"
+    const identities = identityDocument.identities
+
+    // 这两个身份由运行时代码直接使用，不会出现在方块 YAML 的引用遍历中，
+    // 因此在这里显式登记。其余身份必须从配置中的打点路径被实际读取。
+    const usedIdentityPaths: Set<string> = Set(["generators.survival", "namespaces.base"])
+    const manifestResolution = IdentityResolution.parse(resolveIdentityReferences({catalogVersion: manifestSource.catalogVersion}, identities))
+    for path in manifestResolution.usedPaths: usedIdentityPaths.add(path)
+    const resolvedCatalogVersion = ResolvedCatalogVersion.parse(manifestResolution.value)
+    const manifest = BlockCatalogManifest.from(manifestSource, {catalogVersion: resolvedCatalogVersion.catalogVersion})
+    assert manifest.sources.size == sourceTexts.size else "Block catalog source count does not match its manifest"
+    const sourceFiles: List<BlockSourceFile> = []
+    for sourceText in sourceTexts:
+        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identities))
+        for path in resolution.usedPaths: usedIdentityPaths.add(path)
+        sourceFiles.append(BlockSourceFile.parse(resolution.value))
+    const leafIndex = IdentityLeafIndex.parse(collectIdentityLeafPaths(identities))
+
+    // 声明数量相等仍不足以证明集合相同，所以先做快速数量检查，再逐项确认。
+    // 这能及时发现 identities.yml 中写了却没有任何定义使用的陈旧身份。
+    assert usedIdentityPaths.size == leafIndex.paths.size else "Every built-in identity must be referenced from its declared path"
+    for path in leafIndex.paths:
+        assert path in usedIdentityPaths else f"Built-in identity path {path} is not referenced"
+    const blocks = collectBlockTypes(sourceFiles)
+    const stateMap = createStateMap(blocks, identities)
+    const catalog = compileBlockCatalog(manifest, identities, blocks, stateMap)
+
+    // 哈希只基于稳定序列化后的运行时事实，不包含源文件路径或 YAML 排版。
+    // contentHash 识别完整目录，stateMapHash 单独识别 runtimeId 到状态的映射。
+    const contentHash = sha256Text(Json.stableStringify({identities, catalog}))
+    const stateMappings: List<StateIdMapping> = catalog.states.map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
+    const stateMapHash = sha256Text(Json.stableStringify(stateMappings.sorted(by=mapping => mapping.runtimeId)))
     const artifact: BlockCatalogArtifact = {
-        artifactVersion: 1,
+        artifactVersion: 4,
         contentHash,
-        idMapHash,
-        catalog: source,
+        stateMapHash,
+        identities,
+        catalog,
     }
-    return f"{Json.stableStringify(artifact, 2)}\n"
+    return {
+        catalogText: f"{Json.stableStringify(artifact, 2)}\n",
+    }

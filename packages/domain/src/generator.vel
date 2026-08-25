@@ -1,11 +1,11 @@
-import {Chunk, emptyChunk} from "./chunk.vel"
-import {blockId, isFluidBlock} from "@openvoxel/blocks"
+import {Chunk, chunkBlockAtIndex, emptyChunk, paintChunkBlockAtIndex} from "./chunk.vel"
+import {builtinIdentities, defaultBlockStateRuntimeId, isFluidBlock} from "@openvoxel/blocks"
 import {ChunkPosition, Coordinate2} from "./coordinates.vel"
 import {WorldManifest, validateWorldManifest} from "./world.vel"
 import {carveCaves, cavePlanner, generateFluidPockets, generateMinerals, generateVegetation} from "./generation/features.vel"
 import {ColumnCache, GenerationFields, TerrainSample, baseTerrainBlock, columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./generation/terrain.vel"
 
-const airBlock = blockId("openvoxel:air")
+const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 
 def chunkMinimumX(chunk: Chunk) -> number: return chunk.position.x * chunk.edge
 
@@ -31,7 +31,7 @@ def generateBaseTerrain(chunk: Chunk, fields: GenerationFields, cache: ColumnCac
             for localY in range(chunk.edge):
                 const worldY = minimumY + localY
                 const index = localX + chunk.edge * (localZ + chunk.edge * localY)
-                chunk.blocks[index] = baseTerrainBlock(fields, sample, worldY)
+                paintChunkBlockAtIndex(chunk, index, baseTerrainBlock(fields, sample, worldY))
 
 def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
     const topBlock = surfaceBlock(sample, topY)
@@ -43,8 +43,9 @@ def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
         const worldY = topY - depth
         if not insideY(chunk, worldY): continue
         const index = indexAt(chunk, sample.position.x, worldY, sample.position.z)
-        if chunk.blocks[index] != airBlock and not isFluidBlock(chunk.blocks[index]):
-            chunk.blocks[index] = depth == 0 ? topBlock : underBlock
+        const current = chunkBlockAtIndex(chunk, index)
+        if current != airBlockState and not isFluidBlock(current):
+            paintChunkBlockAtIndex(chunk, index, depth == 0 ? topBlock : underBlock)
 
 def generateSurface(chunk: Chunk, cache: ColumnCache):
     for localX in range(chunk.edge):

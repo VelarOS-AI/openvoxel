@@ -5,7 +5,7 @@
 学习顺序：
 
 1. 从 `packages/domain/src/coordinates.vel` 理解负坐标和三维 Chunk。
-2. 从 `packages/domain/src/chunk.vel` 理解定长 `UInt16Buffer` 和内存布局。
+2. 从 `packages/domain/src/chunk.vel` 理解 UInt32 世界运行时 ID 调色板、定长 `UInt16Buffer` 局部索引和内存布局。
 3. 从 `packages/domain/src/generator.vel` 理解种子如何产生确定性世界。
 4. 从 `packages/world-runtime/src/world-runtime.vel` 理解用例如何每次重建基础 Chunk，再叠加稀疏差异。
 5. 对比内存和 SQLite 两个 `WorldDeltaStore` 实现，再阅读 `sqlite-world-store.vel` 中的 command/query 操作，观察业务 SQL 如何通过通用执行器只保存修改数据。

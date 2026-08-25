@@ -1,0 +1,47 @@
+import {BlockStateDefinition} from "../definition/catalog.vel"
+
+/// 收集目录实际引用的逻辑渲染资源，供客户端预加载与缓存规划使用。
+/// 资源清单按类别去重并排序，输出顺序不受状态遍历顺序影响。
+export type BlockRenderResources:
+    /// 所有状态使用的材质规则身份。
+    readonly materials: readonly List<string>
+    /// 所有面引用的纹理身份。
+    readonly textures: readonly List<string>
+    /// 所有可见状态使用的模型身份。
+    readonly models: readonly List<string>
+    /// 可选染色规则身份。
+    readonly tints: readonly List<string>
+    /// 可选纹理动画规则身份。
+    readonly animations: readonly List<string>
+
+def sortedValues(values: Set<string>) -> readonly List<string>: return values.values().sorted()
+
+/// 遍历具体状态而不是方块家族，因为 variant 可能为不同状态替换渲染组件。
+export def collectBlockRenderResources(states: readonly List<readonly BlockStateDefinition>) -> BlockRenderResources:
+    const materials: Set<string> = Set()
+    const textures: Set<string> = Set()
+    const models: Set<string> = Set()
+    const tints: Set<string> = Set()
+    const animations: Set<string> = Set()
+
+    for state in states:
+        const render = state.render
+        if render.model == null: continue
+        models.add(render.model)
+        if render.material != null: materials.add(render.material)
+        if render.textures != null:
+            const blockTextures = render.textures
+            if blockTextures.all != null: textures.add(blockTextures.all)
+            if blockTextures.top != null: textures.add(blockTextures.top)
+            if blockTextures.bottom != null: textures.add(blockTextures.bottom)
+            if blockTextures.side != null: textures.add(blockTextures.side)
+        if render.tint != null: tints.add(render.tint)
+        if render.animation != null: animations.add(render.animation)
+
+    return {
+        materials: sortedValues(materials),
+        textures: sortedValues(textures),
+        models: sortedValues(models),
+        tints: sortedValues(tints),
+        animations: sortedValues(animations),
+    }

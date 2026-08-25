@@ -12,13 +12,13 @@ VelarScript 0.13 已提供声明式 `server` 路由、ServeApp 生命周期与�
 
 - `apps/server` 直接声明 system、world、chunk 和 block 路由，并在组合根统一挂载错误归一、CORS、请求 ID、安全响应头、并发限制和访问日志。
 - HTTP 与 MessagePack WebSocket 通过 `velar/websocket.listen({http: app})` 共享一个端口；浏览器 Origin 在进入连接队列前按 YAML 白名单精确拒绝。
-- SQLite 的表结构、迁移 SQL、世界操作、协议信封、世界运行时和实时广播仍归 OpenVoxel 所有；通用数据库操作层和 SQLite 连接资源来自 VelarScript Libraries，原生服务框架不获得数据库或游戏领域职责。
+- SQLite 的当前表结构、世界注册表 JSON、世界操作、协议信封、世界运行时和实时广播归 OpenVoxel 所有；通用数据库操作层和 SQLite 连接资源来自 VelarScript Libraries，原生服务框架不获得数据库或游戏领域职责。
 - 删除 `@openvoxel/backend` 与 `@openvoxel/fastify`，不保留双实现或隐藏回退路径。
 - 领域值使用 `type`，行为使用普通函数；生成缓存、运行时和服务状态由工厂闭包拥有。只有错误类型和必须参与资源释放协议的外部连接句柄保留 class。应用不建立 Controller、Manager、Repository、Service 容器或其他 C# 风格层级。
 - `provide` 只承载一个应用作用域的已组合服务能力，路由模块不各自复制 provider 或依赖容器。
 - YAML 继续是部署配置权威；`velar.json` 只声明 Node 构建宿主要求的稳定启动形状和默认值。
 
-VelarScript 0.13 同时修正表达式按源码顺序求值。世界生成字段会依次消耗种子随机流，因此 0.12 下建立的气候样本、特征覆盖坐标和 Chunk checksum 不再代表新语义；迁移时重新扫描固定种子并更新了确定性 golden，世界格式、方块 ID 和存档协议版本不变。
+VelarScript 0.13 按源码顺序求值。世界生成字段依次消耗种子随机流，固定种子的气候样本、特征覆盖坐标和 Chunk checksum 由当前实现的确定性 golden 锁定。
 
 ## 验证
 

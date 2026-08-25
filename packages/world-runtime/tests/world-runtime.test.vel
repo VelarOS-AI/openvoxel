@@ -1,10 +1,10 @@
 import {expect} from "velar/test"
-import {blockId, chunkBlock, chunkChecksum} from "@openvoxel/domain"
+import {builtinIdentities, chunkBlock, chunkChecksum, defaultBlockStateRuntimeId} from "@openvoxel/domain"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
 import {worldRuntime} from "../src/world-runtime.vel"
 
-const dirtBlock = blockId("openvoxel:dirt")
-const stoneBlock = blockId("openvoxel:stone")
+const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
 test "world runtime creates generates modifies and restores":
     const store = memoryWorldStore()
@@ -14,25 +14,25 @@ test "world runtime creates generates modifies and restores":
 
     const generated = await firstRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
     const generatedChecksum = chunkChecksum(generated)
-    const baseBlockId = chunkBlock(generated, {x: 15, y: 14, z: 0})
-    const replacementBlockId = baseBlockId == stoneBlock ? dirtBlock : stoneBlock
-    const change = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockId)
+    const baseBlockStateRuntimeId = chunkBlock(generated, {x: 15, y: 14, z: 0})
+    const replacementBlockStateRuntimeId = baseBlockStateRuntimeId == stoneBlock ? dirtBlock : stoneBlock
+    const change = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
     expect(change.chunk).toEqual({x: -1, y: 1, z: 0})
     expect(change.local).toEqual({x: 15, y: 14, z: 0})
-    expect(change.previousBlockId).toBe(baseBlockId)
+    expect(change.previousBlockStateRuntimeId).toBe(baseBlockStateRuntimeId)
     expect(change.revision).toBe(1)
 
-    const repeated = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockId)
+    const repeated = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
     expect(repeated.revision).toBe(change.revision)
 
     const restartedRuntime = worldRuntime(store)
     const restored = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
     expect(restored.revision).toBe(change.revision)
-    expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockId)
+    expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockStateRuntimeId)
     expect(chunkChecksum(restored) == generatedChecksum).toBe(false)
 
-    const reverted = await restartedRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, baseBlockId)
-    expect(reverted.previousBlockId).toBe(replacementBlockId)
+    const reverted = await restartedRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, baseBlockStateRuntimeId)
+    expect(reverted.previousBlockStateRuntimeId).toBe(replacementBlockStateRuntimeId)
     expect(reverted.revision).toBe(2)
     const regenerated = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
     expect(regenerated.revision).toBe(2)

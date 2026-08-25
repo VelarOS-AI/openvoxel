@@ -1,5 +1,10 @@
 # Working in this VelarScript project
 
+## 项目全局规则
+
+1. 不考虑兼容。以当前设计为唯一标准，重构时直接重建格式、协议和存储。
+2. 原始数据与运行时数据分层存放；`data/` 只放人工定义，生成结果统一进入 `generated/`。
+
 This project is written in VelarScript (`.vel` sources). VelarScript's
 parents are JavaScript and Python: write on those priors and the compiler
 teaches the rest. Run `velar skill` for the full language brief — it ships

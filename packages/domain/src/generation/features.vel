@@ -1,45 +1,45 @@
 import {Random, random} from "velar/random"
-import {Chunk} from "../chunk.vel"
-import {blockId, isNaturalRock} from "@openvoxel/blocks"
+import {Chunk, chunkBlockAtIndex, paintChunkBlockAtIndex} from "../chunk.vel"
+import {builtinIdentities, defaultBlockStateRuntimeId, isNaturalRock} from "@openvoxel/blocks"
 import {Coordinate2, Coordinate3} from "../coordinates.vel"
 import {ColumnCache, GenerationFields, TerrainSample, findSurfaceY, maximumWorldY, minimumWorldY, sampleTerrainWithFields, seaLevel, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
 
-const airBlock = blockId("openvoxel:air")
-const basaltBlock = blockId("openvoxel:basalt")
-const birchLeavesBlock = blockId("openvoxel:birch_leaves")
-const birchLogBlock = blockId("openvoxel:birch_log")
-const cactusBlock = blockId("openvoxel:cactus")
-const clayBlock = blockId("openvoxel:clay")
-const coalOreBlock = blockId("openvoxel:coal_ore")
-const copperOreBlock = blockId("openvoxel:copper_ore")
-const diamondOreBlock = blockId("openvoxel:diamond_ore")
-const dirtBlock = blockId("openvoxel:dirt")
-const dryBushBlock = blockId("openvoxel:dry_bush")
-const germaniumOreBlock = blockId("openvoxel:germanium_ore")
-const grassBlock = blockId("openvoxel:grass")
-const gravelBlock = blockId("openvoxel:gravel")
-const ironOreBlock = blockId("openvoxel:iron_ore")
-const limestoneBlock = blockId("openvoxel:limestone")
-const magmaBlock = blockId("openvoxel:magma")
-const mimosaLeavesBlock = blockId("openvoxel:mimosa_leaves")
-const mimosaLogBlock = blockId("openvoxel:mimosa_log")
-const oakLeavesBlock = blockId("openvoxel:oak_leaves")
-const oakLogBlock = blockId("openvoxel:oak_log")
-const poplarLeavesBlock = blockId("openvoxel:poplar_leaves")
-const poplarLogBlock = blockId("openvoxel:poplar_log")
-const purpleFlowerBlock = blockId("openvoxel:purple_flower")
-const redFlowerBlock = blockId("openvoxel:red_flower")
-const saltpeterOreBlock = blockId("openvoxel:saltpeter_ore")
-const sandBlock = blockId("openvoxel:sand")
-const sandstoneBlock = blockId("openvoxel:sandstone")
-const snowBlock = blockId("openvoxel:snow")
-const spruceLeavesBlock = blockId("openvoxel:spruce_leaves")
-const spruceLogBlock = blockId("openvoxel:spruce_log")
-const stoneBlock = blockId("openvoxel:stone")
-const sulphurOreBlock = blockId("openvoxel:sulphur_ore")
-const tallGrassBlock = blockId("openvoxel:tall_grass")
-const waterBlock = blockId("openvoxel:water")
-const whiteFlowerBlock = blockId("openvoxel:white_flower")
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const basaltBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.basalt)
+const birchLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.birchLeaves)
+const birchLogBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.birchLog)
+const cactusBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.cactus)
+const clayBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.clay)
+const coalOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.coalOre)
+const copperOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.copperOre)
+const diamondOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.diamondOre)
+const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const dryBushBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dryBush)
+const germaniumOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.germaniumOre)
+const grassBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
+const gravelBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.gravel)
+const ironOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.ironOre)
+const limestoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.limestone)
+const magmaBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.magma)
+const mimosaLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.mimosaLeaves)
+const mimosaLogBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.mimosaLog)
+const oakLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.oakLeaves)
+const oakLogBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.oakLog)
+const poplarLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.poplarLeaves)
+const poplarLogBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.poplarLog)
+const purpleFlowerBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.purpleFlower)
+const redFlowerBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.redFlower)
+const saltpeterOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.saltpeterOre)
+const sandBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
+const sandstoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sandstone)
+const snowBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.snow)
+const spruceLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.spruceLeaves)
+const spruceLogBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.spruceLog)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const sulphurOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sulphurOre)
+const tallGrassBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.tallGrass)
+const waterBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
+const whiteFlowerBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.whiteFlower)
 
 type CaveBounds:
     minimumX: number
@@ -77,13 +77,13 @@ def worldIndex(chunk: Chunk, position: Coordinate3) -> number:
 
 def getWorldBlock(chunk: Chunk, position: Coordinate3) -> number:
     if not inside(chunk, position): return airBlock
-    return chunk.blocks[worldIndex(chunk, position)]
+    return chunkBlockAtIndex(chunk, worldIndex(chunk, position))
 
-def setWorldBlock(chunk: Chunk, position: Coordinate3, blockId: number):
-    if inside(chunk, position): chunk.blocks[worldIndex(chunk, position)] = blockId
+def setWorldBlock(chunk: Chunk, position: Coordinate3, runtimeId: number):
+    if inside(chunk, position): paintChunkBlockAtIndex(chunk, worldIndex(chunk, position), runtimeId)
 
-def isCarvable(blockId: number) -> bool:
-    return isNaturalRock(blockId) or blockId == dirtBlock or blockId == grassBlock or blockId == sandBlock or blockId == clayBlock or blockId == gravelBlock
+def isCarvable(runtimeId: number) -> bool:
+    return isNaturalRock(runtimeId) or runtimeId == dirtBlock or runtimeId == grassBlock or runtimeId == sandBlock or runtimeId == clayBlock or runtimeId == gravelBlock
 
 def paintCaveSphere(chunk: Chunk, centerX: number, centerY: number, centerZ: number, radius: number):
     const chunkX = chunkMinimumX(chunk)
@@ -107,8 +107,8 @@ def paintCaveSphere(chunk: Chunk, centerX: number, centerY: number, centerZ: num
                     const localY = y - chunkY
                     const localZ = z - chunkZ
                     const index = localX + chunk.edge * (localZ + chunk.edge * localY)
-                    const current = chunk.blocks[index]
-                    if isCarvable(current): chunk.blocks[index] = airBlock
+                    const current = chunkBlockAtIndex(chunk, index)
+                    if isCarvable(current): paintChunkBlockAtIndex(chunk, index, airBlock)
 
 def caveBoundsIntersects(chunk: Chunk, bounds: CaveBounds) -> bool:
     const minimumX = chunkMinimumX(chunk)
@@ -242,10 +242,10 @@ export def carveCaves(chunk: Chunk, planner: CavePlanner):
                 const radius = plan.spheres[offset + 3]
                 if caveSphereIntersects(chunk, x, y, z, radius): paintCaveSphere(chunk, x, y, z, radius)
 
-def acceptsOreSource(blockId: number, source: string) -> bool:
-    if source == "basalt": return blockId == basaltBlock
-    if source == "sandstone": return blockId == sandstoneBlock
-    return isNaturalRock(blockId)
+def acceptsOreSource(runtimeId: number, source: string) -> bool:
+    if source == "basalt": return runtimeId == basaltBlock
+    if source == "sandstone": return runtimeId == sandstoneBlock
+    return isNaturalRock(runtimeId)
 
 def paintOreCell(chunk: Chunk, position: Coordinate3, oreBlock: number, source: string):
     if inside(chunk, position):

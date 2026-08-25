@@ -1,0 +1,219 @@
+import {canonicalStateKey} from "../compiler/state-key.vel"
+import {BlockCatalogContribution, BlockCatalogSource, BlockDefinition, BlockStateDefinition, WorldBlockRegistrySnapshot, WorldBlockStateMapping} from "../definition/catalog.vel"
+import {BlockRegistry, createBlockRegistry, requireBlockStateRuntimeId} from "./block-registry.vel"
+
+/// 世界方块注册表把基础目录、Mod 贡献和已有世界快照合成为当前世界视图。
+/// 基础状态保持固定 ID，Mod 状态只在各自世界中追加分配。
+
+/// 基础目录占用低 24 位区间，Mod 状态从该边界开始按世界分配。
+export const firstModBlockStateRuntimeId = 0x1000000
+
+export class UnknownWorldBlockStateRuntimeIdError extends Error:
+    constructor(const runtimeId: number): super(f"World block registry does not contain runtime id {runtimeId}")
+
+/// 世界注册表的三个结果：当前可查询内容、需要持久化的完整快照，以及缺失内容。
+/// missingStates 保留当前缺失 Mod 的历史映射，重装对应 Mod 后可恢复原 ID。
+export type WorldBlockRegistry:
+    /// 只包含当前可用基础内容和已安装 Mod 内容的运行时索引。
+    registry: BlockRegistry
+    /// 包含活动与缺失映射的完整持久化快照。
+    snapshot: readonly WorldBlockRegistrySnapshot
+    /// 快照中仍有 ID、但当前目录中没有定义的状态。
+    missingStates: readonly List<readonly WorldBlockStateMapping>
+
+def requireOwner(owner: string):
+    assert Text.matches(owner, r"^[a-z][a-z0-9_.-]*$") else "Block catalog contribution owner must be a lowercase namespace"
+
+def belongsToOwner(key: string, owner: string) -> bool: return key.startsWith(f"{owner}:")
+
+/// 世界快照是持久化边界，载入后先验证 ID 与状态键的唯一性。
+/// Mod ID 还必须小于 nextModRuntimeId，确保追加分配不会回到已使用区间。
+export def validateWorldBlockRegistrySnapshot(snapshot: readonly WorldBlockRegistrySnapshot) -> readonly WorldBlockRegistrySnapshot:
+    assert snapshot.formatVersion == 1 else "Unsupported world block registry format version"
+    assert snapshot.nextModRuntimeId.isInteger() and snapshot.nextModRuntimeId >= firstModBlockStateRuntimeId and snapshot.nextModRuntimeId <= 0x100000000 else "World block registry next Mod runtime id is invalid"
+    const runtimeIds: Set<number> = Set()
+    const stateKeys: Set<string> = Set()
+    for mapping in snapshot.states:
+        requireBlockStateRuntimeId(mapping.runtimeId)
+        assert not mapping.stateKey.isBlank() else "World block registry state key cannot be blank"
+        assert not (mapping.runtimeId in runtimeIds) else f"World block registry repeats runtime id {mapping.runtimeId}"
+        assert not (mapping.stateKey in stateKeys) else f"World block registry repeats state key {mapping.stateKey}"
+        if mapping.runtimeId >= firstModBlockStateRuntimeId:
+            assert mapping.runtimeId < snapshot.nextModRuntimeId else f"Mod block state runtime id {mapping.runtimeId} is outside the allocated range"
+        runtimeIds.add(mapping.runtimeId)
+        stateKeys.add(mapping.stateKey)
+    const air = snapshot.states.find(mapping => mapping.runtimeId == 0)
+    assert air != null else "World block registry requires runtime id 0"
+    return snapshot
+
+/// 在持久化快照中执行 runtimeId → stateKey 查询，缺失 Mod 状态也可以被找到。
+export def worldBlockStateKey(snapshot: readonly WorldBlockRegistrySnapshot, runtimeId: number) -> string:
+    requireBlockStateRuntimeId(runtimeId)
+    const mapping = snapshot.states.find(entry => entry.runtimeId == runtimeId)
+    if mapping == null: throw UnknownWorldBlockStateRuntimeIdError(runtimeId)
+    return mapping.stateKey
+
+/// 在持久化快照中执行 stateKey → runtimeId 查询。
+export def worldBlockStateRuntimeId(snapshot: readonly WorldBlockRegistrySnapshot, stateKey: string) -> number:
+    const mapping = snapshot.states.find(entry => entry.stateKey == stateKey)
+    assert mapping != null else f"World block registry does not contain state {stateKey}"
+    return mapping.runtimeId
+
+export def requireWorldBlockStateRuntimeId(snapshot: readonly WorldBlockRegistrySnapshot, runtimeId: number):
+    worldBlockStateKey(snapshot, runtimeId)
+
+/// 把基础或 Mod 目录合并到活动内容索引，并验证 Mod 不能越过自己的命名空间。
+def registerCatalogContent(
+    catalog: readonly BlockCatalogSource,
+    owner: string?,
+    statesByKey: Map<string, readonly BlockStateDefinition>,
+    blocksByKey: Map<string, readonly BlockDefinition>,
+):
+    assert catalog.schemaVersion == 3 else "Unsupported contributed block catalog schema version"
+    for state in catalog.states:
+        if owner != null:
+            assert belongsToOwner(state.blockKey, owner) else f"Block state {state.stateKey} is outside contribution namespace {owner}"
+        assert canonicalStateKey(state.blockKey, state.properties) == state.stateKey else f"Block state {state.stateKey} is not canonical"
+        assert statesByKey.get(state.stateKey) == null else f"Duplicate contributed block state {state.stateKey}"
+        statesByKey.set(state.stateKey, state)
+    for block in catalog.blocks:
+        if owner != null:
+            assert belongsToOwner(block.key, owner) else f"Block {block.key} is outside contribution namespace {owner}"
+        assert blocksByKey.get(block.key) == null else f"Duplicate contributed block type {block.key}"
+        blocksByKey.set(block.key, block)
+
+/// 显式状态别名只移动既有映射，确保内容改名时 runtimeId 保持稳定。
+/// 只有旧状态已经从当前目录消失、新状态真实存在时，别名才是有效的。
+def applyAliases(contributions: readonly List<readonly BlockCatalogContribution>, mappings: List<WorldBlockStateMapping>, activeStateKeys: Set<string>):
+    const aliasSources: Set<string> = Set()
+    const aliasTargets: Set<string> = Set()
+    for contribution in contributions:
+        for alias in contribution.stateAliases:
+            assert belongsToOwner(alias.from, contribution.owner) else f"State alias {alias.from} is outside contribution namespace {contribution.owner}"
+            assert belongsToOwner(alias.to, contribution.owner) else f"State alias {alias.to} is outside contribution namespace {contribution.owner}"
+            assert alias.from != alias.to else f"State alias {alias.from} cannot target itself"
+            assert not (alias.from in aliasSources) else f"Duplicate state alias source {alias.from}"
+            assert not (alias.to in aliasTargets) else f"Duplicate state alias target {alias.to}"
+            assert not (alias.from in activeStateKeys) else f"State alias source {alias.from} is still active"
+            assert alias.to in activeStateKeys else f"State alias target {alias.to} is not active"
+            aliasSources.add(alias.from)
+            aliasTargets.add(alias.to)
+            let sourceIndex: number? = null
+            for mapping, index in mappings:
+                if mapping.stateKey == alias.from:
+                    sourceIndex = index
+                    break
+            if sourceIndex == null: continue
+            assert not mappings.some(mapping => mapping.stateKey == alias.to) else f"State alias target {alias.to} already has a runtime id"
+            mappings[sourceIndex] = {runtimeId: mappings[sourceIndex].runtimeId, stateKey: alias.to}
+
+/// 合成当前世界的完整注册表：恢复历史映射、应用别名，再追加新 Mod 状态。
+/// previous 为空表示创建新世界；非空表示打开已有世界并以快照为 ID 权威。
+export def createWorldBlockRegistry(
+    baseCatalog: readonly BlockCatalogSource,
+    contributions: readonly List<readonly BlockCatalogContribution> = [],
+    previous: readonly WorldBlockRegistrySnapshot? = null,
+) -> WorldBlockRegistry:
+    // 第一步：合并基础目录与全部已安装 Mod，建立当前活动内容集合。
+    const statesByKey: Map<string, readonly BlockStateDefinition> = Map()
+    const blocksByKey: Map<string, readonly BlockDefinition> = Map()
+    registerCatalogContent(baseCatalog, null, statesByKey, blocksByKey)
+    const baseState = baseCatalog.states.find(state => state.runtimeId == 0)
+    assert baseState != null else "Base block catalog requires runtime id 0"
+    const baseNamespace = baseState.blockKey.split(":")[0]
+
+    const owners: Set<string> = Set()
+    for contribution in contributions:
+        requireOwner(contribution.owner)
+        assert contribution.owner != baseNamespace else f"The {baseNamespace} namespace belongs to the base catalog"
+        assert not (contribution.owner in owners) else f"Duplicate block catalog contribution owner {contribution.owner}"
+        owners.add(contribution.owner)
+        registerCatalogContent(contribution.catalog, contribution.owner, statesByKey, blocksByKey)
+
+    // 第二步：新世界从基础映射开始；已有世界完整恢复快照中的历史映射。
+    const mappings: List<WorldBlockStateMapping> = []
+    let nextModRuntimeId = firstModBlockStateRuntimeId
+    if previous == null:
+        for state in baseCatalog.states:
+            assert state.runtimeId < firstModBlockStateRuntimeId else f"Built-in block state {state.stateKey} uses the Mod runtime id range"
+            mappings.append(WorldBlockStateMapping.from(state))
+    else:
+        const snapshot = WorldBlockRegistrySnapshot.parse(validateWorldBlockRegistrySnapshot(previous))
+        mappings.extend(snapshot.states)
+        nextModRuntimeId = snapshot.nextModRuntimeId
+
+    // 第三步：先应用显式改名，再检查所有历史映射仍然一一对应。
+    const activeStateKeys = Set(statesByKey.keys())
+    applyAliases(contributions, mappings, activeStateKeys)
+
+    const mappedRuntimeIds: Set<number> = Set()
+    const mappedStateKeys: Set<string> = Set()
+    for mapping in mappings:
+        assert not (mapping.runtimeId in mappedRuntimeIds) else f"Duplicate world block state runtime id {mapping.runtimeId}"
+        assert not (mapping.stateKey in mappedStateKeys) else f"Duplicate world block state key {mapping.stateKey}"
+        mappedRuntimeIds.add(mapping.runtimeId)
+        mappedStateKeys.add(mapping.stateKey)
+
+    // 第四步：基础状态 ID 是全局固定的，世界快照必须与基础目录完全一致。
+    for state in baseCatalog.states:
+        const existing = mappings.find(mapping => mapping.stateKey == state.stateKey)
+        if existing == null:
+            assert not (state.runtimeId in mappedRuntimeIds) else f"Built-in runtime id {state.runtimeId} is already allocated"
+            mappings.append(WorldBlockStateMapping.from(state))
+            mappedRuntimeIds.add(state.runtimeId)
+            mappedStateKeys.add(state.stateKey)
+        else:
+            assert existing.runtimeId == state.runtimeId else f"Built-in block state {state.stateKey} has runtime id {existing.runtimeId}; expected {state.runtimeId}"
+
+    // 第五步：只为第一次出现在该世界中的 Mod 状态追加新 ID。
+    const contributedStateKeys = statesByKey.keys()
+        .filter(stateKey => not (stateKey in mappedStateKeys))
+        .sorted()
+    for stateKey in contributedStateKeys:
+        while nextModRuntimeId in mappedRuntimeIds: nextModRuntimeId += 1
+        assert nextModRuntimeId <= 0xffffffff else "World block registry exhausted UInt32 runtime ids"
+        mappings.append({runtimeId: nextModRuntimeId, stateKey})
+        mappedRuntimeIds.add(nextModRuntimeId)
+        mappedStateKeys.add(stateKey)
+        nextModRuntimeId += 1
+
+    const runtimeIdByStateKey: Map<string, number> = Map()
+    for mapping in mappings: runtimeIdByStateKey.set(mapping.stateKey, mapping.runtimeId)
+
+    // 第六步：把世界映射中的最终 ID 投影回当前活动状态和方块定义。
+    const activeStates: List<BlockStateDefinition> = []
+    for stateKey in activeStateKeys.values().sorted():
+        const state = statesByKey.get(stateKey)
+        const runtimeId = runtimeIdByStateKey.get(stateKey)
+        assert state != null and runtimeId != null else f"Active block state {stateKey} is missing its world mapping"
+        const mutableState = BlockStateDefinition.parse(state)
+        activeStates.append(BlockStateDefinition.from(mutableState, {runtimeId}))
+
+    const activeBlocks: List<BlockDefinition> = []
+    for blockKey in blocksByKey.keys().sorted():
+        const block = blocksByKey.get(blockKey)
+        assert block != null else f"Missing block type {blockKey}"
+        const defaultStateKey = canonicalStateKey(block.key, block.defaultState)
+        const defaultStateRuntimeId = runtimeIdByStateKey.get(defaultStateKey)
+        assert defaultStateRuntimeId != null else f"Block {block.key} default state is missing its world mapping"
+        const mutableBlock = BlockDefinition.parse(block)
+        activeBlocks.append(BlockDefinition.from(mutableBlock, {defaultStateRuntimeId}))
+
+    // 第七步：保留缺失内容的映射，生成完整快照和当前可用运行时目录。
+    const missingStates = mappings
+        .filter(mapping => not (mapping.stateKey in activeStateKeys))
+        .sorted(by=mapping => mapping.runtimeId)
+    const snapshot: WorldBlockRegistrySnapshot = {
+        formatVersion: 1,
+        nextModRuntimeId,
+        states: mappings.sorted(by=mapping => mapping.runtimeId),
+    }
+    validateWorldBlockRegistrySnapshot(snapshot)
+    const source: BlockCatalogSource = {
+        schemaVersion: baseCatalog.schemaVersion,
+        catalogVersion: baseCatalog.catalogVersion,
+        reservedRuntimeIds: baseCatalog.reservedRuntimeIds.copy(),
+        blocks: activeBlocks,
+        states: activeStates.sorted(by=state => state.runtimeId),
+    }
+    return {registry: createBlockRegistry(source), snapshot, missingStates}

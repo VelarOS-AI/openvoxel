@@ -1,0 +1,265 @@
+/// 方块定义层描述人工 YAML 与编译目录共享的数据模型。
+/// 一个方块先由 BlockTypeSource 描述“它有哪些可能状态”，生成器再把属性的
+/// 全部有限组合展开为 BlockStateDefinition。箱子内容、告示牌文本等大小不固定的
+/// 数据不属于方块状态，应由独立的 Block Entity 系统保存。
+
+/// 方块属性必须是有限集合，生成阶段才能穷举全部状态。
+/// boolean 产生两个取值；enum 使用声明的字符串集合；integer 使用闭区间内的整数。
+/// 多个属性的状态数是各属性取值数的乘积，例如 2 个布尔属性会产生 4 个状态。
+export enum BlockPropertyKind:
+    boolean
+    enumeration = "enum"
+    integer
+
+/// 描述碰撞、选取和遮挡所使用的逻辑形状。
+/// empty 表示没有体积，fullCube 表示完整方块，custom 通过 key 引用自定义形状。
+export enum BlockShapeKind:
+    empty = "none"
+    fullCube = "full_cube"
+    custom
+
+/// 决定渲染排序和混合方式：opaque 不透明，cutout 按透明度裁剪，
+/// translucent 参与半透明混合，水和冰通常使用最后一种。
+export enum BlockRenderLayer:
+    opaque
+    cutout
+    translucent
+
+/// 描述天空光如何穿过方块：直接通过、扩散衰减或完全阻断。
+export enum BlockSkylightMode:
+    passThrough = "pass_through"
+    diffuse
+    blocked
+
+/// 行为种类是模拟系统的稳定调度入口。
+/// 方块定义只声明行为和参数，真正的流体、重力、燃烧等算法由对应系统执行。
+export enum BlockBehaviorKind:
+    gravity
+    fluid
+    flammable
+    contactDamage = "contact_damage"
+    randomTick = "random_tick"
+    scheduledTick = "scheduled_tick"
+    placement
+    support
+
+/// 放置策略根据玩家点击面或朝向计算新方块的初始状态。
+export enum BlockPlacementStrategy:
+    default
+    axisFromFace = "axis_from_face"
+    horizontalFacing = "horizontal_facing"
+
+/// 支撑行为检查方块的哪个方向；below 常用于花草，sides 常用于附着方块。
+export enum BlockSupportFace:
+    below
+    sides
+    any
+
+/// 所有可进入状态键的值类型。值必须可稳定序列化，不能包含对象或任意长度数据。
+export type BlockPropertyValue = string | number | bool
+
+/// 一个具体状态中的“属性名 = 属性值”。
+/// 例如水的 {name: "level", value: 3} 会进入规范状态键 level=3。
+export type BlockStateProperty:
+    /// 对应 BlockPropertyDefinition.name。
+    name: string
+    /// 当前具体状态采用的值。
+    value: BlockPropertyValue
+
+/// 布尔属性适合开关状态，例如是否下落、是否含雪、是否由玩家放置。
+export type BooleanBlockProperty:
+    name: string
+    kind: BlockPropertyKind.boolean
+
+/// 枚举属性适合方向、轴向等有限字符串集合。
+export type EnumBlockProperty:
+    name: string
+    kind: BlockPropertyKind.enumeration
+    /// 允许的全部值，至少需要两个，值的顺序不影响状态键。
+    values: List<string>
+
+/// 整数属性使用包含 minimum 和 maximum 的闭区间。
+/// 例如 minimum=0、maximum=15 会产生 16 个可能值。
+export type IntegerBlockProperty:
+    name: string
+    kind: BlockPropertyKind.integer
+    minimum: number
+    maximum: number
+
+/// 三类属性定义的联合。kind 字段决定当前记录采用哪一种结构。
+export type BlockPropertyDefinition = BooleanBlockProperty | EnumBlockProperty | IntegerBlockProperty
+
+/// 自定义形状的 key 指向 identities.shapes 中的逻辑资源身份。
+/// kind 不是 custom 时 key 必须为空。
+export type BlockShape:
+    kind: BlockShapeKind
+    key: string?
+
+/// 描述实体移动、鼠标选取和面遮挡所需的物理信息。
+export type BlockPhysics:
+    /// 实体移动时参与碰撞检测的形状。
+    collision: BlockShape
+    /// 玩家准星或编辑工具用于选中方块的形状。
+    selection: BlockShape
+    /// 判断相邻方块面是否被完全遮挡的形状。
+    occlusion: BlockShape
+    /// true 表示放置其他方块时可以直接覆盖当前方块，例如空气和花草。
+    replaceable: bool
+    /// 表面摩擦系数；数值越高越不容易滑动。
+    friction: number
+    /// 实体在方块中或方块表面移动时的速度倍率，1 表示不修改。
+    speedFactor: number
+    /// 实体从方块表面起跳时的跳跃倍率，1 表示不修改。
+    jumpFactor: number
+
+/// 光照数值采用 0 到 15 的等级，与体素光照系统保持一致。
+export type BlockLight:
+    /// 方块自身发出的光照强度，0 表示不发光，15 表示最高亮度。
+    emission: number
+    /// 方块对传播光的阻挡强度，0 表示完全透光，15 表示完全阻挡。
+    opacity: number
+    /// 天空光穿过方块时采用的传播模式。
+    skylight: BlockSkylightMode
+    /// 是否在网格阶段计算环境遮蔽阴影。
+    ambientOcclusion: bool
+
+/// 纹理可以统一用于全部面，也可以分别指定顶部、底部和侧面。
+export type BlockTextures:
+    /// 非空时所有面共享同一纹理。
+    all: string?
+    top: string?
+    bottom: string?
+    side: string?
+
+/// 渲染组件只保存逻辑资源身份，不保存引擎对象、UV 或 GPU 句柄。
+export type BlockRender:
+    /// 逻辑模型身份；为空表示该方块不生成可见网格，例如空气。
+    model: string?
+    /// 模型存在时使用的渲染层。
+    layer: BlockRenderLayer?
+    /// 材质规则身份，用于选择着色、透明和光照策略。
+    material: string?
+    /// 模型各个面的逻辑纹理身份。
+    textures: BlockTextures?
+    /// 可选染色规则，例如根据生物群系改变草或水的颜色。
+    tint: string?
+    /// 可选纹理动画规则，例如水面或岩浆动画。
+    animation: string?
+    /// 是否允许隐藏与相邻实心方块贴合的不可见面。
+    cullFaces: bool
+
+/// 描述玩家破坏方块以及反馈资源所需的数据。
+export type BlockInteraction:
+    /// false 表示常规玩法不能破坏，例如空气和流体。
+    breakable: bool
+    /// 影响挖掘耗时；具体速度仍由工具和玩法系统计算。
+    hardness: number
+    /// 抵抗爆炸破坏的能力。
+    blastResistance: number
+    /// 推荐或要求的工具标签，例如 pickaxe、axe；为空表示不限制工具类别。
+    toolTag: string?
+    /// 破坏成功后执行的掉落表身份。
+    drops: string
+    /// 放置、行走和破坏时使用的声音组身份。
+    sounds: string
+
+/// 重力行为让方块在失去支撑后延迟下落，沙子和沙砾会使用它。
+export type GravityBlockBehavior:
+    kind: BlockBehaviorKind.gravity
+    /// 检测到悬空后等待多少 tick 再执行下落。
+    delayTicks: number
+
+/// 流体行为通过方块属性保存液面等级和下落状态。
+export type FluidBlockBehavior:
+    kind: BlockBehaviorKind.fluid
+    /// 流体类型身份，用于选择水或岩浆等模拟规则。
+    fluidKey: string
+    /// 指向当前方块 integer 属性的名称，例如 level。
+    levelProperty: string
+    /// 指向当前方块 boolean 属性的名称，例如 falling。
+    fallingProperty: string
+    /// 两次流体更新之间的 tick 数；越小更新越频繁。
+    tickRate: number
+    /// 流动阻力参数；数值越大通常扩散越慢。
+    viscosity: number
+
+/// 可燃行为声明被点燃和向邻居传播火焰的概率参数。
+export type FlammableBlockBehavior:
+    kind: BlockBehaviorKind.flammable
+    ignitionChance: number
+    spreadChance: number
+
+/// 接触伤害行为用于岩浆、仙人掌等会周期性伤害实体的方块。
+export type ContactDamageBlockBehavior:
+    kind: BlockBehaviorKind.contactDamage
+    /// 每次结算造成的伤害值。
+    damage: number
+    /// 同一实体两次受伤之间的最小 tick 间隔。
+    intervalTicks: number
+
+/// 随机刻由世界调度器抽样触发，handler 指向具体处理逻辑。
+export type RandomTickBlockBehavior:
+    kind: BlockBehaviorKind.randomTick
+    handler: string
+
+/// 计划刻在确定的延迟后触发，适合需要稳定时序的模拟逻辑。
+export type ScheduledTickBlockBehavior:
+    kind: BlockBehaviorKind.scheduledTick
+    handler: string
+    delayTicks: number
+
+/// 放置行为根据上下文为方向、轴向等属性选择初始值。
+export type PlacementBlockBehavior:
+    kind: BlockBehaviorKind.placement
+    strategy: BlockPlacementStrategy
+
+/// 支撑行为在相邻方块变化后检查自身是否仍能存在。
+export type SupportBlockBehavior:
+    kind: BlockBehaviorKind.support
+    face: BlockSupportFace
+    /// 可选标签用于限制支撑方块，例如 plantSupport。
+    supportingTag: string?
+
+/// 所有行为记录的联合。kind 字段决定系统读取哪组参数。
+export type BlockBehavior = GravityBlockBehavior | FluidBlockBehavior | FlammableBlockBehavior | ContactDamageBlockBehavior | RandomTickBlockBehavior | ScheduledTickBlockBehavior | PlacementBlockBehavior | SupportBlockBehavior
+
+/// 状态变体按部分属性匹配，并用声明的完整组件替换基础组件。
+/// when 可以只写关心的属性；同一个具体状态最多命中一个变体。
+export type BlockStateVariant:
+    /// 匹配条件，例如 [{name: "snowy", value: true}]。
+    when: List<BlockStateProperty>
+    physics: BlockPhysics?
+    light: BlockLight?
+    render: BlockRender?
+    interaction: BlockInteraction?
+    behaviors: List<BlockBehavior>?
+
+/// 人工维护的方块家族，是 data/blocks/*.yml 中每个 blocks 项的完整结构。
+/// 它只拥有语义身份；数字 runtimeId 在生成阶段按规范状态键确定。
+export type BlockTypeSource:
+    /// identities.blocks 中的路径解析后得到的命名空间方块身份。
+    key: string
+    /// 客户端本地化系统使用的翻译键。
+    translationKey: string
+    /// 内容分类标签，用于 naturalRock、ore、fluid 等语义查询。
+    tags: List<string>
+    /// 定义状态维度；所有属性的有限组合会被完整展开。
+    properties: List<BlockPropertyDefinition>
+    /// 新放置或未指定状态时使用的完整属性集合。
+    defaultState: List<BlockStateProperty>
+    /// 所有状态默认继承的物理组件。
+    physics: BlockPhysics
+    /// 所有状态默认继承的光照组件。
+    light: BlockLight
+    /// 所有状态默认继承的渲染组件。
+    render: BlockRender
+    /// 所有状态默认继承的交互组件。
+    interaction: BlockInteraction
+    /// 所有状态默认执行的行为组件列表。
+    behaviors: List<BlockBehavior>
+    /// 根据属性条件替换组件的特殊状态规则。
+    variants: List<BlockStateVariant>
+
+/// 一个分组 YAML 文件的顶层结构，例如 terrain.yml 或 fluids.yml。
+export type BlockSourceFile:
+    blocks: List<BlockTypeSource>

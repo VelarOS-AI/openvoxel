@@ -1,0 +1,165 @@
+import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShapeKind, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockTypeSource} from "../definition/block.vel"
+import {BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateDefinition, BlockStateMapSource} from "../definition/catalog.vel"
+import {BuiltinIdentities} from "../definition/identities.vel"
+import {requireUInt32, validateBlockType, validateBuiltinIdentities} from "./block-validation.vel"
+import {canonicalStateKey} from "./state-key.vel"
+
+/// 状态原型是“已经应用 variant、尚未绑定 runtimeId”的中间结果。
+/// 它只存在于生成阶段，最终会转换为 BlockStateDefinition 写入 JSON。
+export type BlockStatePrototype:
+    /// 稳定语义状态键。
+    stateKey: string
+    /// 所属方块家族。
+    blockKey: string
+    /// 当前状态的完整属性组合。
+    properties: List<BlockStateProperty>
+    /// 应用状态变体后的最终组件快照。
+    physics: BlockPhysics
+    light: BlockLight
+    render: BlockRender
+    interaction: BlockInteraction
+    behaviors: List<BlockBehavior>
+
+/// 把一个属性定义展开成所有允许值，供笛卡尔积算法组合状态。
+def propertyValues(property: BlockPropertyDefinition) -> List<BlockPropertyValue>:
+    match property.kind:
+        case BlockPropertyKind.boolean: return [false, true]
+        case BlockPropertyKind.enumeration:
+            const values: List<BlockPropertyValue> = []
+            for value in property.values: values.append(value)
+            return values
+        case BlockPropertyKind.integer:
+            const values: List<BlockPropertyValue> = []
+            for value in range(property.minimum, property.maximum + 1): values.append(value)
+            return values
+
+def propertyValue(properties: List<BlockStateProperty>, name: string) -> BlockPropertyValue?:
+    for property in properties:
+        if property.name == name: return property.value
+    return null
+
+def variantMatches(variant: BlockStateVariant, state: List<BlockStateProperty>) -> bool:
+    return variant.when.every(expected => equals(propertyValue(state, expected.name), expected.value))
+
+/// 从方块的基础组件开始，找到匹配当前属性组合的变体并替换对应组件。
+/// 每个具体状态最多允许命中一个变体，避免最终结果依赖 YAML 中的变体顺序。
+def applyVariant(block: BlockTypeSource, properties: List<BlockStateProperty>) -> BlockStatePrototype:
+    let physics = block.physics
+    let light = block.light
+    let render = block.render
+    let interaction = block.interaction
+    let behaviors = block.behaviors
+    let matched = false
+    for variant in block.variants:
+        if not variantMatches(variant, properties): continue
+        assert not matched else f"Block {block.key} state {canonicalStateKey(block.key, properties)} matches multiple variants"
+        matched = true
+        if variant.physics != null: physics = variant.physics
+        if variant.light != null: light = variant.light
+        if variant.render != null: render = variant.render
+        if variant.interaction != null: interaction = variant.interaction
+        if variant.behaviors != null: behaviors = variant.behaviors
+    return {stateKey: canonicalStateKey(block.key, properties), blockKey: block.key, properties, physics, light, render, interaction, behaviors}
+
+/// 按属性定义的笛卡尔积穷举全部状态，并生成完整组件快照。
+/// 例如 falling 有 2 个值、level 有 16 个值，最终会得到 32 个水状态。
+export def enumerateBlockStates(block: BlockTypeSource) -> List<BlockStatePrototype>:
+    validateBlockType(block)
+    // 先放入一个空组合；每处理一个属性，就把现有组合复制成该属性的全部取值版本。
+    let combinations: List<List<BlockStateProperty>> = [[]]
+    for definition in block.properties.sorted(by=property => property.name):
+        const next: List<List<BlockStateProperty>> = []
+        for combination in combinations:
+            for value in propertyValues(definition):
+                const extended = combination.copy()
+                extended.append({name: definition.name, value})
+                next.append(extended)
+        combinations = next
+    // 单个方块状态过多会放大目录、网格和模拟成本，因此在生成阶段设置明确上限。
+    assert combinations.size <= 256 else f"Block {block.key} expands to more than 256 states"
+    return combinations.map(properties => applyVariant(block, properties))
+
+/// 按 catalog.yml 的文件顺序合并分组 YAML；后续分配仍按规范状态键排序。
+export def collectBlockTypes(files: List<BlockSourceFile>) -> List<BlockTypeSource>:
+    const blocks: List<BlockTypeSource> = []
+    for file in files: blocks.extend(file.blocks)
+    return blocks
+
+/// 将已解析的身份、人工方块和状态映射编译成运行时目录。
+/// 编译分为四步：验证并展开状态、绑定 runtimeId、生成默认类型快照、验证空气。
+export def compileBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+    assert manifest.schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert not manifest.catalogVersion.isBlank() else "Block catalog version cannot be blank"
+    assert stateMap.formatVersion == 2 else "Unsupported block state map format version"
+    validateBuiltinIdentities(identities, sourceBlocks)
+    // 第一步：验证方块家族并展开全部有限状态，以规范状态键建立原型索引。
+    const sourceByKey: Map<string, BlockTypeSource> = Map()
+    const prototypeByKey: Map<string, BlockStatePrototype> = Map()
+    for block in sourceBlocks:
+        validateBlockType(block)
+        assert sourceByKey.get(block.key) == null else f"Duplicate block key {block.key}"
+        sourceByKey.set(block.key, block)
+        for prototype in enumerateBlockStates(block):
+            assert prototypeByKey.get(prototype.stateKey) == null else f"Duplicate block state {prototype.stateKey}"
+            prototypeByKey.set(prototype.stateKey, prototype)
+    assert sourceByKey.size > 0 else "Block catalog cannot be empty"
+    assert prototypeByKey.size <= 0x100000000 else "Block catalog exceeds UInt32 state capacity"
+
+    // 第二步：把状态映射中的 UInt32 ID 绑定到对应原型，并拒绝重复或保留 ID。
+    const reservedRuntimeIds: Set<number> = Set()
+    for runtimeId in stateMap.reservedRuntimeIds:
+        requireUInt32(runtimeId, "Reserved block state runtime id")
+        assert not (runtimeId in reservedRuntimeIds) else f"Duplicate reserved block state runtime id {runtimeId}"
+        reservedRuntimeIds.add(runtimeId)
+    const byId: Map<number, BlockStateDefinition> = Map()
+    const mappedKeys: Set<string> = Set()
+    for mapping in stateMap.states:
+        requireUInt32(mapping.runtimeId, "Block state runtime id")
+        assert not (mapping.runtimeId in reservedRuntimeIds) else f"Active block state runtime id {mapping.runtimeId} is reserved"
+        assert byId.get(mapping.runtimeId) == null else f"Duplicate block state runtime id {mapping.runtimeId}"
+        assert not (mapping.stateKey in mappedKeys) else f"Duplicate block state key {mapping.stateKey}"
+        const prototype = prototypeByKey.get(mapping.stateKey)
+        assert prototype != null else f"State map references unknown state {mapping.stateKey}"
+        mappedKeys.add(mapping.stateKey)
+        byId.set(mapping.runtimeId, {
+            runtimeId: mapping.runtimeId,
+            stateKey: prototype.stateKey,
+            blockKey: prototype.blockKey,
+            properties: prototype.properties,
+            physics: prototype.physics,
+            light: prototype.light,
+            render: prototype.render,
+            interaction: prototype.interaction,
+            behaviors: prototype.behaviors,
+        })
+    assert mappedKeys.size == prototypeByKey.size else "Block state map is missing active states"
+
+    // 第三步：为每个方块家族提取默认状态的最终组件，形成类型级查询目录。
+    const states = byId.values().sorted(by=state => state.runtimeId)
+    const blocks: List<BlockDefinition> = []
+    for source in sourceBlocks.sorted(by=block => block.key):
+        const defaultStateKey = canonicalStateKey(source.key, source.defaultState)
+        const defaultState = states.find(state => state.stateKey == defaultStateKey)
+        assert defaultState != null else f"Block {source.key} default state is missing from the state map"
+        const defaultPrototype = prototypeByKey.get(defaultStateKey)
+        assert defaultPrototype != null else f"Block {source.key} default state prototype is missing"
+        blocks.append({
+            defaultStateRuntimeId: defaultState.runtimeId,
+            key: source.key,
+            translationKey: source.translationKey,
+            tags: source.tags.sorted(),
+            properties: source.properties.sorted(by=property => property.name),
+            defaultState: source.defaultState.sorted(by=property => property.name),
+            physics: defaultPrototype.physics,
+            light: defaultPrototype.light,
+            render: defaultPrototype.render,
+            interaction: defaultPrototype.interaction,
+            behaviors: defaultPrototype.behaviors,
+        })
+    // 第四步：空气是所有 Chunk 和注册表的基础哨兵状态，必须固定为不可见的 runtimeId 0。
+    const air = blocks.find(block => block.key == identities.blocks.air)
+    assert air != null and air.defaultStateRuntimeId == 0 else f"Block state runtime id 0 must be the default {identities.blocks.air} state"
+    assert air.properties.size == 0 else "Air cannot declare state properties"
+    assert air.physics.collision.kind == BlockShapeKind.empty and air.physics.occlusion.kind == BlockShapeKind.empty else "Air cannot collide or occlude"
+    assert air.render.model == null and air.light.emission == 0 and air.light.opacity == 0 else "Air cannot render, emit, or block light"
+    return {schemaVersion: manifest.schemaVersion, catalogVersion: manifest.catalogVersion, reservedRuntimeIds: stateMap.reservedRuntimeIds.sorted(), blocks, states}

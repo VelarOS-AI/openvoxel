@@ -1,0 +1,62 @@
+blocks:
+  - key: blocks.water
+    translationKey: translations.block.water
+    tags: [tags.fluid, tags.water, tags.replaceable]
+    properties:
+      - {name: falling, kind: boolean}
+      - {name: level, kind: integer, minimum: 0, maximum: 15}
+    defaultState:
+      - {name: falling, value: false}
+      - {name: level, value: 0}
+    physics:
+      collision: {kind: none}
+      selection: {kind: custom, key: shapes.fluid}
+      occlusion: {kind: none}
+      replaceable: true
+      friction: 0.5
+      speedFactor: 0.8
+      jumpFactor: 0.8
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.water
+      textures: {all: textures.block.water}
+      tint: tints.biomeWater
+      animation: animations.water
+      cullFaces: true
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
+    behaviors:
+      - {kind: fluid, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}
+    variants: []
+
+  - key: blocks.magma
+    translationKey: translations.block.magma
+    tags: [tags.fluid, tags.magma, tags.replaceable, tags.damaging]
+    properties:
+      - {name: falling, kind: boolean}
+      - {name: level, kind: integer, minimum: 0, maximum: 15}
+    defaultState:
+      - {name: falling, value: false}
+      - {name: level, value: 0}
+    physics:
+      collision: {kind: none}
+      selection: {kind: custom, key: shapes.fluid}
+      occlusion: {kind: none}
+      replaceable: true
+      friction: 0.5
+      speedFactor: 0.5
+      jumpFactor: 0.5
+    light: {emission: 15, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.magma
+      textures: {all: textures.block.magma}
+      animation: animations.magma
+      cullFaces: true
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.magma}
+    behaviors:
+      - {kind: fluid, fluidKey: fluids.magma, levelProperty: level, fallingProperty: falling, tickRate: 30, viscosity: 6}
+      - {kind: contact_damage, damage: 4, intervalTicks: 10}
+    variants: []

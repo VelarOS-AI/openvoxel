@@ -1,0 +1,194 @@
+blocks:
+  - key: blocks.oakLog
+    translationKey: translations.block.oakLog
+    tags: [tags.wood, tags.flammable]
+    properties: [{name: axis, kind: enum, values: [x, y, z]}]
+    defaultState: [{name: axis, value: y}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.column, layer: opaque, material: materials.terrain, textures: {top: textures.block.oakLogTop, bottom: textures.block.oakLogTop, side: textures.block.oakLogSide}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 2, toolTag: tools.axe, drops: loot.block.oakLog, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.05, spreadChance: 0.05}, {kind: placement, strategy: axis_from_face}]
+    variants: []
+
+  - key: blocks.oakLeaves
+    translationKey: translations.block.oakLeaves
+    tags: [tags.leaves, tags.flammable]
+    properties:
+      - {name: distance, kind: integer, minimum: 1, maximum: 7}
+      - {name: persistent, kind: boolean}
+    defaultState: [{name: distance, value: 7}, {name: persistent, value: false}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: cutout, material: materials.leaves, textures: {all: textures.block.oakLeaves}, tint: tints.biomeFoliage, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.2, blastResistance: 0.2, toolTag: tools.shears, drops: loot.block.oakLeaves, sounds: sounds.leaves}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.6}, {kind: random_tick, handler: handlers.leafDecay}]
+    variants: []
+
+  - key: blocks.birchLog
+    translationKey: translations.block.birchLog
+    tags: [tags.wood, tags.flammable]
+    properties: [{name: axis, kind: enum, values: [x, y, z]}]
+    defaultState: [{name: axis, value: y}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.column, layer: opaque, material: materials.terrain, textures: {top: textures.block.birchLogTop, bottom: textures.block.birchLogTop, side: textures.block.birchLogSide}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 2, toolTag: tools.axe, drops: loot.block.birchLog, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.05, spreadChance: 0.05}, {kind: placement, strategy: axis_from_face}]
+    variants: []
+
+  - key: blocks.birchLeaves
+    translationKey: translations.block.birchLeaves
+    tags: [tags.leaves, tags.flammable]
+    properties: [{name: distance, kind: integer, minimum: 1, maximum: 7}, {name: persistent, kind: boolean}]
+    defaultState: [{name: distance, value: 7}, {name: persistent, value: false}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: cutout, material: materials.leaves, textures: {all: textures.block.birchLeaves}, tint: tints.biomeFoliage, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.2, blastResistance: 0.2, toolTag: tools.shears, drops: loot.block.birchLeaves, sounds: sounds.leaves}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.6}, {kind: random_tick, handler: handlers.leafDecay}]
+    variants: []
+
+  - key: blocks.spruceLog
+    translationKey: translations.block.spruceLog
+    tags: [tags.wood, tags.flammable]
+    properties: [{name: axis, kind: enum, values: [x, y, z]}]
+    defaultState: [{name: axis, value: y}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.column, layer: opaque, material: materials.terrain, textures: {top: textures.block.spruceLogTop, bottom: textures.block.spruceLogTop, side: textures.block.spruceLogSide}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 2, toolTag: tools.axe, drops: loot.block.spruceLog, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.05, spreadChance: 0.05}, {kind: placement, strategy: axis_from_face}]
+    variants: []
+
+  - key: blocks.spruceLeaves
+    translationKey: translations.block.spruceLeaves
+    tags: [tags.leaves, tags.flammable]
+    properties: [{name: distance, kind: integer, minimum: 1, maximum: 7}, {name: persistent, kind: boolean}]
+    defaultState: [{name: distance, value: 7}, {name: persistent, value: false}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: cutout, material: materials.leaves, textures: {all: textures.block.spruceLeaves}, tint: tints.biomeFoliage, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.2, blastResistance: 0.2, toolTag: tools.shears, drops: loot.block.spruceLeaves, sounds: sounds.leaves}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.6}, {kind: random_tick, handler: handlers.leafDecay}]
+    variants: []
+
+  - key: blocks.mimosaLog
+    translationKey: translations.block.mimosaLog
+    tags: [tags.wood, tags.flammable]
+    properties: [{name: axis, kind: enum, values: [x, y, z]}]
+    defaultState: [{name: axis, value: y}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.column, layer: opaque, material: materials.terrain, textures: {top: textures.block.mimosaLogTop, bottom: textures.block.mimosaLogTop, side: textures.block.mimosaLogSide}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 2, toolTag: tools.axe, drops: loot.block.mimosaLog, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.05, spreadChance: 0.05}, {kind: placement, strategy: axis_from_face}]
+    variants: []
+
+  - key: blocks.mimosaLeaves
+    translationKey: translations.block.mimosaLeaves
+    tags: [tags.leaves, tags.flammable]
+    properties: [{name: distance, kind: integer, minimum: 1, maximum: 7}, {name: persistent, kind: boolean}]
+    defaultState: [{name: distance, value: 7}, {name: persistent, value: false}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: cutout, material: materials.leaves, textures: {all: textures.block.mimosaLeaves}, tint: tints.biomeFoliage, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.2, blastResistance: 0.2, toolTag: tools.shears, drops: loot.block.mimosaLeaves, sounds: sounds.leaves}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.6}, {kind: random_tick, handler: handlers.leafDecay}]
+    variants: []
+
+  - key: blocks.poplarLog
+    translationKey: translations.block.poplarLog
+    tags: [tags.wood, tags.flammable]
+    properties: [{name: axis, kind: enum, values: [x, y, z]}]
+    defaultState: [{name: axis, value: y}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.column, layer: opaque, material: materials.terrain, textures: {top: textures.block.poplarLogTop, bottom: textures.block.poplarLogTop, side: textures.block.poplarLogSide}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2, blastResistance: 2, toolTag: tools.axe, drops: loot.block.poplarLog, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.05, spreadChance: 0.05}, {kind: placement, strategy: axis_from_face}]
+    variants: []
+
+  - key: blocks.poplarLeaves
+    translationKey: translations.block.poplarLeaves
+    tags: [tags.leaves, tags.flammable]
+    properties: [{name: distance, kind: integer, minimum: 1, maximum: 7}, {name: persistent, kind: boolean}]
+    defaultState: [{name: distance, value: 7}, {name: persistent, value: false}]
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
+    render: {model: models.block.cube, layer: cutout, material: materials.leaves, textures: {all: textures.block.poplarLeaves}, tint: tints.biomeFoliage, cullFaces: true}
+    interaction: {breakable: true, hardness: 0.2, blastResistance: 0.2, toolTag: tools.shears, drops: loot.block.poplarLeaves, sounds: sounds.leaves}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.6}, {kind: random_tick, handler: handlers.leafDecay}]
+    variants: []
+
+  - key: blocks.tallGrass
+    translationKey: translations.block.tallGrass
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.tallGrass}, tint: tints.biomeGrass, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.tallGrass, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []
+
+  - key: blocks.redFlower
+    translationKey: translations.block.redFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.redFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.redFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []
+
+  - key: blocks.purpleFlower
+    translationKey: translations.block.purpleFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.purpleFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.purpleFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []
+
+  - key: blocks.whiteFlower
+    translationKey: translations.block.whiteFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.whiteFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.whiteFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []
+
+  - key: blocks.dryBush
+    translationKey: translations.block.dryBush
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.dryBush}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.dryBush, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.8, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []
+
+  - key: blocks.cactus
+    translationKey: translations.block.cactus
+    tags: [tags.plant, tags.damaging]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: custom, key: shapes.cactus}, selection: {kind: custom, key: shapes.cactus}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cactus, layer: cutout, material: materials.model, textures: {all: textures.block.cactus}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0.4, blastResistance: 0.4, toolTag: tools.axe, drops: loot.block.cactus, sounds: sounds.wood}
+    behaviors: [{kind: contact_damage, damage: 1, intervalTicks: 10}, {kind: support, face: below, supportingTag: tags.plantSupport}]
+    variants: []

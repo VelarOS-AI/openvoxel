@@ -5,7 +5,7 @@ export type SocketBlockCommand extends BlockMutation:
 
 export type BlockChangedEvent extends BlockMutation:
     event: string
-    previousBlockId: number
+    previousBlockStateRuntimeId: number
     revision: number
 
 export type SocketErrorEvent:

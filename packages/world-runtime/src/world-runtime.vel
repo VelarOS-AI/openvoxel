@@ -1,4 +1,5 @@
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkBlock, chunkKey, createWorldManifest, locateBlock, maximumChunkBatchSize, requireBlockId, setChunkBlock, worldGenerator} from "@openvoxel/domain"
+import {WorldBlockRegistry, baseWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkBlock, chunkKey, createWorldManifest, locateBlock, maximumChunkBatchSize, setChunkBlock, worldGenerator} from "@openvoxel/domain"
 import {ChunkDelta, WorldStore} from "./contracts.vel"
 
 export class WorldNotFoundError extends Error:
@@ -12,8 +13,8 @@ export type BlockChange:
     position: BlockPosition
     chunk: ChunkPosition
     local: LocalPosition
-    previousBlockId: number
-    blockId: number
+    previousBlockStateRuntimeId: number
+    blockStateRuntimeId: number
     revision: number
 
 export type WorldRuntime:
@@ -23,10 +24,10 @@ export type WorldRuntime:
     chunk: (worldId: string, position: ChunkPosition) -> Promise<Chunk>
     chunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<Chunk>>
     terrainSample: (worldId: string, position: Coordinate2) -> Promise<TerrainSample>
-    setBlock: (worldId: string, position: BlockPosition, blockId: number) -> Promise<BlockChange>
+    setBlock: (worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> Promise<BlockChange>
     close: () -> Promise<null>
 
-export def worldRuntime(store: WorldStore) -> WorldRuntime:
+export def worldRuntime(store: WorldStore, activeBlocks: readonly WorldBlockRegistry = baseWorldBlockRegistry) -> WorldRuntime:
     const generators: Map<string, WorldGenerator> = Map()
 
     def generatorFor(manifest: WorldManifest) -> WorldGenerator:
@@ -37,7 +38,7 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
         return generator
 
     async def createWorld(command: CreateWorld) -> WorldManifest:
-        const manifest = createWorldManifest(command)
+        const manifest = createWorldManifest(command, activeBlocks.snapshot)
         const existing = await store.manifests.find(manifest.id)
         if existing != null: throw WorldAlreadyExistsError(manifest.id)
         await store.manifests.save(manifest)
@@ -50,9 +51,11 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
         if manifest == null: throw WorldNotFoundError(worldId)
         return manifest
 
-    def applyDelta(chunk: Chunk, delta: ChunkDelta):
+    def applyDelta(manifest: WorldManifest, chunk: Chunk, delta: ChunkDelta):
         assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
-        for entry in delta.overrides: setChunkBlock(chunk, entry.position, entry.blockId)
+        for entry in delta.overrides:
+            requireWorldBlockStateRuntimeId(manifest.blockRegistry, entry.blockStateRuntimeId)
+            setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
         chunk.revision = delta.revision
 
     async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
@@ -67,7 +70,7 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
         for position in positions:
             const chunk = generator.generate(position)
             const delta = deltas.get(chunkKey(position))
-            if delta != null: applyDelta(chunk, delta)
+            if delta != null: applyDelta(manifest, chunk, delta)
             output.append(chunk)
         return output
 
@@ -79,22 +82,23 @@ export def worldRuntime(store: WorldStore) -> WorldRuntime:
         const manifest = await requireWorld(worldId)
         return generatorFor(manifest).sample(position)
 
-    async def setBlock(worldId: string, position: BlockPosition, blockId: number) -> BlockChange:
-        requireBlockId(blockId)
+    async def setBlock(worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> BlockChange:
+        activeBlocks.registry.requireStateByRuntimeId(blockStateRuntimeId)
         const manifest = await requireWorld(worldId)
+        requireWorldBlockStateRuntimeId(manifest.blockRegistry, blockStateRuntimeId)
         const located = locateBlock(position, manifest.chunkEdge)
         const generated = generatorFor(manifest).generate(located.chunk)
-        const baseBlockId = chunkBlock(generated, located.local)
-        const overrideBlockId = blockId == baseBlockId ? null : blockId
-        const commit = await store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockId)
-        const previousBlockId = commit.previousOverrideBlockId ?? baseBlockId
+        const baseBlockStateRuntimeId = chunkBlock(generated, located.local)
+        const overrideBlockStateRuntimeId = blockStateRuntimeId == baseBlockStateRuntimeId ? null : blockStateRuntimeId
+        const commit = await store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockStateRuntimeId)
+        const previousBlockStateRuntimeId = commit.previousOverrideBlockStateRuntimeId ?? baseBlockStateRuntimeId
         return {
             worldId,
             position,
             chunk: located.chunk,
             local: located.local,
-            previousBlockId,
-            blockId,
+            previousBlockStateRuntimeId,
+            blockStateRuntimeId,
             revision: commit.revision,
         }
 

@@ -4,7 +4,7 @@
 
 ## 裁决
 
-OpenVoxel 的世界模型、网络协议、存储结构、生成算法、表结构、迁移 SQL 和部署配置全部由 OpenVoxel 仓库拥有。VelarScript 主仓库只拥有语言、编译器和 `velar/*` 标准能力；独立的 VelarScript Libraries 仓库维护官方但非标准的通用可复用包，类似 VelarScript 自己的 npm 包生态。主仓库不能反向依赖 Libraries。
+OpenVoxel 的世界模型、网络协议、存储结构、生成算法、当前表结构和部署配置全部由 OpenVoxel 仓库拥有。VelarScript 主仓库只拥有语言、编译器和 `velar/*` 标准能力；独立的 VelarScript Libraries 仓库维护官方但非标准的通用可复用包，类似 VelarScript 自己的 npm 包生态。主仓库不能反向依赖 Libraries。
 
 缺少能力时按以下顺序处理：
 
@@ -26,4 +26,4 @@ OpenVoxel 的世界模型、网络协议、存储结构、生成算法、表结�
 
 因此 OpenVoxel 是 VelarScript 的教学项目和证据来源，但不是扩张标准库的后门。
 
-当前实例是后端边界：项目显式激活 `@velarscript/server`，由它组合 `@velarscript/node` 的 ServeApp、WebSocket 与宿主能力，并负责根 `application.*` 的严格有界加载；函数式数据库操作和 SQLite 资源能力仍分别由 `@velarscript-labs/database`、`@velarscript-labs/sqlite` 提供。`@velarscript/server` 只抽象连接的建立、注入与释放生命周期，不拥有具体驱动、模型、查询或迁移。OpenVoxel 只拥有应用路由、错误信封、配置类型、世界协议、表结构、迁移 SQL、稀疏覆盖事务和服务组合，不把游戏语义写回通用库。
+当前实例是后端边界：项目显式激活 `@velarscript/server`，由它组合 `@velarscript/node` 的 ServeApp、WebSocket 与宿主能力，并负责根 `application.*` 的严格有界加载；函数式数据库操作和 SQLite 资源能力仍分别由 `@velarscript-labs/database`、`@velarscript-labs/sqlite` 提供。`@velarscript/server` 只抽象连接的建立、注入与释放生命周期，不拥有具体驱动、模型或查询。OpenVoxel 拥有应用路由、错误信封、配置类型、世界协议、当前表结构、稀疏覆盖事务和服务组合，不把游戏语义写回通用库。

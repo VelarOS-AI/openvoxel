@@ -1,0 +1,286 @@
+/// 内建身份类型与 data/identities.yml 保持同一棵树结构。
+/// 例如方块 YAML 中的 models.block.fluid 会逐层读取 identities.models.block.fluid，
+/// 运行时代码也使用 builtinIdentities.models.block.fluid 访问同一位置。
+/// 这些类型固定“有哪些位置”，真正的 openvoxel:* 身份值只由 identities.yml 提供。
+
+/// 所有基础方块家族的稳定身份，例如 blocks.water 和 blocks.stone。
+export type BuiltinBlockKeys:
+    air: string
+    basalt: string
+    birchLeaves: string
+    birchLog: string
+    cactus: string
+    clay: string
+    coalOre: string
+    copperOre: string
+    diamondOre: string
+    dirt: string
+    dryBush: string
+    germaniumOre: string
+    granite: string
+    grass: string
+    gravel: string
+    ice: string
+    ironOre: string
+    limestone: string
+    magma: string
+    mimosaLeaves: string
+    mimosaLog: string
+    oakLeaves: string
+    oakLog: string
+    poplarLeaves: string
+    poplarLog: string
+    purpleFlower: string
+    redFlower: string
+    saltpeterOre: string
+    sand: string
+    sandstone: string
+    snow: string
+    spruceLeaves: string
+    spruceLog: string
+    stone: string
+    sulphurOre: string
+    tallGrass: string
+    water: string
+    whiteFlower: string
+
+/// 供玩法和生成系统查询的语义分类，不参与方块状态键计算。
+export type BuiltinBlockTags:
+    damaging: string
+    flammable: string
+    fluid: string
+    ice: string
+    leaves: string
+    magma: string
+    naturalRock: string
+    ore: string
+    plant: string
+    plantSupport: string
+    replaceable: string
+    snow: string
+    soil: string
+    terrain: string
+    water: string
+    wood: string
+
+/// 世界生成算法身份；世界清单通过它选择确定性的生成器实现。
+export type BuiltinWorldGenerators:
+    survival: string
+
+/// 基础内容拥有的命名空间，编译器用它检查内建方块归属。
+export type BuiltinNamespaces:
+    base: string
+
+/// 基础方块目录的语义版本身份。
+export type BuiltinCatalogKeys:
+    base: string
+
+/// 自定义碰撞、选取和遮挡形状的逻辑身份。
+export type BuiltinShapeKeys:
+    cactus: string
+    cross: string
+    fluid: string
+    snowLayer: string
+
+/// 方块逻辑模型身份；客户端负责把它们映射到具体网格实现。
+export type BuiltinBlockModelKeys:
+    cactus: string
+    column: string
+    cross: string
+    cube: string
+    fluid: string
+    snowLayer: string
+
+export type BuiltinModelKeys:
+    block: BuiltinBlockModelKeys
+
+/// 渲染材质规则身份，描述不透明、叶片、流体等渲染策略。
+export type BuiltinMaterialKeys:
+    cross: string
+    ice: string
+    leaves: string
+    magma: string
+    metal: string
+    model: string
+    terrain: string
+    water: string
+
+/// 方块纹理的逻辑身份；这里只列出目录可引用的位置。
+export type BuiltinBlockTextureKeys:
+    basalt: string
+    birchLeaves: string
+    birchLogSide: string
+    birchLogTop: string
+    cactus: string
+    clay: string
+    coalOre: string
+    copperOre: string
+    diamondOre: string
+    dirt: string
+    dryBush: string
+    germaniumOre: string
+    granite: string
+    grassSide: string
+    grassTop: string
+    gravel: string
+    ice: string
+    ironOre: string
+    limestone: string
+    magma: string
+    mimosaLeaves: string
+    mimosaLogSide: string
+    mimosaLogTop: string
+    oakLeaves: string
+    oakLogSide: string
+    oakLogTop: string
+    poplarLeaves: string
+    poplarLogSide: string
+    poplarLogTop: string
+    purpleFlower: string
+    redFlower: string
+    saltpeterOre: string
+    sand: string
+    sandstone: string
+    snow: string
+    spruceLeaves: string
+    spruceLogSide: string
+    spruceLogTop: string
+    stone: string
+    sulphurOre: string
+    tallGrass: string
+    water: string
+    whiteFlower: string
+
+export type BuiltinTextureKeys:
+    block: BuiltinBlockTextureKeys
+
+/// 生物群系或其他环境颜色修正规则。
+export type BuiltinTintKeys:
+    biomeFoliage: string
+    biomeGrass: string
+    biomeGrassTop: string
+    biomeWater: string
+
+/// 动态纹理的动画规则身份。
+export type BuiltinAnimationKeys:
+    magma: string
+    water: string
+
+/// 各方块默认掉落表的逻辑身份。
+export type BuiltinBlockLootKeys:
+    basalt: string
+    birchLeaves: string
+    birchLog: string
+    cactus: string
+    clay: string
+    coalOre: string
+    copperOre: string
+    diamondOre: string
+    dirt: string
+    dryBush: string
+    germaniumOre: string
+    granite: string
+    grass: string
+    gravel: string
+    ice: string
+    ironOre: string
+    limestone: string
+    mimosaLeaves: string
+    mimosaLog: string
+    oakLeaves: string
+    oakLog: string
+    poplarLeaves: string
+    poplarLog: string
+    purpleFlower: string
+    redFlower: string
+    saltpeterOre: string
+    sand: string
+    sandstone: string
+    snow: string
+    spruceLeaves: string
+    spruceLog: string
+    stone: string
+    sulphurOre: string
+    tallGrass: string
+    whiteFlower: string
+
+export type BuiltinLootKeys:
+    empty: string
+    block: BuiltinBlockLootKeys
+
+/// 放置、行走、命中和破坏反馈使用的声音组身份。
+export type BuiltinSoundKeys:
+    glass: string
+    grass: string
+    gravel: string
+    leaves: string
+    magma: string
+    silent: string
+    sand: string
+    snow: string
+    stone: string
+    water: string
+    wood: string
+
+/// 工具类别标签，用于挖掘效率和掉落条件判断。
+export type BuiltinToolKeys:
+    axe: string
+    pickaxe: string
+    shears: string
+    shovel: string
+
+/// 流体模拟类型身份，行为系统根据它选择水或岩浆规则。
+export type BuiltinFluidKeys:
+    magma: string
+    water: string
+
+/// 数据驱动行为指向的稳定处理器身份。
+export type BuiltinHandlerKeys:
+    leafDecay: string
+
+/// 方块显示名称的本地化键，结构与 blocks 保持一致以便查找。
+export type BuiltinTranslationKeys:
+    block: BuiltinBlockKeys
+
+/// 运行时身份树直接嵌入生成产物，业务代码通过相同层级访问。
+/// 每个字段名同时也是方块 YAML 打点路径的第一段。
+export type BuiltinIdentities:
+    /// 命名空间所有权。
+    namespaces: BuiltinNamespaces
+    /// 内容目录版本。
+    catalogs: BuiltinCatalogKeys
+    /// 世界生成器身份。
+    generators: BuiltinWorldGenerators
+    /// 方块家族身份。
+    blocks: BuiltinBlockKeys
+    /// 方块语义标签。
+    tags: BuiltinBlockTags
+    /// 自定义体素形状。
+    shapes: BuiltinShapeKeys
+    /// 逻辑渲染模型。
+    models: BuiltinModelKeys
+    /// 材质规则。
+    materials: BuiltinMaterialKeys
+    /// 逻辑纹理。
+    textures: BuiltinTextureKeys
+    /// 染色规则。
+    tints: BuiltinTintKeys
+    /// 动画规则。
+    animations: BuiltinAnimationKeys
+    /// 掉落表。
+    loot: BuiltinLootKeys
+    /// 声音组。
+    sounds: BuiltinSoundKeys
+    /// 工具标签。
+    tools: BuiltinToolKeys
+    /// 流体类型。
+    fluids: BuiltinFluidKeys
+    /// 行为处理器。
+    handlers: BuiltinHandlerKeys
+    /// 本地化键。
+    translations: BuiltinTranslationKeys
+
+/// identities.yml 顶层文档保留独立格式版本，便于生成器先验证结构再读取身份树。
+export type BuiltinIdentityDocument:
+    formatVersion: number
+    identities: BuiltinIdentities

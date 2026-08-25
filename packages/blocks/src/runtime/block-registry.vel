@@ -1,0 +1,133 @@
+import {canonicalStateKey} from "../compiler/state-key.vel"
+import {BlockBehaviorKind, BlockPropertyValue, BlockStateProperty} from "../definition/block.vel"
+import {BlockCatalogSource, BlockDefinition, BlockStateDefinition} from "../definition/catalog.vel"
+
+/// 基础方块注册表负责把编译目录建立为运行时索引。
+/// 它只解释既有 runtimeId，不参与基础 ID 生成或 Mod ID 分配。
+
+export class InvalidBlockStateRuntimeIdError extends Error:
+    constructor(const runtimeId: number):
+        super(f"Block state runtime id {runtimeId} must be an integer from 0 through 4294967295")
+
+export class UnknownBlockStateRuntimeIdError extends Error:
+    constructor(const runtimeId: number): super(f"Unknown block state runtime id {runtimeId}")
+
+export class ReservedBlockStateRuntimeIdError extends Error:
+    constructor(const runtimeId: number): super(f"Reserved block state runtime id {runtimeId}")
+
+/// 所有跨存储和网络传递的方块 ID 都必须满足 UInt32 约束。
+export def requireBlockStateRuntimeId(runtimeId: number):
+    if not runtimeId.isInteger() or runtimeId < 0 or runtimeId > 0xffffffff:
+        throw InvalidBlockStateRuntimeIdError(runtimeId)
+
+/// 注册表提供按类型、状态 ID 和规范状态键查询的只读运行时接口。
+export type BlockRegistry:
+    /// 返回方块家族目录。
+    catalog: () -> readonly List<readonly BlockDefinition>
+    /// 返回全部具体状态目录。
+    states: () -> readonly List<readonly BlockStateDefinition>
+    /// 按命名空间方块 key 查询家族定义。
+    requireTypeByKey: (key: string) -> readonly BlockDefinition
+    /// 查询方块家族的默认状态 ID。
+    defaultStateRuntimeIdForKey: (key: string) -> number
+    /// 按 UInt32 ID 查询具体状态。
+    requireStateByRuntimeId: (runtimeId: number) -> readonly BlockStateDefinition
+    /// 按规范状态键查询具体状态。
+    requireStateByKey: (stateKey: string) -> readonly BlockStateDefinition
+    /// 将方块 key 和完整属性集合解析为状态 ID。
+    stateRuntimeIdFor: (blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> number
+    /// 替换一个属性并解析到另一个已存在的有限状态。
+    withProperty: (runtimeId: number, name: string, value: BlockPropertyValue) -> number
+    /// 查询状态所属方块家族的标签。
+    hasTag: (runtimeId: number, tag: string) -> bool
+    /// 查询具体状态最终行为列表中的行为种类。
+    hasBehavior: (runtimeId: number, kind: BlockBehaviorKind) -> bool
+
+/// 从完整编译目录一次性建立索引，并验证默认状态与状态键的一致性。
+export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegistry:
+    assert source.schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert not source.catalogVersion.isBlank() else "Block catalog version cannot be blank"
+    assert source.blocks.size > 0 else "Block catalog cannot be empty"
+    assert source.states.size > 0 and source.states.size <= 0x100000000 else "Block state catalog must contain from 1 through 4294967296 states"
+    // 同时建立四个索引，避免运行时反复扫描完整目录。
+    const byBlockKey: Map<string, readonly BlockDefinition> = Map()
+    const byStateId: Map<number, readonly BlockStateDefinition> = Map()
+    const byStateKey: Map<string, readonly BlockStateDefinition> = Map()
+    const tagsByBlockKey: Map<string, readonly Set<string>> = Map()
+    const reservedRuntimeIds = Set(source.reservedRuntimeIds)
+
+    // 先验证状态并建立 ID、状态键索引；状态键必须能由方块 key 和属性重新计算出来。
+    for runtimeId in source.reservedRuntimeIds: requireBlockStateRuntimeId(runtimeId)
+    for state in source.states:
+        requireBlockStateRuntimeId(state.runtimeId)
+        assert not (state.runtimeId in reservedRuntimeIds) else f"Active block state runtime id {state.runtimeId} is reserved"
+        assert byStateId.get(state.runtimeId) == null else f"Duplicate block state runtime id {state.runtimeId}"
+        assert byStateKey.get(state.stateKey) == null else f"Duplicate block state key {state.stateKey}"
+        assert canonicalStateKey(state.blockKey, state.properties) == state.stateKey else f"Block state {state.runtimeId} has a non-canonical key"
+        byStateId.set(state.runtimeId, state)
+        byStateKey.set(state.stateKey, state)
+    // 再建立方块家族和标签索引，同时验证默认状态确实属于该家族。
+    for definition in source.blocks:
+        requireBlockStateRuntimeId(definition.defaultStateRuntimeId)
+        assert byBlockKey.get(definition.key) == null else f"Duplicate block key {definition.key}"
+        const defaultStateKey = canonicalStateKey(definition.key, definition.defaultState)
+        const defaultState = byStateKey.get(defaultStateKey)
+        assert defaultState != null and defaultState.runtimeId == definition.defaultStateRuntimeId else f"Block {definition.key} default state mapping is inconsistent"
+        byBlockKey.set(definition.key, definition)
+        tagsByBlockKey.set(definition.key, Set(definition.tags))
+    for state in source.states:
+        assert byBlockKey.get(state.blockKey) != null else f"Block state {state.stateKey} names unknown block {state.blockKey}"
+
+    def catalog() -> readonly List<readonly BlockDefinition>: return source.blocks
+
+    def states() -> readonly List<readonly BlockStateDefinition>: return source.states
+
+    def requireTypeByKey(key: string) -> readonly BlockDefinition:
+        const definition = byBlockKey.get(key)
+        assert definition != null else f"Unknown block key {key}"
+        return definition
+
+    def defaultStateRuntimeIdForKey(key: string) -> number: return requireTypeByKey(key).defaultStateRuntimeId
+
+    def requireStateByRuntimeId(runtimeId: number) -> readonly BlockStateDefinition:
+        requireBlockStateRuntimeId(runtimeId)
+        if runtimeId in reservedRuntimeIds: throw ReservedBlockStateRuntimeIdError(runtimeId)
+        const state = byStateId.get(runtimeId)
+        if state == null: throw UnknownBlockStateRuntimeIdError(runtimeId)
+        return state
+
+    def requireStateByKey(stateKey: string) -> readonly BlockStateDefinition:
+        const state = byStateKey.get(stateKey)
+        assert state != null else f"Unknown block state {stateKey}"
+        return state
+
+    def stateRuntimeIdFor(blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> number:
+        requireTypeByKey(blockKey)
+        return requireStateByKey(canonicalStateKey(blockKey, properties)).runtimeId
+
+    def withProperty(runtimeId: number, name: string, value: BlockPropertyValue) -> number:
+        const state = requireStateByRuntimeId(runtimeId)
+        // 复制属性列表再替换目标值，随后用规范状态键定位目录中已有的目标状态。
+        const properties = state.properties.copy()
+        let replaced = false
+        for property, index in properties:
+            if property.name == name:
+                properties[index] = {name, value}
+                replaced = true
+                break
+        assert replaced else f"Block {state.blockKey} has no state property {name}"
+        return stateRuntimeIdFor(state.blockKey, properties)
+
+    def hasTag(runtimeId: number, tag: string) -> bool:
+        const state = requireStateByRuntimeId(runtimeId)
+        const tags = tagsByBlockKey.get(state.blockKey)
+        assert tags != null else f"Missing tag index for block {state.blockKey}"
+        return tag in tags
+
+    def hasBehavior(runtimeId: number, kind: BlockBehaviorKind) -> bool:
+        return requireStateByRuntimeId(runtimeId).behaviors.some(behavior => behavior.kind == kind)
+
+    // runtimeId 0 是 Chunk 初始化使用的空气哨兵，注册表创建时再次确认它没有属性。
+    const air = requireStateByRuntimeId(0)
+    assert air.properties.size == 0 else "Block state runtime id 0 must not carry state properties"
+    return {catalog, states, requireTypeByKey, defaultStateRuntimeIdForKey, requireStateByRuntimeId, requireStateByKey, stateRuntimeIdFor, withProperty, hasTag, hasBehavior}

@@ -1,22 +1,22 @@
 import {simplex2, simplex3} from "@velarscript-labs/noise"
 import {random} from "velar/random"
 import {UInt16Buffer, uint16Buffer} from "velar/binary"
-import {blockId} from "@openvoxel/blocks"
+import {builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {Coordinate2, requireCoordinate2} from "../coordinates.vel"
 
-const airBlock = blockId("openvoxel:air")
-const basaltBlock = blockId("openvoxel:basalt")
-const clayBlock = blockId("openvoxel:clay")
-const dirtBlock = blockId("openvoxel:dirt")
-const graniteBlock = blockId("openvoxel:granite")
-const grassBlock = blockId("openvoxel:grass")
-const gravelBlock = blockId("openvoxel:gravel")
-const iceBlock = blockId("openvoxel:ice")
-const limestoneBlock = blockId("openvoxel:limestone")
-const sandBlock = blockId("openvoxel:sand")
-const sandstoneBlock = blockId("openvoxel:sandstone")
-const stoneBlock = blockId("openvoxel:stone")
-const waterBlock = blockId("openvoxel:water")
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const basaltBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.basalt)
+const clayBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.clay)
+const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const graniteBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.granite)
+const grassBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
+const gravelBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.gravel)
+const iceBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.ice)
+const limestoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.limestone)
+const sandBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
+const sandstoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sandstone)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const waterBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
 
 export const minimumWorldY = 0
 export const maximumWorldY = 255

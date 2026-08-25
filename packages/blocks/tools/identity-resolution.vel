@@ -1,0 +1,128 @@
+// identities.yml 中的层级是一棵由字符串、列表和对象组成的数据树。Record<unknown>
+// 表示“字段名在运行时决定、字段值尚未验证”的普通数据对象，正好用于逐段读取
+// models.block.fluid 这样的身份路径。
+//
+// Record 的动态读取只检查对象自己的字符串字段，不会沿 JavaScript 原型链查找，
+// 也不会调用 getter。因此这里可以直接处理 YAML 数据，不需要 JavaScript 反射。
+type DynamicDataRecord = Record<unknown>
+
+// 一次解析同时返回替换后的数据和实际读取过的身份路径。调用方利用 usedPaths
+// 检查 identities.yml 中是否存在从未使用的声明。
+export type IdentityResolution:
+    value: unknown
+    usedPaths: List<string>
+
+// identities.yml 的所有叶子最终都必须是非空字符串。paths 保存每个叶子的
+// 打点路径，例如 models.block.fluid。
+export type IdentityLeafIndex:
+    paths: List<string>
+
+// 至少包含一个点才会被识别为身份引用。普通字符串不会被误当成身份路径。
+const identityReferencePattern = "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)+$"
+
+// identities.yml 每一层的字段名都使用小驼峰形式。
+const identitySegmentPattern = "^[a-z][A-Za-z0-9]*$"
+
+// 这些名称在 JavaScript 对象模型中具有特殊含义。Record 已经只读取自有字段，
+// 这里继续明确拒绝它们，使身份路径规则不依赖底层运行时细节。
+const forbiddenIdentitySegments: Set<string> = Set([
+    "__proto__",
+    "prototype",
+    "constructor",
+])
+
+// 将 unknown 收窄为动态数据对象。YAML 解析器只能承诺 unknown，因为只有读取
+// 数据的项目才知道它应该是什么。每次按字段读取前都经过这里，错误会准确落在
+// 正在解析的身份路径上，而不是在更深处变成难懂的动态下标错误。
+def requireDynamicDataRecord(value: unknown, label: string) -> DynamicDataRecord:
+    assert value is Record<unknown> else f"{label} must be an object"
+    return value
+
+// 从 identities 根节点开始，按照打点路径逐层读取最终字符串。
+//
+// has 负责区分“字段不存在”和“字段存在但值为 null”。这样缺失字段会报告
+// Unknown built-in identity path，而错误的叶子类型会报告 does not point to a
+// string，两种配置错误不会混在一起。
+def resolveIdentityPath(
+    identities: DynamicDataRecord,
+    path: string,
+    usedPaths: Set<string>,
+) -> string:
+    let current: unknown = identities
+
+    for segment in path.split("."):
+        assert not (segment in forbiddenIdentitySegments) else f"Invalid built-in identity path {path}"
+
+        const record = requireDynamicDataRecord(
+            current,
+            f"Built-in identity path {path}",
+        )
+        assert record.has(segment) else f"Unknown built-in identity path {path}"
+        current = record[segment]
+
+    assert (current is string) and current.size > 0 else f"Built-in identity path {path} does not point to a string"
+
+    usedPaths.add(path)
+    return current
+
+// 递归复制一份 YAML 数据，并把其中所有身份引用替换成 identities.yml 的真实值。
+// 返回新列表和新 Record，不修改 parseYaml 返回的原始数据。这样后续类型解析拿到
+// 的是完整、独立的解析结果，原始 YAML 数据仍然只代表作者写下的内容。
+def resolveIdentityValue(
+    value: unknown,
+    identities: DynamicDataRecord,
+    usedPaths: Set<string>,
+) -> unknown:
+    if value is string:
+        return Text.matches(value, identityReferencePattern) ? resolveIdentityPath(identities, value, usedPaths) : value
+
+    if value is List<unknown>: return value.map(item => resolveIdentityValue(item, identities, usedPaths))
+
+    if value is Record<unknown>:
+        const resolved: Record<unknown> = {}
+        for key, child in value: resolved[key] = resolveIdentityValue(child, identities, usedPaths)
+        return resolved
+
+    // number、bool 和 null 不包含身份引用，保持原值即可。
+    return value
+
+// 解析任意 YAML 数据中的身份引用，并返回确定排序的已用路径清单。排序让生成
+// 产物和错误检查不受遍历顺序影响。
+export def resolveIdentityReferences(value: unknown, identitiesValue: unknown) -> IdentityResolution:
+    const identities = requireDynamicDataRecord(identitiesValue, "Built-in identities")
+    const usedPaths: Set<string> = Set()
+    return {
+        value: resolveIdentityValue(value, identities, usedPaths),
+        usedPaths: usedPaths.values().sorted(),
+    }
+
+// 深度遍历 identities.yml，收集所有字符串叶子的打点路径。中间节点必须是
+// 非空 Record，叶子必须是非空字符串，避免身份树出现空分组或数字、列表叶子。
+def visitIdentityLeaves(
+    value: unknown,
+    segments: List<string>,
+    paths: List<string>,
+):
+    if value is string:
+        assert value.size > 0 else f"Built-in identity {segments.join(".")} cannot be empty"
+        paths.append(segments.join("."))
+        return
+
+    const label = segments.size == 0 ? "root" : segments.join(".")
+    const record = requireDynamicDataRecord(value, f"Built-in identity {label}")
+    assert record.size > 0 else f"Built-in identity {label} cannot be empty"
+
+    for key, child in record:
+        assert not (key in forbiddenIdentitySegments) and Text.matches(key, identitySegmentPattern) else f"Invalid built-in identity segment {key}"
+
+        // 每个递归分支持有自己的路径副本，兄弟节点不会互相污染 segments。
+        const childSegments = segments.copy()
+        childSegments.append(key)
+        visitIdentityLeaves(child, childSegments, paths)
+
+// 建立 identities.yml 的完整叶子索引。调用方把它与 usedPaths 对照，即可保证
+// 每项声明都通过自己的打点路径被实际引用，防止统一事实源中积累失效配置。
+export def collectIdentityLeafPaths(identities: unknown) -> IdentityLeafIndex:
+    const paths: List<string> = []
+    visitIdentityLeaves(identities, [], paths)
+    return {paths: paths.sorted()}

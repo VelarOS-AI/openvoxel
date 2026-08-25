@@ -17,14 +17,7 @@ export def realtimeHub(warning: (message: string, context: unknown) -> null) -> 
     def leave(connection: WebSocketConnection): connections.remove(connection)
 
     async def publishChange(change: BlockChange):
-        const event: BlockChangedEvent = {
-            event: "block.changed",
-            worldId: change.worldId,
-            position: change.position,
-            previousBlockId: change.previousBlockId,
-            blockId: change.blockId,
-            revision: change.revision,
-        }
+        const event = BlockChangedEvent.from(change, {event: "block.changed"})
         const message: Bytes = encode(event)
         const failed: List<WebSocketConnection> = []
         for connection in connections.copy():

@@ -36,7 +36,7 @@ curl -X POST http://127.0.0.1:3000/api/generation/sample \
   -d '{"worldId":"lesson-one","position":{"x":0,"z":0}}'
 ```
 
-WebSocket 地址是 `ws://127.0.0.1:3000/api/events`，命令和事件都使用 MessagePack。完整契约见 [协议 v1](docs/protocol-v1.md)。
+WebSocket 地址是 `ws://127.0.0.1:3000/api/events`，命令和事件都使用 MessagePack。完整契约见 [协议 v2](docs/protocol-v2.md)。
 
 ## 架构
 
@@ -59,16 +59,16 @@ flowchart LR
 仓库分层：
 
 - `packages/domain`：坐标、Chunk、世界清单和确定性生成；不导入 Node 能力。
-- `packages/blocks`：由 `data/blocks.yml` 生成的跨 Node/浏览器方块注册表；拥有稳定 ID、模拟属性和声明式渲染描述。
+- `packages/blocks`：由 `identities.yml` 集中定义内建身份，分组方块 YAML 直接使用同层级打点路径，并用唯一 JSON 产物发布编译目录；源码按 `definition`、`compiler`、`runtime` 分层，拥有规范状态键、UInt32 运行时 ID、每世界 Mod 注册表、有限状态和声明式组件契约。
 - `packages/protocol`：HTTP 和 MessagePack WebSocket 的应用协议、稳定路由常量与客户端接入契约。
 - `packages/world-runtime`：创建世界、查询 Chunk、修改方块等用例和存储端口。
-- `apps/server`：system、world、chunk、block、realtime 模块，以及拥有表结构、迁移 SQL 和稀疏世界规则的 SQLite 适配器与组合根。
+- `apps/server`：system、world、chunk、block、realtime 模块，以及拥有当前表结构、世界注册表 JSON 和稀疏世界规则的 SQLite 适配器与组合根。
 - `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定和抽象连接生命周期；`@velarscript-labs/yaml` 仅用于方块目录生成，`@velarscript-labs/database` 与 `@velarscript-labs/sqlite` 仍是非标准的 VelarScript Libraries。OpenVoxel 不复制通用边界，也不把游戏业务搬进这些库。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
 
 目录按职责固定：手写运行时代码进入 `src/`，测试进入 `tests/`，测试辅助件进入 `tests/support/`，性能基准进入 `benchmarks/`，人工数据进入 `data/`，生成物进入 `generated/`，生成与检查脚本进入 `tools/`。`src/` 不放测试和生成物，`generated/` 禁止生成 `.vel`；`npm run structure:check` 和完整门禁会持续检查这两条规则。
 
-应用边界和标准库晋升规则见 [ADR 0001](docs/architecture/0001-application-boundary.md)，Chunk 格式见 [ADR 0002](docs/architecture/0002-world-format-v1.md)，世界生成裁决见 [ADR 0004](docs/architecture/0004-survival-world-generation.md)，原生服务框架裁决见 [ADR 0010](docs/architecture/0010-native-velarscript-backend.md)，稀疏世界存储见 [ADR 0006](docs/architecture/0006-sparse-world-deltas.md)，YAML 配置与方块目录裁决见 [ADR 0007](docs/architecture/0007-yaml-configuration-and-block-catalog.md)，存档与目录兼容性见 [ADR 0008](docs/architecture/0008-world-block-catalog-compatibility.md)，客户端接入契约见 [ADR 0009](docs/architecture/0009-client-contract-boundary.md)。
+应用边界和标准库晋升规则见 [ADR 0001](docs/architecture/0001-application-boundary.md)，Chunk 格式见 [ADR 0002](docs/architecture/0002-world-format-v1.md)，世界生成裁决见 [ADR 0004](docs/architecture/0004-survival-world-generation.md)，原生服务框架裁决见 [ADR 0010](docs/architecture/0010-native-velarscript-backend.md)，稀疏世界存储见 [ADR 0006](docs/architecture/0006-sparse-world-deltas.md)，YAML 定义与 JSON 方块产物见 [ADR 0007](docs/architecture/0007-yaml-configuration-and-block-catalog.md)，每世界方块注册表见 [ADR 0008](docs/architecture/0008-world-block-registry.md)，客户端接入契约见 [ADR 0009](docs/architecture/0009-client-contract-boundary.md)，方块类型与有限状态地基见 [ADR 0011](docs/architecture/0011-block-type-and-state-foundation.md)。
 
 生成性能基线可以独立运行：
 

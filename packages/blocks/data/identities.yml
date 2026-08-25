@@ -1,0 +1,255 @@
+formatVersion: 2
+identities:
+  namespaces:
+    base: openvoxel
+
+  catalogs:
+    base: openvoxel:base-v1
+
+  generators:
+    survival: openvoxel:survival-v1
+
+  blocks:
+    air: openvoxel:air
+    basalt: openvoxel:basalt
+    birchLeaves: openvoxel:birch_leaves
+    birchLog: openvoxel:birch_log
+    cactus: openvoxel:cactus
+    clay: openvoxel:clay
+    coalOre: openvoxel:coal_ore
+    copperOre: openvoxel:copper_ore
+    diamondOre: openvoxel:diamond_ore
+    dirt: openvoxel:dirt
+    dryBush: openvoxel:dry_bush
+    germaniumOre: openvoxel:germanium_ore
+    granite: openvoxel:granite
+    grass: openvoxel:grass
+    gravel: openvoxel:gravel
+    ice: openvoxel:ice
+    ironOre: openvoxel:iron_ore
+    limestone: openvoxel:limestone
+    magma: openvoxel:magma
+    mimosaLeaves: openvoxel:mimosa_leaves
+    mimosaLog: openvoxel:mimosa_log
+    oakLeaves: openvoxel:oak_leaves
+    oakLog: openvoxel:oak_log
+    poplarLeaves: openvoxel:poplar_leaves
+    poplarLog: openvoxel:poplar_log
+    purpleFlower: openvoxel:purple_flower
+    redFlower: openvoxel:red_flower
+    saltpeterOre: openvoxel:saltpeter_ore
+    sand: openvoxel:sand
+    sandstone: openvoxel:sandstone
+    snow: openvoxel:snow
+    spruceLeaves: openvoxel:spruce_leaves
+    spruceLog: openvoxel:spruce_log
+    stone: openvoxel:stone
+    sulphurOre: openvoxel:sulphur_ore
+    tallGrass: openvoxel:tall_grass
+    water: openvoxel:water
+    whiteFlower: openvoxel:white_flower
+
+  tags:
+    damaging: openvoxel:damaging
+    flammable: openvoxel:flammable
+    fluid: openvoxel:fluid
+    ice: openvoxel:ice
+    leaves: openvoxel:leaves
+    magma: openvoxel:magma
+    naturalRock: openvoxel:natural_rock
+    ore: openvoxel:ore
+    plant: openvoxel:plant
+    plantSupport: openvoxel:plant_support
+    replaceable: openvoxel:replaceable
+    snow: openvoxel:snow
+    soil: openvoxel:soil
+    terrain: openvoxel:terrain
+    water: openvoxel:water
+    wood: openvoxel:wood
+
+  shapes:
+    cactus: openvoxel:shape/cactus
+    cross: openvoxel:shape/cross
+    fluid: openvoxel:shape/fluid
+    snowLayer: openvoxel:shape/snow_layer
+
+  models:
+    block:
+      cactus: openvoxel:model/block/cactus
+      column: openvoxel:model/block/column
+      cross: openvoxel:model/block/cross
+      cube: openvoxel:model/block/cube
+      fluid: openvoxel:model/block/fluid
+      snowLayer: openvoxel:model/block/snow_layer
+
+  materials:
+    cross: openvoxel:material/cross
+    ice: openvoxel:material/ice
+    leaves: openvoxel:material/leaves
+    magma: openvoxel:material/magma
+    metal: openvoxel:material/metal
+    model: openvoxel:material/model
+    terrain: openvoxel:material/terrain
+    water: openvoxel:material/water
+
+  textures:
+    block:
+      basalt: openvoxel:texture/block/basalt
+      birchLeaves: openvoxel:texture/block/birch_leaves
+      birchLogSide: openvoxel:texture/block/birch_log_side
+      birchLogTop: openvoxel:texture/block/birch_log_top
+      cactus: openvoxel:texture/block/cactus
+      clay: openvoxel:texture/block/clay
+      coalOre: openvoxel:texture/block/coal_ore
+      copperOre: openvoxel:texture/block/copper_ore
+      diamondOre: openvoxel:texture/block/diamond_ore
+      dirt: openvoxel:texture/block/dirt
+      dryBush: openvoxel:texture/block/dry_bush
+      germaniumOre: openvoxel:texture/block/germanium_ore
+      granite: openvoxel:texture/block/granite
+      grassSide: openvoxel:texture/block/grass_side
+      grassTop: openvoxel:texture/block/grass_top
+      gravel: openvoxel:texture/block/gravel
+      ice: openvoxel:texture/block/ice
+      ironOre: openvoxel:texture/block/iron_ore
+      limestone: openvoxel:texture/block/limestone
+      magma: openvoxel:texture/block/magma
+      mimosaLeaves: openvoxel:texture/block/mimosa_leaves
+      mimosaLogSide: openvoxel:texture/block/mimosa_log_side
+      mimosaLogTop: openvoxel:texture/block/mimosa_log_top
+      oakLeaves: openvoxel:texture/block/oak_leaves
+      oakLogSide: openvoxel:texture/block/oak_log_side
+      oakLogTop: openvoxel:texture/block/oak_log_top
+      poplarLeaves: openvoxel:texture/block/poplar_leaves
+      poplarLogSide: openvoxel:texture/block/poplar_log_side
+      poplarLogTop: openvoxel:texture/block/poplar_log_top
+      purpleFlower: openvoxel:texture/block/purple_flower
+      redFlower: openvoxel:texture/block/red_flower
+      saltpeterOre: openvoxel:texture/block/saltpeter_ore
+      sand: openvoxel:texture/block/sand
+      sandstone: openvoxel:texture/block/sandstone
+      snow: openvoxel:texture/block/snow
+      spruceLeaves: openvoxel:texture/block/spruce_leaves
+      spruceLogSide: openvoxel:texture/block/spruce_log_side
+      spruceLogTop: openvoxel:texture/block/spruce_log_top
+      stone: openvoxel:texture/block/stone
+      sulphurOre: openvoxel:texture/block/sulphur_ore
+      tallGrass: openvoxel:texture/block/tall_grass
+      water: openvoxel:texture/block/water
+      whiteFlower: openvoxel:texture/block/white_flower
+
+  tints:
+    biomeFoliage: openvoxel:tint/biome_foliage
+    biomeGrass: openvoxel:tint/biome_grass
+    biomeGrassTop: openvoxel:tint/biome_grass_top
+    biomeWater: openvoxel:tint/biome_water
+
+  animations:
+    magma: openvoxel:animation/magma
+    water: openvoxel:animation/water
+
+  loot:
+    empty: openvoxel:loot/empty
+    block:
+      basalt: openvoxel:loot/block/basalt
+      birchLeaves: openvoxel:loot/block/birch_leaves
+      birchLog: openvoxel:loot/block/birch_log
+      cactus: openvoxel:loot/block/cactus
+      clay: openvoxel:loot/block/clay
+      coalOre: openvoxel:loot/block/coal_ore
+      copperOre: openvoxel:loot/block/copper_ore
+      diamondOre: openvoxel:loot/block/diamond_ore
+      dirt: openvoxel:loot/block/dirt
+      dryBush: openvoxel:loot/block/dry_bush
+      germaniumOre: openvoxel:loot/block/germanium_ore
+      granite: openvoxel:loot/block/granite
+      grass: openvoxel:loot/block/grass
+      gravel: openvoxel:loot/block/gravel
+      ice: openvoxel:loot/block/ice
+      ironOre: openvoxel:loot/block/iron_ore
+      limestone: openvoxel:loot/block/limestone
+      mimosaLeaves: openvoxel:loot/block/mimosa_leaves
+      mimosaLog: openvoxel:loot/block/mimosa_log
+      oakLeaves: openvoxel:loot/block/oak_leaves
+      oakLog: openvoxel:loot/block/oak_log
+      poplarLeaves: openvoxel:loot/block/poplar_leaves
+      poplarLog: openvoxel:loot/block/poplar_log
+      purpleFlower: openvoxel:loot/block/purple_flower
+      redFlower: openvoxel:loot/block/red_flower
+      saltpeterOre: openvoxel:loot/block/saltpeter_ore
+      sand: openvoxel:loot/block/sand
+      sandstone: openvoxel:loot/block/sandstone
+      snow: openvoxel:loot/block/snow
+      spruceLeaves: openvoxel:loot/block/spruce_leaves
+      spruceLog: openvoxel:loot/block/spruce_log
+      stone: openvoxel:loot/block/stone
+      sulphurOre: openvoxel:loot/block/sulphur_ore
+      tallGrass: openvoxel:loot/block/tall_grass
+      whiteFlower: openvoxel:loot/block/white_flower
+
+  sounds:
+    glass: openvoxel:sound/glass
+    grass: openvoxel:sound/grass
+    gravel: openvoxel:sound/gravel
+    leaves: openvoxel:sound/leaves
+    magma: openvoxel:sound/magma
+    silent: openvoxel:sound/none
+    sand: openvoxel:sound/sand
+    snow: openvoxel:sound/snow
+    stone: openvoxel:sound/stone
+    water: openvoxel:sound/water
+    wood: openvoxel:sound/wood
+
+  tools:
+    axe: openvoxel:tool/axe
+    pickaxe: openvoxel:tool/pickaxe
+    shears: openvoxel:tool/shears
+    shovel: openvoxel:tool/shovel
+
+  fluids:
+    magma: openvoxel:fluid/magma
+    water: openvoxel:fluid/water
+
+  handlers:
+    leafDecay: openvoxel:handler/leaf_decay
+
+  translations:
+    block:
+      air: block.openvoxel.air
+      basalt: block.openvoxel.basalt
+      birchLeaves: block.openvoxel.birch_leaves
+      birchLog: block.openvoxel.birch_log
+      cactus: block.openvoxel.cactus
+      clay: block.openvoxel.clay
+      coalOre: block.openvoxel.coal_ore
+      copperOre: block.openvoxel.copper_ore
+      diamondOre: block.openvoxel.diamond_ore
+      dirt: block.openvoxel.dirt
+      dryBush: block.openvoxel.dry_bush
+      germaniumOre: block.openvoxel.germanium_ore
+      granite: block.openvoxel.granite
+      grass: block.openvoxel.grass
+      gravel: block.openvoxel.gravel
+      ice: block.openvoxel.ice
+      ironOre: block.openvoxel.iron_ore
+      limestone: block.openvoxel.limestone
+      magma: block.openvoxel.magma
+      mimosaLeaves: block.openvoxel.mimosa_leaves
+      mimosaLog: block.openvoxel.mimosa_log
+      oakLeaves: block.openvoxel.oak_leaves
+      oakLog: block.openvoxel.oak_log
+      poplarLeaves: block.openvoxel.poplar_leaves
+      poplarLog: block.openvoxel.poplar_log
+      purpleFlower: block.openvoxel.purple_flower
+      redFlower: block.openvoxel.red_flower
+      saltpeterOre: block.openvoxel.saltpeter_ore
+      sand: block.openvoxel.sand
+      sandstone: block.openvoxel.sandstone
+      snow: block.openvoxel.snow
+      spruceLeaves: block.openvoxel.spruce_leaves
+      spruceLog: block.openvoxel.spruce_log
+      stone: block.openvoxel.stone
+      sulphurOre: block.openvoxel.sulphur_ore
+      tallGrass: block.openvoxel.tall_grass
+      water: block.openvoxel.water
+      whiteFlower: block.openvoxel.white_flower

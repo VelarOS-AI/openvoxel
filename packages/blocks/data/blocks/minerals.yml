@@ -1,0 +1,84 @@
+blocks:
+  - key: blocks.coalOre
+    translationKey: translations.block.coalOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.coalOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 3, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.coalOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.copperOre
+    translationKey: translations.block.copperOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.metal, textures: {all: textures.block.copperOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 3, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.copperOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.ironOre
+    translationKey: translations.block.ironOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.metal, textures: {all: textures.block.ironOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 3, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.ironOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.saltpeterOre
+    translationKey: translations.block.saltpeterOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.saltpeterOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2.5, blastResistance: 5, toolTag: tools.pickaxe, drops: loot.block.saltpeterOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.sulphurOre
+    translationKey: translations.block.sulphurOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 1, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.sulphurOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 2.5, blastResistance: 5, toolTag: tools.pickaxe, drops: loot.block.sulphurOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.diamondOre
+    translationKey: translations.block.diamondOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.metal, textures: {all: textures.block.diamondOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 3, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.diamondOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
+  - key: blocks.germaniumOre
+    translationKey: translations.block.germaniumOre
+    tags: [tags.terrain, tags.ore]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.metal, textures: {all: textures.block.germaniumOre}, cullFaces: true}
+    interaction: {breakable: true, hardness: 3, blastResistance: 6, toolTag: tools.pickaxe, drops: loot.block.germaniumOre, sounds: sounds.stone}
+    behaviors: []
+    variants: []

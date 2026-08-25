@@ -1,34 +1,34 @@
 import {expect} from "velar/test"
 import {checkWorldCoordinates} from "./support/property-check.vel"
-import {BlockOcclusion, blockCatalog, blockDefinition, blockId} from "@openvoxel/blocks"
-import {Chunk, blockIndex, chunkBlock, chunkChecksum} from "../src/chunk.vel"
+import {BlockShapeKind, blockCatalog, blockTypeDefinition, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {Chunk, blockIndex, chunkBlock, chunkBlockAtIndex, chunkChecksum, emptyChunk, setChunkBlock} from "../src/chunk.vel"
 import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/coordinates.vel"
 import {generateChunk} from "../src/generator.vel"
 import {maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "../src/generation/terrain.vel"
-import {WorldBlockCatalogMismatchError, createWorldManifest, validateWorldManifest} from "../src/world.vel"
+import {createWorldManifest, validateWorldManifest} from "../src/world.vel"
 
-const airBlock = blockId("openvoxel:air")
-const coalOreBlock = blockId("openvoxel:coal_ore")
-const copperOreBlock = blockId("openvoxel:copper_ore")
-const diamondOreBlock = blockId("openvoxel:diamond_ore")
-const germaniumOreBlock = blockId("openvoxel:germanium_ore")
-const ironOreBlock = blockId("openvoxel:iron_ore")
-const magmaBlock = blockId("openvoxel:magma")
-const saltpeterOreBlock = blockId("openvoxel:saltpeter_ore")
-const sandBlock = blockId("openvoxel:sand")
-const spruceLeavesBlock = blockId("openvoxel:spruce_leaves")
-const stoneBlock = blockId("openvoxel:stone")
-const sulphurOreBlock = blockId("openvoxel:sulphur_ore")
-const waterBlock = blockId("openvoxel:water")
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const coalOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.coalOre)
+const copperOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.copperOre)
+const diamondOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.diamondOre)
+const germaniumOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.germaniumOre)
+const ironOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.ironOre)
+const magmaBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.magma)
+const saltpeterOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.saltpeterOre)
+const sandBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
+const spruceLeavesBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.spruceLeaves)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const sulphurOreBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.sulphurOre)
+const waterBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
 
 def coordinateRoundTrip(position: Coordinate3) -> bool:
     const located = locateBlock(position, 16)
     return located.chunk.x * 16 + located.local.x == position.x and located.chunk.y * 16 + located.local.y == position.y and located.chunk.z * 16 + located.local.z == position.z
 
-def countBlock(chunk: Chunk, blockId: number) -> number:
+def countBlock(chunk: Chunk, runtimeId: number) -> number:
     let count = 0
-    for index in range(chunk.blocks.size):
-        if chunk.blocks[index] == blockId: count += 1
+    for index in range(chunk.indices.size):
+        if chunkBlockAtIndex(chunk, index) == runtimeId: count += 1
     return count
 
 test "negative world coordinates map to stable chunks":
@@ -66,14 +66,14 @@ test "generator is deterministic across positive and negative chunks":
     const other = generateChunk(manifest, {x: -2, y: 0, z: 5})
     expect(chunkChecksum(first)).toBe(chunkChecksum(second))
     expect(chunkChecksum(first) == chunkChecksum(other)).toBe(false)
-    expect(first.blocks.size).toBe(4096)
+    expect(first.indices.size).toBe(4096)
 
 test "three dimensional lookup crosses chunk boundaries":
     const located = locateBlock({x: -1, y: 16, z: 32}, 16)
     expect(located.chunk).toEqual({x: -1, y: 1, z: 2})
     expect(located.local).toEqual({x: 15, y: 0, z: 0})
     expect(airBlock).toBe(0)
-    expect(stoneBlock).toBe(3)
+    expect(stoneBlock).toBe(147)
 
 test "survival generator exposes stable climate and world limits":
     const sample = sampleTerrain("openvoxel", {x: 0, z: 0})
@@ -85,28 +85,24 @@ test "survival generator exposes stable climate and world limits":
     expect(sample.humidity).toBe(4)
     expect(sample.biome).toBe("tundra")
 
-test "block catalog keeps persisted identifiers stable":
+test "block catalog exposes runtime definitions by canonical type key":
     expect(blockCatalog().size).toBe(38)
-    expect(blockDefinition(airBlock).key).toBe("openvoxel:air")
-    expect(blockDefinition(stoneBlock).key).toBe("openvoxel:stone")
-    expect(blockDefinition(spruceLeavesBlock).simulation.occlusion).toBe(BlockOcclusion.empty)
+    expect(blockTypeDefinition(builtinIdentities.blocks.air).defaultStateRuntimeId).toBe(airBlock)
+    expect(blockTypeDefinition(builtinIdentities.blocks.stone).defaultStateRuntimeId).toBe(stoneBlock)
+    expect(blockTypeDefinition(builtinIdentities.blocks.spruceLeaves).physics.occlusion.kind).toBe(BlockShapeKind.empty)
 
-test "world manifests reject a different persisted block id mapping":
-    const manifest = createWorldManifest({id: "catalog", name: "Catalog", seed: "openvoxel"})
-    let rejected = false
-    try:
-        validateWorldManifest({
-            id: manifest.id,
-            name: manifest.name,
-            seed: manifest.seed,
-            formatVersion: manifest.formatVersion,
-            chunkEdge: manifest.chunkEdge,
-            generator: manifest.generator,
-            blockCatalogVersion: manifest.blockCatalogVersion,
-            blockIdMapHash: "different-id-map",
-        })
-    catch error: rejected = error is WorldBlockCatalogMismatchError
-    expect(rejected).toBe(true)
+test "world manifests carry their complete runtime registry":
+    const manifest = validateWorldManifest(createWorldManifest({id: "catalog", name: "Catalog", seed: "openvoxel"}))
+    expect(manifest.blockRegistry.states.size).toBe(183)
+    expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
+
+test "chunk palettes store UInt32 runtime ids behind UInt16 local indices":
+    const chunk = emptyChunk({x: 0, y: 0, z: 0}, 16)
+    const modRuntimeId = 0x1000000
+    setChunkBlock(chunk, {x: 1, y: 2, z: 3}, modRuntimeId)
+    expect(chunk.palette).toEqual([airBlock, modRuntimeId])
+    expect(chunkBlock(chunk, {x: 1, y: 2, z: 3})).toBe(modRuntimeId)
+    expect(chunk.indices[561]).toBe(1)
 
 test "world generation covers oceans caves fluids and all mineral families":
     const manifest = createWorldManifest({id: "palette", name: "Palette", seed: "openvoxel"})
@@ -155,6 +151,6 @@ test "generator returns empty chunks outside the version one vertical range":
 
 test "survival generator golden chunks detect accidental algorithm drift":
     const manifest = createWorldManifest({id: "golden", name: "Golden", seed: "openvoxel"})
-    expect(chunkChecksum(generateChunk(manifest, {x: 0, y: 0, z: 0}))).toBe(2478496577)
-    expect(chunkChecksum(generateChunk(manifest, {x: 0, y: 3, z: 0}))).toBe(4178771817)
-    expect(chunkChecksum(generateChunk(manifest, {x: -10, y: 3, z: -10}))).toBe(2462532069)
+    expect(chunkChecksum(generateChunk(manifest, {x: 0, y: 0, z: 0}))).toBe(2919264330)
+    expect(chunkChecksum(generateChunk(manifest, {x: 0, y: 3, z: 0}))).toBe(2665425008)
+    expect(chunkChecksum(generateChunk(manifest, {x: -10, y: 3, z: -10}))).toBe(2320878832)

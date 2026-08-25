@@ -1,4 +1,15 @@
-export {BlockCatalogArtifact, BlockCatalogSource, BlockCollision, BlockDefinition, BlockFluid, BlockOcclusion, BlockRender, BlockRenderLayer, BlockRenderShape, BlockSimulation, BlockTextures, CubeBlockRender, CrossBlockRender, EmptyBlockRender, ModelBlockRender} from "./schema.vel"
-export {BlockRegistry, InvalidBlockIdError, RetiredBlockIdError, UnknownBlockIdError, createBlockRegistry, requireBlockStorageId} from "./registry.vel"
-export {BlockRenderResources, collectBlockRenderResources} from "./resources.vel"
-export {blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockDefinition, blockId, blockIdMapHash, blockRegistry, isFluidBlock, isNaturalRock, requireBlockId} from "./catalog.vel"
+/// 定义层：人工方块、身份树、编译目录和世界快照的数据契约。
+export {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPlacementStrategy, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockRenderLayer, BlockShape, BlockShapeKind, BlockSkylightMode, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockSupportFace, BlockTextures, BlockTypeSource} from "./definition/block.vel"
+export {BuiltinAnimationKeys, BuiltinBlockKeys, BuiltinBlockLootKeys, BuiltinBlockModelKeys, BuiltinBlockTags, BuiltinBlockTextureKeys, BuiltinCatalogKeys, BuiltinFluidKeys, BuiltinHandlerKeys, BuiltinIdentities, BuiltinIdentityDocument, BuiltinLootKeys, BuiltinMaterialKeys, BuiltinModelKeys, BuiltinNamespaces, BuiltinShapeKeys, BuiltinSoundKeys, BuiltinTextureKeys, BuiltinTintKeys, BuiltinToolKeys, BuiltinTranslationKeys, BuiltinWorldGenerators} from "./definition/identities.vel"
+export {BlockCatalogArtifact, BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateAlias, BlockStateDefinition, BlockStateMapSource, BlockStateMapping, WorldBlockRegistrySnapshot, WorldBlockStateMapping} from "./definition/catalog.vel"
+
+/// 编译层：规范状态键、方块语义验证和有限状态目录编译。
+export {canonicalStateKey} from "./compiler/state-key.vel"
+export {validateBlockType} from "./compiler/block-validation.vel"
+export {BlockStatePrototype, compileBlockCatalog, enumerateBlockStates} from "./compiler/catalog-compiler.vel"
+
+/// 运行时层：基础目录索引、每世界注册表和渲染资源查询。
+export {BlockRegistry, InvalidBlockStateRuntimeIdError, ReservedBlockStateRuntimeIdError, UnknownBlockStateRuntimeIdError, createBlockRegistry, requireBlockStateRuntimeId} from "./runtime/block-registry.vel"
+export {UnknownWorldBlockStateRuntimeIdError, WorldBlockRegistry, createWorldBlockRegistry, firstModBlockStateRuntimeId, requireWorldBlockStateRuntimeId, validateWorldBlockRegistrySnapshot, worldBlockStateKey, worldBlockStateRuntimeId} from "./runtime/world-block-registry.vel"
+export {BlockRenderResources, collectBlockRenderResources} from "./runtime/render-resources.vel"
+export {baseBlockCatalogSource, baseWorldBlockRegistry, baseWorldBlockRegistrySnapshot, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockRegistry, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, builtinIdentities, defaultBlockStateRuntimeId, hasBlockBehavior, hasBlockTag, isFluidBlock, isNaturalRock, requireBlockState, withBlockStateProperty} from "./runtime/builtin-catalog.vel"

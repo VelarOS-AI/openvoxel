@@ -7,11 +7,11 @@ import {expect} from "velar/test"
 import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
 import {createOpenVoxelApp, startOpenVoxelServer} from "../src/server.vel"
 import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, openVoxelApplicationProvider} from "../src/application.vel"
-import {WorldManifest, blockId} from "@openvoxel/domain"
+import {WorldManifest, blockCatalogVersion, builtinIdentities, chunkBlock, defaultBlockStateRuntimeId, defaultGenerator} from "@openvoxel/domain"
 import {ApiResponse, BlockCatalogResponse, BlockChangedEvent, ChunkBatchResponse, ChunkResponse, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, WorldBootstrapResponse} from "@openvoxel/protocol"
 import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 
-extern js()`
+extern js`
     import WebSocket from "ws"
 
     export function rejectedWebSocketStatus(url, origin) {
@@ -39,7 +39,7 @@ extern js()`
 `:
     export def rejectedWebSocketStatus(url: string, origin: string) -> Promise<number>
 
-const stoneBlock = blockId("openvoxel:stone")
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
 type HealthResponse:
     status: string
@@ -64,18 +64,11 @@ def providerOverride(application: OpenVoxelApplication) -> Map<Provider, unknown
 async def testApplication() -> OpenVoxelApplication:
     const configuration = await loadOpenVoxelConfiguration("application.yml")
     const configured = serverOptions(configuration, logger=false)
-    const options: OpenVoxelServerOptions = {
+    const options = OpenVoxelServerOptions.from(configured, {
         host: "127.0.0.1",
         port: 0,
         logger: false,
-        bodyLimit: configured.bodyLimit,
-        corsAllowedOrigins: configured.corsAllowedOrigins,
-        maxMessageBytes: configured.maxMessageBytes,
-        maxQueuedMessages: configured.maxQueuedMessages,
-        maxQueuedBytes: configured.maxQueuedBytes,
-        maxPendingSendBytes: configured.maxPendingSendBytes,
-        maxConnections: configured.maxConnections,
-    }
+    })
     return openVoxelApplication(worldRuntime(memoryWorldStore()), options)
 
 test "native HTTP modules complete the backend vertical slice":
@@ -89,15 +82,16 @@ test "native HTTP modules complete the backend vertical slice":
         expect(healthResponse.status).toBe(200)
         const health = HealthResponse.parse((await envelope(healthResponse)).data)
         expect(health.status).toBe("ready")
-        expect(health.protocolVersion).toBe(1)
-        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("1")
+        expect(health.protocolVersion).toBe(2)
+        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("2")
 
         const contractResponse = await api.get("/api/client-contract")
         const contract = ClientContractResponse.parse((await envelope(contractResponse)).data)
-        expect(contract.contractVersion).toBe(1)
+        expect(contract.contractVersion).toBe(3)
         expect(contract.http.routes.queryChunk.path).toBe("/api/chunks/query")
         expect(contract.chunks.indexOrder).toBe("x + edge * (z + edge * y)")
-        expect(contract.blockCatalog.catalogVersion).toBe("openvoxel:base-v1")
+        expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
+        expect(contract.blockCatalog.catalogVersion).toBe(blockCatalogVersion)
         expect(contract.limits.requestBodyBytes).toBe(65536)
         expect(contractResponse.headers.get("cache-control")).toBe("no-store")
 
@@ -111,8 +105,8 @@ test "native HTTP modules complete the backend vertical slice":
         expect(worldEnvelope.code).toBe("CREATED")
         const world = WorldManifest.parse(worldEnvelope.data)
         expect(world.chunkEdge).toBe(16)
-        expect(world.generator).toBe("openvoxel:survival-v1")
-        expect(world.blockIdMapHash.size).toBe(64)
+        expect(world.generator).toBe(defaultGenerator)
+        expect(world.blockRegistry.states.size).toBe(183)
 
         const duplicateResponse = await api.post("/api/worlds", {json: {
             id: "transport",
@@ -126,13 +120,15 @@ test "native HTTP modules complete the backend vertical slice":
 
         const catalogResponse = await api.get("/api/blocks")
         const catalog = BlockCatalogResponse.parse((await envelope(catalogResponse)).data)
-        expect(catalog.schemaVersion).toBe(1)
-        expect(catalog.catalogVersion).toBe("openvoxel:base-v1")
-        expect(catalog.idMapHash).toBe(world.blockIdMapHash)
+        expect(catalog.schemaVersion).toBe(3)
+        expect(catalog.catalogVersion).toBe(blockCatalogVersion)
         expect(catalog.contentHash.size).toBe(64)
         expect(catalog.blocks.size).toBe(38)
-        expect(catalog.resources.textures.size).toBe(42)
-        expect(catalog.resources.models).toEqual(["block/cactus"])
+        expect(catalog.states.size).toBe(183)
+        expect(catalog.stateMapHash.size).toBe(64)
+        expect(catalog.resources.textures.size).toBe(43)
+        expect(catalog.resources.models.size).toBe(6)
+        expect(catalog.resources.models).toEqual(catalog.resources.models.sorted())
         const catalogEtag = catalogResponse.headers.get("etag")
         expect(catalogEtag).toBe(f`"{catalog.contentHash}"`)
         const cachedCatalogResponse = await api.get("/api/blocks", {headers: Map([["if-none-match", catalogEtag ?? ""]])})
@@ -141,20 +137,21 @@ test "native HTTP modules complete the backend vertical slice":
 
         const bootstrapResponse = await api.get(f"/api/worlds/{world.id}/bootstrap")
         const bootstrap = WorldBootstrapResponse.parse((await envelope(bootstrapResponse)).data)
-        expect(bootstrap.protocolVersion).toBe(1)
-        expect(bootstrap.clientContractVersion).toBe(1)
+        expect(bootstrap.protocolVersion).toBe(2)
+        expect(bootstrap.clientContractVersion).toBe(3)
         expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
-        expect(bootstrap.blockIdMapHash).toBe(world.blockIdMapHash)
+        expect(bootstrap.blockRegistry).toEqual(world.blockRegistry)
         expect(bootstrap.blockCatalogContentHash).toBe(catalog.contentHash)
+        expect(bootstrap.blockCatalogStateMapHash).toBe(catalog.stateMapHash)
         expect(bootstrap.maximumChunkBatchSize).toBe(64)
 
         const unknownBlockResponse = await api.post("/api/blocks", {json: {
             worldId: world.id,
             position: {x: 0, y: 30, z: 0},
-            blockId: 65535,
+            blockStateRuntimeId: 65535,
         }})
         expect(unknownBlockResponse.status).toBe(400)
-        expect((await envelope(unknownBlockResponse)).code).toBe("UnknownBlockIdError")
+        expect((await envelope(unknownBlockResponse)).code).toBe("UnknownBlockStateRuntimeIdError")
 
         const invalidBlockResponse = await api.post("/api/blocks", {json: {worldId: world.id}})
         expect(invalidBlockResponse.status).toBe(400)
@@ -174,7 +171,8 @@ test "native HTTP modules complete the backend vertical slice":
             position: {x: 0, y: 1, z: 0},
         }})
         const before = ChunkResponse.parse((await envelope(beforeResponse)).data)
-        expect(before.blocks.size).toBe(4096)
+        expect(before.indices.size).toBe(4096)
+        expect(before.palette.size > 0).toBe(true)
 
         const batchResponse = await api.post("/api/chunks/batch", {json: {
             worldId: world.id,
@@ -230,7 +228,7 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
             operation: "delete-world",
             worldId: world.id,
             position: {x: 0, y: 30, z: 0},
-            blockId: stoneBlock,
+            blockStateRuntimeId: stoneBlock,
         }))
         const unsupportedMessage = await sender.next()
         if not (unsupportedMessage is Bytes): throw Error("Expected a binary unsupported-operation event")
@@ -250,23 +248,23 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
             operation: "set-block",
             worldId: world.id,
             position: {x: 0, y: 30, z: 0},
-            blockId: 65535,
+            blockStateRuntimeId: 65535,
         }))
         const invalidMessage = await sender.next()
         if not (invalidMessage is Bytes): throw Error("Expected a binary realtime error event")
-        expect(parse(invalidMessage, SocketErrorEvent).code).toBe("UnknownBlockIdError")
+        expect(parse(invalidMessage, SocketErrorEvent).code).toBe("UnknownBlockStateRuntimeIdError")
 
         await sender.send(encode({
             operation: "set-block",
             worldId: world.id,
             position: {x: 0, y: 30, z: 0},
-            blockId: stoneBlock,
+            blockStateRuntimeId: stoneBlock,
         }))
         const message = await sender.next()
         if not (message is Bytes): throw Error("Expected a binary block change event")
         const event = parse(message, BlockChangedEvent)
         expect(event.position).toEqual({x: 0, y: 30, z: 0})
-        expect(event.blockId).toBe(stoneBlock)
+        expect(event.blockStateRuntimeId).toBe(stoneBlock)
         expect(event.revision).toBe(1)
 
         const observedMessage = await observer.next()
@@ -277,5 +275,5 @@ test "native shared-port WebSocket transport preserves MessagePack realtime beha
 
         const after = await application.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
         expect(after.revision).toBe(1)
-        expect(after.blocks[3584]).toBe(stoneBlock)
+        expect(chunkBlock(after, {x: 0, y: 14, z: 0})).toBe(stoneBlock)
     finally: await server.stop()

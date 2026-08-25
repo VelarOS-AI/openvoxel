@@ -1,0 +1,68 @@
+import {BlockBehaviorKind, BlockPropertyValue, BlockStateProperty} from "../definition/block.vel"
+import {BlockCatalogArtifact, BlockDefinition, BlockStateDefinition} from "../definition/catalog.vel"
+import {createWorldBlockRegistry} from "./world-block-registry.vel"
+import json blockCatalogData from "@openvoxel/blocks/block-catalog-data"
+
+/// 内建目录是生成 JSON 与运行时 API 之间的唯一装配点。
+/// 模块加载时完成一次 JSON 解析和索引建立；之后业务代码通过下面的函数查询，
+/// 不需要再次读取 YAML、遍历原始数组或自己拼接状态键。
+
+/// JSON 资源先按产物契约解析，后续模块只接触已经验证的强类型数据。
+const artifact = BlockCatalogArtifact.parse(blockCatalogData)
+assert artifact.artifactVersion == 4 else "Unsupported generated block catalog artifact version"
+const catalogSource = artifact.catalog
+
+/// 与 identities.yml 同结构的身份树，业务代码通过它引用方块、标签和资源。
+export const builtinIdentities = artifact.identities
+/// 生成器输出的基础目录原始数据，创建世界注册表或返回网络目录时使用。
+export const baseBlockCatalogSource = catalogSource
+/// 只包含基础内容的世界注册表结果。
+export const baseWorldBlockRegistry = createWorldBlockRegistry(catalogSource)
+/// 高频查询使用的基础 BlockRegistry 索引。
+export const blockRegistry = baseWorldBlockRegistry.registry
+/// 创建新世界时可以直接持久化的基础状态映射快照。
+export const baseWorldBlockRegistrySnapshot = baseWorldBlockRegistry.snapshot
+export const blockCatalogSchemaVersion = catalogSource.schemaVersion
+export const blockCatalogVersion = catalogSource.catalogVersion
+export const blockCatalogHash = artifact.contentHash
+export const blockStateMapHash = artifact.stateMapHash
+
+/// 返回全部方块家族定义；适合客户端目录、调试界面和类型级遍历。
+export def blockCatalog() -> readonly List<readonly BlockDefinition>: return blockRegistry.catalog()
+
+/// 返回全部具体状态定义；每项都已经应用 variant 并绑定 runtimeId。
+export def blockStateCatalog() -> readonly List<readonly BlockStateDefinition>: return blockRegistry.states()
+
+/// 根据方块 key 取得默认状态 ID，例如放置一个未指定属性的石头。
+export def defaultBlockStateRuntimeId(key: string) -> number: return blockRegistry.defaultStateRuntimeIdForKey(key)
+
+/// 根据方块 key 和完整属性集合查找具体状态 ID。
+export def blockStateRuntimeId(key: string, properties: readonly List<readonly BlockStateProperty>) -> number:
+    return blockRegistry.stateRuntimeIdFor(key, properties)
+
+/// 断言 ID 对应活动状态；非法、保留或未知 ID 会立即报错。
+export def requireBlockState(runtimeId: number): blockRegistry.requireStateByRuntimeId(runtimeId)
+
+/// 根据方块家族身份读取类型级定义和默认组件。
+export def blockTypeDefinition(key: string) -> readonly BlockDefinition: return blockRegistry.requireTypeByKey(key)
+
+/// 根据 runtimeId 读取具体状态的完整组件快照。
+export def blockStateDefinition(runtimeId: number) -> readonly BlockStateDefinition:
+    return blockRegistry.requireStateByRuntimeId(runtimeId)
+
+/// 修改一个已有状态的属性并返回目标状态 ID；原状态和目录本身保持不可变。
+export def withBlockStateProperty(runtimeId: number, name: string, value: BlockPropertyValue) -> number:
+    return blockRegistry.withProperty(runtimeId, name, value)
+
+/// 查询状态所属方块家族是否带有指定语义标签。
+export def hasBlockTag(runtimeId: number, tag: string) -> bool: return blockRegistry.hasTag(runtimeId, tag)
+
+/// 查询具体状态最终组件中是否包含某类行为。
+export def hasBlockBehavior(runtimeId: number, kind: BlockBehaviorKind) -> bool:
+    return blockRegistry.hasBehavior(runtimeId, kind)
+
+/// 常用语义查询：状态是否由流体系统管理。
+export def isFluidBlock(runtimeId: number) -> bool: return hasBlockBehavior(runtimeId, BlockBehaviorKind.fluid)
+
+/// 常用语义查询：状态所属方块是否可作为天然岩层参与世界生成替换。
+export def isNaturalRock(runtimeId: number) -> bool: return hasBlockTag(runtimeId, builtinIdentities.tags.naturalRock)
