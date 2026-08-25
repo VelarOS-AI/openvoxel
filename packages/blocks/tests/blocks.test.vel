@@ -1,38 +1,24 @@
 import {expect} from "velar/test"
-import {BlockBehaviorKind, BlockCatalogContribution, BlockCatalogSource, BlockDefinition, BlockRenderLayer, BlockStateDefinition, baseBlockCatalogSource, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, builtinIdentities, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
+import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPropertyKind, BlockRenderLayer, BlockTypeSource, baseBlockCatalogSource, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, builtinIdentities, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
 
 const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 const grassBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
 const stoneBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 const waterBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
 
-def contributionCatalog(blockKey: string) -> BlockCatalogSource:
-    const sourceState = BlockStateDefinition.parse(blockStateDefinition(stoneBlockState))
-    const state = BlockStateDefinition.from(sourceState, {
-        runtimeId: 0,
-        stateKey: blockKey,
-        blockKey,
-        properties: [],
-    })
+def contributionSource(blockKey: string) -> BlockTypeSource:
     const sourceBlock = BlockDefinition.parse(blockTypeDefinition(builtinIdentities.blocks.stone))
-    const block = BlockDefinition.from(sourceBlock, {
-        defaultStateRuntimeId: 0,
+    return BlockTypeSource.from(sourceBlock, {
         key: blockKey,
         translationKey: f"block.{blockKey.replace(":", ".")}",
         tags: [],
         properties: [],
         defaultState: [],
+        variants: [],
     })
-    return {
-        schemaVersion: 3,
-        catalogVersion: f"{blockKey}:v1",
-        reservedRuntimeIds: [],
-        blocks: [block],
-        states: [state],
-    }
 
 def contribution(owner: string, blockKey: string) -> BlockCatalogContribution:
-    return {owner, catalog: contributionCatalog(blockKey), stateAliases: []}
+    return compileModBlockCatalogContribution(owner, f"{blockKey}:v1", [contributionSource(blockKey)])
 
 test "generated runtime catalog expands finite states with UInt32 identities":
     expect(blockCatalogSchemaVersion).toBe(3)
@@ -41,6 +27,8 @@ test "generated runtime catalog expands finite states with UInt32 identities":
     expect(blockStateMapHash).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
     expect(blockCatalog().size).toBe(38)
     expect(blockStateCatalog().size).toBe(183)
+    expect(packedBlockCatalog().componentProfiles.size).toBe(38)
+    expect(packedBlockCatalog().states.size).toBe(183)
     expect(airBlockState).toBe(0)
     expect(stoneBlockState).toBe(147)
     expect(grassBlockState).toBe(28)
@@ -62,10 +50,21 @@ test "state registry resolves properties through explicit runtime ids":
     expect(blockStateDefinition(oakLogX).runtimeId).toBe(oakLogX)
     expect(() => requireBlockState(0xffffffff)).toThrow()
 
+test "Mod compiler expands finite source states before world id allocation":
+    const crop = BlockTypeSource.from(contributionSource("farming:tomato_crop"), {
+        properties: [{name: "age", kind: BlockPropertyKind.integer, minimum: 0, maximum: 3}],
+        defaultState: [{name: "age", value: 0}],
+    })
+    const farming = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [crop])
+    expect(farming.catalog.blocks.size).toBe(1)
+    expect(farming.catalog.states.size).toBe(4)
+    expect(farming.catalog.states[0].stateKey).toBe("farming:tomato_crop[age=0]")
+    expect(farming.catalog.states[3].stateKey).toBe("farming:tomato_crop[age=3]")
+
 test "world registry assigns Mod states above the built-in range and keeps missing mappings":
     const farming = contribution("farming", "farming:tomato_crop")
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [farming])
-    const tomatoRuntimeId = worldBlockStateRuntimeId(installed.snapshot, "farming:tomato_crop")
+    const tomatoRuntimeId = worldBlockStateRuntimeId(installed.index, "farming:tomato_crop")
     expect(tomatoRuntimeId).toBe(firstModBlockStateRuntimeId)
     expect(tomatoRuntimeId > 0xffff).toBe(true)
     expect(installed.registry.requireStateByRuntimeId(tomatoRuntimeId).blockKey).toBe("farming:tomato_crop")
@@ -75,18 +74,18 @@ test "world registry assigns Mod states above the built-in range and keeps missi
     expect(unavailable.missingStates[0].runtimeId).toBe(tomatoRuntimeId)
 
     const restored = createWorldBlockRegistry(baseBlockCatalogSource, [farming], unavailable.snapshot)
-    expect(worldBlockStateRuntimeId(restored.snapshot, "farming:tomato_crop")).toBe(tomatoRuntimeId)
+    expect(worldBlockStateRuntimeId(restored.index, "farming:tomato_crop")).toBe(tomatoRuntimeId)
     expect(restored.missingStates.size).toBe(0)
 
 test "explicit Mod aliases move an existing world mapping to the renamed state":
     const original = contribution("farming", "farming:tomato_crop")
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [original])
-    const originalRuntimeId = worldBlockStateRuntimeId(installed.snapshot, "farming:tomato_crop")
+    const originalRuntimeId = worldBlockStateRuntimeId(installed.index, "farming:tomato_crop")
     const renamed: BlockCatalogContribution = {
         owner: "farming",
-        catalog: contributionCatalog("farming:tomato_plant"),
+        catalog: contribution("farming", "farming:tomato_plant").catalog,
         stateAliases: [{from: "farming:tomato_crop", to: "farming:tomato_plant"}],
     }
     const updated = createWorldBlockRegistry(baseBlockCatalogSource, [renamed], installed.snapshot)
-    expect(worldBlockStateRuntimeId(updated.snapshot, "farming:tomato_plant")).toBe(originalRuntimeId)
+    expect(worldBlockStateRuntimeId(updated.index, "farming:tomato_plant")).toBe(originalRuntimeId)
     expect(updated.missingStates.size).toBe(0)

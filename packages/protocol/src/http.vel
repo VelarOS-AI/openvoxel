@@ -1,9 +1,9 @@
-import {BlockDefinition, BlockRenderResources, BlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources} from "@openvoxel/blocks"
+import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources, packedBlockCatalog} from "@openvoxel/blocks"
 import {BlockPosition, Chunk, ChunkPosition, Coordinate2, TerrainSample, WorldManifest, defaultGenerator, maximumChunkBatchSize, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/domain"
 import {batchChunksPath, blockCatalogPath, changeBlockPath, clientContractPath, createWorldPath, findWorldPath, generationSamplePath, healthPath, queryChunkPath, realtimeEventsPath, worldBootstrapPathTemplate} from "./routes.vel"
 
-export const protocolVersion = 2
-export const clientContractVersion = 3
+export const protocolVersion = 3
+export const clientContractVersion = 4
 export const httpEnvelopeVersion = 1
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
 
@@ -111,7 +111,8 @@ export type BlockCatalogResponse:
     seaLevel: number
     resources: BlockRenderResources
     blocks: readonly List<readonly BlockDefinition>
-    states: readonly List<readonly BlockStateDefinition>
+    componentProfiles: readonly List<readonly BlockComponentProfile>
+    states: readonly List<readonly PackedBlockStateDefinition>
 
 export type WorldBootstrapResponse extends WorldManifest:
     clientContractVersion: number
@@ -172,6 +173,7 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
         protocolVersion,
         capabilities: [
             "block-catalog-etag",
+            "block-component-profiles",
             "world-block-registry",
             "chunk-palettes",
             "world-bootstrap",
@@ -208,6 +210,7 @@ export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatc
 export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
     return GenerationSampleResponse.from(sample, {worldId})
 
+const packedCatalog = packedBlockCatalog()
 const sharedBlockCatalogResponse: BlockCatalogResponse = {
     schemaVersion: blockCatalogSchemaVersion,
     catalogVersion: blockCatalogVersion,
@@ -218,8 +221,9 @@ const sharedBlockCatalogResponse: BlockCatalogResponse = {
     maximumWorldY,
     seaLevel,
     resources: collectBlockRenderResources(blockStateCatalog()),
-    blocks: blockCatalog(),
-    states: blockStateCatalog(),
+    blocks: packedCatalog.blocks,
+    componentProfiles: packedCatalog.componentProfiles,
+    states: packedCatalog.states,
 }
 
 export def blockCatalogResponse() -> readonly BlockCatalogResponse: return sharedBlockCatalogResponse

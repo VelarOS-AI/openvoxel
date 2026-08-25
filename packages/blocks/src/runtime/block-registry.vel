@@ -127,7 +127,4 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
     def hasBehavior(runtimeId: number, kind: BlockBehaviorKind) -> bool:
         return requireStateByRuntimeId(runtimeId).behaviors.some(behavior => behavior.kind == kind)
 
-    // runtimeId 0 是 Chunk 初始化使用的空气哨兵，注册表创建时再次确认它没有属性。
-    const air = requireStateByRuntimeId(0)
-    assert air.properties.size == 0 else "Block state runtime id 0 must not carry state properties"
     return {catalog, states, requireTypeByKey, defaultStateRuntimeIdForKey, requireStateByRuntimeId, requireStateByKey, stateRuntimeIdFor, withProperty, hasTag, hasBehavior}

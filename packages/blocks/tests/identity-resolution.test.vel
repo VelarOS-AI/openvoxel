@@ -1,0 +1,20 @@
+import {expect} from "velar/test"
+import {BuiltinIdentityDocument} from "../src/definition/identities.vel"
+import {IdentityResolution, resolveIdentityReferences} from "../tools/identity-resolution.vel"
+
+test "identity documents preserve and resolve data-only paths without a VelarScript field declaration":
+    const identityDocument = BuiltinIdentityDocument.parse({
+        formatVersion: 2,
+        identities: {
+            futureResources: {
+                experimentalModel: "example:model/block/experimental",
+            },
+        },
+    })
+    const resolved = IdentityResolution.parse(resolveIdentityReferences(
+        {model: "futureResources.experimentalModel"},
+        identityDocument.identities,
+    ))
+    assert resolved.value is Record<unknown> else "Resolved identity example must remain a record"
+    expect(resolved.value["model"]).toBe("example:model/block/experimental")
+    expect(resolved.usedPaths).toEqual(["futureResources.experimentalModel"])

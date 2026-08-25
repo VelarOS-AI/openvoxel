@@ -1,0 +1,76 @@
+import {BlockCatalogSource, BlockComponentProfile, BlockStateDefinition, PackedBlockCatalogSource, PackedBlockStateDefinition} from "../definition/catalog.vel"
+import {requireUInt32} from "./block-validation.vel"
+
+/// 组件签名只覆盖状态执行所需的最终组件。状态身份和属性不在其中，因此多个
+/// 属性状态在组件完全相同时可以安全共用同一个档案。
+def componentSignature(state: BlockStateDefinition) -> string:
+    return Json.stableStringify({
+        physics: state.physics,
+        light: state.light,
+        render: state.render,
+        interaction: state.interaction,
+        behaviors: state.behaviors,
+    })
+
+/// 将完整运行时目录压缩为生成产物和网络传输格式。档案按状态 runtimeId 首次出现
+/// 的顺序编号，因此相同输入始终得到相同 JSON。
+export def packBlockCatalog(source: BlockCatalogSource) -> PackedBlockCatalogSource:
+    const profileIdBySignature: Map<string, number> = Map()
+    const componentProfiles: List<BlockComponentProfile> = []
+    const states: List<PackedBlockStateDefinition> = []
+
+    for state in source.states.sorted(by=entry => entry.runtimeId):
+        const signature = componentSignature(state)
+        let profileId = profileIdBySignature.get(signature)
+        if profileId == null:
+            profileId = componentProfiles.size
+            profileIdBySignature.set(signature, profileId)
+            componentProfiles.append(BlockComponentProfile.from(state, {profileId}))
+        assert profileId != null else "Block component profile allocation failed"
+        states.append(PackedBlockStateDefinition.from(state, {componentProfileId: profileId}))
+
+    return {
+        schemaVersion: source.schemaVersion,
+        catalogVersion: source.catalogVersion,
+        reservedRuntimeIds: source.reservedRuntimeIds.copy(),
+        blocks: source.blocks.copy(),
+        componentProfiles,
+        states,
+    }
+
+/// 运行时把紧凑目录恢复为完整状态快照。所有档案引用在模块装配阶段验证一次，
+/// 后面的方块查询和模拟代码不需要知道压缩格式的存在。
+export def unpackBlockCatalog(source: PackedBlockCatalogSource) -> BlockCatalogSource:
+    assert source.schemaVersion == 3 else "Unsupported packed block catalog schema version"
+    assert not source.catalogVersion.isBlank() else "Packed block catalog version cannot be blank"
+    assert source.componentProfiles.size > 0 else "Packed block catalog requires component profiles"
+    const profileById: Map<number, BlockComponentProfile> = Map()
+    for profile in source.componentProfiles:
+        requireUInt32(profile.profileId, "Block component profile id")
+        assert profileById.get(profile.profileId) == null else f"Duplicate block component profile id {profile.profileId}"
+        profileById.set(profile.profileId, profile)
+
+    const states: List<BlockStateDefinition> = []
+    for state in source.states:
+        requireUInt32(state.componentProfileId, "Block state component profile id")
+        const profile = profileById.get(state.componentProfileId)
+        assert profile != null else f"Block state {state.stateKey} references unknown component profile {state.componentProfileId}"
+        states.append({
+            runtimeId: state.runtimeId,
+            stateKey: state.stateKey,
+            blockKey: state.blockKey,
+            properties: state.properties,
+            physics: profile.physics,
+            light: profile.light,
+            render: profile.render,
+            interaction: profile.interaction,
+            behaviors: profile.behaviors,
+        })
+
+    return {
+        schemaVersion: source.schemaVersion,
+        catalogVersion: source.catalogVersion,
+        reservedRuntimeIds: source.reservedRuntimeIds.copy(),
+        blocks: source.blocks.copy(),
+        states,
+    }

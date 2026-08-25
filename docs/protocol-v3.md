@@ -1,6 +1,6 @@
-# OpenVoxel 协议 v2
+# OpenVoxel 协议 v3
 
-所有 HTTP JSON 请求最大 64 KiB。世界和 Chunk 的领域格式由世界清单中的 `formatVersion` 表示；HTTP 与 WebSocket 语义由 `protocolVersion` 表示；机器可读客户端清单当前为 `clientContractVersion = 3`。
+所有 HTTP JSON 请求最大 64 KiB。世界和 Chunk 的领域格式由世界清单中的 `formatVersion` 表示；HTTP 与 WebSocket 语义由 `protocolVersion` 表示；机器可读客户端清单当前为 `clientContractVersion = 4`。
 
 ## HTTP 信封
 
@@ -35,7 +35,7 @@ Chunk 契约固定为：
 
 ### `GET /api/blocks`
 
-返回基础方块目录、世界高度和渲染资源需求。目录包含 `schemaVersion`、`catalogVersion`、覆盖规范状态键与基础运行时 ID 的 `stateMapHash`，以及覆盖完整组件内容的 `contentHash`。`blocks` 给出方块类型，`states` 给出每个有限状态的 UInt32 `runtimeId`、完整属性、物理、光照、交互、行为和渲染描述。
+返回基础方块目录、世界高度和渲染资源需求。目录包含 `schemaVersion`、`catalogVersion`、覆盖规范状态键与基础运行时 ID 的 `stateMapHash`，以及覆盖完整组件内容的 `contentHash`。`blocks` 给出方块类型；`componentProfiles` 对物理、光照、交互、行为和渲染组件去重；`states` 保存每个有限状态的 UInt32 `runtimeId`、完整属性与 `componentProfileId`。客户端通过档案 ID 取得该状态的最终组件，这项结构由 `block-component-profiles` capability 标识。
 
 响应使用由 `contentHash` 构造的强 ETag 和 `Cache-Control: public, max-age=0, must-revalidate`。客户端可发送 `If-None-Match`，内容未变化时返回 304。
 

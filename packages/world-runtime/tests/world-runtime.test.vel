@@ -1,10 +1,23 @@
 import {expect} from "velar/test"
-import {builtinIdentities, chunkBlock, chunkChecksum, defaultBlockStateRuntimeId} from "@openvoxel/domain"
+import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, builtinIdentities, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/domain"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
-import {worldRuntime} from "../src/world-runtime.vel"
+import {WorldBlockCatalogSet, worldRuntime} from "../src/world-runtime.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+
+def tomatoContribution() -> BlockCatalogContribution:
+    const stone = BlockDefinition.parse(blockTypeDefinition(builtinIdentities.blocks.stone))
+    const tomato = BlockTypeSource.from(stone, {
+        key: "farming:tomato_crop",
+        translationKey: "block.farming.tomato_crop",
+        tags: [],
+        properties: [],
+        defaultState: [],
+        variants: [],
+    })
+    return compileModBlockCatalogContribution("farming", "farming:catalog-v1", [tomato])
 
 test "world runtime creates generates modifies and restores":
     const store = memoryWorldStore()
@@ -37,6 +50,38 @@ test "world runtime creates generates modifies and restores":
     const regenerated = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
     expect(regenerated.revision).toBe(2)
     expect(chunkChecksum(regenerated)).toBe(generatedChecksum)
+
+test "world runtime resolves and caches a separate active block registry for every world":
+    const farming = tomatoContribution()
+
+    def catalogs(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
+        if manifest.id == "modded": return {revision: "farming-v1", contributions: [farming]}
+        return {revision: "base", contributions: []}
+
+    const store = memoryWorldStore()
+    const runtime = worldRuntime(store, catalogs)
+    const vanilla = await runtime.createWorld({id: "vanilla", name: "Vanilla", seed: "plain"})
+    const modded = await runtime.createWorld({id: "modded", name: "Modded", seed: "farming"})
+    expect(vanilla.blockRegistry.states.size).toBe(183)
+    expect(modded.blockRegistry.states.size).toBe(184)
+    expect(modded.blockRegistry.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
+
+    def withoutMods(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
+        return {revision: "without-mods", contributions: []}
+
+    const unavailableRuntime = worldRuntime(store, withoutMods)
+    const unavailable = await unavailableRuntime.requireWorld(modded.id)
+    expect(unavailable.blockRegistry.states.size).toBe(184)
+    let rejectedMissingState = false
+    try: await unavailableRuntime.setBlock(modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
+    catch error: rejectedMissingState = true
+    expect(rejectedMissingState).toBe(true)
+
+    const restoredRuntime = worldRuntime(store, catalogs)
+    const restored = await restoredRuntime.requireWorld(modded.id)
+    expect(restored.blockRegistry.states.size).toBe(184)
+    const change = await restoredRuntime.setBlock(modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
+    expect(change.blockStateRuntimeId).toBe(firstModBlockStateRuntimeId)
 
 test "world runtime exposes deterministic samples and bounded chunk batches":
     const runtime = worldRuntime(memoryWorldStore())

@@ -1,5 +1,5 @@
 import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShapeKind, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockTypeSource} from "../definition/block.vel"
-import {BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateDefinition, BlockStateMapSource} from "../definition/catalog.vel"
+import {BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateAlias, BlockStateDefinition, BlockStateMapSource, BlockStateMapping} from "../definition/catalog.vel"
 import {BuiltinIdentities} from "../definition/identities.vel"
 import {requireUInt32, validateBlockType, validateBuiltinIdentities} from "./block-validation.vel"
 import {canonicalStateKey} from "./state-key.vel"
@@ -85,13 +85,12 @@ export def collectBlockTypes(files: List<BlockSourceFile>) -> List<BlockTypeSour
     for file in files: blocks.extend(file.blocks)
     return blocks
 
-/// 将已解析的身份、人工方块和状态映射编译成运行时目录。
-/// 编译分为四步：验证并展开状态、绑定 runtimeId、生成默认类型快照、验证空气。
-export def compileBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
-    assert manifest.schemaVersion == 3 else "Unsupported block catalog schema version"
-    assert not manifest.catalogVersion.isBlank() else "Block catalog version cannot be blank"
+/// 基础目录和 Mod 目录共享的纯编译核心。调用方负责提供状态映射策略；这里统一
+/// 验证方块、展开有限状态、绑定 runtimeId 并生成默认状态快照。
+def compileCatalogWithStateMap(schemaVersion: number, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+    assert schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert not catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert stateMap.formatVersion == 2 else "Unsupported block state map format version"
-    validateBuiltinIdentities(identities, sourceBlocks)
     // 第一步：验证方块家族并展开全部有限状态，以规范状态键建立原型索引。
     const sourceByKey: Map<string, BlockTypeSource> = Map()
     const prototypeByKey: Map<string, BlockStatePrototype> = Map()
@@ -156,10 +155,51 @@ export def compileBlockCatalog(manifest: BlockCatalogManifest, identities: Built
             interaction: defaultPrototype.interaction,
             behaviors: defaultPrototype.behaviors,
         })
-    // 第四步：空气是所有 Chunk 和注册表的基础哨兵状态，必须固定为不可见的 runtimeId 0。
+    return {schemaVersion, catalogVersion, reservedRuntimeIds: stateMap.reservedRuntimeIds.sorted(), blocks, states}
+
+/// 编译 OpenVoxel 基础目录。基础目录额外拥有命名空间、空掉落表和空气哨兵约束。
+export def compileBuiltinBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+    validateBuiltinIdentities(identities, sourceBlocks)
+    const catalog = compileCatalogWithStateMap(manifest.schemaVersion, manifest.catalogVersion, sourceBlocks, stateMap)
+    // 空气是所有 Chunk 和注册表的基础哨兵状态，必须固定为不可见的 runtimeId 0。
+    const blocks = catalog.blocks
     const air = blocks.find(block => block.key == identities.blocks.air)
     assert air != null and air.defaultStateRuntimeId == 0 else f"Block state runtime id 0 must be the default {identities.blocks.air} state"
     assert air.properties.size == 0 else "Air cannot declare state properties"
     assert air.physics.collision.kind == BlockShapeKind.empty and air.physics.occlusion.kind == BlockShapeKind.empty else "Air cannot collide or occlude"
     assert air.render.model == null and air.light.emission == 0 and air.light.opacity == 0 else "Air cannot render, emit, or block light"
-    return {schemaVersion: manifest.schemaVersion, catalogVersion: manifest.catalogVersion, reservedRuntimeIds: stateMap.reservedRuntimeIds.sorted(), blocks, states}
+    return catalog
+
+/// Mod 编译入口使用与基础目录相同的方块模型和语义校验，但不要求空气或基础身份树。
+/// 这里的 runtimeId 只是目录内部的临时编号；安装到世界时会由 WorldBlockRegistry
+/// 按该世界的持久化快照重新绑定到 Mod 高位区间。
+export def compileModBlockCatalog(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>) -> BlockCatalogSource:
+    assert Text.matches(owner, r"^[a-z][a-z0-9_.-]*$") else "Mod block catalog owner must be a lowercase namespace"
+    assert not catalogVersion.isBlank() else "Mod block catalog version cannot be blank"
+    assert sourceBlocks.size > 0 else "Mod block catalog cannot be empty"
+    const stateKeys: Set<string> = Set()
+    for block in sourceBlocks:
+        assert block.key.startsWith(f"{owner}:") else f"Mod block {block.key} is outside contribution namespace {owner}"
+        for state in enumerateBlockStates(block):
+            assert not (state.stateKey in stateKeys) else f"Duplicate Mod block state {state.stateKey}"
+            stateKeys.add(state.stateKey)
+    const mappings: List<BlockStateMapping> = []
+    let runtimeId = 0
+    for stateKey in stateKeys.values().sorted():
+        mappings.append({runtimeId, stateKey})
+        runtimeId += 1
+    const stateMap: BlockStateMapSource = {
+        formatVersion: 2,
+        nextRuntimeId: runtimeId,
+        reservedRuntimeIds: [],
+        states: mappings,
+    }
+    return compileCatalogWithStateMap(3, catalogVersion, sourceBlocks, stateMap)
+
+/// 直接生成世界注册表可消费的 Mod contribution，避免 Mod 加载器手工拼接目录结构。
+export def compileModBlockCatalogContribution(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateAliases: List<BlockStateAlias> = []) -> BlockCatalogContribution:
+    return {
+        owner,
+        catalog: compileModBlockCatalog(owner, catalogVersion, sourceBlocks),
+        stateAliases,
+    }

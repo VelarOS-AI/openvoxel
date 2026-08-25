@@ -1,5 +1,5 @@
 import {Request, RequestBodyTooLargeError, ServeResponse} from "velar/serve"
-import {InvalidBlockStateRuntimeIdError, ReservedBlockStateRuntimeIdError, UnknownBlockStateRuntimeIdError, UnknownWorldBlockStateRuntimeIdError} from "@openvoxel/domain"
+import {InvalidBlockStateRuntimeIdError, ReservedBlockStateRuntimeIdError, UnknownBlockStateRuntimeIdError, UnknownWorldBlockStateRuntimeIdError} from "@openvoxel/blocks"
 import {WorldAlreadyExistsError, WorldNotFoundError} from "@openvoxel/world-runtime"
 import {failure} from "./responses.vel"
 

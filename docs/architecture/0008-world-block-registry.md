@@ -22,7 +22,7 @@
 - `catalog`：与基础目录使用同一 schema 的编译方块目录。
 - `stateAliases`：状态改名时显式声明的旧键到新键映射。
 
-合成器验证命名空间所有权、目录 schema、规范状态键和重复定义。已有映射优先复用，新状态从 `nextModRuntimeId` 分配。未启用 Mod 的映射仍保留在世界快照并作为 `missingStates` 暴露；重新启用相同状态键时恢复原运行时 ID。显式别名把已有映射移动到新状态键。
+Mod 原始方块先通过 `compileModBlockCatalogContribution` 编译，复用基础目录的有限状态和组件验证；合成器继续验证命名空间所有权、目录 schema、规范状态键和重复定义。已有映射优先复用，新状态从 `nextModRuntimeId` 分配。未启用 Mod 的映射仍保留在世界快照并作为 `missingStates` 暴露；重新启用相同状态键时恢复原运行时 ID。显式别名把已有映射移动到新状态键。
 
 ## 运行时边界
 
@@ -32,6 +32,8 @@
 - 当前激活内容构造的 `BlockRegistry`，用于生成、模拟、渲染描述和新写入校验。
 - `missingStates`，用于向客户端和工具报告缺少实现的世界映射。
 
+载入时还会建立 `WorldBlockRegistryIndex`，分别保存 `runtimeId → stateKey` 与 `stateKey → runtimeId` 的 Map。Chunk 覆盖恢复和方块写入只查询该索引，不在线性扫描持久化列表。`world-runtime` 按世界和当前 Mod 目录 revision 缓存合成结果；目录集合变化时重新合成并把新快照写回 `WorldManifestStore`。
+
 Chunk 调色板存放世界运行时 ID，体素使用 UInt16 局部索引。一个 Chunk 最多容纳 65536 个不同状态，同时整个世界保留 UInt32 身份空间。
 
 ## 存储与协议
@@ -40,4 +42,4 @@ SQLite schema 3 将世界快照保存到 `worlds.block_registry_json`，覆盖�
 
 ## 强制验证
 
-自动测试覆盖基础 ID 区间、Mod 高位分配、加载顺序确定性、缺失状态保留、重新启用恢复、显式别名、未知世界 ID 拒绝和高位 Mod 状态通过 Chunk 调色板往返。
+自动测试覆盖基础 ID 区间、Mod 编译与高位分配、每世界目录选择、加载顺序确定性、缺失状态保留、重新启用恢复、显式别名、快照索引、未知世界 ID 拒绝和高位 Mod 状态通过 Chunk 调色板往返。

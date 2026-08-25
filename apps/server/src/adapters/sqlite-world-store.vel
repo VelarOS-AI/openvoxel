@@ -1,7 +1,8 @@
 import {DatabaseCommand, DatabaseExecutor, DatabaseQuery, all, command, execute, one, query, requireOne, sqlConcat, trustedSql} from "@velarscript-labs/database"
-import {SqlPredicate, deleteCommand, insertCommand, insertStatement, selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlEqual, sqlLeftJoin, sqlNamedField, sqlTable, sqlTupleIn} from "@velarscript-labs/sql"
+import {SqlPredicate, deleteCommand, insertCommand, insertStatement, selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlEqual, sqlLeftJoin, sqlNamedField, sqlSet, sqlTable, sqlTupleIn, updateCommand} from "@velarscript-labs/sql"
 import {SqliteConnection, SqliteJournalMode, SqliteTransaction, openSqlite, sqliteLiteral} from "@velarscript-labs/sqlite"
-import {ChunkPosition, LocalPosition, WorldBlockRegistrySnapshot, WorldManifest, chunkKey, requireBlockStateRuntimeId, validateWorldManifest} from "@openvoxel/domain"
+import {WorldBlockRegistrySnapshot, requireBlockStateRuntimeId} from "@openvoxel/blocks"
+import {ChunkPosition, LocalPosition, WorldManifest, chunkKey, validateWorldManifest} from "@openvoxel/domain"
 import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "@openvoxel/world-runtime"
 
 type WorldRow:
@@ -73,6 +74,15 @@ def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
         where = sqlColumnEqual("id", worldId),
         limit = 1,
         maximumRows = 1,
+    )
+
+def updateWorldBlockRegistryOperation(worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot) -> DatabaseCommand:
+    return updateCommand(
+        worldsTable,
+        [sqlSet("block_registry_json", Json.stableStringify(blockRegistry))],
+        sqlColumnEqual("id", worldId),
+        minimumAffected = 1,
+        maximumAffected = 1,
     )
 
 def chunkPredicate(worldId: string, chunk: ChunkPosition) -> SqlPredicate:
@@ -200,6 +210,9 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
         const blockRegistry = WorldBlockRegistrySnapshot.parse(Json.parse(row.blockRegistryJson))
         return validateWorldManifest(WorldManifest.from(row, {blockRegistry}))
 
+    async def updateBlockRegistry(worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot):
+        await execute(databaseExecutor, updateWorldBlockRegistryOperation(worldId, blockRegistry))
+
     async def findChunks(worldId: string, positions: List<ChunkPosition>) -> List<ChunkDelta>:
         if positions.size == 0: return []
 
@@ -292,7 +305,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
     async def close(): await database.close()
 
     return {
-        manifests: {save: saveManifest, find: findManifest},
+        manifests: {save: saveManifest, find: findManifest, updateBlockRegistry},
         deltas: {findChunks, commitBlock},
         close,
     }

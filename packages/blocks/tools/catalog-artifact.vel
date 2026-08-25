@@ -3,7 +3,8 @@ import {sha256Text} from "velar/hash"
 import {BlockSourceFile, BlockTypeSource} from "../src/definition/block.vel"
 import {BlockCatalogArtifact, BlockCatalogManifest, BlockStateMapSource, BlockStateMapping} from "../src/definition/catalog.vel"
 import {BuiltinIdentities, BuiltinIdentityDocument} from "../src/definition/identities.vel"
-import {collectBlockTypes, compileBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"
+import {collectBlockTypes, compileBuiltinBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"
+import {packBlockCatalog} from "../src/compiler/catalog-packing.vel"
 import {IdentityResolution, IdentityLeafIndex, collectIdentityLeafPaths, resolveIdentityReferences} from "./identity-resolution.vel"
 
 type StateIdMapping:
@@ -46,22 +47,23 @@ export def generateCatalogArtifacts(manifestText: string, identitiesText: string
     const manifestSource = BlockCatalogManifest.parse(parseYaml(manifestText))
     const identityDocument = BuiltinIdentityDocument.parse(parseYaml(identitiesText))
     assert identityDocument.formatVersion == 2 else "Unsupported built-in identity format version"
-    const identities = identityDocument.identities
+    const identityTree = identityDocument.identities
+    const identities = BuiltinIdentities.parse(identityTree)
 
     // 这两个身份由运行时代码直接使用，不会出现在方块 YAML 的引用遍历中，
     // 因此在这里显式登记。其余身份必须从配置中的打点路径被实际读取。
     const usedIdentityPaths: Set<string> = Set(["generators.survival", "namespaces.base"])
-    const manifestResolution = IdentityResolution.parse(resolveIdentityReferences({catalogVersion: manifestSource.catalogVersion}, identities))
+    const manifestResolution = IdentityResolution.parse(resolveIdentityReferences({catalogVersion: manifestSource.catalogVersion}, identityTree))
     for path in manifestResolution.usedPaths: usedIdentityPaths.add(path)
     const resolvedCatalogVersion = ResolvedCatalogVersion.parse(manifestResolution.value)
     const manifest = BlockCatalogManifest.from(manifestSource, {catalogVersion: resolvedCatalogVersion.catalogVersion})
     assert manifest.sources.size == sourceTexts.size else "Block catalog source count does not match its manifest"
     const sourceFiles: List<BlockSourceFile> = []
     for sourceText in sourceTexts:
-        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identities))
+        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
         for path in resolution.usedPaths: usedIdentityPaths.add(path)
         sourceFiles.append(BlockSourceFile.parse(resolution.value))
-    const leafIndex = IdentityLeafIndex.parse(collectIdentityLeafPaths(identities))
+    const leafIndex = IdentityLeafIndex.parse(collectIdentityLeafPaths(identityTree))
 
     // 声明数量相等仍不足以证明集合相同，所以先做快速数量检查，再逐项确认。
     // 这能及时发现 identities.yml 中写了却没有任何定义使用的陈旧身份。
@@ -70,19 +72,20 @@ export def generateCatalogArtifacts(manifestText: string, identitiesText: string
         assert path in usedIdentityPaths else f"Built-in identity path {path} is not referenced"
     const blocks = collectBlockTypes(sourceFiles)
     const stateMap = createStateMap(blocks, identities)
-    const catalog = compileBlockCatalog(manifest, identities, blocks, stateMap)
+    const catalog = compileBuiltinBlockCatalog(manifest, identities, blocks, stateMap)
+    const packedCatalog = packBlockCatalog(catalog)
 
     // 哈希只基于稳定序列化后的运行时事实，不包含源文件路径或 YAML 排版。
     // contentHash 识别完整目录，stateMapHash 单独识别 runtimeId 到状态的映射。
-    const contentHash = sha256Text(Json.stableStringify({identities, catalog}))
+    const contentHash = sha256Text(Json.stableStringify({identities: identityTree, catalog}))
     const stateMappings: List<StateIdMapping> = catalog.states.map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
     const stateMapHash = sha256Text(Json.stableStringify(stateMappings.sorted(by=mapping => mapping.runtimeId)))
     const artifact: BlockCatalogArtifact = {
-        artifactVersion: 4,
+        artifactVersion: 5,
         contentHash,
         stateMapHash,
-        identities,
-        catalog,
+        identities: identityTree,
+        catalog: packedCatalog,
     }
     return {
         catalogText: f"{Json.stableStringify(artifact, 2)}\n",

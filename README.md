@@ -36,7 +36,7 @@ curl -X POST http://127.0.0.1:3000/api/generation/sample \
   -d '{"worldId":"lesson-one","position":{"x":0,"z":0}}'
 ```
 
-WebSocket 地址是 `ws://127.0.0.1:3000/api/events`，命令和事件都使用 MessagePack。完整契约见 [协议 v2](docs/protocol-v2.md)。
+WebSocket 地址是 `ws://127.0.0.1:3000/api/events`，命令和事件都使用 MessagePack。完整契约见 [协议 v3](docs/protocol-v3.md)。
 
 ## 架构
 

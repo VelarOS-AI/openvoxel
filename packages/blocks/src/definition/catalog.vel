@@ -1,5 +1,4 @@
 import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockRender, BlockStateProperty} from "./block.vel"
-import {BuiltinIdentities} from "./identities.vel"
 
 /// data/catalog.yml 的强类型结构，只描述人工源如何组织。
 /// catalogVersion 本身也是 identities 中的直接路径，生成时解析为稳定版本身份。
@@ -71,6 +70,33 @@ export type BlockCatalogSource:
     blocks: List<BlockDefinition>
     states: List<BlockStateDefinition>
 
+/// 多个状态共享的一组最终组件。生成产物把重复组件只保存一次，运行时再恢复为
+/// BlockStateDefinition 的完整快照；profileId 只属于目录传输格式，不进入状态身份。
+export type BlockComponentProfile:
+    profileId: number
+    physics: BlockPhysics
+    light: BlockLight
+    render: BlockRender
+    interaction: BlockInteraction
+    behaviors: List<BlockBehavior>
+
+/// 压缩状态只保留身份、属性和组件档案引用。
+export type PackedBlockStateDefinition:
+    runtimeId: number
+    stateKey: string
+    blockKey: string
+    properties: List<BlockStateProperty>
+    componentProfileId: number
+
+/// generated JSON 与网络目录共同使用的紧凑格式。
+export type PackedBlockCatalogSource:
+    schemaVersion: number
+    catalogVersion: string
+    reservedRuntimeIds: List<number>
+    blocks: List<BlockDefinition>
+    componentProfiles: List<BlockComponentProfile>
+    states: List<PackedBlockStateDefinition>
+
 /// generated/block-catalog.json 的顶层结构。
 /// 唯一 JSON 产物同时携带身份树、编译目录和确定性哈希。
 export type BlockCatalogArtifact:
@@ -80,10 +106,10 @@ export type BlockCatalogArtifact:
     contentHash: string
     /// 只覆盖 runtimeId 与 stateKey 的映射；用于判断世界状态编号是否一致。
     stateMapHash: string
-    /// 与 identities.yml 同结构的运行时身份树。
-    identities: BuiltinIdentities
-    /// 已完成状态展开和语义验证的目录。
-    catalog: BlockCatalogSource
+    /// identities.yml 的完整开放树；运行时从中解析直接点访问的强类型核心视图。
+    identities: Record<unknown>
+    /// 已完成状态展开和语义验证、并对重复组件做过归并的紧凑目录。
+    catalog: PackedBlockCatalogSource
 
 /// 状态改名的显式声明。世界注册表会把 from 的既有 runtimeId 移动到 to。
 export type BlockStateAlias:

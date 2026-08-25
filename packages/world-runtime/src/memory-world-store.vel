@@ -1,3 +1,4 @@
+import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/domain"
 import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "./contracts.vel"
 
@@ -13,6 +14,11 @@ export def memoryWorldStore() -> WorldStore:
     async def saveManifest(manifest: WorldManifest): worlds.set(manifest.id, manifest)
 
     async def findManifest(worldId: string) -> WorldManifest?: return worlds.get(worldId)
+
+    async def updateBlockRegistry(worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot):
+        const manifest = worlds.get(worldId)
+        assert manifest != null else f"World '{worldId}' was not found while updating its block registry"
+        worlds.set(worldId, WorldManifest.from(manifest, {blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry)}))
 
     async def findChunks(worldId: string, positions: List<ChunkPosition>) -> List<ChunkDelta>:
         const found: List<ChunkDelta> = []
@@ -46,7 +52,7 @@ export def memoryWorldStore() -> WorldStore:
     async def close(): pass
 
     return {
-        manifests: {save: saveManifest, find: findManifest},
+        manifests: {save: saveManifest, find: findManifest, updateBlockRegistry},
         deltas: {findChunks, commitBlock},
         close,
     }

@@ -19,9 +19,9 @@ OpenVoxel 采用内容、体素、模拟、网格和渲染边界分离的方块�
 
 ## 人工源与生成链
 
-`data/identities.yml` 集中定义运行时代码需要引用的方块、标签、资源和生成器身份。`data/catalog.yml` 声明 schema、目录版本和有序源文件；`data/blocks/` 按 terrain、fluids、minerals 和 vegetation 分组。方块中的 `blocks.water`、`tags.fluid`、`models.block.fluid` 等引用就是 `identities` 树中的实际位置，生成器只按这些路径逐层取值。合并结果通过同一套 runtime type 与语义校验，任一路径不存在或任一身份项无人引用都会中止生成。
+`data/identities.yml` 集中定义运行时代码需要引用的方块、标签、资源和生成器身份。`data/catalog.yml` 声明 schema、目录版本和有序源文件；`data/blocks/` 按 terrain、fluids、minerals 和 vegetation 分组。方块中的 `blocks.water`、`tags.fluid`、`models.block.fluid` 等引用就是 `identities` 树中的实际位置，生成器只按这些路径逐层取值。完整身份树作为开放数据保留；只被 YAML 引用的新路径自动进入产物，VelarScript 直接点访问的核心路径再经过强类型投影。合并结果通过同一套 runtime type 与语义校验，任一路径不存在或任一身份项无人引用都会中止生成。
 
-`npm run generate` 只读取 `data/`，并将身份、完整类型、状态、组件和确定性的基础 `{runtimeId,stateKey}` 映射写入唯一的 `generated/block-catalog.json`。
+`npm run generate` 只读取 `data/`，并将身份、完整类型、状态、组件和确定性的基础 `{runtimeId,stateKey}` 映射写入唯一的 `generated/block-catalog.json`。生成产物把相同的物理、光照、渲染、交互和行为组合归并为 `componentProfiles`；状态只保存 `componentProfileId`，运行时装配时再恢复完整不可变快照。
 
 生成结果不回写人工源。空气固定为 0，其余基础状态按规范状态键排序分配。`stateMapHash` 覆盖基础映射；`contentHash` 覆盖完整编译目录。
 
@@ -59,8 +59,12 @@ OpenVoxel 采用内容、体素、模拟、网格和渲染边界分离的方块�
 - 缺少内容的已有映射保留为 `missingStates`。
 - 状态改名通过显式 `stateAliases` 移动映射。
 
+`compileModBlockCatalogContribution` 是 Mod 方块进入世界注册表的标准编译入口。它复用基础目录的有限状态展开和语义校验，但只要求 Mod 自己的命名空间，不要求空气或基础身份树；临时 ID 会在安装到具体世界时重新绑定。
+
+`world-runtime` 通过 `WorldBlockCatalogProvider` 为每个世界选择当前启用的 contribution 集合。世界打开时以持久化快照为数字身份权威重新合成活动注册表，并按 provider revision 缓存；新分配或别名移动后的快照通过 `WorldManifestStore.updateBlockRegistry` 写回存储。
+
 Chunk 的 `palette` 保存 UInt32 世界运行时 ID，4096 个 `indices` 使用 UInt16 局部索引。生成、网格和状态模拟通过注册表解释调色板项。
 
 ## 强制验证
 
-构建拒绝非法命名空间 key、重复类型/状态/标签/行为、非法默认状态、属性笛卡尔积过大、非法 UInt32、无效形状、越界光照、非法资源引用、缺少流体属性、重叠状态变体和错误空气定义。测试覆盖生成确定性、核心语义标签、状态转换、Mod 分配、缺失内容恢复、别名和 Chunk 调色板。
+构建拒绝非法命名空间 key、重复类型/状态/标签/行为、非法默认状态、属性笛卡尔积过大、非法 UInt32、无效形状、越界光照、非法资源引用、缺少流体属性、重叠状态变体和错误空气定义。测试覆盖生成确定性、组件档案归并、核心语义标签、状态转换、Mod 编译与分配、每世界目录选择、缺失内容恢复、别名和 Chunk 调色板。

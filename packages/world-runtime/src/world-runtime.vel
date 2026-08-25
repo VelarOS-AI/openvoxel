@@ -1,4 +1,4 @@
-import {WorldBlockRegistry, baseWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
+import {BlockCatalogContribution, WorldBlockRegistry, WorldBlockRegistrySnapshot, baseBlockCatalogSource, baseWorldBlockRegistrySnapshot, blockCatalogHash, createWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
 import {BlockPosition, Chunk, ChunkPosition, Coordinate2, CreateWorld, LocalPosition, TerrainSample, WorldGenerator, WorldManifest, chunkBlock, chunkKey, createWorldManifest, locateBlock, maximumChunkBatchSize, setChunkBlock, worldGenerator} from "@openvoxel/domain"
 import {ChunkDelta, WorldStore} from "./contracts.vel"
 
@@ -17,6 +17,23 @@ export type BlockChange:
     blockStateRuntimeId: number
     revision: number
 
+/// 一个目录集合描述某个世界当前启用的全部 Mod 方块内容。
+/// revision 必须在任一 contribution 内容或顺序无关集合发生变化时更新，运行时用它
+/// 失效该世界的注册表缓存。provider 接收世界清单，因此不同世界可以启用不同 Mod。
+export type WorldBlockCatalogSet:
+    revision: string
+    contributions: readonly List<readonly BlockCatalogContribution>
+
+export type WorldBlockCatalogProvider = (manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet
+
+type ActiveWorld:
+    manifest: WorldManifest
+    blocks: WorldBlockRegistry
+
+type CachedWorldBlocks:
+    revision: string
+    blocks: WorldBlockRegistry
+
 export type WorldRuntime:
     createWorld: (command: CreateWorld) -> Promise<WorldManifest>
     findWorld: (worldId: string) -> Promise<WorldManifest?>
@@ -27,8 +44,21 @@ export type WorldRuntime:
     setBlock: (worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> Promise<BlockChange>
     close: () -> Promise<null>
 
-export def worldRuntime(store: WorldStore, activeBlocks: readonly WorldBlockRegistry = baseWorldBlockRegistry) -> WorldRuntime:
+/// 基础运行时没有 Mod；目录哈希就是它的缓存版本。
+def baseBlockCatalogs(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
+    return {revision: blockCatalogHash, contributions: []}
+
+/// 固定目录集合适合服务器启动时已经确定 Mod 列表的场景。
+export def fixedWorldBlockCatalogProvider(revision: string, contributions: readonly List<readonly BlockCatalogContribution>) -> WorldBlockCatalogProvider:
+    assert not revision.isBlank() else "World block catalog revision cannot be blank"
+
+    def provide(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet: return {revision, contributions}
+
+    return provide
+
+export def worldRuntime(store: WorldStore, blockCatalogs: WorldBlockCatalogProvider = baseBlockCatalogs) -> WorldRuntime:
     const generators: Map<string, WorldGenerator> = Map()
+    const blockRegistries: Map<string, CachedWorldBlocks> = Map()
 
     def generatorFor(manifest: WorldManifest) -> WorldGenerator:
         const existing = generators.get(manifest.id)
@@ -37,31 +67,68 @@ export def worldRuntime(store: WorldStore, activeBlocks: readonly WorldBlockRegi
         generators.set(manifest.id, generator)
         return generator
 
+    def requireCatalogSet(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
+        const catalogs = blockCatalogs(manifest)
+        assert not catalogs.revision.isBlank() else f"World {manifest.id} block catalog revision cannot be blank"
+        return catalogs
+
+    def snapshotsEqual(left: readonly WorldBlockRegistrySnapshot, right: readonly WorldBlockRegistrySnapshot) -> bool:
+        return Json.stableStringify(left) == Json.stableStringify(right)
+
+    /// 载入世界时以持久化快照为数字身份权威，并把当前目录集合投影成活动注册表。
+    /// 同一世界和 revision 只构建一次；Mod 集合改变后 revision 会触发重新合成。
+    async def activateWorld(manifest: WorldManifest) -> ActiveWorld:
+        const catalogs = requireCatalogSet(manifest)
+        const cached = blockRegistries.get(manifest.id)
+        if cached != null and cached.revision == catalogs.revision: return {manifest, blocks: cached.blocks}
+
+        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, catalogs.contributions, manifest.blockRegistry)
+        let activeManifest = manifest
+        if not snapshotsEqual(manifest.blockRegistry, blocks.snapshot):
+            await store.manifests.updateBlockRegistry(manifest.id, blocks.snapshot)
+            activeManifest = WorldManifest.from(manifest, {blockRegistry: WorldBlockRegistrySnapshot.parse(blocks.snapshot)})
+        blockRegistries.set(manifest.id, {revision: catalogs.revision, blocks})
+        return {manifest: activeManifest, blocks}
+
     async def createWorld(command: CreateWorld) -> WorldManifest:
-        const manifest = createWorldManifest(command, activeBlocks.snapshot)
-        const existing = await store.manifests.find(manifest.id)
-        if existing != null: throw WorldAlreadyExistsError(manifest.id)
+        const initial = createWorldManifest(command, baseWorldBlockRegistrySnapshot)
+        const existing = await store.manifests.find(initial.id)
+        if existing != null: throw WorldAlreadyExistsError(initial.id)
+        const catalogs = requireCatalogSet(initial)
+        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, catalogs.contributions, initial.blockRegistry)
+        const manifest = createWorldManifest(command, blocks.snapshot)
         await store.manifests.save(manifest)
+        blockRegistries.set(manifest.id, {revision: catalogs.revision, blocks})
         return manifest
 
-    async def findWorld(worldId: string) -> WorldManifest?: return await store.manifests.find(worldId)
+    async def findActiveWorld(worldId: string) -> ActiveWorld?:
+        const manifest = await store.manifests.find(worldId)
+        if manifest == null: return null
+        return await activateWorld(manifest)
 
-    async def requireWorld(worldId: string) -> WorldManifest:
-        const manifest = await findWorld(worldId)
-        if manifest == null: throw WorldNotFoundError(worldId)
-        return manifest
+    async def findWorld(worldId: string) -> WorldManifest?:
+        const active = await findActiveWorld(worldId)
+        return active?.manifest
 
-    def applyDelta(manifest: WorldManifest, chunk: Chunk, delta: ChunkDelta):
+    async def requireActiveWorld(worldId: string) -> ActiveWorld:
+        const active = await findActiveWorld(worldId)
+        if active == null: throw WorldNotFoundError(worldId)
+        return active
+
+    async def requireWorld(worldId: string) -> WorldManifest: return (await requireActiveWorld(worldId)).manifest
+
+    def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: ChunkDelta):
         assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
         for entry in delta.overrides:
-            requireWorldBlockStateRuntimeId(manifest.blockRegistry, entry.blockStateRuntimeId)
+            requireWorldBlockStateRuntimeId(blocks.index, entry.blockStateRuntimeId)
             setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
         chunk.revision = delta.revision
 
     async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
         assert positions.size > 0 else "A chunk batch cannot be empty"
         assert positions.size <= maximumChunkBatchSize else f"A chunk batch cannot contain more than {maximumChunkBatchSize} positions"
-        const manifest = await requireWorld(worldId)
+        const active = await requireActiveWorld(worldId)
+        const manifest = active.manifest
         const generator = generatorFor(manifest)
         const stored = await store.deltas.findChunks(worldId, positions)
         const deltas: Map<string, ChunkDelta> = Map()
@@ -70,7 +137,7 @@ export def worldRuntime(store: WorldStore, activeBlocks: readonly WorldBlockRegi
         for position in positions:
             const chunk = generator.generate(position)
             const delta = deltas.get(chunkKey(position))
-            if delta != null: applyDelta(manifest, chunk, delta)
+            if delta != null: applyDelta(active.blocks, chunk, delta)
             output.append(chunk)
         return output
 
@@ -79,13 +146,14 @@ export def worldRuntime(store: WorldStore, activeBlocks: readonly WorldBlockRegi
         return found[0]
 
     async def terrainSample(worldId: string, position: Coordinate2) -> TerrainSample:
-        const manifest = await requireWorld(worldId)
-        return generatorFor(manifest).sample(position)
+        const active = await requireActiveWorld(worldId)
+        return generatorFor(active.manifest).sample(position)
 
     async def setBlock(worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> BlockChange:
-        activeBlocks.registry.requireStateByRuntimeId(blockStateRuntimeId)
-        const manifest = await requireWorld(worldId)
-        requireWorldBlockStateRuntimeId(manifest.blockRegistry, blockStateRuntimeId)
+        const active = await requireActiveWorld(worldId)
+        active.blocks.registry.requireStateByRuntimeId(blockStateRuntimeId)
+        requireWorldBlockStateRuntimeId(active.blocks.index, blockStateRuntimeId)
+        const manifest = active.manifest
         const located = locateBlock(position, manifest.chunkEdge)
         const generated = generatorFor(manifest).generate(located.chunk)
         const baseBlockStateRuntimeId = chunkBlock(generated, located.local)

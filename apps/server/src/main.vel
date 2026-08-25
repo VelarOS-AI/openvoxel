@@ -1,9 +1,9 @@
 import {get} from "velar/env"
 import {WebSocketServer} from "velar/websocket"
+import {blockCatalogHash, blockCatalogVersion, blockStateMapHash} from "@openvoxel/blocks"
 import {appName, startOpenVoxelServer} from "./app.vel"
 import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
 import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
-import {blockCatalogHash, blockCatalogVersion, blockStateMapHash} from "@openvoxel/domain"
 import {worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelApplication} from "./application.vel"
 

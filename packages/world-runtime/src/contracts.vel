@@ -1,3 +1,4 @@
+import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/domain"
 
 export type BlockOverride:
@@ -17,6 +18,8 @@ export type BlockOverrideCommit:
 export type WorldManifestStore:
     save: (manifest: WorldManifest) -> Promise<null>
     find: (worldId: string) -> Promise<WorldManifest?>
+    /// Mod 集合变化后只替换这个世界的注册表快照；世界身份和生成参数保持不变。
+    updateBlockRegistry: (worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot) -> Promise<null>
 
 export type WorldDeltaStore:
     findChunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<ChunkDelta>>

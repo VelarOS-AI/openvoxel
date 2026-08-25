@@ -1,7 +1,9 @@
-/// 内建身份类型与 data/identities.yml 保持同一棵树结构。
+/// BuiltinIdentities 是 VelarScript 业务代码直接点访问的强类型核心视图。
 /// 例如方块 YAML 中的 models.block.fluid 会逐层读取 identities.models.block.fluid，
 /// 运行时代码也使用 builtinIdentities.models.block.fluid 访问同一位置。
-/// 这些类型固定“有哪些位置”，真正的 openvoxel:* 身份值只由 identities.yml 提供。
+/// 完整身份树以 Record<unknown> 原样进入生成产物，因此只被 YAML 数据引用的新身份
+/// 不需要修改这里；只有新增 VelarScript 直接访问路径时才扩充这份核心类型契约。
+/// 真正的 openvoxel:* 身份值始终只由 identities.yml 提供。
 
 /// 所有基础方块家族的稳定身份，例如 blocks.water 和 blocks.stone。
 export type BuiltinBlockKeys:
@@ -283,4 +285,5 @@ export type BuiltinIdentities:
 /// identities.yml 顶层文档保留独立格式版本，便于生成器先验证结构再读取身份树。
 export type BuiltinIdentityDocument:
     formatVersion: number
-    identities: BuiltinIdentities
+    /// 保留 identities.yml 的完整开放树；强类型核心视图在使用边界另行解析。
+    identities: Record<unknown>

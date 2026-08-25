@@ -2,7 +2,8 @@ import {exists, removeFile} from "velar/fs"
 import {sqlConcat, trustedSql, trustedSqlTemplate} from "@velarscript-labs/database"
 import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {expect} from "velar/test"
-import {builtinIdentities, chunkBlock, defaultBlockStateRuntimeId} from "@openvoxel/domain"
+import {WorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {chunkBlock} from "@openvoxel/domain"
 import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
 
@@ -177,15 +178,25 @@ test "SQLite adapter persists the complete world block registry":
     const databasePath = "openvoxel-world-registry-test.sqlite"
     await removeDatabase(databasePath)
     try:
-        const first = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
-        try: await first.createWorld({id: "registry", name: "Registry", seed: "openvoxel"})
+        const firstStore = await sqliteWorldStore(testDatabase(databasePath))
+        const first = worldRuntime(firstStore)
+        try:
+            const created = await first.createWorld({id: "registry", name: "Registry", seed: "openvoxel"})
+            const states = created.blockRegistry.states.copy()
+            states.append({runtimeId: firstModBlockStateRuntimeId, stateKey: "farming:missing_crop"})
+            const updated = WorldBlockRegistrySnapshot.from(created.blockRegistry, {
+                nextModRuntimeId: firstModBlockStateRuntimeId + 1,
+                states,
+            })
+            await firstStore.manifests.updateBlockRegistry(created.id, updated)
         finally: await first.close()
 
         const reopened = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
         try:
             const manifest = await reopened.requireWorld("registry")
-            expect(manifest.blockRegistry.states.size).toBe(183)
+            expect(manifest.blockRegistry.states.size).toBe(184)
             expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
+            expect(manifest.blockRegistry.states[183]).toEqual({runtimeId: firstModBlockStateRuntimeId, stateKey: "farming:missing_crop"})
         finally: await reopened.close()
         expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion)
     finally: await removeDatabase(databasePath)

@@ -18,6 +18,7 @@
     "build": "velar build"
   },
   "dependencies": {
+    "@openvoxel/blocks": "0.1.0",
     "@openvoxel/domain": "0.1.0",
     "@openvoxel/protocol": "0.1.0",
     "@openvoxel/world-runtime": "0.1.0",

@@ -26,6 +26,7 @@
     "build": "velar build"
   },
   "dependencies": {
+    "@openvoxel/blocks": "0.1.0",
     "@openvoxel/domain": "0.1.0"
   }
 }

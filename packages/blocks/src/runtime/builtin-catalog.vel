@@ -1,5 +1,7 @@
 import {BlockBehaviorKind, BlockPropertyValue, BlockStateProperty} from "../definition/block.vel"
-import {BlockCatalogArtifact, BlockDefinition, BlockStateDefinition} from "../definition/catalog.vel"
+import {unpackBlockCatalog} from "../compiler/catalog-packing.vel"
+import {BlockCatalogArtifact, BlockDefinition, BlockStateDefinition, PackedBlockCatalogSource} from "../definition/catalog.vel"
+import {BuiltinIdentities} from "../definition/identities.vel"
 import {createWorldBlockRegistry} from "./world-block-registry.vel"
 import json blockCatalogData from "@openvoxel/blocks/block-catalog-data"
 
@@ -9,13 +11,16 @@ import json blockCatalogData from "@openvoxel/blocks/block-catalog-data"
 
 /// JSON 资源先按产物契约解析，后续模块只接触已经验证的强类型数据。
 const artifact = BlockCatalogArtifact.parse(blockCatalogData)
-assert artifact.artifactVersion == 4 else "Unsupported generated block catalog artifact version"
-const catalogSource = artifact.catalog
+assert artifact.artifactVersion == 5 else "Unsupported generated block catalog artifact version"
+const packedCatalogSource = artifact.catalog
+const catalogSource = unpackBlockCatalog(packedCatalogSource)
 
 /// 与 identities.yml 同结构的身份树，业务代码通过它引用方块、标签和资源。
-export const builtinIdentities = artifact.identities
+export const builtinIdentities = BuiltinIdentities.parse(artifact.identities)
 /// 生成器输出的基础目录原始数据，创建世界注册表或返回网络目录时使用。
 export const baseBlockCatalogSource = catalogSource
+/// 网络和工具可直接复用生成产物中的紧凑目录，不必再次执行组件归并。
+export const basePackedBlockCatalogSource = packedCatalogSource
 /// 只包含基础内容的世界注册表结果。
 export const baseWorldBlockRegistry = createWorldBlockRegistry(catalogSource)
 /// 高频查询使用的基础 BlockRegistry 索引。
@@ -32,6 +37,9 @@ export def blockCatalog() -> readonly List<readonly BlockDefinition>: return blo
 
 /// 返回全部具体状态定义；每项都已经应用 variant 并绑定 runtimeId。
 export def blockStateCatalog() -> readonly List<readonly BlockStateDefinition>: return blockRegistry.states()
+
+/// 返回按组件档案去重后的目录，适合网络传输和客户端缓存。
+export def packedBlockCatalog() -> readonly PackedBlockCatalogSource: return basePackedBlockCatalogSource
 
 /// 根据方块 key 取得默认状态 ID，例如放置一个未指定属性的石头。
 export def defaultBlockStateRuntimeId(key: string) -> number: return blockRegistry.defaultStateRuntimeIdForKey(key)

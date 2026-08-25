@@ -11,6 +11,18 @@ export const firstModBlockStateRuntimeId = 0x1000000
 export class UnknownWorldBlockStateRuntimeIdError extends Error:
     constructor(const runtimeId: number): super(f"World block registry does not contain runtime id {runtimeId}")
 
+/// 世界快照索引把持久化 List 编译为两个常数时间查询入口。
+/// 快照仍然是唯一持久化事实，索引只在载入世界时建立一次，不进入 JSON 或数据库。
+export type WorldBlockRegistryIndex:
+    /// 索引对应的已验证快照。
+    snapshot: readonly WorldBlockRegistrySnapshot
+    /// UInt32 世界状态 ID 到规范状态键。
+    stateKeyForRuntimeId: (runtimeId: number) -> string
+    /// 规范状态键到 UInt32 世界状态 ID。
+    runtimeIdForStateKey: (stateKey: string) -> number
+    /// 只验证一个 ID 是否存在，避免调用方为了校验而取得未使用的字符串。
+    requireRuntimeId: (runtimeId: number) -> null
+
 /// 世界注册表的三个结果：当前可查询内容、需要持久化的完整快照，以及缺失内容。
 /// missingStates 保留当前缺失 Mod 的历史映射，重装对应 Mod 后可恢复原 ID。
 export type WorldBlockRegistry:
@@ -18,6 +30,8 @@ export type WorldBlockRegistry:
     registry: BlockRegistry
     /// 包含活动与缺失映射的完整持久化快照。
     snapshot: readonly WorldBlockRegistrySnapshot
+    /// 当前世界完整映射的常数时间索引，包含缺失 Mod 状态。
+    index: WorldBlockRegistryIndex
     /// 快照中仍有 ID、但当前目录中没有定义的状态。
     missingStates: readonly List<readonly WorldBlockStateMapping>
 
@@ -46,21 +60,40 @@ export def validateWorldBlockRegistrySnapshot(snapshot: readonly WorldBlockRegis
     assert air != null else "World block registry requires runtime id 0"
     return snapshot
 
-/// 在持久化快照中执行 runtimeId → stateKey 查询，缺失 Mod 状态也可以被找到。
-export def worldBlockStateKey(snapshot: readonly WorldBlockRegistrySnapshot, runtimeId: number) -> string:
-    requireBlockStateRuntimeId(runtimeId)
-    const mapping = snapshot.states.find(entry => entry.runtimeId == runtimeId)
-    if mapping == null: throw UnknownWorldBlockStateRuntimeIdError(runtimeId)
-    return mapping.stateKey
+/// 从持久化快照建立不可变查询表。所有唯一性和 UInt32 检查集中发生在这里，
+/// Chunk 恢复、方块写入和协议查询随后都复用同一组 Map，不再逐次扫描 states。
+export def createWorldBlockRegistryIndex(snapshot: readonly WorldBlockRegistrySnapshot) -> WorldBlockRegistryIndex:
+    const checked = WorldBlockRegistrySnapshot.parse(validateWorldBlockRegistrySnapshot(snapshot))
+    const stateKeyByRuntimeId: Map<number, string> = Map()
+    const runtimeIdByStateKey: Map<string, number> = Map()
+    for mapping in checked.states:
+        stateKeyByRuntimeId.set(mapping.runtimeId, mapping.stateKey)
+        runtimeIdByStateKey.set(mapping.stateKey, mapping.runtimeId)
 
-/// 在持久化快照中执行 stateKey → runtimeId 查询。
-export def worldBlockStateRuntimeId(snapshot: readonly WorldBlockRegistrySnapshot, stateKey: string) -> number:
-    const mapping = snapshot.states.find(entry => entry.stateKey == stateKey)
-    assert mapping != null else f"World block registry does not contain state {stateKey}"
-    return mapping.runtimeId
+    def stateKeyForRuntimeId(runtimeId: number) -> string:
+        requireBlockStateRuntimeId(runtimeId)
+        const stateKey = stateKeyByRuntimeId.get(runtimeId)
+        if stateKey == null: throw UnknownWorldBlockStateRuntimeIdError(runtimeId)
+        return stateKey
 
-export def requireWorldBlockStateRuntimeId(snapshot: readonly WorldBlockRegistrySnapshot, runtimeId: number):
-    worldBlockStateKey(snapshot, runtimeId)
+    def runtimeIdForStateKey(stateKey: string) -> number:
+        const runtimeId = runtimeIdByStateKey.get(stateKey)
+        assert runtimeId != null else f"World block registry does not contain state {stateKey}"
+        return runtimeId
+
+    def requireRuntimeId(runtimeId: number): stateKeyForRuntimeId(runtimeId)
+
+    return {snapshot: checked, stateKeyForRuntimeId, runtimeIdForStateKey, requireRuntimeId}
+
+/// 缺失 Mod 状态也保留在索引中，因此仍然可以解释其历史 runtimeId。
+export def worldBlockStateKey(index: readonly WorldBlockRegistryIndex, runtimeId: number) -> string:
+    return index.stateKeyForRuntimeId(runtimeId)
+
+export def worldBlockStateRuntimeId(index: readonly WorldBlockRegistryIndex, stateKey: string) -> number:
+    return index.runtimeIdForStateKey(stateKey)
+
+export def requireWorldBlockStateRuntimeId(index: readonly WorldBlockRegistryIndex, runtimeId: number):
+    index.requireRuntimeId(runtimeId)
 
 /// 把基础或 Mod 目录合并到活动内容索引，并验证 Mod 不能越过自己的命名空间。
 def registerCatalogContent(
@@ -154,7 +187,13 @@ export def createWorldBlockRegistry(
         mappedRuntimeIds.add(mapping.runtimeId)
         mappedStateKeys.add(mapping.stateKey)
 
-    // 第四步：基础状态 ID 是全局固定的，世界快照必须与基础目录完全一致。
+    // 第四步：低位区间只属于基础目录；世界快照不能把缺失 Mod 或任意状态塞进该区间。
+    for mapping in mappings:
+        if mapping.runtimeId >= firstModBlockStateRuntimeId: continue
+        const base = baseCatalog.states.find(state => state.runtimeId == mapping.runtimeId)
+        assert base != null and base.stateKey == mapping.stateKey else f"World block state {mapping.stateKey} cannot own built-in runtime id {mapping.runtimeId}"
+
+    // 基础状态 ID 是全局固定的，世界快照必须与基础目录完全一致。
     for state in baseCatalog.states:
         const existing = mappings.find(mapping => mapping.stateKey == state.stateKey)
         if existing == null:
@@ -208,7 +247,7 @@ export def createWorldBlockRegistry(
         nextModRuntimeId,
         states: mappings.sorted(by=mapping => mapping.runtimeId),
     }
-    validateWorldBlockRegistrySnapshot(snapshot)
+    const index = createWorldBlockRegistryIndex(snapshot)
     const source: BlockCatalogSource = {
         schemaVersion: baseCatalog.schemaVersion,
         catalogVersion: baseCatalog.catalogVersion,
@@ -216,4 +255,4 @@ export def createWorldBlockRegistry(
         blocks: activeBlocks,
         states: activeStates.sorted(by=state => state.runtimeId),
     }
-    return {registry: createBlockRegistry(source), snapshot, missingStates}
+    return {registry: createBlockRegistry(source), snapshot: index.snapshot, index, missingStates}
