@@ -1,4 +1,4 @@
-/// BuiltinIdentities 是 VelarScript 业务代码直接点访问的强类型核心视图。
+/// BuiltinIdentities 是所有内容包共享的强类型身份视图。
 /// 例如方块 YAML 中的 models.block.fluid 会逐层读取 identities.models.block.fluid，
 /// 运行时代码也使用 builtinIdentities.models.block.fluid 访问同一位置。
 /// 完整身份树以 Record<unknown> 原样进入生成产物，因此只被 YAML 数据引用的新身份
@@ -68,6 +68,32 @@ export type BuiltinBlockTags:
 /// 世界生成算法身份；世界清单通过它选择确定性的生成器实现。
 export type BuiltinWorldGenerators:
     survival: string
+
+/// 世界生成材料调色板身份。它把生成算法中的语义槽位绑定到内容方块，
+/// 但不属于方块定义，也不属于地形参数。
+export type BuiltinWorldGeneratorPalettes:
+    survival: string
+
+/// 地形骨架类型只描述地貌，不夹带温度、湿度或植被含义。
+export type BuiltinTerrainTypeKeys:
+    deepOcean: string
+    ocean: string
+    coast: string
+    plain: string
+    hill: string
+    mountain: string
+    valley: string
+    river: string
+
+/// 群系身份描述最终气候结果；群系在地形骨架完成后选择。
+export type BuiltinBiomeKeys:
+    ocean: string
+    coast: string
+    river: string
+    plains: string
+    forest: string
+    desert: string
+    tundra: string
 
 /// 基础内容拥有的命名空间，编译器用它检查内建方块归属。
 export type BuiltinNamespaces:
@@ -253,6 +279,12 @@ export type BuiltinIdentities:
     catalogs: BuiltinCatalogKeys
     /// 世界生成器身份。
     generators: BuiltinWorldGenerators
+    /// 世界生成材料调色板身份。
+    worldGeneratorPalettes: BuiltinWorldGeneratorPalettes
+    /// 与气候解耦的地形骨架类型。
+    terrainTypes: BuiltinTerrainTypeKeys
+    /// 最终气候群系身份。
+    biomes: BuiltinBiomeKeys
     /// 方块家族身份。
     blocks: BuiltinBlockKeys
     /// 方块语义标签。
@@ -281,6 +313,14 @@ export type BuiltinIdentities:
     handlers: BuiltinHandlerKeys
     /// 本地化键。
     translations: BuiltinTranslationKeys
+
+/// 方块编译器只消费自己负责的身份根。这个窄视图避免方块配置因为地形类型、
+/// 群系或生成器身份的变化而重新承担世界生成配置校验。
+export type BuiltinBlockIdentities:
+    namespaces: BuiltinNamespaces
+    blocks: BuiltinBlockKeys
+    tags: BuiltinBlockTags
+    loot: BuiltinLootKeys
 
 /// identities.yml 顶层文档保留独立格式版本，便于生成器先验证结构再读取身份树。
 export type BuiltinIdentityDocument:

@@ -1,0 +1,225 @@
+/// 本文件是人工 YAML 与运行时生成器之间的稳定契约。配置有意保持为有限、
+/// 可验证的字段集合：曲线、噪声参数和各生成阶段参数都可以调整，但不会执行
+/// 任意表达式，因此 Mod 数据不能把代码注入生成流程。
+
+export type WorldGeneratorCatalogManifest:
+    formatVersion: number
+    generatorSources: List<string>
+    paletteSources: List<string>
+
+export type CurvePoint:
+    input: number
+    output: number
+
+export type FractalNoiseConfig:
+    period: number
+    octaves: number
+    lacunarity: number
+    persistence: number
+
+export type WorldHeightConfig:
+    minimumY: number
+    maximumY: number
+    seaLevel: number
+    maximumNaturalSurfaceY: number
+    bedrockDepth: number
+
+export type DensitySamplingConfig:
+    horizontalStep: number
+    verticalStep: number
+    halo: number
+    columnCacheCapacity: number
+
+export type ClimateConfig:
+    temperaturePeriod: number
+    humidityPeriod: number
+
+export type DomainWarpConfig:
+    continentalAmplitude: number
+    continentalPeriod: number
+    riverAmplitude: number
+    riverPeriod: number
+
+export type TerrainConfig:
+    continentalness: FractalNoiseConfig
+    erosion: FractalNoiseConfig
+    ridge: FractalNoiseConfig
+    hills: FractalNoiseConfig
+    river: FractalNoiseConfig
+    detail: FractalNoiseConfig
+    climate: ClimateConfig
+    warp: DomainWarpConfig
+    continentalHeight: List<CurvePoint>
+    mountainAmplitude: number
+    detailAmplitude: number
+    riverLowlandDepth: number
+    riverHighlandDepth: number
+    riverHalfWidth: number
+
+export type TerrainTypeIdentities:
+    deepOcean: string
+    ocean: string
+    coast: string
+    plain: string
+    hill: string
+    mountain: string
+    valley: string
+    river: string
+
+export type BiomeIdentities:
+    ocean: string
+    coast: string
+    river: string
+    plains: string
+    forest: string
+    desert: string
+    tundra: string
+
+/// 生成器只认识这些语义槽位。槽位中的字符串在编译期从 identities.yml
+/// 解析为真实方块 key，构造世界生成器时再由该世界注册表解析为 runtimeId。
+export type GeneratorBlockIdentities:
+    air: string
+    basalt: string
+    birchLeaves: string
+    birchLog: string
+    cactus: string
+    clay: string
+    coalOre: string
+    copperOre: string
+    diamondOre: string
+    dirt: string
+    dryBush: string
+    germaniumOre: string
+    granite: string
+    grass: string
+    gravel: string
+    ice: string
+    ironOre: string
+    limestone: string
+    magma: string
+    mimosaLeaves: string
+    mimosaLog: string
+    oakLeaves: string
+    oakLog: string
+    poplarLeaves: string
+    poplarLog: string
+    purpleFlower: string
+    redFlower: string
+    saltpeterOre: string
+    sand: string
+    sandstone: string
+    snow: string
+    spruceLeaves: string
+    spruceLog: string
+    stone: string
+    sulphurOre: string
+    tallGrass: string
+    water: string
+    whiteFlower: string
+
+export type SurfaceConfig:
+    rockSlope: number
+    mixedSlope: number
+    soilDepth: number
+    wetSoilDepth: number
+    snowTemperature: number
+
+export type CaveConfig:
+    tunnelCellSize: number
+    chamberCellSize: number
+    minimumLength: number
+    maximumLength: number
+    minimumRadius: number
+    maximumRadius: number
+    tunnelChance: number
+    branchChance: number
+    chamberChance: number
+    minimumChamberRadius: number
+    maximumChamberRadius: number
+    surfaceThickness: number
+
+export type AquiferConfig:
+    minimumWaterDepth: number
+    maximumWaterDepth: number
+    magmaMaximumY: number
+    wetThreshold: number
+
+export type MineralConfig:
+    key: string
+    chance: number
+    minimumY: number
+    maximumY: number
+    minimumSize: number
+    maximumSize: number
+    largeChance: number
+
+/// 矿物的几何分布属于生成器定义；矿物最终写入什么方块、替换什么方块，
+/// 属于材料调色板。两者用稳定的矿物 key 对接，而不是互相嵌入配置。
+export type MineralMaterialBinding:
+    key: string
+    block: string
+    source: string
+
+/// 生成材料调色板是世界生成与方块注册表之间唯一的绑定层。地形定义只引用
+/// palette key，不携带具体方块，因此换材质包不会改动地形参数或算法配置。
+export type WorldGeneratorPaletteDefinition:
+    schemaVersion: number
+    key: string
+    blocks: GeneratorBlockIdentities
+    minerals: List<MineralMaterialBinding>
+
+export type VegetationConfig:
+    treeCellSize: number
+    cactusCellSize: number
+    groundPlantCellSize: number
+    groundPlantChance: number
+    treeMaximumSlope: number
+    cactusMaximumSlope: number
+
+export type SpawnConfig:
+    searchRadius: number
+    sampleStep: number
+    maximumSlope: number
+    minimumY: number
+    maximumY: number
+
+export type WorldGeneratorDefinition:
+    schemaVersion: number
+    key: string
+    palette: string
+    world: WorldHeightConfig
+    sampling: DensitySamplingConfig
+    terrain: TerrainConfig
+    terrainTypes: TerrainTypeIdentities
+    biomes: BiomeIdentities
+    surface: SurfaceConfig
+    caves: CaveConfig
+    aquifers: AquiferConfig
+    minerals: List<MineralConfig>
+    vegetation: VegetationConfig
+    spawn: SpawnConfig
+
+export type WorldGeneratorCatalogSource:
+    schemaVersion: number
+    generators: List<WorldGeneratorDefinition>
+    palettes: List<WorldGeneratorPaletteDefinition>
+
+/// 生成产物同时保存内容哈希和所有已验证定义。运行时从这里装配生成器，
+/// 不重新读取 YAML，也不重新解释打点路径。
+export type WorldGeneratorCatalogArtifact:
+    artifactVersion: number
+    contentHash: string
+    catalog: WorldGeneratorCatalogSource
+
+/// 一个 Mod 对世界生成器目录的贡献。owner 是命名空间，目录中的每个生成器
+/// key 都必须属于它，因而不同 Mod 不能悄悄覆盖彼此或基础生成器。
+export type WorldGeneratorCatalogContribution:
+    owner: string
+    catalog: WorldGeneratorCatalogSource
+
+/// Mod 构建目录中的 JSON 包装；哈希覆盖 owner 和完整生成器目录，可直接并入
+/// WorldContentSet.revision 的计算。
+export type WorldGeneratorContributionArtifact:
+    artifactVersion: number
+    contentHash: string
+    contribution: WorldGeneratorCatalogContribution

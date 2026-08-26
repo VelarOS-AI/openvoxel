@@ -1,10 +1,9 @@
 import {expect} from "velar/test"
-import {BuiltinIdentityDocument} from "../src/definition/identities.vel"
-import {IdentityResolution, resolveIdentityReferences} from "../tools/identity-resolution.vel"
+import {BuiltinIdentityDocument, IdentityResolution, resolveIdentityReferences} from "../src/index.vel"
 
 test "identity documents preserve and resolve data-only paths without a VelarScript field declaration":
     const identityDocument = BuiltinIdentityDocument.parse({
-        formatVersion: 2,
+        formatVersion: 3,
         identities: {
             futureResources: {
                 experimentalModel: "example:model/block/experimental",

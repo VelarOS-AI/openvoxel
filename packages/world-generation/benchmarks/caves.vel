@@ -3,10 +3,13 @@
 /// across adjacent and vertically stacked chunks without changing checksums.
 
 import {monotonic} from "velar/time"
-import {builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, ChunkPosition, chunkChecksum, emptyChunk} from "@openvoxel/world"
 import {carveCaves, cavePlanner} from "../src/survival/caves.vel"
-import {createGenerationFields} from "../src/survival/terrain.vel"
+import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {columnPlanner, createGenerationFields} from "../src/survival/terrain.vel"
 
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
@@ -29,14 +32,21 @@ def benchmarkPositions() -> List<ChunkPosition>:
 def rockChunk(position: ChunkPosition) -> Chunk: return emptyChunk(position, 16, fill=stoneBlock)
 
 def measure(positions: List<ChunkPosition>, capacity: number) -> CaveBenchmarkResult:
-    const planner = cavePlanner(createGenerationFields(seed), seed, capacity)
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const fields = createGenerationFields(seed, profile)
+    const columns = columnPlanner(fields, 16)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const planner = cavePlanner(fields, seed, blocks, capacity)
     const started = monotonic()
+    let checksumElapsed = 0
     let checksum = 0
     for position in positions:
         const chunk = rockChunk(position)
-        carveCaves(chunk, planner)
+        carveCaves(chunk, planner, profile, blocks, baseWorldBlockRegistry.registry, columns.columns(position.x, position.z))
+        const checksumStarted = monotonic()
         checksum = (checksum ^ chunkChecksum(chunk)) >>> 0
-    const totalMs = monotonic() - started
+        checksumElapsed += monotonic() - checksumStarted
+    const totalMs = monotonic() - started - checksumElapsed
     return {
         averageMs: totalMs / positions.size,
         checksum,

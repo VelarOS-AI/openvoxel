@@ -4,16 +4,13 @@ import {BlockCatalogManifest} from "../src/definition/catalog.vel"
 
 export type BlockCatalogInputs:
     manifestText: string
-    identitiesText: string
     sourceTexts: List<string>
 
 export async def readBlockCatalogInputs() -> BlockCatalogInputs:
     const manifestText = await readText("data/catalog.yml", 64 * 1024)
     const manifest = BlockCatalogManifest.parse(parseYaml(manifestText))
-    assert manifest.identities == "identities.yml" else "Block catalog identities must come from data/identities.yml"
-    const identitiesText = await readText(f"data/{manifest.identities}", 64 * 1024)
     const sourceTexts: List<string> = []
     for source in manifest.sources:
         assert Text.matches(source, r"^blocks/[a-z0-9-]+\.yml$") else f"Invalid block source path {source}"
         sourceTexts.append(await readText(f"data/{source}", 512 * 1024))
-    return {manifestText, identitiesText, sourceTexts}
+    return {manifestText, sourceTexts}

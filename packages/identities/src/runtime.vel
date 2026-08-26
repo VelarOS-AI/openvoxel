@@ -1,0 +1,14 @@
+import json identityData from "@openvoxel/identities/identity-data"
+import {IdentityCatalogArtifact} from "./catalog.vel"
+import {BuiltinBlockIdentities, BuiltinIdentities} from "./identities.vel"
+
+const artifact = IdentityCatalogArtifact.parse(identityData)
+assert artifact.artifactVersion == 1 else "Unsupported generated identity catalog artifact version"
+
+/// 开放树供数据编译器解析打点路径；强类型视图供普通业务代码直接点访问。
+export const identityTree = artifact.identities
+export const builtinIdentities = BuiltinIdentities.parse(identityTree)
+// 完整身份树已经在上一行完成深度验证。方块视图只是同一可信值的窄投影，使用
+// from 复制目标字段即可，避免启动时第二次递归遍历 blocks、tags、loot 等子树。
+export const builtinBlockIdentities = BuiltinBlockIdentities.from(builtinIdentities)
+export const identityCatalogHash = artifact.contentHash

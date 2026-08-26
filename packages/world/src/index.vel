@@ -2,7 +2,7 @@
 export {BlockPosition, ChunkPosition, Coordinate2, Coordinate3, LocatedBlock, LocalPosition, chunkCoordinate, chunkKey, localCoordinate, locateBlock, maximumWorldCoordinate, requireChunkEdge, requireChunkPosition, requireCoordinate2, requireCoordinate3} from "./spatial/coordinates.vel"
 
 /// Chunk 层：调色板存储、方块访问和修改规则。
-export {Chunk, blockIndex, chunk, chunkBlock, chunkBlockAtIndex, chunkChecksum, chunkVolume, emptyChunk, paintChunkBlockAtIndex, setChunkBlock} from "./chunk/chunk.vel"
+export {Chunk, ChunkPaletteTemplate, blockIndex, chunk, chunkBlock, chunkBlockAtIndex, chunkChecksum, chunkPaletteTemplate, chunkVolume, emptyChunk, emptyPaletteChunk, paintChunkBlockAtIndex, setChunkBlock} from "./chunk/chunk.vel"
 
 /// 清单层：世界持久化身份与格式不变量。
-export {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"
+export {WorldManifest, WorldSpawn, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"

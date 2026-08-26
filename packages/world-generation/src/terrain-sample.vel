@@ -4,10 +4,22 @@ import {Coordinate2} from "@openvoxel/world"
 /// 它描述世界坐标处的基础地形，不包含已保存的方块覆盖。
 export type TerrainSample:
     position: Coordinate2
+    /// 最终地表高度；由当前水平列共享的密度网格推导。
     surfaceY: number
+    /// 0 表示近似平坦，1 表示一格水平距离内高度变化至少八格。
+    slope: number
+    /// -1..1 的大陆度，决定深海、海岸与内陆基准高度。
+    continentalness: number
+    /// 0..1 的侵蚀度；值越大，地形整体越平缓。
+    erosion: number
+    /// 0..1 的山脊强度；高值形成连续山脉骨架。
+    ridge: number
+    /// 0..1 的河道中心强度；只改变河谷，不负责群系气候。
+    riverStrength: number
     temperature: number
     humidity: number
-    shoreDistance: number
-    mountainFactor: number
     forestDensity: number
+    /// 与气候无关的地形骨架身份。
+    terrainType: string
+    /// 在最终高度、坡度和地形类型确定后选出的群系身份。
     biome: string

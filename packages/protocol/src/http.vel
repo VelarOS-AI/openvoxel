@@ -1,11 +1,11 @@
 import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources, packedBlockCatalog} from "@openvoxel/blocks"
-import {TerrainSample, defaultGenerator, maximumWorldY, minimumWorldY, seaLevel} from "@openvoxel/world-generation"
+import {TerrainSample, defaultGenerator, defaultGeneratorHash, maximumWorldY, minimumWorldY, seaLevel, worldGeneratorCatalogHash} from "@openvoxel/world-generation"
 import {BlockPosition, Chunk, ChunkPosition, Coordinate2, WorldManifest} from "@openvoxel/world"
 import {maximumChunkBatchSize} from "@openvoxel/world-runtime"
 import {batchChunksPath, blockCatalogPath, changeBlockPath, clientContractPath, createWorldPath, findWorldPath, generationSamplePath, healthPath, queryChunkPath, realtimeEventsPath, worldBootstrapPathTemplate} from "./routes.vel"
 
-export const protocolVersion = 3
-export const clientContractVersion = 4
+export const protocolVersion = 4
+export const clientContractVersion = 5
 export const httpEnvelopeVersion = 1
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
 
@@ -108,6 +108,8 @@ export type BlockCatalogResponse:
     stateMapHash: string
     contentHash: string
     generator: string
+    generatorHash: string
+    generatorCatalogHash: string
     minimumWorldY: number
     maximumWorldY: number
     seaLevel: number
@@ -177,6 +179,7 @@ export def clientContractResponse(limits: ClientTransportLimits) -> ClientContra
             "block-catalog-etag",
             "block-component-profiles",
             "world-block-registry",
+            "world-generator-hash",
             "chunk-palettes",
             "world-bootstrap",
             "chunk-batch",
@@ -219,6 +222,8 @@ const sharedBlockCatalogResponse: BlockCatalogResponse = {
     stateMapHash: blockStateMapHash,
     contentHash: blockCatalogHash,
     generator: defaultGenerator,
+    generatorHash: defaultGeneratorHash,
+    generatorCatalogHash: worldGeneratorCatalogHash,
     minimumWorldY,
     maximumWorldY,
     seaLevel,
@@ -241,6 +246,7 @@ export def worldBootstrapResponse(manifest: readonly WorldManifest) -> WorldBoot
         blockCatalogContentHash: blockCatalogHash,
         blockCatalogStateMapHash: blockStateMapHash,
         blockRegistry: WorldBlockRegistrySnapshot.parse(manifest.blockRegistry),
+        spawn: {x: manifest.spawn.x, y: manifest.spawn.y, z: manifest.spawn.z},
         minimumWorldY,
         maximumWorldY,
         seaLevel,

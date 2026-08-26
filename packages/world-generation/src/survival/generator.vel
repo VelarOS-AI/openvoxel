@@ -1,82 +1,149 @@
-import {Chunk, ChunkPosition, Coordinate2, chunkBlockAtIndex, emptyChunk, paintChunkBlockAtIndex} from "@openvoxel/world"
-import {isFluidBlock} from "@openvoxel/blocks"
+import {WorldBlockRegistry, baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {Chunk, ChunkPosition, Coordinate2, Coordinate3, chunkPaletteTemplate, emptyChunk} from "@openvoxel/world"
 import {WorldGenerator} from "../contracts.vel"
+import {WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../definition/catalog.vel"
+import {baseWorldGeneratorCatalog} from "../runtime/builtin-catalog.vel"
 import {TerrainSample} from "../terrain-sample.vel"
+import {SurvivalBlockPalette, createSurvivalBlockPalette, survivalChunkPalette} from "./block-palette.vel"
 import {carveCaves, cavePlanner} from "./caves.vel"
-import {generateFluidPockets} from "./fluids.vel"
-import {generateMinerals} from "./minerals.vel"
-import {generateVegetation} from "./vegetation.vel"
-import {survivalBlocks} from "./block-palette.vel"
-import {ColumnCache, GenerationFields, baseTerrainBlock, columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrainWithFields, subsurfaceBlock, surfaceBlock} from "./terrain.vel"
+import {generateAquifers} from "./fluids.vel"
+import {generateMinerals, mineralPlanner} from "./minerals.vel"
+import {generateSurface, surfacePlanner} from "./surface.vel"
+import {GenerationFields, TerrainColumnPlan, baseTerrainBlock, columnPlanner, createGenerationFields, terrainTargetSurfaceY} from "./terrain.vel"
+import {decorationPlanner, generateVegetation} from "./vegetation.vel"
 
-def chunkMinimumX(chunk: Chunk) -> number: return chunk.position.x * chunk.edge
-
-def chunkMinimumY(chunk: Chunk) -> number: return chunk.position.y * chunk.edge
-
-def chunkMinimumZ(chunk: Chunk) -> number: return chunk.position.z * chunk.edge
-
-def insideY(chunk: Chunk, y: number) -> bool:
-    const minimumY = chunkMinimumY(chunk)
-    return y >= minimumY and y < minimumY + chunk.edge
-
-def indexAt(chunk: Chunk, worldX: number, worldY: number, worldZ: number) -> number:
-    const localX = worldX - chunkMinimumX(chunk)
-    const localY = worldY - chunkMinimumY(chunk)
-    const localZ = worldZ - chunkMinimumZ(chunk)
-    return localX + chunk.edge * (localZ + chunk.edge * localY)
-
-def generateBaseTerrain(chunk: Chunk, fields: GenerationFields, cache: ColumnCache):
-    const minimumY = chunkMinimumY(chunk)
+export def generateBaseTerrain(
+    chunk: Chunk,
+    fields: GenerationFields,
+    plan: readonly TerrainColumnPlan,
+    paletteBlocks: readonly SurvivalBlockPalette,
+):
+    const minimumX = chunk.position.x * chunk.edge
+    const minimumY = chunk.position.y * chunk.edge
+    const minimumZ = chunk.position.z * chunk.edge
     for localX in range(chunk.edge):
+        const worldX = minimumX + localX
         for localZ in range(chunk.edge):
-            const sample = cache.samples[localZ + chunk.edge * localX]
+            const worldZ = minimumZ + localZ
+            const sample = plan.sampleAt(worldX, worldZ)
+            const strataBase = fields.strata(worldX * 0.045, worldZ * 0.045)
+            const densityAtY = plan.densityColumnAt(worldX, worldZ)
             for localY in range(chunk.edge):
                 const worldY = minimumY + localY
                 const index = localX + chunk.edge * (localZ + chunk.edge * localY)
-                paintChunkBlockAtIndex(chunk, index, baseTerrainBlock(fields, sample, worldY))
+                // baseTerrainBlock 只关心各材料槽位中的数字含义。这里传入同形的
+                // 局部索引记录，选择结果可以直接写入 UInt16Buffer，无需再执行
+                // runtimeId -> paletteIndex 的逐体素 Map 查询。
+                chunk.indices[index] = baseTerrainBlock(fields, paletteBlocks, sample, worldY, densityAtY(worldY), strataBase)
 
-def paintSurfaceColumn(chunk: Chunk, sample: TerrainSample, topY: number):
-    const topBlock = surfaceBlock(sample, topY)
-    const underBlock = subsurfaceBlock(sample, topY)
-    let thickness = 4
-    if sample.mountainFactor > 0.9: thickness = 2
-    else if sample.humidity > 11: thickness = 6
-    for depth in range(thickness):
-        const worldY = topY - depth
-        if not insideY(chunk, worldY): continue
-        const index = indexAt(chunk, sample.position.x, worldY, sample.position.z)
-        const current = chunkBlockAtIndex(chunk, index)
-        if current != survivalBlocks.air and not isFluidBlock(current):
-            paintChunkBlockAtIndex(chunk, index, depth == 0 ? topBlock : underBlock)
+def spawnScore(profile: readonly WorldGeneratorDefinition, sample: readonly TerrainSample) -> number:
+    const distance = Math.hypot(sample.position.x, sample.position.z)
+    const climate = (sample.temperature - 8).abs() + 0.45 * (sample.humidity - 8).abs()
+    const resources = 12 * sample.forestDensity + 7 * sample.riverStrength
+    return 240 - 150 * sample.slope - 0.08 * distance - 2.2 * climate + resources
 
-def generateSurface(chunk: Chunk, cache: ColumnCache):
-    for localX in range(chunk.edge):
-        for localZ in range(chunk.edge):
-            const index = localZ + chunk.edge * localX
-            paintSurfaceColumn(chunk, cache.samples[index], cache.surfaceHeights[index])
+type SpawnCandidate:
+    x: number
+    z: number
+    score: number
 
-/// 构造内建生存生成器。生成器只接收已经验证过的种子和 Chunk 边长，
-/// 生成器身份选择由上层 registry 统一处理。
-export def survivalWorldGenerator(seed: string, edge: number) -> WorldGenerator:
-    const fields = createGenerationFields(seed)
+/// 第一遍只用地形骨架高度筛掉明显不合格的位置，并保留有限数量的高分候选。
+/// 第二遍再通过共享列计划读取最终高度、坡度、群系和资源事实。这样半径 512
+/// 的搜索不会为了大量低分点构建数千份完整 18×18 列计划。
+def coarseSpawnCandidates(fields: GenerationFields) -> List<SpawnCandidate>:
+    const profile = fields.profile
+    const candidates: List<SpawnCandidate> = []
+    const radius = profile.spawn.searchRadius
+    const step = profile.spawn.sampleStep
+    const capacity = 64
+    for x in range(-radius, radius + 1, step):
+        for z in range(-radius, radius + 1, step):
+            const distanceSquared = x * x + z * z
+            if distanceSquared > radius * radius: continue
+            const surfaceY = terrainTargetSurfaceY(fields, {x, z})
+            if surfaceY < profile.spawn.minimumY - 8 or surfaceY > profile.spawn.maximumY + 8: continue
+            const dx = (terrainTargetSurfaceY(fields, {x: x + step, z}) - terrainTargetSurfaceY(fields, {x: x - step, z})).abs()
+            const dz = (terrainTargetSurfaceY(fields, {x, z: z + step}) - terrainTargetSurfaceY(fields, {x, z: z - step})).abs()
+            const coarseSlope = Math.max(dx, dz) / (2 * step)
+            const score = 220 - 120 * coarseSlope - 0.08 * Math.sqrt(distanceSquared) - 0.35 * (surfaceY - 86).abs()
+            candidates.append({x, z, score})
+            if candidates.size > capacity:
+                const ordered = candidates.sorted(by=candidate => -candidate.score)
+                candidates.clear()
+                candidates.extend(ordered.slice(0, capacity))
+    return candidates.sorted(by=candidate => -candidate.score)
+
+/// 构造生存生成器时同时绑定配置、种子和当前世界方块注册表。所有方块 key 只在
+/// 这里解析一次；Chunk 生成热路径只使用当前世界的数字调色板。
+export def survivalWorldGenerator(
+    seed: string,
+    edge: number,
+    worldBlocks: readonly WorldBlockRegistry = baseWorldBlockRegistry,
+    profile: readonly WorldGeneratorDefinition = baseWorldGeneratorCatalog.generators[0],
+    palette: readonly WorldGeneratorPaletteDefinition = baseWorldGeneratorCatalog.palettes[0],
+) -> WorldGenerator:
+    assert profile.palette == palette.key else f"World generator {profile.key} requires palette {profile.palette}, received {palette.key}"
+    const blocks = createSurvivalBlockPalette(worldBlocks.registry, palette.blocks)
+    // 基础填充会写满 4096 个位置。提前建立完整局部调色板后可直接写 UInt16
+    // 索引，避免每个方块重复做 runtimeId 合法性校验和动态调色板扩容查询。
+    const generationPalette = survivalChunkPalette(blocks)
+    const generationChunkPalette = chunkPaletteTemplate(generationPalette.runtimeIds)
+    const fields = createGenerationFields(seed, profile)
     const columns = columnPlanner(fields, edge)
-    const caves = cavePlanner(fields, seed)
+    const caves = cavePlanner(fields, seed, blocks)
+    const minerals = mineralPlanner(profile, palette, seed, worldBlocks.registry)
+    const surfaces = surfacePlanner(profile, blocks)
+    const decorations = decorationPlanner(profile, seed, blocks, columns)
+    let minimumMineralY = profile.world.maximumY
+    let maximumMineralY = profile.world.minimumY
+    for mineral in profile.minerals:
+        minimumMineralY = Math.min(minimumMineralY, mineral.minimumY)
+        maximumMineralY = Math.max(maximumMineralY, mineral.maximumY)
 
-    def sample(position: Coordinate2) -> TerrainSample: return sampleTerrainWithFields(fields, position)
+    def sample(position: Coordinate2) -> TerrainSample:
+        const plan = columns.columns((position.x / edge).floor(), (position.z / edge).floor())
+        return TerrainSample.parse(plan.sampleAt(position.x, position.z))
 
     def generate(position: ChunkPosition) -> Chunk:
-        const chunk = emptyChunk(position, edge, survivalBlocks.air)
         const minimumY = position.y * edge
         const maximumY = minimumY + edge - 1
-        if maximumY < minimumWorldY or minimumY > maximumWorldY: return chunk
+        if maximumY < profile.world.minimumY or minimumY > profile.world.maximumY:
+            return emptyChunk(position, edge, blocks.air)
+        const generatedChunk = generationChunkPalette.instantiate(position, edge)
 
-        const cache = columns.columns(position.x, position.z)
-        generateBaseTerrain(chunk, fields, cache)
-        carveCaves(chunk, caves)
-        generateFluidPockets(chunk, seed)
-        generateMinerals(chunk, seed)
-        generateSurface(chunk, cache)
-        generateVegetation(chunk, fields, seed, cache)
-        return chunk
+        const plan = columns.columns(position.x, position.z)
+        // 固定阶段顺序是生成结果的一部分：后续阶段只覆盖前一阶段明确允许的方块。
+        generateBaseTerrain(generatedChunk, fields, plan, generationPalette.indices)
+        carveCaves(generatedChunk, caves, profile, blocks, worldBlocks.registry, plan)
+        const highestAquiferY = Math.max(profile.world.seaLevel - profile.aquifers.minimumWaterDepth, profile.aquifers.magmaMaximumY)
+        if minimumY <= highestAquiferY: generateAquifers(generatedChunk, fields, plan, blocks)
+        if maximumY >= minimumMineralY and minimumY <= maximumMineralY:
+            generateMinerals(generatedChunk, minerals, blocks, worldBlocks.registry)
+        const minimumSurfacePaintY = plan.minimumSurfaceY - profile.surface.wetSoilDepth + 1
+        if maximumY >= minimumSurfacePaintY and minimumY <= plan.maximumSurfaceY:
+            generateSurface(generatedChunk, surfaces.surface(plan), blocks, worldBlocks.registry)
+        // 装饰只可能出现在最终地面上方约十格。与这个范围不相交的垂直 Chunk
+        // 不构建也不遍历 DecorationPlan。
+        if maximumY >= plan.minimumSurfaceY + 1 and minimumY <= plan.maximumSurfaceY + 10:
+            generateVegetation(generatedChunk, decorations.decorations(position.x, position.z), blocks)
+        return generatedChunk
 
-    return {sample, generate}
+    def findSpawn() -> Coordinate3:
+        let best: TerrainSample? = null
+        let bestScore = -Math.infinity
+        for coarse in coarseSpawnCandidates(fields):
+            const candidate = sample(Coordinate2.from(coarse))
+            if candidate.surfaceY < profile.spawn.minimumY or candidate.surfaceY > profile.spawn.maximumY: continue
+            if candidate.slope > profile.spawn.maximumSlope: continue
+            if candidate.biome == profile.biomes.ocean or candidate.biome == profile.biomes.coast: continue
+            const score = spawnScore(profile, candidate)
+            if score > bestScore:
+                best = candidate
+                bestScore = score
+        assert best != null else "World generator could not find a safe spawn inside the configured radius"
+        // best 是循环中持续改写的可选位置；断言后复制成稳定 const，让运行时只
+        // 校验一次完整 TerrainSample，后面的三个字段读取无需重复深校验。
+        const selected: TerrainSample = best
+        return {x: selected.position.x, y: selected.surfaceY + 1, z: selected.position.z}
+
+    return {sample, generate, findSpawn}

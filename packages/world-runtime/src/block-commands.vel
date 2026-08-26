@@ -1,0 +1,52 @@
+import {BlockPosition, ChunkPosition, LocalPosition, chunkBlock, locateBlock} from "@openvoxel/world"
+import {WorldStore} from "./contracts.vel"
+import {WorldSessionCache} from "./world-sessions.vel"
+
+/// 一次方块修改完成后的应用结果。
+/// 它同时给出世界坐标、所属 Chunk、本地坐标和前后状态，协议层可以直接把它
+/// 投影成 HTTP 响应或实时事件，不需要再次查询世界或重复坐标换算。
+export type BlockChange:
+    worldId: string
+    position: BlockPosition
+    chunk: ChunkPosition
+    local: LocalPosition
+    previousBlockStateRuntimeId: number
+    blockStateRuntimeId: number
+    revision: number
+
+/// 方块命令服务只负责会改变世界状态的应用操作。
+/// 具体事务和并发写入顺序由 WorldDeltaStore 实现，运行层只计算需要保存的
+/// 稀疏覆盖值，并返回对客户端有意义的修改结果。
+export type WorldBlockCommands:
+    setBlock: (worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> Promise<BlockChange>
+
+export def worldBlockCommands(sessions: WorldSessionCache, store: WorldStore) -> WorldBlockCommands:
+    async def setBlock(worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> BlockChange:
+        const world = await sessions.require(worldId)
+
+        // registry 验证这个状态当前有完整方块定义；index 再验证它确实属于这个
+        // 世界的数字身份空间。缺失 Mod 的历史 ID 仍保留在 index 中，但不能被
+        // 新命令主动写入，因为运行时已经没有对应方块行为和渲染定义。
+        world.blocks.registry.requireStateByRuntimeId(blockStateRuntimeId)
+        world.blocks.index.requireRuntimeId(blockStateRuntimeId)
+
+        const located = locateBlock(position, world.manifest.chunkEdge)
+        const generated = world.generator.generate(located.chunk)
+        const baseBlockStateRuntimeId = chunkBlock(generated, located.local)
+
+        // 玩家设置回生成器原值时不保存冗余覆盖；存储适配器会删除已有覆盖，
+        // 但仍推进 Chunk revision，让并发客户端能够观察到这次真实变化。
+        const overrideBlockStateRuntimeId = blockStateRuntimeId == baseBlockStateRuntimeId ? null : blockStateRuntimeId
+        const commit = await store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockStateRuntimeId)
+        const previousBlockStateRuntimeId = commit.previousOverrideBlockStateRuntimeId ?? baseBlockStateRuntimeId
+        return {
+            worldId,
+            position,
+            chunk: located.chunk,
+            local: located.local,
+            previousBlockStateRuntimeId,
+            blockStateRuntimeId,
+            revision: commit.revision,
+        }
+
+    return {setBlock}

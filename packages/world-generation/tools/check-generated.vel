@@ -1,0 +1,7 @@
+import {readText} from "velar/fs"
+import {generatedWorldGeneratorCatalogText} from "./generate.vel"
+
+@main:
+    const expected = await generatedWorldGeneratorCatalogText()
+    const actual = await readText("generated/world-generator-catalog.json", 2 * 1024 * 1024)
+    assert actual == expected else "Generated world generator catalog is stale; run npm run generate"

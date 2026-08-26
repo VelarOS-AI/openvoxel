@@ -7,8 +7,6 @@ export type BlockCatalogManifest:
     schemaVersion: number
     /// 当前基础内容目录的语义版本。
     catalogVersion: string
-    /// identities.yml 相对于 data/ 的文件名。
-    identities: string
     /// 按确定顺序读取的分组方块文件列表。
     sources: List<string>
 
@@ -106,8 +104,6 @@ export type BlockCatalogArtifact:
     contentHash: string
     /// 只覆盖 runtimeId 与 stateKey 的映射；用于判断世界状态编号是否一致。
     stateMapHash: string
-    /// identities.yml 的完整开放树；运行时从中解析直接点访问的强类型核心视图。
-    identities: Record<unknown>
     /// 已完成状态展开和语义验证、并对重复组件做过归并的紧凑目录。
     catalog: PackedBlockCatalogSource
 

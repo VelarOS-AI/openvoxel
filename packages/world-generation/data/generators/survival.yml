@@ -1,0 +1,139 @@
+schemaVersion: 1
+key: generators.survival
+palette: worldGeneratorPalettes.survival
+
+world:
+  minimumY: 0
+  maximumY: 255
+  seaLevel: 64
+  maximumNaturalSurfaceY: 223
+  bedrockDepth: 5
+
+sampling:
+  horizontalStep: 4
+  verticalStep: 8
+  halo: 1
+  columnCacheCapacity: 64
+
+terrain:
+  continentalness:
+    period: 3072
+    octaves: 4
+    lacunarity: 2
+    persistence: 0.5
+  erosion:
+    period: 768
+    octaves: 3
+    lacunarity: 2
+    persistence: 0.55
+  ridge:
+    period: 512
+    octaves: 4
+    lacunarity: 2
+    persistence: 0.55
+  hills:
+    period: 192
+    octaves: 3
+    lacunarity: 2
+    persistence: 0.5
+  river:
+    period: 640
+    octaves: 3
+    lacunarity: 2
+    persistence: 0.5
+  detail:
+    period: 48
+    octaves: 2
+    lacunarity: 2
+    persistence: 0.5
+  climate:
+    temperaturePeriod: 1536
+    humidityPeriod: 1280
+  warp:
+    continentalAmplitude: 384
+    continentalPeriod: 2048
+    riverAmplitude: 96
+    riverPeriod: 768
+  continentalHeight:
+    - {input: -1, output: 24}
+    - {input: -0.6, output: 42}
+    - {input: -0.32, output: 58}
+    - {input: -0.18, output: 63}
+    - {input: 0, output: 68}
+    - {input: 0.4, output: 72}
+    - {input: 1, output: 78}
+  mountainAmplitude: 96
+  detailAmplitude: 7
+  riverLowlandDepth: 8
+  riverHighlandDepth: 18
+  riverHalfWidth: 0.055
+
+terrainTypes:
+  deepOcean: terrainTypes.deepOcean
+  ocean: terrainTypes.ocean
+  coast: terrainTypes.coast
+  plain: terrainTypes.plain
+  hill: terrainTypes.hill
+  mountain: terrainTypes.mountain
+  valley: terrainTypes.valley
+  river: terrainTypes.river
+
+biomes:
+  ocean: biomes.ocean
+  coast: biomes.coast
+  river: biomes.river
+  plains: biomes.plains
+  forest: biomes.forest
+  desert: biomes.desert
+  tundra: biomes.tundra
+
+surface:
+  rockSlope: 0.72
+  mixedSlope: 0.42
+  soilDepth: 4
+  wetSoilDepth: 6
+  snowTemperature: 0
+
+caves:
+  tunnelCellSize: 32
+  chamberCellSize: 64
+  minimumLength: 40
+  maximumLength: 96
+  minimumRadius: 1.4
+  maximumRadius: 3.2
+  tunnelChance: 0.18
+  branchChance: 0.2
+  chamberChance: 0.16
+  minimumChamberRadius: 4
+  maximumChamberRadius: 9
+  surfaceThickness: 7
+
+aquifers:
+  minimumWaterDepth: 8
+  maximumWaterDepth: 26
+  magmaMaximumY: 12
+  wetThreshold: 0.15
+
+minerals:
+  - {key: coal, chance: 0.72, minimumY: 5, maximumY: 128, minimumSize: 5, maximumSize: 12, largeChance: 0}
+  - {key: copper, chance: 0.38, minimumY: 22, maximumY: 96, minimumSize: 4, maximumSize: 9, largeChance: 0.035}
+  - {key: iron, chance: 0.42, minimumY: 2, maximumY: 72, minimumSize: 4, maximumSize: 9, largeChance: 0.04}
+  - {key: saltpeter, chance: 0.24, minimumY: 48, maximumY: 86, minimumSize: 6, maximumSize: 13, largeChance: 0}
+  - {key: sulphur, chance: 0.26, minimumY: 2, maximumY: 42, minimumSize: 4, maximumSize: 9, largeChance: 0}
+  - {key: diamond, chance: 0.055, minimumY: 2, maximumY: 18, minimumSize: 3, maximumSize: 7, largeChance: 0}
+  - {key: germanium, chance: 0.16, minimumY: 2, maximumY: 56, minimumSize: 4, maximumSize: 9, largeChance: 0}
+
+vegetation:
+  treeCellSize: 4
+  cactusCellSize: 8
+  groundPlantCellSize: 2
+  groundPlantChance: 0.22
+  treeMaximumSlope: 0.42
+  cactusMaximumSlope: 0.28
+
+spawn:
+  searchRadius: 512
+  sampleStep: 8
+  maximumSlope: 0.32
+  minimumY: 66
+  maximumY: 160

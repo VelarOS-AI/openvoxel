@@ -1,0 +1,229 @@
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {exists, makeDirectory, writeText} from "velar/fs"
+import {monotonic} from "velar/time"
+import {Chunk, Coordinate3, chunkBlockAtIndex} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../src/definition/catalog.vel"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+import {survivalWorldGenerator} from "../src/survival/generator.vel"
+import {columnPlanner, createGenerationFields} from "../src/survival/terrain.vel"
+
+type NamedCount:
+    key: string
+    count: number
+
+type SeedQualityReport:
+    seed: string
+    sampleCount: number
+    minimumHeight: number
+    maximumHeight: number
+    heightP95: number
+    heightP99: number
+    averageSlope: number
+    landRatio: number
+    riverLandRatio: number
+    riverConnectedComponents: number
+    spikeRatio: number
+    biomeAreas: List<NamedCount>
+    caveRatio: number
+    oreBlocks: number
+    vegetationBlocks: number
+    columnBuildCount: number
+    terrainMilliseconds: number
+    chunkCount: number
+    chunkMilliseconds: number
+    averageChunkMilliseconds: number
+    spawn: Coordinate3
+
+type QualityReport:
+    artifactVersion: number
+    qualityGatePassed: bool
+    sampledWidth: number
+    sampleStep: number
+    seeds: List<SeedQualityReport>
+
+/// 质量报告同时充当固定语料门禁。阈值只约束可观察的世界性质，不把某个种子
+/// 的像素地图固化成唯一答案；算法仍可演进，但不能悄悄退化成全海洋、碎河流、
+/// 尖峰地形或找不到出生点的世界。
+def validateQualityReport(profile: readonly WorldGeneratorDefinition, reports: readonly List<readonly SeedQualityReport>):
+    const observedBiomes: Set<string> = Set()
+    for report in reports:
+        assert report.landRatio >= 0.5 and report.landRatio <= 0.75 else f"Seed {report.seed} land ratio is outside 50% through 75%"
+        assert report.riverLandRatio >= 0.02 and report.riverLandRatio <= 0.08 else f"Seed {report.seed} river ratio is outside 2% through 8% of land"
+        assert report.heightP95 >= 110 and report.heightP95 <= 190 else f"Seed {report.seed} 95th percentile height is outside 110 through 190"
+        assert report.heightP99 < 224 else f"Seed {report.seed} 99th percentile height reaches the reserved ceiling"
+        assert report.spikeRatio < 0.005 else f"Seed {report.seed} has too many single-column spikes"
+        assert report.riverConnectedComponents > 0 else f"Seed {report.seed} contains no sampled river network"
+        assert report.caveRatio > 0 and report.oreBlocks > 0 and report.vegetationBlocks > 0 else f"Seed {report.seed} is missing an underground or decoration stage"
+        assert Math.hypot(report.spawn.x, report.spawn.z) <= profile.spawn.searchRadius else f"Seed {report.seed} spawn is outside the configured search radius"
+        assert report.spawn.y - 1 >= profile.spawn.minimumY and report.spawn.y - 1 <= profile.spawn.maximumY else f"Seed {report.seed} spawn height is unsafe"
+        for biome in report.biomeAreas: observedBiomes.add(biome.key)
+    for biome in [profile.biomes.plains, profile.biomes.forest, profile.biomes.desert, profile.biomes.tundra]:
+        assert biome in observedBiomes else f"Fixed seed corpus is missing climate biome {biome}"
+
+def percentile(sorted: readonly List<number>, amount: number) -> number:
+    return sorted[Math.clamp(((sorted.size - 1) * amount).round(), 0, sorted.size - 1)]
+
+def connectedComponents(mask: readonly List<bool>, edge: number) -> number:
+    const visited: Set<number> = Set()
+    let components = 0
+    for start in range(mask.size):
+        if not mask[start] or start in visited: continue
+        components += 1
+        const queue: List<number> = [start]
+        visited.add(start)
+        let cursor = 0
+        while cursor < queue.size:
+            const index = queue[cursor]
+            cursor += 1
+            const x = index % edge
+            const z = (index / edge).floor()
+            const neighbors: List<number> = []
+            if x > 0: neighbors.append(index - 1)
+            if x + 1 < edge: neighbors.append(index + 1)
+            if z > 0: neighbors.append(index - edge)
+            if z + 1 < edge: neighbors.append(index + edge)
+            for neighbor in neighbors:
+                if mask[neighbor] and not (neighbor in visited):
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+    return components
+
+def countSelectedBlocks(chunk: readonly Chunk, selected: readonly Set<number>) -> number:
+    let count = 0
+    for index in range(chunk.indices.size):
+        if chunkBlockAtIndex(chunk, index) in selected: count += 1
+    return count
+
+def previewColor(profile: readonly WorldGeneratorDefinition, biome: string, height: number) -> string:
+    if biome == profile.biomes.ocean: return height < profile.world.seaLevel - 16 ? "#173f70" : "#2f6f9f"
+    if biome == profile.biomes.coast: return "#d9c78b"
+    if biome == profile.biomes.river: return "#3f82aa"
+    if biome == profile.biomes.desert: return "#d7b765"
+    if biome == profile.biomes.tundra: return "#d9e4e7"
+    if biome == profile.biomes.forest: return "#3d7544"
+    return height >= 110 ? "#777b72" : "#77a85b"
+
+async def reportSeed(seed: string, radius: number, step: number, writePreview: bool) -> SeedQualityReport:
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const palette = baseWorldGeneratorCatalog.palettes[0]
+    const fields = createGenerationFields(seed, profile)
+    const columns = columnPlanner(fields, 16)
+    const heights: List<number> = []
+    const riverMask: List<bool> = []
+    const biomeCounts: Map<string, number> = Map()
+    const previewRects: List<string> = []
+    let slopeTotal = 0
+    let landCount = 0
+    let riverLandCount = 0
+    let spikeCount = 0
+    const gridEdge = (2 * radius / step).floor()
+    const terrainStarted = monotonic()
+    for gridX in range(gridEdge):
+        const x = -radius + gridX * step
+        for gridZ in range(gridEdge):
+            const z = -radius + gridZ * step
+            const sample = columns.columns((x / 16).floor(), (z / 16).floor()).sampleAt(x, z)
+            heights.append(sample.surfaceY)
+            slopeTotal += sample.slope
+            const land = sample.surfaceY > profile.world.seaLevel
+            if land: landCount += 1
+            const river = land and sample.riverStrength >= 0.48
+            riverMask.append(river)
+            if river: riverLandCount += 1
+            if sample.slope >= 0.95: spikeCount += 1
+            biomeCounts.set(sample.biome, (biomeCounts.get(sample.biome) ?? 0) + 1)
+            if writePreview:
+                previewRects.append(f`<rect x="{gridX}" y="{gridZ}" width="1" height="1" fill="{previewColor(profile, sample.biome, sample.surfaceY)}"/>`)
+    const terrainMilliseconds = monotonic() - terrainStarted
+
+    if writePreview:
+        const preview = f`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {gridEdge} {gridEdge}" shape-rendering="crispEdges">{previewRects.join("")}</svg>\n`
+        await writeText(".velar/reports/worldgen-preview.svg", preview)
+
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, palette.blocks)
+    const oreIds = Set(palette.minerals.map(mineral => baseWorldBlockRegistry.registry.defaultStateRuntimeIdForKey(mineral.block)))
+    const vegetationIds = Set([
+        blocks.oakLog,
+        blocks.oakLeaves,
+        blocks.birchLog,
+        blocks.birchLeaves,
+        blocks.spruceLog,
+        blocks.spruceLeaves,
+        blocks.poplarLog,
+        blocks.poplarLeaves,
+        blocks.mimosaLog,
+        blocks.mimosaLeaves,
+        blocks.cactus,
+        blocks.dryBush,
+        blocks.tallGrass,
+        blocks.redFlower,
+        blocks.purpleFlower,
+        blocks.whiteFlower,
+        blocks.snow,
+    ])
+    const generator = survivalWorldGenerator(seed, 16, baseWorldBlockRegistry, profile, palette)
+    let caveAir = 0
+    let undergroundBlocks = 0
+    let oreBlocks = 0
+    let vegetationBlocks = 0
+    let chunkCount = 0
+    const chunkStarted = monotonic()
+    for chunkX in range(-4, 4):
+        for chunkZ in range(-4, 4):
+            for chunkY in range(1, 4):
+                const chunk = generator.generate({x: chunkX, y: chunkY, z: chunkZ})
+                chunkCount += 1
+                oreBlocks += countSelectedBlocks(chunk, oreIds)
+                vegetationBlocks += countSelectedBlocks(chunk, vegetationIds)
+                for index in range(chunk.indices.size):
+                    undergroundBlocks += 1
+                    if chunkBlockAtIndex(chunk, index) == blocks.air: caveAir += 1
+    const chunkMilliseconds = monotonic() - chunkStarted
+    // 地下 192 Chunk 性能语料不包含地表装饰，因此另取每个水平列的最终地表
+    // Chunk 统计植被量，避免把“没有采到地表”误报成植被密度为零。
+    for chunkX in range(-4, 4):
+        for chunkZ in range(-4, 4):
+            const center = generator.sample({x: chunkX * 16 + 8, z: chunkZ * 16 + 8})
+            const surfaceChunkY = ((center.surfaceY + 1) / 16).floor()
+            vegetationBlocks += countSelectedBlocks(generator.generate({x: chunkX, y: surfaceChunkY, z: chunkZ}), vegetationIds)
+
+    const biomeAreas: List<NamedCount> = []
+    for key in biomeCounts.keys().sorted(): biomeAreas.append({key, count: biomeCounts.get(key) ?? 0})
+    const sortedHeights = heights.sorted()
+    return {
+        seed,
+        sampleCount: heights.size,
+        minimumHeight: sortedHeights[0],
+        maximumHeight: sortedHeights[sortedHeights.size - 1],
+        heightP95: percentile(sortedHeights, 0.95),
+        heightP99: percentile(sortedHeights, 0.99),
+        averageSlope: slopeTotal / heights.size,
+        landRatio: landCount / heights.size,
+        riverLandRatio: landCount == 0 ? 0 : riverLandCount / landCount,
+        riverConnectedComponents: connectedComponents(riverMask, gridEdge),
+        spikeRatio: spikeCount / heights.size,
+        biomeAreas,
+        caveRatio: caveAir / undergroundBlocks,
+        oreBlocks,
+        vegetationBlocks,
+        columnBuildCount: columns.columnBuildCount(),
+        terrainMilliseconds,
+        chunkCount,
+        chunkMilliseconds,
+        averageChunkMilliseconds: chunkMilliseconds / chunkCount,
+        spawn: generator.findSpawn(),
+    }
+
+@main:
+    if not await exists(".velar"): await makeDirectory(".velar")
+    if not await exists(".velar/reports"): await makeDirectory(".velar/reports")
+    const seeds = ["openvoxel", "continental-ridges", "connected-rivers", "climate-extremes"]
+    const reports: List<SeedQualityReport> = []
+    for seed, index in seeds: reports.append(await reportSeed(seed, 512, 8, index == 0))
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    validateQualityReport(profile, reports)
+    const report: QualityReport = {artifactVersion: 1, qualityGatePassed: true, sampledWidth: 1024, sampleStep: 8, seeds: reports}
+    const output = f"{Json.stableStringify(report, 2)}\n"
+    await writeText(".velar/reports/worldgen-quality.json", output)
+    print(output)

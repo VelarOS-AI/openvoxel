@@ -1,56 +1,35 @@
-import {random} from "velar/random"
-import {isNaturalRock} from "@openvoxel/blocks"
-import {Chunk, Coordinate3} from "@openvoxel/world"
-import {survivalBlocks} from "./block-palette.vel"
-import {chunkMinimumX, chunkMinimumY, chunkMinimumZ, generatedBlock, paintGeneratedBlock} from "./chunk-brush.vel"
+import {Chunk, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {GenerationFields, TerrainColumnPlan} from "./terrain.vel"
 
-def paintFluidPocket(chunk: Chunk, center: Coordinate3, radius: number, fluidBlock: number):
-    const minimumX = Math.max(chunkMinimumX(chunk), center.x - radius)
-    const maximumX = Math.min(chunkMinimumX(chunk) + chunk.edge - 1, center.x + radius)
-    const minimumY = Math.max(chunkMinimumY(chunk), center.y - radius)
-    const maximumY = Math.min(chunkMinimumY(chunk) + chunk.edge - 1, center.y + radius)
-    const minimumZ = Math.max(chunkMinimumZ(chunk), center.z - radius)
-    const maximumZ = Math.min(chunkMinimumZ(chunk) + chunk.edge - 1, center.z + radius)
-    const radiusSquared = radius * radius
-    for x in range(minimumX, maximumX + 1):
-        for z in range(minimumZ, maximumZ + 1):
-            for y in range(minimumY, maximumY + 1):
-                const dx = x - center.x
-                const dy = y - center.y
-                const dz = z - center.z
-                if dx * dx + dy * dy + dz * dz > radiusSquared: continue
-                const position = {x, y, z}
-                const current = generatedBlock(chunk, position)
-                if isNaturalRock(current):
-                    paintGeneratedBlock(chunk, position, y <= center.y ? fluidBlock : survivalBlocks.air)
-
-/// 地下流体只负责初始世界生成；流体后续传播由独立执行系统处理。
-export def generateFluidPockets(chunk: Chunk, seed: string):
-    const firstCellX = ((chunkMinimumX(chunk) - 5) / 16).floor()
-    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge - 1 + 5) / 16).floor()
-    const firstCellY = ((chunkMinimumY(chunk) - 5) / 16).floor()
-    const lastCellY = ((chunkMinimumY(chunk) + chunk.edge - 1 + 5) / 16).floor()
-    const firstCellZ = ((chunkMinimumZ(chunk) - 5) / 16).floor()
-    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge - 1 + 5) / 16).floor()
-    const pocketRoot = random(seed).fork("fluid-pockets")
-    for cellX in range(firstCellX, lastCellX + 1):
-        for cellZ in range(firstCellZ, lastCellZ + 1):
-            for cellY in range(firstCellY, lastCellY + 1):
-                const water = pocketRoot.fork(f"water:{cellX}:{cellY}:{cellZ}")
-                const waterY = cellY * 16 + water.int(0, 16)
-                if waterY >= 28 and waterY <= 58 and water.bool(0.035):
-                    paintFluidPocket(
-                        chunk,
-                        {x: cellX * 16 + water.int(0, 16), y: waterY, z: cellZ * 16 + water.int(0, 16)},
-                        water.int(2, 5),
-                        survivalBlocks.water,
-                    )
-                const magma = pocketRoot.fork(f"magma:{cellX}:{cellY}:{cellZ}")
-                const magmaY = cellY * 16 + magma.int(0, 16)
-                if magmaY >= 7 and magmaY <= 30 and magma.bool(0.05):
-                    paintFluidPocket(
-                        chunk,
-                        {x: cellX * 16 + magma.int(0, 16), y: magmaY, z: cellZ * 16 + magma.int(0, 16)},
-                        magma.int(2, 5),
-                        survivalBlocks.magma,
-                    )
+/// 洞穴完成后才建立局部含水层。这里只决定初始水体和岩浆方块，后续流动、
+/// 混合和更新仍由 blocks 之外的流体执行系统负责。
+export def generateAquifers(chunk: Chunk, fields: GenerationFields, plan: readonly TerrainColumnPlan, blocks: readonly SurvivalBlockPalette):
+    const profile = fields.profile
+    const minimumX = chunk.position.x * chunk.edge
+    const minimumY = chunk.position.y * chunk.edge
+    const minimumZ = chunk.position.z * chunk.edge
+    const waterPaletteEntry = chunk.paletteIndex.get(blocks.water)
+    const magmaPaletteEntry = chunk.paletteIndex.get(blocks.magma)
+    for localX in range(chunk.edge):
+        const worldX = minimumX + localX
+        for localZ in range(chunk.edge):
+            const worldZ = minimumZ + localZ
+            const sample = plan.sampleAt(worldX, worldZ)
+            const depthRange = profile.aquifers.maximumWaterDepth - profile.aquifers.minimumWaterDepth
+            const climateDepth = profile.aquifers.minimumWaterDepth + depthRange * (1 - sample.humidity / 15)
+            const localWaterY = (profile.world.seaLevel - climateDepth).round()
+            // 一个水平列共享湿度值。含水层不需要逐方块 3D 噪声；Y 只负责与
+            // 局部水位和岩浆上限比较，既连续也更便宜。
+            const wetness = fields.aquifer(worldX / 52, localWaterY / 38, worldZ / 52)
+            for localY in range(chunk.edge):
+                const worldY = minimumY + localY
+                if worldY >= sample.surfaceY - profile.caves.surfaceThickness: continue
+                const index = localX + chunk.edge * (localZ + chunk.edge * localY)
+                if chunk.palette[chunk.indices[index]] != blocks.air: continue
+                if worldY <= profile.aquifers.magmaMaximumY and wetness > 0.42:
+                    if magmaPaletteEntry == null: paintChunkBlockAtIndex(chunk, index, blocks.magma)
+                    else: chunk.indices[index] = magmaPaletteEntry
+                else if worldY <= localWaterY and wetness >= profile.aquifers.wetThreshold:
+                    if waterPaletteEntry == null: paintChunkBlockAtIndex(chunk, index, blocks.water)
+                    else: chunk.indices[index] = waterPaletteEntry

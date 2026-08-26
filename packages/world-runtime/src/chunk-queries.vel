@@ -1,0 +1,53 @@
+import {WorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
+import {TerrainSample} from "@openvoxel/world-generation"
+import {Chunk, ChunkPosition, Coordinate2, chunkKey, setChunkBlock} from "@openvoxel/world"
+import {ChunkDelta, WorldStore} from "./contracts.vel"
+import {maximumChunkBatchSize} from "./runtime-limits.vel"
+import {WorldSessionCache} from "./world-sessions.vel"
+
+/// 区块查询服务集中实现所有只读世界查询。
+/// 调用方不需要知道一个 Chunk 是现场生成的，也不需要知道玩家修改按稀疏增量保存。
+export type WorldChunkQueries:
+    chunk: (worldId: string, position: ChunkPosition) -> Promise<Chunk>
+    chunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<Chunk>>
+    terrainSample: (worldId: string, position: Coordinate2) -> Promise<TerrainSample>
+
+/// 把一个持久化增量覆盖到刚生成的基础 Chunk 上。
+/// 每个 runtimeId 都先经过当前世界注册表验证，损坏或不属于该世界的数据会在
+/// 存储边界附近立即失败，不会悄悄进入后续渲染或网络响应。
+def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: ChunkDelta):
+    assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
+    for entry in delta.overrides:
+        requireWorldBlockStateRuntimeId(blocks.index, entry.blockStateRuntimeId)
+        setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
+    chunk.revision = delta.revision
+
+export def worldChunkQueries(sessions: WorldSessionCache, store: WorldStore) -> WorldChunkQueries:
+    async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
+        assert positions.size > 0 else "A chunk batch cannot be empty"
+        assert positions.size <= maximumChunkBatchSize else f"A chunk batch cannot contain more than {maximumChunkBatchSize} positions"
+
+        // 一次批量查询只取得一份 LoadedWorld，确保整批 Chunk 使用完全相同的
+        // 生成器、注册表和目录 revision。
+        const world = await sessions.require(worldId)
+        const stored = await store.deltas.findChunks(worldId, positions)
+        const deltas: Map<string, ChunkDelta> = Map()
+        for delta in stored: deltas.set(chunkKey(delta.position), delta)
+
+        const output: List<Chunk> = []
+        for position in positions:
+            const chunk = world.generator.generate(position)
+            const delta = deltas.get(chunkKey(position))
+            if delta != null: applyDelta(world.blocks, chunk, delta)
+            output.append(chunk)
+        return output
+
+    async def chunk(worldId: string, position: ChunkPosition) -> Chunk:
+        const found = await chunks(worldId, [position])
+        return found[0]
+
+    async def terrainSample(worldId: string, position: Coordinate2) -> TerrainSample:
+        const world = await sessions.require(worldId)
+        return world.generator.sample(position)
+
+    return {chunk, chunks, terrainSample}

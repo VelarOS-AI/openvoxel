@@ -1,0 +1,75 @@
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {monotonic} from "velar/time"
+import {Chunk, ChunkPosition, chunkPaletteTemplate} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette, survivalChunkPalette} from "../src/survival/block-palette.vel"
+import {carveCaves, cavePlanner} from "../src/survival/caves.vel"
+import {generateAquifers} from "../src/survival/fluids.vel"
+import {generateBaseTerrain} from "../src/survival/generator.vel"
+import {generateMinerals, mineralPlanner} from "../src/survival/minerals.vel"
+import {columnPlanner, createGenerationFields} from "../src/survival/terrain.vel"
+import {decorationPlanner, generateVegetation} from "../src/survival/vegetation.vel"
+import {generateSurface, surfacePlanner} from "../src/survival/surface.vel"
+
+@main:
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const palette = baseWorldGeneratorCatalog.palettes[0]
+    const seed = "openvoxel-benchmark"
+    const fields = createGenerationFields(seed, profile)
+    const columns = columnPlanner(fields, 16)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, palette.blocks)
+    const generationPalette = survivalChunkPalette(blocks)
+    const generationChunkPalette = chunkPaletteTemplate(generationPalette.runtimeIds)
+    const caves = cavePlanner(fields, seed, blocks)
+    const minerals = mineralPlanner(profile, palette, seed, baseWorldBlockRegistry.registry)
+    const decorations = decorationPlanner(profile, seed, blocks, columns)
+    const surfaces = surfacePlanner(profile, blocks)
+    let minimumMineralY = profile.world.maximumY
+    let maximumMineralY = profile.world.minimumY
+    for mineral in profile.minerals:
+        minimumMineralY = Math.min(minimumMineralY, mineral.minimumY)
+        maximumMineralY = Math.max(maximumMineralY, mineral.maximumY)
+    const positions: List<ChunkPosition> = []
+    for y in range(2, 6):
+        for x in range(-6, 6):
+            for z in range(-2, 2): positions.append({x, y, z})
+    const chunks: List<Chunk> = positions.map(position => generationChunkPalette.instantiate(position, 16))
+    let columnsMs = 0
+    let baseMs = 0
+    let cavesMs = 0
+    let aquifersMs = 0
+    let mineralsMs = 0
+    let surfaceMs = 0
+    let decorationMs = 0
+    for chunk, index in chunks:
+        const position = positions[index]
+        const minimumY = position.y * 16
+        const maximumY = minimumY + 15
+        let started = monotonic()
+        const terrain = columns.columns(position.x, position.z)
+        columnsMs += monotonic() - started
+        started = monotonic()
+        generateBaseTerrain(chunk, fields, terrain, generationPalette.indices)
+        baseMs += monotonic() - started
+        started = monotonic()
+        carveCaves(chunk, caves, profile, blocks, baseWorldBlockRegistry.registry, terrain)
+        cavesMs += monotonic() - started
+        const highestAquiferY = Math.max(profile.world.seaLevel - profile.aquifers.minimumWaterDepth, profile.aquifers.magmaMaximumY)
+        if minimumY <= highestAquiferY:
+            started = monotonic()
+            generateAquifers(chunk, fields, terrain, blocks)
+            aquifersMs += monotonic() - started
+        if maximumY >= minimumMineralY and minimumY <= maximumMineralY:
+            started = monotonic()
+            generateMinerals(chunk, minerals, blocks, baseWorldBlockRegistry.registry)
+            mineralsMs += monotonic() - started
+        const minimumSurfacePaintY = terrain.minimumSurfaceY - profile.surface.wetSoilDepth + 1
+        if maximumY >= minimumSurfacePaintY and minimumY <= terrain.maximumSurfaceY:
+            started = monotonic()
+            generateSurface(chunk, surfaces.surface(terrain), blocks, baseWorldBlockRegistry.registry)
+            surfaceMs += monotonic() - started
+        if maximumY >= terrain.minimumSurfaceY + 1 and minimumY <= terrain.maximumSurfaceY + 10:
+            started = monotonic()
+            generateVegetation(chunk, decorations.decorations(position.x, position.z), blocks)
+            decorationMs += monotonic() - started
+    print(Json.stableStringify({columnsMs, baseMs, cavesMs, aquifersMs, mineralsMs, surfaceMs, decorationMs}, 2))

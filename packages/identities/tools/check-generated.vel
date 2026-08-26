@@ -1,0 +1,7 @@
+import {readText} from "velar/fs"
+import {generatedIdentityCatalogText} from "./generate.vel"
+
+@main:
+    const expected = await generatedIdentityCatalogText()
+    const actual = await readText("generated/identities.json", 512 * 1024)
+    assert actual == expected else "Generated identity catalog is stale; run npm run generate"

@@ -1,0 +1,51 @@
+schemaVersion: 1
+key: worldGeneratorPalettes.survival
+
+blocks:
+  air: blocks.air
+  basalt: blocks.basalt
+  birchLeaves: blocks.birchLeaves
+  birchLog: blocks.birchLog
+  cactus: blocks.cactus
+  clay: blocks.clay
+  coalOre: blocks.coalOre
+  copperOre: blocks.copperOre
+  diamondOre: blocks.diamondOre
+  dirt: blocks.dirt
+  dryBush: blocks.dryBush
+  germaniumOre: blocks.germaniumOre
+  granite: blocks.granite
+  grass: blocks.grass
+  gravel: blocks.gravel
+  ice: blocks.ice
+  ironOre: blocks.ironOre
+  limestone: blocks.limestone
+  magma: blocks.magma
+  mimosaLeaves: blocks.mimosaLeaves
+  mimosaLog: blocks.mimosaLog
+  oakLeaves: blocks.oakLeaves
+  oakLog: blocks.oakLog
+  poplarLeaves: blocks.poplarLeaves
+  poplarLog: blocks.poplarLog
+  purpleFlower: blocks.purpleFlower
+  redFlower: blocks.redFlower
+  saltpeterOre: blocks.saltpeterOre
+  sand: blocks.sand
+  sandstone: blocks.sandstone
+  snow: blocks.snow
+  spruceLeaves: blocks.spruceLeaves
+  spruceLog: blocks.spruceLog
+  stone: blocks.stone
+  sulphurOre: blocks.sulphurOre
+  tallGrass: blocks.tallGrass
+  water: blocks.water
+  whiteFlower: blocks.whiteFlower
+
+minerals:
+  - {key: coal, block: blocks.coalOre, source: blocks.stone}
+  - {key: copper, block: blocks.copperOre, source: blocks.stone}
+  - {key: iron, block: blocks.ironOre, source: blocks.basalt}
+  - {key: saltpeter, block: blocks.saltpeterOre, source: blocks.sandstone}
+  - {key: sulphur, block: blocks.sulphurOre, source: blocks.basalt}
+  - {key: diamond, block: blocks.diamondOre, source: blocks.basalt}
+  - {key: germanium, block: blocks.germaniumOre, source: blocks.basalt}

@@ -1,10 +1,11 @@
 import {exists, makeDirectory, readText, writeText} from "velar/fs"
+import {identityTree} from "@openvoxel/identities"
 import {generateCatalogArtifacts} from "./catalog-artifact.vel"
 import {readBlockCatalogInputs} from "./catalog-input.vel"
 
 @main:
     const inputs = await readBlockCatalogInputs()
-    const output = generateCatalogArtifacts(inputs.manifestText, inputs.identitiesText, inputs.sourceTexts)
+    const output = generateCatalogArtifacts(inputs.manifestText, identityTree, inputs.sourceTexts)
 
     const generatedDirectory = "generated"
     if not await exists(generatedDirectory): await makeDirectory(generatedDirectory)

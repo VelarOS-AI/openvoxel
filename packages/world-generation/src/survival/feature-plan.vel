@@ -1,0 +1,101 @@
+import {Chunk, Coordinate3, paintChunkBlockAtIndex} from "@openvoxel/world"
+
+export type FeatureBounds:
+    minimumX: number
+    maximumX: number
+    minimumY: number
+    maximumY: number
+    minimumZ: number
+    maximumZ: number
+
+/// FeatureWrite 使用相对坐标保存预编译结果。owner 和 origin 决定世界归属，
+/// 同一计划可以被所有相交 Chunk 独立裁剪，绝不修改或要求加载邻居 Chunk。
+export type FeatureWrite:
+    x: number
+    y: number
+    z: number
+    runtimeId: number
+
+export type CompiledFeaturePlan:
+    owner: string
+    origin: Coordinate3
+    bounds: FeatureBounds
+    sortKey: string
+    writes: readonly List<readonly FeatureWrite>
+    /// 预先按目标 Chunk 坐标分桶；热路径不会再扫描整份跨区特征列表。
+    buckets: Map<string, List<FeatureWrite>>
+    bucket: (chunkX: number, chunkY: number, chunkZ: number) -> readonly List<readonly FeatureWrite>
+
+export def chunkMinimumX(chunk: readonly Chunk) -> number: return chunk.position.x * chunk.edge
+
+export def chunkMinimumY(chunk: readonly Chunk) -> number: return chunk.position.y * chunk.edge
+
+export def chunkMinimumZ(chunk: readonly Chunk) -> number: return chunk.position.z * chunk.edge
+
+export def featureIntersectsChunk(plan: readonly CompiledFeaturePlan, chunk: readonly Chunk) -> bool:
+    const minimumX = chunkMinimumX(chunk)
+    const minimumY = chunkMinimumY(chunk)
+    const minimumZ = chunkMinimumZ(chunk)
+    return plan.bounds.minimumX <= minimumX + chunk.edge - 1 and plan.bounds.maximumX >= minimumX and plan.bounds.minimumY <= minimumY + chunk.edge - 1 and plan.bounds.maximumY >= minimumY and plan.bounds.minimumZ <= minimumZ + chunk.edge - 1 and plan.bounds.maximumZ >= minimumZ
+
+def worldIndex(chunk: readonly Chunk, worldX: number, worldY: number, worldZ: number) -> number:
+    const localX = worldX - chunkMinimumX(chunk)
+    const localY = worldY - chunkMinimumY(chunk)
+    const localZ = worldZ - chunkMinimumZ(chunk)
+    return localX + chunk.edge * (localZ + chunk.edge * localY)
+
+def chunkBucketKey(chunkX: number, chunkY: number, chunkZ: number) -> string: return f"{chunkX}:{chunkY}:{chunkZ}"
+
+/// replacement 决定当前方块能否被计划覆盖。洞穴只替换天然地层，矿物只替换
+/// 指定母岩，植被则只替换空气或叶片；所有阶段复用相同的裁剪和排序语义。
+export def applyCompiledFeaturePlan(chunk: Chunk, plan: readonly CompiledFeaturePlan, replacement: (current: number, target: number, worldX: number, worldY: number, worldZ: number) -> bool):
+    if not featureIntersectsChunk(plan, chunk): return
+    const bucket = plan.bucket(chunk.position.x, chunk.position.y, chunk.position.z)
+    const minimumX = chunkMinimumX(chunk)
+    const minimumY = chunkMinimumY(chunk)
+    const minimumZ = chunkMinimumZ(chunk)
+    for write in bucket:
+        const worldX = plan.origin.x + write.x
+        const worldY = plan.origin.y + write.y
+        const worldZ = plan.origin.z + write.z
+        if worldX < minimumX or worldX >= minimumX + chunk.edge or worldY < minimumY or worldY >= minimumY + chunk.edge or worldZ < minimumZ or worldZ >= minimumZ + chunk.edge:
+            continue
+        const index = worldIndex(chunk, worldX, worldY, worldZ)
+        const current = chunk.palette[chunk.indices[index]]
+        if not replacement(current, write.runtimeId, worldX, worldY, worldZ): continue
+        const paletteEntry = chunk.paletteIndex.get(write.runtimeId)
+        if paletteEntry == null: paintChunkBlockAtIndex(chunk, index, write.runtimeId)
+        else: chunk.indices[index] = paletteEntry
+
+/// 从相对写入列表计算精确包围盒。空计划使用 origin 的单点包围盒，调用方仍可
+/// 缓存它来记录“这个所有者没有特征”，避免反复随机判定。
+export def compiledFeaturePlan(owner: string, origin: Coordinate3, sortKey: string, writes: List<FeatureWrite>) -> CompiledFeaturePlan:
+    let minimumX = origin.x
+    let maximumX = origin.x
+    let minimumY = origin.y
+    let maximumY = origin.y
+    let minimumZ = origin.z
+    let maximumZ = origin.z
+    const buckets: Map<string, List<FeatureWrite>> = Map()
+    for write in writes:
+        const worldX = origin.x + write.x
+        const worldY = origin.y + write.y
+        const worldZ = origin.z + write.z
+        minimumX = Math.min(minimumX, worldX)
+        maximumX = Math.max(maximumX, worldX)
+        minimumY = Math.min(minimumY, worldY)
+        maximumY = Math.max(maximumY, worldY)
+        minimumZ = Math.min(minimumZ, worldZ)
+        maximumZ = Math.max(maximumZ, worldZ)
+        const bucketKey = chunkBucketKey((worldX / 16).floor(), (worldY / 16).floor(), (worldZ / 16).floor())
+        // `get` 的结果可空；直接在 else 中使用收窄后的 List 会按语言安全规则
+        // 重新验证整个桶。先用空桶合并成确定的 List，再在首次出现时写回 Map，
+        // 可让大量特征写入始终保持线性，同时兼容当前已发布的编译器。
+        const existing = buckets.get(bucketKey)
+        const bucket = existing ?? []
+        bucket.append(write)
+        if existing == null: buckets.set(bucketKey, bucket)
+    def bucket(chunkX: number, chunkY: number, chunkZ: number) -> readonly List<readonly FeatureWrite>:
+        return buckets.get(chunkBucketKey(chunkX, chunkY, chunkZ)) ?? []
+
+    return {owner, origin, bounds: {minimumX, maximumX, minimumY, maximumY, minimumZ, maximumZ}, sortKey, writes, buckets, bucket}

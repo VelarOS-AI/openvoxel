@@ -12,6 +12,10 @@ type WorldRow:
     formatVersion: number
     chunkEdge: number
     generator: string
+    generatorHash: string
+    spawnX: number
+    spawnY: number
+    spawnZ: number
     blockRegistryJson: string
 
 type DatabaseVersionRow:
@@ -40,7 +44,7 @@ export type SqliteWorldStoreOptions:
     maxRows: number
     maxResultBytes: number
 
-export const sqliteSchemaVersion = 3
+export const sqliteSchemaVersion = 4
 const worldsTable = sqlTable("worlds")
 const chunkStatesTable = sqlTable("chunk_states")
 const blockOverridesTable = sqlTable("block_overrides")
@@ -52,8 +56,8 @@ const readSchemaVersion = query(trustedSql("PRAGMA user_version"), DatabaseVersi
 def insertWorldOperation(world: WorldManifest) -> DatabaseCommand:
     return insertCommand(
         worldsTable,
-        ["id", "name", "seed", "format_version", "chunk_edge", "generator", "block_registry_json"],
-        [[world.id, world.name, world.seed, world.formatVersion, world.chunkEdge, world.generator, Json.stableStringify(world.blockRegistry)]],
+        ["id", "name", "seed", "format_version", "chunk_edge", "generator", "generator_hash", "spawn_x", "spawn_y", "spawn_z", "block_registry_json"],
+        [[world.id, world.name, world.seed, world.formatVersion, world.chunkEdge, world.generator, world.generatorHash, world.spawn.x, world.spawn.y, world.spawn.z, Json.stableStringify(world.blockRegistry)]],
         minimumAffected = 1,
         maximumAffected = 1,
     )
@@ -68,6 +72,10 @@ def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
             sqlNamedField("format_version", alias="formatVersion"),
             sqlNamedField("chunk_edge", alias="chunkEdge"),
             sqlNamedField("generator"),
+            sqlNamedField("generator_hash", alias="generatorHash"),
+            sqlNamedField("spawn_x", alias="spawnX"),
+            sqlNamedField("spawn_y", alias="spawnY"),
+            sqlNamedField("spawn_z", alias="spawnZ"),
             sqlNamedField("block_registry_json", alias="blockRegistryJson"),
         ],
         WorldRow,
@@ -167,9 +175,12 @@ async def openDatabase(options: SqliteWorldStoreOptions) -> SqliteConnection:
 
 async def migrate(executor: DatabaseExecutor):
     const versionRow = await requireOne(executor, readSchemaVersion, message="SQLite did not return its schema version")
-    assert versionRow.user_version == 0 or versionRow.user_version == sqliteSchemaVersion else f"SQLite schema version {versionRow.user_version} does not match required version {sqliteSchemaVersion}"
+    if versionRow.user_version == sqliteSchemaVersion: return
+    assert versionRow.user_version == 0 else f"SQLite schema version {versionRow.user_version} does not match required version {sqliteSchemaVersion}"
+    // 新格式直接建表；如果 user_version 为 0 但旧 worlds 表已经存在，CREATE
+    // TABLE 会明确失败。这里不会猜测旧结构、删数据或自动迁移。
     await execute(executor, command(
-        trustedSql("CREATE TABLE IF NOT EXISTS worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, block_registry_json TEXT NOT NULL)"),
+        trustedSql("CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, generator_hash TEXT NOT NULL, spawn_x INTEGER NOT NULL, spawn_y INTEGER NOT NULL, spawn_z INTEGER NOT NULL, block_registry_json TEXT NOT NULL)"),
     ))
     await execute(executor, command(sqlConcat([
         trustedSql("PRAGMA user_version = "),
@@ -208,7 +219,10 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
         const row = await one(databaseExecutor, findWorldOperation(worldId))
         if row == null: return null
         const blockRegistry = WorldBlockRegistrySnapshot.parse(Json.parse(row.blockRegistryJson))
-        return validateWorldManifest(WorldManifest.from(row, {blockRegistry}))
+        return validateWorldManifest(WorldManifest.from(row, {
+            spawn: {x: row.spawnX, y: row.spawnY, z: row.spawnZ},
+            blockRegistry,
+        }))
 
     async def updateBlockRegistry(worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot):
         await execute(databaseExecutor, updateWorldBlockRegistryOperation(worldId, blockRegistry))

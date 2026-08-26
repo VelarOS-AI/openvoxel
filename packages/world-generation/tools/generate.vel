@@ -1,0 +1,16 @@
+import {identityTree} from "@openvoxel/identities"
+import {exists, makeDirectory, readText, writeText} from "velar/fs"
+import {compileWorldGeneratorCatalog} from "../src/compiler/catalog-compiler.vel"
+import {readWorldGeneratorCatalogInputs} from "./catalog-input.vel"
+
+export async def generatedWorldGeneratorCatalogText() -> string:
+    const inputs = await readWorldGeneratorCatalogInputs()
+    const artifact = compileWorldGeneratorCatalog(inputs.manifestText, inputs.generatorSourceTexts, inputs.paletteSourceTexts, identityTree)
+    return f"{Json.stableStringify(artifact, 2)}\n"
+
+@main:
+    const generatedDirectory = "generated"
+    if not await exists(generatedDirectory): await makeDirectory(generatedDirectory)
+    const path = "generated/world-generator-catalog.json"
+    const output = await generatedWorldGeneratorCatalogText()
+    if not await exists(path) or await readText(path, 2 * 1024 * 1024) != output: await writeText(path, output)

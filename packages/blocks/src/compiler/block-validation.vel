@@ -1,5 +1,5 @@
 import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShape, BlockShapeKind, BlockStateProperty, BlockTypeSource} from "../definition/block.vel"
-import {BuiltinIdentities} from "../definition/identities.vel"
+import {BuiltinBlockIdentities} from "@openvoxel/identities"
 
 /// 该模块集中执行单个方块及其组件的语义验证。
 /// YAML 结构验证由 runtime type 负责，例如字段是否存在、值是否为正确类型；
@@ -73,12 +73,10 @@ def requireInteraction(interaction: BlockInteraction, blockKey: string):
 
 /// 验证身份树中由运行时直接使用的基础约束，以及内建内容的命名空间归属。
 /// 不可破坏方块必须使用统一的空掉落表，避免空气或流体意外产生物品。
-export def validateBuiltinIdentities(identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>):
+export def validateBuiltinBlockIdentities(identities: BuiltinBlockIdentities, sourceBlocks: List<BlockTypeSource>):
     const baseNamespace = identities.namespaces.base
     assert Text.matches(baseNamespace, r"^[a-z][a-z0-9_.-]*$") else "Built-in namespace is invalid"
-    requireNamespacedKey(identities.generators.survival, "Survival generator identity")
     requireNamespacedKey(identities.loot.empty, "Empty loot identity")
-    assert identities.generators.survival.startsWith(f"{baseNamespace}:") else "Survival generator identity is outside the base namespace"
     for block in sourceBlocks:
         assert block.key.startsWith(f"{baseNamespace}:") else f"Built-in block {block.key} is outside the base namespace"
         if not block.interaction.breakable:

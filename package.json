@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "workspaces": [
+    "packages/identities",
     "packages/blocks",
     "packages/protocol",
     "packages/world",
@@ -38,6 +39,6 @@
     "@openvoxel/world-runtime": "0.1.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.15.0"
+    "@velarscript/cli": "0.16.0"
   }
 }

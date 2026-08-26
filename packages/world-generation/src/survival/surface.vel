@@ -1,0 +1,93 @@
+import {BlockBehaviorKind, BlockRegistry} from "@openvoxel/blocks"
+import {Chunk, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {evictOldest} from "./lru-cache.vel"
+import {TerrainColumnPlan, subsurfaceBlock, surfaceBlock} from "./terrain.vel"
+
+type SurfaceWrite:
+    localX: number
+    worldY: number
+    localZ: number
+    runtimeId: number
+
+export type SurfacePaintPlan:
+    chunkX: number
+    chunkZ: number
+    buckets: List<List<SurfaceWrite>>
+    writesFor: (chunkY: number) -> readonly List<readonly SurfaceWrite>
+
+export type SurfacePlanner:
+    cachedPlanCount: () -> number
+    planBuildCount: () -> number
+    surface: (terrain: readonly TerrainColumnPlan) -> readonly SurfacePaintPlan
+
+/// 表层规则只依赖最终 TerrainSample 和已经绑定的材料调色板。每个水平列首次
+/// 访问时把草皮、土层、沙床等写入编译成按垂直 Chunk 分桶的计划；随后相同列的
+/// 生成以及基准复跑只裁剪目标桶，不再重复遍历 16×16×土层厚度。
+export def surfacePlanner(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    capacity: number = profile.sampling.columnCacheCapacity,
+) -> SurfacePlanner:
+    const plans: Map<string, SurfacePaintPlan> = Map()
+    let builds = 0
+
+    def cachedPlanCount() -> number: return plans.size
+
+    def planBuildCount() -> number: return builds
+
+    def surface(terrain: readonly TerrainColumnPlan) -> readonly SurfacePaintPlan:
+        const chunkX = (terrain.minimumX / terrain.edge).floor()
+        const chunkZ = (terrain.minimumZ / terrain.edge).floor()
+        const key = f"surface:{chunkX}:{chunkZ}"
+        if plans.has(key):
+            const existing = plans.get(key)!
+            plans.remove(key)
+            plans.set(key, existing)
+            return existing
+
+        const verticalChunkCount = (profile.world.maximumY + 1 - profile.world.minimumY) / terrain.edge
+        const buckets: List<List<SurfaceWrite>> = []
+        for chunkY in range(verticalChunkCount): buckets.append([])
+        for localX in range(terrain.edge):
+            const worldX = terrain.minimumX + localX
+            for localZ in range(terrain.edge):
+                const worldZ = terrain.minimumZ + localZ
+                const sample = terrain.sampleAt(worldX, worldZ)
+                const topBlock = surfaceBlock(profile, blocks, sample)
+                const underBlock = subsurfaceBlock(profile, blocks, sample)
+                let thickness = profile.surface.soilDepth
+                if sample.humidity >= 11: thickness = profile.surface.wetSoilDepth
+                if sample.slope >= profile.surface.rockSlope: thickness = 2
+                for depth in range(thickness):
+                    const worldY = sample.surfaceY - depth
+                    const chunkY = (worldY / terrain.edge).floor()
+                    const write: SurfaceWrite = {localX, worldY, localZ, runtimeId: depth == 0 ? topBlock : underBlock}
+                    if chunkY >= 0 and chunkY < buckets.size: buckets[chunkY].append(write)
+
+        def writesFor(chunkY: number) -> readonly List<readonly SurfaceWrite>:
+            if chunkY < 0 or chunkY >= buckets.size: return []
+            return buckets[chunkY]
+
+        const built: SurfacePaintPlan = {chunkX, chunkZ, buckets, writesFor}
+        builds += 1
+        if plans.size >= capacity: evictOldest(plans)
+        plans.set(key, built)
+        return built
+
+    return {cachedPlanCount, planBuildCount, surface}
+
+/// 洞穴、含水层和矿物已经完成后才应用表层。空气和流体保持原样，因而河面、
+/// 海面与洞穴开口不会被土层计划重新封死。
+export def generateSurface(chunk: Chunk, plan: readonly SurfacePaintPlan, blocks: readonly SurvivalBlockPalette, registry: readonly BlockRegistry):
+    if chunk.position.x != plan.chunkX or chunk.position.z != plan.chunkZ: return
+    const minimumY = chunk.position.y * chunk.edge
+    for write in plan.writesFor(chunk.position.y):
+        const localY = write.worldY - minimumY
+        const index = write.localX + chunk.edge * (write.localZ + chunk.edge * localY)
+        const current = chunk.palette[chunk.indices[index]]
+        if current == blocks.air or registry.hasBehavior(current, BlockBehaviorKind.fluid): continue
+        const paletteEntry = chunk.paletteIndex.get(write.runtimeId)
+        if paletteEntry == null: paintChunkBlockAtIndex(chunk, index, write.runtimeId)
+        else: chunk.indices[index] = paletteEntry

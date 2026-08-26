@@ -49,11 +49,14 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
     assert not source.catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert source.blocks.size > 0 else "Block catalog cannot be empty"
     assert source.states.size > 0 and source.states.size <= 0x100000000 else "Block state catalog must contain from 1 through 4294967296 states"
-    // 同时建立四个索引，避免运行时反复扫描完整目录。
+    // 同时建立面向查询入口的索引，避免运行时先取完整状态、再沿 blockKey 回查
+    // 家族定义。标签与行为是高频分类条件，直接按 runtimeId 命中紧凑 Set。
     const byBlockKey: Map<string, readonly BlockDefinition> = Map()
     const byStateId: Map<number, readonly BlockStateDefinition> = Map()
     const byStateKey: Map<string, readonly BlockStateDefinition> = Map()
     const tagsByBlockKey: Map<string, readonly Set<string>> = Map()
+    const tagsByStateId: Map<number, readonly Set<string>> = Map()
+    const behaviorKindsByStateId: Map<number, readonly Set<BlockBehaviorKind>> = Map()
     const reservedRuntimeIds = Set(source.reservedRuntimeIds)
 
     // 先验证状态并建立 ID、状态键索引；状态键必须能由方块 key 和属性重新计算出来。
@@ -77,6 +80,12 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
         tagsByBlockKey.set(definition.key, Set(definition.tags))
     for state in source.states:
         assert byBlockKey.get(state.blockKey) != null else f"Block state {state.stateKey} names unknown block {state.blockKey}"
+        const tags = tagsByBlockKey.get(state.blockKey)
+        assert tags != null else f"Missing tag index for block {state.blockKey}"
+        tagsByStateId.set(state.runtimeId, tags)
+        const behaviorKinds: Set<BlockBehaviorKind> = Set()
+        for behavior in state.behaviors: behaviorKinds.add(behavior.kind)
+        behaviorKindsByStateId.set(state.runtimeId, behaviorKinds)
 
     def catalog() -> readonly List<readonly BlockDefinition>: return source.blocks
 
@@ -119,12 +128,17 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
         return stateRuntimeIdFor(state.blockKey, properties)
 
     def hasTag(runtimeId: number, tag: string) -> bool:
-        const state = requireStateByRuntimeId(runtimeId)
-        const tags = tagsByBlockKey.get(state.blockKey)
-        assert tags != null else f"Missing tag index for block {state.blockKey}"
+        requireBlockStateRuntimeId(runtimeId)
+        if runtimeId in reservedRuntimeIds: throw ReservedBlockStateRuntimeIdError(runtimeId)
+        const tags = tagsByStateId.get(runtimeId)
+        if tags == null: throw UnknownBlockStateRuntimeIdError(runtimeId)
         return tag in tags
 
     def hasBehavior(runtimeId: number, kind: BlockBehaviorKind) -> bool:
-        return requireStateByRuntimeId(runtimeId).behaviors.some(behavior => behavior.kind == kind)
+        requireBlockStateRuntimeId(runtimeId)
+        if runtimeId in reservedRuntimeIds: throw ReservedBlockStateRuntimeIdError(runtimeId)
+        const behaviorKinds = behaviorKindsByStateId.get(runtimeId)
+        if behaviorKinds == null: throw UnknownBlockStateRuntimeIdError(runtimeId)
+        return kind in behaviorKinds
 
     return {catalog, states, requireTypeByKey, defaultStateRuntimeIdForKey, requireStateByRuntimeId, requireStateByKey, stateRuntimeIdFor, withProperty, hasTag, hasBehavior}

@@ -1,0 +1,21 @@
+import {readText} from "velar/fs"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {WorldGeneratorCatalogManifest} from "../src/definition/catalog.vel"
+
+export type WorldGeneratorCatalogInputs:
+    manifestText: string
+    generatorSourceTexts: List<string>
+    paletteSourceTexts: List<string>
+
+export async def readWorldGeneratorCatalogInputs() -> WorldGeneratorCatalogInputs:
+    const manifestText = await readText("data/catalog.yml", 64 * 1024)
+    const manifest = WorldGeneratorCatalogManifest.parse(parseYaml(manifestText))
+    const generatorSourceTexts: List<string> = []
+    for source in manifest.generatorSources:
+        assert Text.matches(source, r"^generators/[a-z0-9-]+\.yml$") else f"Invalid world generator source path {source}"
+        generatorSourceTexts.append(await readText(f"data/{source}", 512 * 1024))
+    const paletteSourceTexts: List<string> = []
+    for source in manifest.paletteSources:
+        assert Text.matches(source, r"^palettes/[a-z0-9-]+\.yml$") else f"Invalid world generator palette source path {source}"
+        paletteSourceTexts.append(await readText(f"data/{source}", 512 * 1024))
+    return {manifestText, generatorSourceTexts, paletteSourceTexts}

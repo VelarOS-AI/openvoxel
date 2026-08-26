@@ -1,5 +1,6 @@
 import {expect} from "velar/test"
-import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPropertyKind, BlockRenderLayer, BlockTypeSource, baseBlockCatalogSource, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, builtinIdentities, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
+import {builtinIdentities} from "@openvoxel/identities"
+import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPropertyKind, BlockRenderLayer, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
 
 const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 const grassBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
@@ -23,7 +24,7 @@ def contribution(owner: string, blockKey: string) -> BlockCatalogContribution:
 test "generated runtime catalog expands finite states with UInt32 identities":
     expect(blockCatalogSchemaVersion).toBe(3)
     expect(blockCatalogVersion).toBe(baseBlockCatalogSource.catalogVersion)
-    expect(blockCatalogHash).toBe("c51b21d7471c32c5e881772e1c48edcc2eb6eb3fec06fd782ce444712defb17e")
+    expect(blockCatalogHash).toBe("c7d6748bf9de3cf264f8ac6b1a6a17ad591ed8af7e07f2f53ff47bcd891e0bb2")
     expect(blockStateMapHash).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
     expect(blockCatalog().size).toBe(38)
     expect(blockStateCatalog().size).toBe(183)
@@ -49,6 +50,12 @@ test "state registry resolves properties through explicit runtime ids":
     requireBlockState(oakLogX)
     expect(blockStateDefinition(oakLogX).runtimeId).toBe(oakLogX)
     expect(() => requireBlockState(0xffffffff)).toThrow()
+
+test "tag and behavior indexes preserve unknown runtime id errors":
+    expect(baseWorldBlockRegistry.registry.hasTag(stoneBlockState, builtinIdentities.tags.naturalRock)).toBe(true)
+    expect(baseWorldBlockRegistry.registry.hasBehavior(waterBlockState, BlockBehaviorKind.fluid)).toBe(true)
+    expect(() => baseWorldBlockRegistry.registry.hasTag(0xffffffff, builtinIdentities.tags.terrain)).toThrow()
+    expect(() => baseWorldBlockRegistry.registry.hasBehavior(0xffffffff, BlockBehaviorKind.fluid)).toThrow()
 
 test "Mod compiler expands finite source states before world id allocation":
     const crop = BlockTypeSource.from(contributionSource("farming:tomato_crop"), {

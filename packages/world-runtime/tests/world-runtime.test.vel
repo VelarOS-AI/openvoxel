@@ -1,8 +1,10 @@
 import {expect} from "velar/test"
-import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, builtinIdentities, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {WorldGeneratorCatalogContribution, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog, worldGeneratorDefinitionHash} from "@openvoxel/world-generation"
 import {WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
-import {WorldBlockCatalogSet, worldRuntime} from "../src/world-runtime.vel"
+import {WorldAlreadyExistsError, WorldContentSet, worldRuntime} from "../src/index.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
@@ -18,6 +20,11 @@ def tomatoContribution() -> BlockCatalogContribution:
         variants: [],
     })
     return compileModBlockCatalogContribution("farming", "farming:catalog-v1", [tomato])
+
+def terrainGeneratorContribution() -> WorldGeneratorCatalogContribution:
+    const definition = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "terrainmod:survival", palette: "terrainmod:palette"})
+    const palette = WorldGeneratorPaletteDefinition.from(baseWorldGeneratorCatalog.palettes[0], {key: "terrainmod:palette"})
+    return {owner: "terrainmod", catalog: {schemaVersion: 2, generators: [definition], palettes: [palette]}}
 
 test "world runtime creates generates modifies and restores":
     const store = memoryWorldStore()
@@ -54,9 +61,10 @@ test "world runtime creates generates modifies and restores":
 test "world runtime resolves and caches a separate active block registry for every world":
     const farming = tomatoContribution()
 
-    def catalogs(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
-        if manifest.id == "modded": return {revision: "farming-v1", contributions: [farming]}
-        return {revision: "base", contributions: []}
+    def catalogs(worldId: string) -> readonly WorldContentSet:
+        if worldId == "modded":
+            return {revision: "farming-v1", blockContributions: [farming], generatorContributions: []}
+        return {revision: "base", blockContributions: [], generatorContributions: []}
 
     const store = memoryWorldStore()
     const runtime = worldRuntime(store, catalogs)
@@ -66,8 +74,8 @@ test "world runtime resolves and caches a separate active block registry for eve
     expect(modded.blockRegistry.states.size).toBe(184)
     expect(modded.blockRegistry.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
 
-    def withoutMods(manifest: readonly WorldManifest) -> readonly WorldBlockCatalogSet:
-        return {revision: "without-mods", contributions: []}
+    def withoutMods(worldId: string) -> readonly WorldContentSet:
+        return {revision: "without-mods", blockContributions: [], generatorContributions: []}
 
     const unavailableRuntime = worldRuntime(store, withoutMods)
     const unavailable = await unavailableRuntime.requireWorld(modded.id)
@@ -87,8 +95,8 @@ test "world runtime exposes deterministic samples and bounded chunk batches":
     const runtime = worldRuntime(memoryWorldStore())
     const manifest = await runtime.createWorld({id: "generation", name: "Generation", seed: "openvoxel"})
     const sample = await runtime.terrainSample(manifest.id, {x: 0, z: 0})
-    expect(sample.surfaceY).toBe(99)
-    expect(sample.biome).toBe("tundra")
+    expect(sample.surfaceY).toBe(61)
+    expect(sample.biome).toBe(builtinIdentities.biomes.ocean)
     const chunks = await runtime.chunks(manifest.id, [
         {x: 0, y: 3, z: 0},
         {x: 0, y: 4, z: 0},
@@ -96,3 +104,86 @@ test "world runtime exposes deterministic samples and bounded chunk batches":
     expect(chunks.size).toBe(2)
     expect(chunks[0].position.y).toBe(3)
     expect(chunks[1].position.y).toBe(4)
+
+test "world runtime shares an in-flight world load and supports explicit unloading":
+    const store = memoryWorldStore()
+    const creator = worldRuntime(store)
+    await creator.createWorld({id: "session", name: "Session", seed: "shared-load"})
+
+    let catalogResolutions = 0
+    def catalogs(worldId: string) -> readonly WorldContentSet:
+        catalogResolutions += 1
+        return {revision: "base", blockContributions: [], generatorContributions: []}
+
+    const runtime = worldRuntime(store, catalogs)
+    const worlds = await Promise.all([
+        runtime.requireWorld("session"),
+        runtime.requireWorld("session"),
+        runtime.requireWorld("session"),
+    ])
+    expect(worlds.size).toBe(3)
+    expect(worlds.every(world => world.id == "session")).toBe(true)
+    expect(catalogResolutions).toBe(1)
+
+    await runtime.unloadWorld("session")
+    const reloaded = await runtime.requireWorld("session")
+    expect(reloaded.id).toBe("session")
+    expect(catalogResolutions).toBe(2)
+
+test "world runtime refreshes one loaded registry when its catalog revision changes":
+    const farming = tomatoContribution()
+    let revision = "base"
+
+    def catalogs(worldId: string) -> readonly WorldContentSet:
+        if revision == "farming-v1": return {revision, blockContributions: [farming], generatorContributions: []}
+        return {revision, blockContributions: [], generatorContributions: []}
+
+    const runtime = worldRuntime(memoryWorldStore(), catalogs)
+    const created = await runtime.createWorld({id: "refresh", name: "Refresh", seed: "catalog-refresh"})
+    expect(created.blockRegistry.states.size).toBe(183)
+
+    revision = "farming-v1"
+    const expanded = await runtime.requireWorld(created.id)
+    expect(expanded.blockRegistry.states.size).toBe(184)
+    const change = await runtime.setBlock(created.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
+    expect(change.blockStateRuntimeId).toBe(firstModBlockStateRuntimeId)
+
+    revision = "base-again"
+    const retained = await runtime.requireWorld(created.id)
+    expect(retained.blockRegistry.states.size).toBe(184)
+    let rejectedMissingState = false
+    try: await runtime.setBlock(created.id, {x: 1, y: 80, z: 0}, firstModBlockStateRuntimeId)
+    catch error: rejectedMissingState = true
+    expect(rejectedMissingState).toBe(true)
+
+test "world runtime serializes concurrent creation for the same world identity":
+    const runtime = worldRuntime(memoryWorldStore())
+    const first = runtime.createWorld({id: "single-create", name: "First", seed: "first"})
+    const duplicate = runtime.createWorld({id: "single-create", name: "Second", seed: "second"})
+
+    const created = await first
+    expect(created.name).toBe("First")
+    let rejectedDuplicate = false
+    try: await duplicate
+    catch error: rejectedDuplicate = error is WorldAlreadyExistsError
+    expect(rejectedDuplicate).toBe(true)
+
+test "world runtime composes Mod content before saving a new world":
+    const contribution = terrainGeneratorContribution()
+
+    def content(worldId: string) -> readonly WorldContentSet:
+        if worldId == "mod-generator":
+            return {revision: "terrainmod-v1", blockContributions: [], generatorContributions: [contribution]}
+        return {revision: "base", blockContributions: [], generatorContributions: []}
+
+    const runtime = worldRuntime(memoryWorldStore(), content)
+    const manifest = await runtime.createWorld({
+        id: "mod-generator",
+        name: "Mod Generator",
+        seed: "mod-seed",
+        generator: "terrainmod:survival",
+    })
+    expect(manifest.generator).toBe("terrainmod:survival")
+    expect(manifest.generatorHash).toBe(worldGeneratorDefinitionHash(contribution.catalog.generators[0], contribution.catalog.palettes[0]))
+    expect(manifest.spawn.y > 0).toBe(true)
+    expect((await runtime.chunk(manifest.id, {x: 0, y: 4, z: 0})).indices.size).toBe(4096)

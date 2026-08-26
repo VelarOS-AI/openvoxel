@@ -1,6 +1,5 @@
 schemaVersion: 3
 catalogVersion: catalogs.base
-identities: identities.yml
 sources:
   - blocks/terrain.yml
   - blocks/fluids.yml

@@ -1,0 +1,5 @@
+formatVersion: 2
+generatorSources:
+  - generators/survival.yml
+paletteSources:
+  - palettes/survival.yml

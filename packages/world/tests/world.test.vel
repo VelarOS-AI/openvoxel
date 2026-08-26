@@ -1,11 +1,13 @@
 import {expect} from "velar/test"
-import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
-import {Chunk, blockIndex, chunkBlock, emptyChunk, setChunkBlock} from "../src/chunk/chunk.vel"
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Chunk, blockIndex, chunkBlock, chunkPaletteTemplate, emptyChunk, emptyPaletteChunk, setChunkBlock} from "../src/chunk/chunk.vel"
 import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/spatial/coordinates.vel"
 import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
 import {checkWorldCoordinates} from "./support/property-check.vel"
 
 const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
 def coordinateRoundTrip(position: Coordinate3) -> bool:
     const located = locateBlock(position, initialChunkEdge)
@@ -19,6 +21,8 @@ def manifest() -> WorldManifest:
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: builtinIdentities.generators.survival,
+        generatorHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        spawn: {x: 0, y: 65, z: 0},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
     })
 
@@ -67,3 +71,19 @@ test "chunk palettes store UInt32 runtime ids behind UInt16 local indices":
     expect(chunk.palette).toEqual([airBlock, modRuntimeId])
     expect(chunkBlock(chunk, {x: 1, y: 2, z: 3})).toBe(modRuntimeId)
     expect(chunk.indices[561]).toBe(1)
+
+test "new generator chunks may preseed a validated local palette":
+    const chunk = emptyPaletteChunk({x: 0, y: 0, z: 0}, 16, [airBlock, stoneBlock])
+    expect(chunk.palette).toEqual([airBlock, stoneBlock])
+    expect(chunk.paletteIndex.get(stoneBlock)).toBe(1)
+    expect(chunkBlock(chunk, {x: 15, y: 15, z: 15})).toBe(airBlock)
+    expect(() => emptyPaletteChunk({x: 0, y: 0, z: 0}, 16, [airBlock, airBlock])).toThrow()
+
+test "palette templates validate once while keeping Chunk mutations isolated":
+    const template = chunkPaletteTemplate([airBlock, stoneBlock])
+    const left = template.instantiate({x: 0, y: 0, z: 0}, 16)
+    const right = template.instantiate({x: 1, y: 0, z: 0}, 16)
+    setChunkBlock(left, {x: 0, y: 0, z: 0}, 0x1000000)
+    expect(left.palette.size).toBe(3)
+    expect(right.palette).toEqual([airBlock, stoneBlock])
+    expect(template.runtimeIds).toEqual([airBlock, stoneBlock])

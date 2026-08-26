@@ -7,7 +7,8 @@ import {expect} from "velar/test"
 import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
 import {createOpenVoxelApp, startOpenVoxelServer} from "../src/server.vel"
 import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, openVoxelApplicationProvider} from "../src/application.vel"
-import {blockCatalogVersion, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {blockCatalogVersion, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
 import {defaultGenerator} from "@openvoxel/world-generation"
 import {WorldManifest, chunkBlock} from "@openvoxel/world"
 import {ApiResponse, BlockCatalogResponse, BlockChangedEvent, ChunkBatchResponse, ChunkResponse, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, WorldBootstrapResponse} from "@openvoxel/protocol"
@@ -84,12 +85,12 @@ test "native HTTP modules complete the backend vertical slice":
         expect(healthResponse.status).toBe(200)
         const health = HealthResponse.parse((await envelope(healthResponse)).data)
         expect(health.status).toBe("ready")
-        expect(health.protocolVersion).toBe(3)
-        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("3")
+        expect(health.protocolVersion).toBe(4)
+        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("4")
 
         const contractResponse = await api.get("/api/client-contract")
         const contract = ClientContractResponse.parse((await envelope(contractResponse)).data)
-        expect(contract.contractVersion).toBe(4)
+        expect(contract.contractVersion).toBe(5)
         expect(contract.http.routes.queryChunk.path).toBe("/api/chunks/query")
         expect(contract.chunks.indexOrder).toBe("x + edge * (z + edge * y)")
         expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
@@ -140,8 +141,8 @@ test "native HTTP modules complete the backend vertical slice":
 
         const bootstrapResponse = await api.get(f"/api/worlds/{world.id}/bootstrap")
         const bootstrap = WorldBootstrapResponse.parse((await envelope(bootstrapResponse)).data)
-        expect(bootstrap.protocolVersion).toBe(3)
-        expect(bootstrap.clientContractVersion).toBe(4)
+        expect(bootstrap.protocolVersion).toBe(4)
+        expect(bootstrap.clientContractVersion).toBe(5)
         expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
         expect(bootstrap.blockRegistry).toEqual(world.blockRegistry)
         expect(bootstrap.blockCatalogContentHash).toBe(catalog.contentHash)
@@ -166,8 +167,8 @@ test "native HTTP modules complete the backend vertical slice":
         }})
         const sample = GenerationSampleResponse.parse((await envelope(sampleResponse)).data)
         expect(sample.position).toEqual({x: 0, z: 0})
-        expect(sample.surfaceY).toBe(100)
-        expect(sample.biome).toBe("tundra")
+        expect(sample.surfaceY).toBe(61)
+        expect(sample.biome).toBe(builtinIdentities.biomes.ocean)
 
         const beforeResponse = await api.post("/api/chunks/query", {json: {
             worldId: world.id,

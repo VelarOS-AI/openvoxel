@@ -1,117 +1,197 @@
 import {Random, random} from "velar/random"
 import {Chunk, Coordinate3} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {TerrainSample} from "../terrain-sample.vel"
-import {survivalBlocks} from "./block-palette.vel"
-import {chunkMinimumX, chunkMinimumZ, generatedBlock, paintGeneratedBlock} from "./chunk-brush.vel"
-import {ColumnCache, GenerationFields, findSurfaceY, sampleTerrainWithFields, seaLevel, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {evictOldest} from "./lru-cache.vel"
+import {CompiledFeaturePlan, FeatureWrite, applyCompiledFeaturePlan, compiledFeaturePlan} from "./feature-plan.vel"
+import {ColumnPlanner, TerrainColumnPlan, temperatureAtHeight} from "./terrain.vel"
 
-def treeBlocks(sample: TerrainSample, stream: Random) -> List<number>?:
-    if sample.humidity < 4:
-        if sample.temperature >= 2 and sample.temperature <= 14 and stream.bool(0.04):
-            return [survivalBlocks.mimosaLog, survivalBlocks.mimosaLeaves]
-        return null
-    if sample.temperature <= 6: return [survivalBlocks.spruceLog, survivalBlocks.spruceLeaves]
-    if sample.humidity >= 11 and sample.temperature >= 4 and sample.temperature <= 12 and stream.bool(0.4):
-        return [survivalBlocks.poplarLog, survivalBlocks.poplarLeaves]
+export type DecorationPlan:
+    chunkX: number
+    chunkZ: number
+    features: readonly List<readonly CompiledFeaturePlan>
+
+export type DecorationPlanner:
+    cachedPlanCount: () -> number
+    planBuildCount: () -> number
+    decorations: (chunkX: number, chunkZ: number) -> readonly DecorationPlan
+
+def planAt(columns: ColumnPlanner, x: number, z: number) -> readonly TerrainColumnPlan:
+    return columns.columns((x / 16).floor(), (z / 16).floor())
+
+/// 邻域比较只需要稳定的 [0, 1) 标量，不需要为九个相邻格各构造一条 Random
+/// 子流。坐标散列不会被调用顺序影响，真正入选的候选仍使用独立 Random 流生成
+/// 树种、高度和格内抖动。
+def candidatePriority(salt: number, cellX: number, cellZ: number) -> number:
+    const raw = Math.sin(salt + cellX * 12.9898 + cellZ * 78.233) * 43758.5453123
+    return raw - raw.floor()
+
+/// 一个候选只有在相邻八格中优先级最高才保留。随机抖动决定格内坐标，邻域
+/// 优先级负责最小间距，组合后得到稳定、近似蓝噪声的分布。
+def ownsNeighborhood(salt: number, cellX: number, cellZ: number) -> bool:
+    const priority = candidatePriority(salt, cellX, cellZ)
+    for dx in range(-1, 2):
+        for dz in range(-1, 2):
+            if dx == 0 and dz == 0: continue
+            if candidatePriority(salt, cellX + dx, cellZ + dz) >= priority: return false
+    return true
+
+def treeBlocks(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample, stream: Random) -> List<number>?:
+    if sample.temperature <= 5: return [blocks.spruceLog, blocks.spruceLeaves]
+    if sample.humidity >= 11 and stream.bool(0.4): return [blocks.poplarLog, blocks.poplarLeaves]
     if sample.temperature >= 5 and sample.temperature <= 11 and stream.bool(0.35):
-        return [survivalBlocks.birchLog, survivalBlocks.birchLeaves]
-    if sample.temperature >= 2 and sample.temperature <= 14 and sample.humidity <= 6 and stream.bool(0.12):
-        return [survivalBlocks.mimosaLog, survivalBlocks.mimosaLeaves]
-    if sample.temperature >= 4 and sample.humidity >= 6: return [survivalBlocks.oakLog, survivalBlocks.oakLeaves]
+        return [blocks.birchLog, blocks.birchLeaves]
+    if sample.humidity <= 6 and stream.bool(0.18): return [blocks.mimosaLog, blocks.mimosaLeaves]
+    if sample.biome == profile.biomes.forest or sample.humidity >= 7: return [blocks.oakLog, blocks.oakLeaves]
     return null
 
-def paintTree(chunk: Chunk, ground: Coordinate3, height: number, logBlock: number, leavesBlock: number):
-    for offset in range(height):
-        const position = {x: ground.x, y: ground.y + 1 + offset, z: ground.z}
-        const current = generatedBlock(chunk, position)
-        if current == survivalBlocks.air or current == leavesBlock or current == survivalBlocks.snow:
-            paintGeneratedBlock(chunk, position, logBlock)
-    const crownY = ground.y + height
+def treeFeature(owner: string, ground: Coordinate3, height: number, logBlock: number, leavesBlock: number) -> CompiledFeaturePlan:
+    const writes: List<FeatureWrite> = []
+    for offset in range(height): writes.append({x: 0, y: 1 + offset, z: 0, runtimeId: logBlock})
+    const crownY = height
     for dy in range(-2, 2):
         const radius = dy >= 1 ? 1 : 2
         for dx in range(-radius, radius + 1):
             for dz in range(-radius, radius + 1):
                 if dx.abs() + dz.abs() > radius + 1: continue
-                const position = {x: ground.x + dx, y: crownY + dy, z: ground.z + dz}
-                if generatedBlock(chunk, position) == survivalBlocks.air:
-                    paintGeneratedBlock(chunk, position, leavesBlock)
+                writes.append({x: dx, y: crownY + dy, z: dz, runtimeId: leavesBlock})
+    return compiledFeaturePlan(owner, ground, owner, writes)
 
-def generateTrees(chunk: Chunk, fields: GenerationFields, root: Random):
-    const cellSize = 4
-    const firstCellX = ((chunkMinimumX(chunk) - 4) / cellSize).floor()
-    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge - 1 + 4) / cellSize).floor()
-    const firstCellZ = ((chunkMinimumZ(chunk) - 4) / cellSize).floor()
-    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge - 1 + 4) / cellSize).floor()
-    for cellX in range(firstCellX, lastCellX + 1):
-        for cellZ in range(firstCellZ, lastCellZ + 1):
-            const stream = root.fork(f"tree:{cellX}:{cellZ}")
-            const x = cellX * cellSize + stream.int(0, cellSize)
-            const z = cellZ * cellSize + stream.int(0, cellSize)
-            const position = {x, z}
-            const sample = sampleTerrainWithFields(fields, position)
-            if sample.biome == "ocean" or sample.biome == "shore" or sample.biome == "desert" or sample.biome == "mountains":
-                continue
-            const chance = 0.04 + 0.42 * sample.forestDensity
-            if not stream.bool(chance): continue
-            const topY = findSurfaceY(fields, position)
-            if topY <= seaLevel or temperatureAtHeight(sample.temperature, topY) <= 0: continue
-            const blocks = treeBlocks(sample, stream)
-            if blocks == null: continue
-            paintTree(chunk, {x, y: topY, z}, stream.int(4, 8), blocks[0], blocks[1])
+def cactusFeature(owner: string, ground: Coordinate3, height: number, block: number) -> CompiledFeaturePlan:
+    const writes: List<FeatureWrite> = []
+    for offset in range(1, height + 1): writes.append({x: 0, y: offset, z: 0, runtimeId: block})
+    return compiledFeaturePlan(owner, ground, owner, writes)
 
-def generateCacti(chunk: Chunk, fields: GenerationFields, root: Random):
-    const cellSize = 8
-    const firstCellX = ((chunkMinimumX(chunk) - 1) / cellSize).floor()
-    const lastCellX = ((chunkMinimumX(chunk) + chunk.edge) / cellSize).floor()
-    const firstCellZ = ((chunkMinimumZ(chunk) - 1) / cellSize).floor()
-    const lastCellZ = ((chunkMinimumZ(chunk) + chunk.edge) / cellSize).floor()
-    for cellX in range(firstCellX, lastCellX + 1):
-        for cellZ in range(firstCellZ, lastCellZ + 1):
-            const stream = root.fork(f"cactus:{cellX}:{cellZ}")
-            if not stream.bool(0.16): continue
-            const x = cellX * cellSize + stream.int(0, cellSize)
-            const z = cellZ * cellSize + stream.int(0, cellSize)
-            const position = {x, z}
-            const sample = sampleTerrainWithFields(fields, position)
-            if sample.biome != "desert": continue
-            const topY = findSurfaceY(fields, position)
-            const height = stream.int(2, 5)
-            for offset in range(1, height + 1):
-                const blockPosition = {x, y: topY + offset, z}
-                if generatedBlock(chunk, blockPosition) == survivalBlocks.air:
-                    paintGeneratedBlock(chunk, blockPosition, survivalBlocks.cactus)
+def singleBlockFeature(owner: string, position: Coordinate3, block: number) -> CompiledFeaturePlan:
+    return compiledFeaturePlan(owner, position, owner, [{x: 0, y: 0, z: 0, runtimeId: block}])
 
-def generateGroundPlants(chunk: Chunk, cache: ColumnCache, root: Random):
-    const minimumX = chunkMinimumX(chunk)
-    const minimumZ = chunkMinimumZ(chunk)
-    for localX in range(chunk.edge):
-        for localZ in range(chunk.edge):
+/// DecorationPlan 以水平列为缓存单位。树、仙人掌、花草和积雪候选在这里计算
+/// 一次，所有垂直 Chunk 共享；跨边界树冠仍由候选所有者的稳定计划负责。
+export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: string, blocks: readonly SurvivalBlockPalette, columns: ColumnPlanner, capacity: number = profile.sampling.columnCacheCapacity) -> DecorationPlanner:
+    const root = random(seed).fork("decoration")
+    const treePrioritySalt = random(seed).fork("decoration:tree-priority").number() * 1_000_000
+    const plans: Map<string, DecorationPlan> = Map()
+    let builds = 0
+
+    def cachedPlanCount() -> number: return plans.size
+
+    def planBuildCount() -> number: return builds
+
+    def decorations(chunkX: number, chunkZ: number) -> readonly DecorationPlan:
+        const key = f"{chunkX}:{chunkZ}"
+        if plans.has(key):
+            const existing = plans.get(key)!
+            plans.remove(key)
+            plans.set(key, existing)
+            return existing
+
+        const features: List<CompiledFeaturePlan> = []
+        const minimumX = chunkX * 16
+        const minimumZ = chunkZ * 16
+        const treeSize = profile.vegetation.treeCellSize
+        const treeReach = 4
+        const firstTreeX = ((minimumX - treeReach) / treeSize).floor()
+        const lastTreeX = ((minimumX + 15 + treeReach) / treeSize).floor()
+        const firstTreeZ = ((minimumZ - treeReach) / treeSize).floor()
+        const lastTreeZ = ((minimumZ + 15 + treeReach) / treeSize).floor()
+        for cellX in range(firstTreeX, lastTreeX + 1):
+            for cellZ in range(firstTreeZ, lastTreeZ + 1):
+                if not ownsNeighborhood(treePrioritySalt, cellX, cellZ): continue
+                const stream = root.fork(f"tree:{cellX}:{cellZ}")
+                const x = cellX * treeSize + stream.int(0, treeSize)
+                const z = cellZ * treeSize + stream.int(0, treeSize)
+                const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.slope > profile.vegetation.treeMaximumSlope or sample.surfaceY <= profile.world.seaLevel:
+                    continue
+                if sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast or sample.biome == profile.biomes.desert or sample.biome == profile.biomes.tundra:
+                    continue
+                if not stream.bool(0.08 + 0.72 * sample.forestDensity): continue
+                const tree = treeBlocks(profile, blocks, sample, stream)
+                if tree == null: continue
+                // Map/函数返回的可选 List 先稳定为局部值，避免后续随机流调用让
+                // 树干和树叶两次索引各自重新验证整份 List。
+                const selectedTree: List<number> = tree
+                const trunk = selectedTree[0]
+                const leaves = selectedTree[1]
+                const height = stream.int(4, 8)
+                if sample.surfaceY + height + 2 > profile.world.maximumY: continue
+                const owner = f"tree:{cellX}:{cellZ}"
+                features.append(treeFeature(owner, {x, y: sample.surfaceY, z}, height, trunk, leaves))
+
+        const cactusSize = profile.vegetation.cactusCellSize
+        const firstCactusX = ((minimumX - 1) / cactusSize).floor()
+        const lastCactusX = ((minimumX + 16) / cactusSize).floor()
+        const firstCactusZ = ((minimumZ - 1) / cactusSize).floor()
+        const lastCactusZ = ((minimumZ + 16) / cactusSize).floor()
+        for cellX in range(firstCactusX, lastCactusX + 1):
+            for cellZ in range(firstCactusZ, lastCactusZ + 1):
+                if not ownsNeighborhood(treePrioritySalt + 40499.17, cellX, cellZ): continue
+                const stream = root.fork(f"cactus:{cellX}:{cellZ}")
+                const x = cellX * cactusSize + stream.int(0, cactusSize)
+                const z = cellZ * cactusSize + stream.int(0, cactusSize)
+                const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.biome != profile.biomes.desert or sample.slope > profile.vegetation.cactusMaximumSlope:
+                    continue
+                features.append(cactusFeature(f"cactus:{cellX}:{cellZ}", {x, y: sample.surfaceY, z}, stream.int(2, 5), blocks.cactus))
+
+        const core = columns.columns(chunkX, chunkZ)
+        // 积雪连续覆盖所有达到雪线的列；它属于表面气候结果，不能用稀疏植物
+        // 采样代替。
+        for localX in range(16):
             const x = minimumX + localX
-            const z = minimumZ + localZ
-            const index = localZ + chunk.edge * localX
-            const sample = cache.samples[index]
-            const topY = cache.surfaceHeights[index]
-            const plantY = topY + 1
-            const position = {x, y: plantY, z}
-            if temperatureAtHeight(sample.temperature, topY) <= 0 and surfaceBlock(sample, topY) != survivalBlocks.sand:
-                if generatedBlock(chunk, position) == survivalBlocks.air:
-                    paintGeneratedBlock(chunk, position, survivalBlocks.snow)
-                continue
-            const stream = root.fork(f"plant:{x}:{z}")
-            if sample.biome == "desert":
-                if stream.bool(0.06) and generatedBlock(chunk, position) == survivalBlocks.air:
-                    paintGeneratedBlock(chunk, position, survivalBlocks.dryBush)
-                continue
-            const chance = 0.05 + 0.22 * Math.clamp(sample.humidity / 15, 0, 1)
-            if not stream.bool(chance) or generatedBlock(chunk, position) != survivalBlocks.air: continue
-            const choice = stream.int(0, 20)
-            if choice == 0: paintGeneratedBlock(chunk, position, survivalBlocks.redFlower)
-            else if choice == 1: paintGeneratedBlock(chunk, position, survivalBlocks.purpleFlower)
-            else if choice == 2: paintGeneratedBlock(chunk, position, survivalBlocks.whiteFlower)
-            else: paintGeneratedBlock(chunk, position, survivalBlocks.tallGrass)
+            for localZ in range(16):
+                const z = minimumZ + localZ
+                const sample = core.sampleAt(x, z)
+                const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
+                if adjustedTemperature <= profile.surface.snowTemperature and sample.biome != profile.biomes.desert:
+                    features.append(singleBlockFeature(f"snow:{x}:{z}", {x, y: sample.surfaceY + 1, z}, blocks.snow))
 
-export def generateVegetation(chunk: Chunk, fields: GenerationFields, seed: string, cache: ColumnCache):
-    const vegetationRoot = random(seed).fork("vegetation")
-    generateTrees(chunk, fields, vegetationRoot)
-    generateCacti(chunk, fields, vegetationRoot)
-    generateGroundPlants(chunk, cache, vegetationRoot)
+        // 花草和枯灌木使用独立抖动网格。每格只产生一个候选，密度由 cellSize
+        // 与 chance 共同控制，避免逐方块创建随机流，同时保留世界坐标确定性。
+        const plantSize = profile.vegetation.groundPlantCellSize
+        const firstPlantX = (minimumX / plantSize).floor()
+        const lastPlantX = ((minimumX + 15) / plantSize).floor()
+        const firstPlantZ = (minimumZ / plantSize).floor()
+        const lastPlantZ = ((minimumZ + 15) / plantSize).floor()
+        for cellX in range(firstPlantX, lastPlantX + 1):
+            for cellZ in range(firstPlantZ, lastPlantZ + 1):
+                const stream = root.fork(f"ground:{cellX}:{cellZ}")
+                const x = cellX * plantSize + stream.int(0, plantSize)
+                const z = cellZ * plantSize + stream.int(0, plantSize)
+                if x < minimumX or x > minimumX + 15 or z < minimumZ or z > minimumZ + 15: continue
+                const sample = core.sampleAt(x, z)
+                const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
+                if adjustedTemperature <= profile.surface.snowTemperature: continue
+                const position = {x, y: sample.surfaceY + 1, z}
+                if sample.biome == profile.biomes.desert:
+                    if stream.bool(0.045):
+                        features.append(singleBlockFeature(f"bush:{x}:{z}", position, blocks.dryBush))
+                    continue
+                const chance = profile.vegetation.groundPlantChance * Math.clamp(sample.humidity / 12, 0.25, 1)
+                if sample.slope > profile.vegetation.treeMaximumSlope or not stream.bool(chance): continue
+                const choice = stream.int(0, 24)
+                let plant = blocks.tallGrass
+                if choice == 0: plant = blocks.redFlower
+                else if choice == 1: plant = blocks.purpleFlower
+                else if choice == 2: plant = blocks.whiteFlower
+                features.append(singleBlockFeature(f"plant:{x}:{z}", position, plant))
+
+        const built: DecorationPlan = {chunkX, chunkZ, features: features.sorted(by=feature => feature.sortKey)}
+        builds += 1
+        if plans.size >= capacity: evictOldest(plans)
+        plans.set(key, built)
+        return built
+
+    return {cachedPlanCount, planBuildCount, decorations}
+
+export def generateVegetation(chunk: Chunk, plan: readonly DecorationPlan, blocks: readonly SurvivalBlockPalette):
+    const logs = Set([blocks.oakLog, blocks.birchLog, blocks.spruceLog, blocks.poplarLog, blocks.mimosaLog])
+    const leaves = Set([blocks.oakLeaves, blocks.birchLeaves, blocks.spruceLeaves, blocks.poplarLeaves, blocks.mimosaLeaves])
+
+    def replaceable(current: number, target: number, worldX: number, worldY: number, worldZ: number) -> bool:
+        if target in logs: return current == blocks.air or current == blocks.snow or current in leaves
+        if target in leaves: return current == blocks.air or current == blocks.snow
+        return current == blocks.air
+
+    for feature in plan.features: applyCompiledFeaturePlan(chunk, feature, replaceable)

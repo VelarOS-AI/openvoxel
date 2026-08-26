@@ -1,0 +1,20 @@
+import json worldGeneratorCatalogData from "@openvoxel/world-generation/world-generator-catalog-data"
+import {WorldGeneratorCatalogArtifact, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../definition/catalog.vel"
+
+/// 运行时只装载独立生成目录产物。YAML、文件路径和身份打点语法都停留在
+/// 构建阶段，游戏热路径只读取已经校验过的强类型定义。
+const artifact = WorldGeneratorCatalogArtifact.parse(worldGeneratorCatalogData)
+assert artifact.artifactVersion == 1 else "Unsupported generated world generator catalog artifact version"
+
+export const baseWorldGeneratorCatalog = artifact.catalog
+export const worldGeneratorCatalogHash = artifact.contentHash
+
+export def requireBuiltinWorldGeneratorDefinition(key: string) -> readonly WorldGeneratorDefinition:
+    const definition = baseWorldGeneratorCatalog.generators.find(generator => generator.key == key)
+    assert definition != null else f"Unknown built-in world generator {key}"
+    return definition
+
+export def requireBuiltinWorldGeneratorPalette(key: string) -> readonly WorldGeneratorPaletteDefinition:
+    const palette = baseWorldGeneratorCatalog.palettes.find(candidate => candidate.key == key)
+    assert palette != null else f"Unknown built-in world generator palette {key}"
+    return palette

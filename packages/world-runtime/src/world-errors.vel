@@ -1,0 +1,11 @@
+/// 查询一个尚未创建的世界时抛出这个错误。
+/// worldId 作为结构化字段保留下来，协议适配层可以直接把它放进错误响应，
+/// 不需要从 message 文本中反向解析世界身份。
+export class WorldNotFoundError extends Error:
+    constructor(const worldId: string): super(f"World '{worldId}' was not found")
+
+/// 创建命令使用了已经存在的世界身份时抛出这个错误。
+/// “世界身份唯一”是应用运行层规则，因此错误也由 world-runtime 定义，
+/// 存储适配器只负责实现清单的保存能力。
+export class WorldAlreadyExistsError extends Error:
+    constructor(const worldId: string): super(f"World '{worldId}' already exists")

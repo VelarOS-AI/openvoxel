@@ -2,7 +2,8 @@ import {exists, removeFile} from "velar/fs"
 import {sqlConcat, trustedSql, trustedSqlTemplate} from "@velarscript-labs/database"
 import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {expect} from "velar/test"
-import {WorldBlockRegistrySnapshot, builtinIdentities, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {WorldBlockRegistrySnapshot, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
 import {chunkBlock} from "@openvoxel/world"
 import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
@@ -194,6 +195,8 @@ test "SQLite adapter persists the complete world block registry":
         const reopened = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
         try:
             const manifest = await reopened.requireWorld("registry")
+            expect(manifest.generatorHash.size).toBe(64)
+            expect(manifest.spawn.y > 0).toBe(true)
             expect(manifest.blockRegistry.states.size).toBe(184)
             expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
             expect(manifest.blockRegistry.states[183]).toEqual({runtimeId: firstModBlockStateRuntimeId, stateKey: "farming:missing_crop"})
@@ -235,6 +238,24 @@ test "SQLite adapter rejects databases created by a newer server schema":
         await database.execute(sqlConcat([
             trustedSql("PRAGMA user_version = "),
             sqliteLiteral(999),
+        ]))
+
+        let rejected = false
+        try:
+            const incompatible = await sqliteWorldStore(testDatabase(databasePath))
+            await incompatible.close()
+        catch error: rejected = error.message.has("does not match required version")
+        expect(rejected).toBe(true)
+    finally: await removeDatabase(databasePath)
+
+test "SQLite adapter reports the previous schema as unsupported":
+    const databasePath = "openvoxel-previous-schema-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        using database = await openSqlite(databasePath)
+        await database.execute(sqlConcat([
+            trustedSql("PRAGMA user_version = "),
+            sqliteLiteral(sqliteSchemaVersion - 1),
         ]))
 
         let rejected = false

@@ -1,0 +1,7 @@
+import {expect} from "velar/test"
+import {builtinIdentities, identityCatalogHash} from "../src/index.vel"
+
+test "identity catalog exposes independent typed content roots":
+    expect(builtinIdentities.blocks.air).toBe("openvoxel:air")
+    expect(builtinIdentities.generators.survival).toBe("openvoxel:survival-v2")
+    expect(identityCatalogHash.size).toBe(64)

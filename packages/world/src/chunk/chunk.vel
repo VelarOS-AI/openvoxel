@@ -22,11 +22,26 @@ export type Chunk:
     paletteIndex: Map<number, number>
     revision: number
 
+/// 经过一次完整验证、可重复实例化的 Chunk 局部调色板模板。模板只共享稳定的
+/// runtimeId 顺序；每个 Chunk 仍拥有自己的可变 palette 和 paletteIndex。
+export type ChunkPaletteTemplate:
+    runtimeIds: readonly List<number>
+    instantiate: (position: ChunkPosition, edge: number) -> Chunk
+
 /// paletteIndex 是由 palette 重建的进程内加速索引，不属于 Chunk 的存储或网络格式。
 /// 对外投影只使用 position、edge、palette、indices 和 revision。
 
 def requireStorageIndex(chunk: readonly Chunk, index: number):
     assert index.isInteger() and index >= 0 and index < chunk.indices.size else "Chunk storage index is outside the chunk"
+
+def buildPaletteIndex(palette: readonly List<number>) -> Map<number, number>:
+    assert palette.size > 0 and palette.size <= 0x10000 else "Chunk palette must contain from 1 through 65536 runtime ids"
+    const paletteIndex: Map<number, number> = Map()
+    for runtimeId, index in palette:
+        requireBlockStateRuntimeId(runtimeId)
+        assert paletteIndex.get(runtimeId) == null else f"Chunk palette repeats block state runtime id {runtimeId}"
+        paletteIndex.set(runtimeId, index)
+    return paletteIndex
 
 export def chunk(
     position: ChunkPosition,
@@ -38,13 +53,8 @@ export def chunk(
     requireChunkPosition(position)
     requireChunkEdge(edge)
     assert indices.size == chunkVolume(edge) else "Chunk palette indices have the wrong size"
-    assert palette.size > 0 and palette.size <= 0x10000 else "Chunk palette must contain from 1 through 65536 runtime ids"
     assert revision.isInteger() and revision >= 0 else "Chunk revision must be a non-negative integer"
-    const paletteIndex: Map<number, number> = Map()
-    for runtimeId, index in palette:
-        requireBlockStateRuntimeId(runtimeId)
-        assert paletteIndex.get(runtimeId) == null else f"Chunk palette repeats block state runtime id {runtimeId}"
-        paletteIndex.set(runtimeId, index)
+    const paletteIndex = buildPaletteIndex(palette)
     for paletteEntry in indices.values():
         assert paletteEntry < palette.size else f"Chunk palette index {paletteEntry} is outside the palette"
     return {position, edge, palette, indices, paletteIndex, revision}
@@ -83,7 +93,29 @@ export def setChunkBlock(chunk: Chunk, local: LocalPosition, runtimeId: number) 
 /// 空 Chunk 本身不知道哪个方块代表空气；调用方必须从当前内容目录提供填充值。
 export def emptyChunk(position: ChunkPosition, edge: number, fill: number) -> Chunk:
     requireBlockStateRuntimeId(fill)
-    return chunk(position, edge, [fill], uint16Buffer(chunkVolume(edge)))
+    return emptyPaletteChunk(position, edge, [fill])
+
+/// 生成器预先知道自己可能写入的全部方块时，可以一次性建立局部调色板。新分配的
+/// UInt16Buffer 保证全部索引为 0，因此这里无需像反序列化入口 chunk() 那样再扫描
+/// 4096 个索引；外部不可信数据仍必须使用完整验证入口。
+export def emptyPaletteChunk(position: ChunkPosition, edge: number, palette: List<number>) -> Chunk:
+    return chunkPaletteTemplate(palette).instantiate(position, edge)
+
+/// 生成器构造时创建一次模板，后续每个 Chunk 只复制已经验证的几十项映射，
+/// 无需再次验证同一组 runtimeId。这个入口不接受持久化或网络数据。
+export def chunkPaletteTemplate(runtimeIds: List<number>) -> ChunkPaletteTemplate:
+    buildPaletteIndex(runtimeIds)
+    const stableRuntimeIds = runtimeIds.slice()
+
+    def instantiate(position: ChunkPosition, edge: number) -> Chunk:
+        requireChunkPosition(position)
+        requireChunkEdge(edge)
+        const palette = stableRuntimeIds.slice()
+        const paletteIndex: Map<number, number> = Map()
+        for runtimeId, index in palette: paletteIndex.set(runtimeId, index)
+        return {position, edge, palette, indices: uint16Buffer(chunkVolume(edge)), paletteIndex, revision: 0}
+
+    return {runtimeIds: stableRuntimeIds, instantiate}
 
 export def chunkChecksum(chunk: readonly Chunk) -> number:
     let checksum = 0x6d2b79f5

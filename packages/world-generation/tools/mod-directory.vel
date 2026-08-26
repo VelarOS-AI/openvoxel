@@ -1,0 +1,37 @@
+import {identityTree} from "@openvoxel/identities"
+import {exists, makeDirectory, readText, writeText} from "velar/fs"
+import {sha256Text} from "velar/hash"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {compileModWorldGeneratorContribution} from "../src/compiler/catalog-compiler.vel"
+import {WorldGeneratorCatalogManifest, WorldGeneratorContributionArtifact} from "../src/definition/catalog.vel"
+
+/// 编译一个 Mod 目录中的 world-generation 子目录。sourceRoot 指向 Mod 原始
+/// 目录，buildRoot 指向它自己的构建目录；JSON 永远不会写回 YAML 所在位置。
+export async def compileModWorldGeneratorDirectory(owner: string, sourceRoot: string, buildRoot: string) -> string:
+    assert not sourceRoot.isBlank() and not buildRoot.isBlank() else "Mod source and build roots cannot be blank"
+    const definitionRoot = f"{sourceRoot}/world-generation"
+    const manifestText = await readText(f"{definitionRoot}/catalog.yml", 64 * 1024)
+    const identitiesText = await readText(f"{definitionRoot}/identities.yml", 256 * 1024)
+    const manifest = WorldGeneratorCatalogManifest.parse(parseYaml(manifestText))
+    const generatorSourceTexts: List<string> = []
+    for source in manifest.generatorSources:
+        assert Text.matches(source, r"^generators/[a-z0-9-]+\.yml$") else f"Invalid Mod world generator source path {source}"
+        generatorSourceTexts.append(await readText(f"{definitionRoot}/{source}", 512 * 1024))
+    const paletteSourceTexts: List<string> = []
+    for source in manifest.paletteSources:
+        assert Text.matches(source, r"^palettes/[a-z0-9-]+\.yml$") else f"Invalid Mod world generator palette source path {source}"
+        paletteSourceTexts.append(await readText(f"{definitionRoot}/{source}", 512 * 1024))
+    const contribution = compileModWorldGeneratorContribution(owner, manifestText, identitiesText, generatorSourceTexts, paletteSourceTexts, identityTree)
+    const artifact: WorldGeneratorContributionArtifact = {
+        artifactVersion: 1,
+        contentHash: sha256Text(Json.stableStringify(contribution)),
+        contribution,
+    }
+    const output = f"{Json.stableStringify(artifact, 2)}\n"
+    const outputDirectory = f"{buildRoot}/world-generation"
+    if not await exists(buildRoot): await makeDirectory(buildRoot)
+    if not await exists(outputDirectory): await makeDirectory(outputDirectory)
+    const outputPath = f"{outputDirectory}/world-generator-catalog.json"
+    if not await exists(outputPath) or await readText(outputPath, 2 * 1024 * 1024) != output:
+        await writeText(outputPath, output)
+    return outputPath

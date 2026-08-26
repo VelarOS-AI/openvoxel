@@ -25,12 +25,15 @@ def benchmarkPositions() -> List<ChunkPosition>:
 def measure(positions: List<ChunkPosition>, capacity: number) -> ColumnBenchmarkResult:
     const planner = columnPlanner(createGenerationFields(seed), 16, capacity)
     const started = monotonic()
+    let checksumElapsed = 0
     let checksum = 0
     for position in positions:
         const cache = planner.columns(position.x, position.z)
+        const checksumStarted = monotonic()
         for index in range(cache.surfaceHeights.size):
             checksum = ((checksum << 5) ^ (checksum >>> 2) ^ cache.surfaceHeights[index]) & 0xffffffff
-    const totalMs = monotonic() - started
+        checksumElapsed += monotonic() - checksumStarted
+    const totalMs = monotonic() - started - checksumElapsed
     return {
         averageMs: totalMs / positions.size,
         builds: planner.columnBuildCount(),

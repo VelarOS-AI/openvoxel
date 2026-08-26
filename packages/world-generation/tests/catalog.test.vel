@@ -1,0 +1,48 @@
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {identityTree} from "@openvoxel/identities"
+import {GeneratorBlockIdentities, TerrainConfig, WorldGeneratorCatalogArtifact, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../src/definition/catalog.vel"
+import {compileModWorldGeneratorContribution, compileWorldGeneratorCatalog} from "../src/compiler/catalog-compiler.vel"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+
+const oneSourceManifest = `{"formatVersion":2,"generatorSources":["generators/custom.yml"],"paletteSources":["palettes/custom.yml"]}`
+
+def source(definition: readonly WorldGeneratorDefinition) -> string: return Json.stableStringify(definition)
+def paletteSource(palette: readonly WorldGeneratorPaletteDefinition) -> string: return Json.stableStringify(palette)
+
+test "generator catalog compiler resolves one validated definition":
+    const artifact = compileWorldGeneratorCatalog(oneSourceManifest, [source(baseWorldGeneratorCatalog.generators[0])], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)
+    expect(WorldGeneratorCatalogArtifact.is(artifact)).toBe(true)
+    expect(artifact.contentHash.size).toBe(64)
+    expect(artifact.catalog.generators.size).toBe(1)
+
+test "generator catalog compiler rejects unknown identities illegal curves and duplicate generators":
+    const unknownIdentity = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "generators.missing"})
+    expect(() => compileWorldGeneratorCatalog(oneSourceManifest, [source(unknownIdentity)], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+    const invalidTerrain = baseWorldGeneratorCatalog.generators[0].terrain
+    const invalidCurve = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {
+        terrain: TerrainConfig.from(invalidTerrain, {
+            continentalHeight: [
+                {input: 0, output: 64},
+                {input: -1, output: 32},
+            ],
+        }),
+    })
+    expect(() => compileWorldGeneratorCatalog(oneSourceManifest, [source(invalidCurve)], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+    const duplicateManifest = `{"formatVersion":2,"generatorSources":["generators/a.yml","generators/b.yml"],"paletteSources":["palettes/custom.yml"]}`
+    const definitionText = source(baseWorldGeneratorCatalog.generators[0])
+    expect(() => compileWorldGeneratorCatalog(duplicateManifest, [definitionText, definitionText], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+test "Mod generator compiler enforces generator palette ownership and current world blocks":
+    const definition = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "terrainmod:survival", palette: "terrainmod:palette"})
+    const palette = WorldGeneratorPaletteDefinition.from(baseWorldGeneratorCatalog.palettes[0], {key: "terrainmod:palette"})
+    const modIdentities = `{"formatVersion":3,"identities":{"generators":{"terrainmod":"terrainmod:survival"},"worldGeneratorPalettes":{"terrainmod":"terrainmod:palette"}}}`
+    const contribution = compileModWorldGeneratorContribution("terrainmod", oneSourceManifest, modIdentities, [source(definition)], [paletteSource(palette)], identityTree)
+    expect(contribution.owner).toBe("terrainmod")
+    expect(() => compileModWorldGeneratorContribution("othermod", oneSourceManifest, modIdentities, [source(definition)], [paletteSource(palette)], identityTree)).toThrow()
+
+    const unknownBlocks = GeneratorBlockIdentities.from(palette.blocks, {air: "terrainmod:missing_air"})
+    expect(() => createSurvivalBlockPalette(baseWorldBlockRegistry.registry, unknownBlocks)).toThrow()

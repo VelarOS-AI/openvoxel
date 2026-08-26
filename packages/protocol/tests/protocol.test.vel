@@ -1,7 +1,8 @@
 import {expect} from "velar/test"
 import {TerrainSample, defaultGenerator, sampleTerrain} from "@openvoxel/world-generation"
 import {emptyChunk, setChunkBlock} from "@openvoxel/world"
-import {blockCatalogVersion, builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {blockCatalogVersion, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
 import {BlockMutation, ChunkQuery, ClientContractResponse, GenerationSampleResponse, WorldBootstrapResponse, WorldScoped, blockCatalogResponse, chunkBatchResponse, chunkBlockIndexOrder, chunkResponse, clientContractResponse, generationSampleResponse, protocolVersion, worldBootstrapResponse} from "../src/http.vel"
 import {createWorldManifest} from "@openvoxel/world-runtime"
 import {BlockChangedEvent, SocketBlockCommand} from "../src/realtime.vel"
@@ -26,6 +27,8 @@ test "generation metadata is projected without leaking runtime objects":
     expect(catalog.stateMapHash.size).toBe(64)
     expect(catalog.contentHash.size).toBe(64)
     expect(catalog.generator).toBe(defaultGenerator)
+    expect(catalog.generatorHash.size).toBe(64)
+    expect(catalog.generatorCatalogHash.size).toBe(64)
     expect(catalog.seaLevel).toBe(64)
     expect(catalog.blocks.size).toBe(38)
     expect(catalog.componentProfiles.size).toBe(38)
@@ -52,7 +55,7 @@ test "generation metadata is projected without leaking runtime objects":
     const bootstrap = worldBootstrapResponse(manifest)
     expect(WorldBootstrapResponse.is(bootstrap)).toBe(true)
     expect(bootstrap.protocolVersion).toBe(protocolVersion)
-    expect(bootstrap.clientContractVersion).toBe(4)
+    expect(bootstrap.clientContractVersion).toBe(5)
     expect(bootstrap.clientContractPath).toBe("/api/client-contract")
     expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
     expect(bootstrap.realtimeEventsPath).toBe("/api/events")
@@ -63,7 +66,7 @@ test "generation metadata is projected without leaking runtime objects":
 
     const contract = clientContractResponse({requestBodyBytes: 65536, realtimeMessageBytes: 65536})
     expect(ClientContractResponse.is(contract)).toBe(true)
-    expect(contract.contractVersion).toBe(4)
+    expect(contract.contractVersion).toBe(5)
     expect(contract.http.routes.worldBootstrap.path).toBe("/api/worlds/:worldId/bootstrap")
     expect(contract.http.routes.blockCatalog.method).toBe("GET")
     expect(contract.realtime.encoding).toBe("messagepack")

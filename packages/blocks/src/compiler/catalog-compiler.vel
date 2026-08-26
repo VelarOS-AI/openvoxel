@@ -1,7 +1,7 @@
 import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShapeKind, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockTypeSource} from "../definition/block.vel"
 import {BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateAlias, BlockStateDefinition, BlockStateMapSource, BlockStateMapping} from "../definition/catalog.vel"
-import {BuiltinIdentities} from "../definition/identities.vel"
-import {requireUInt32, validateBlockType, validateBuiltinIdentities} from "./block-validation.vel"
+import {BuiltinBlockIdentities} from "@openvoxel/identities"
+import {requireUInt32, validateBlockType, validateBuiltinBlockIdentities} from "./block-validation.vel"
 import {canonicalStateKey} from "./state-key.vel"
 
 /// 状态原型是“已经应用 variant、尚未绑定 runtimeId”的中间结果。
@@ -158,8 +158,8 @@ def compileCatalogWithStateMap(schemaVersion: number, catalogVersion: string, so
     return {schemaVersion, catalogVersion, reservedRuntimeIds: stateMap.reservedRuntimeIds.sorted(), blocks, states}
 
 /// 编译 OpenVoxel 基础目录。基础目录额外拥有命名空间、空掉落表和空气哨兵约束。
-export def compileBuiltinBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
-    validateBuiltinIdentities(identities, sourceBlocks)
+export def compileBuiltinBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinBlockIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+    validateBuiltinBlockIdentities(identities, sourceBlocks)
     const catalog = compileCatalogWithStateMap(manifest.schemaVersion, manifest.catalogVersion, sourceBlocks, stateMap)
     // 空气是所有 Chunk 和注册表的基础哨兵状态，必须固定为不可见的 runtimeId 0。
     const blocks = catalog.blocks

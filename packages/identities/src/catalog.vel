@@ -1,0 +1,6 @@
+/// 生成产物只保存一棵经过校验的身份树和它的内容哈希。各内容包可以读取
+/// 自己负责的路径，但不能把别的内容域配置塞进自己的数据目录。
+export type IdentityCatalogArtifact:
+    artifactVersion: number
+    contentHash: string
+    identities: Record<unknown>

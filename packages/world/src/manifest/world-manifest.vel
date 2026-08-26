@@ -1,7 +1,7 @@
 import {WorldBlockRegistrySnapshot, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {requireChunkEdge} from "../spatial/coordinates.vel"
 
-export const worldFormatVersion = 1
+export const worldFormatVersion = 2
 export const initialChunkEdge = 16
 
 /// 世界清单只保存能够决定世界身份和重建结果的稳定事实。
@@ -13,7 +13,16 @@ export type WorldManifest:
     formatVersion: number
     chunkEdge: number
     generator: string
+    /// 创建世界时所用生成器定义的确定性哈希。
+    generatorHash: string
+    /// 已由生成器评分并验证过的世界出生点。
+    spawn: WorldSpawn
     blockRegistry: WorldBlockRegistrySnapshot
+
+export type WorldSpawn:
+    x: number
+    y: number
+    z: number
 
 def requireBoundedText(value: string, label: string, maximum: number):
     assert not value.isBlank() else f"{label} cannot be blank"
@@ -27,5 +36,8 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     requireChunkEdge(manifest.chunkEdge)
     assert manifest.chunkEdge == initialChunkEdge else "World requires a chunk edge of 16"
     requireBoundedText(manifest.generator, "World generator", 128)
+    assert Text.matches(manifest.generatorHash, r"^[0-9a-f]{64}$") else "World generator hash must be a lowercase SHA-256 value"
+    assert manifest.spawn.x.isInteger() and manifest.spawn.y.isInteger() and manifest.spawn.z.isInteger() else "World spawn coordinates must be integers"
+    assert manifest.spawn.y >= 0 and manifest.spawn.y <= 255 else "World spawn y is outside world height"
     validateWorldBlockRegistrySnapshot(manifest.blockRegistry)
     return manifest

@@ -1,4 +1,4 @@
-formatVersion: 2
+formatVersion: 3
 identities:
   namespaces:
     base: openvoxel
@@ -7,7 +7,29 @@ identities:
     base: openvoxel:base-v1
 
   generators:
-    survival: openvoxel:survival-v1
+    survival: openvoxel:survival-v2
+
+  worldGeneratorPalettes:
+    survival: openvoxel:worldgen-palette/survival
+
+  terrainTypes:
+    deepOcean: openvoxel:terrain/deep_ocean
+    ocean: openvoxel:terrain/ocean
+    coast: openvoxel:terrain/coast
+    plain: openvoxel:terrain/plain
+    hill: openvoxel:terrain/hill
+    mountain: openvoxel:terrain/mountain
+    valley: openvoxel:terrain/valley
+    river: openvoxel:terrain/river
+
+  biomes:
+    ocean: openvoxel:biome/ocean
+    coast: openvoxel:biome/coast
+    river: openvoxel:biome/river
+    plains: openvoxel:biome/plains
+    forest: openvoxel:biome/forest
+    desert: openvoxel:biome/desert
+    tundra: openvoxel:biome/tundra
 
   blocks:
     air: openvoxel:air

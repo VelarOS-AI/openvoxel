@@ -1,11 +1,10 @@
 import {parseYaml} from "@velarscript-labs/yaml"
+import {BuiltinBlockIdentities, IdentityResolution, resolveIdentityReferences} from "@openvoxel/identities"
 import {sha256Text} from "velar/hash"
 import {BlockSourceFile, BlockTypeSource} from "../src/definition/block.vel"
 import {BlockCatalogArtifact, BlockCatalogManifest, BlockStateMapSource, BlockStateMapping} from "../src/definition/catalog.vel"
-import {BuiltinIdentities, BuiltinIdentityDocument} from "../src/definition/identities.vel"
 import {collectBlockTypes, compileBuiltinBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"
 import {packBlockCatalog} from "../src/compiler/catalog-packing.vel"
-import {IdentityResolution, IdentityLeafIndex, collectIdentityLeafPaths, resolveIdentityReferences} from "./identity-resolution.vel"
 
 type StateIdMapping:
     runtimeId: number
@@ -17,7 +16,7 @@ type ResolvedCatalogVersion:
 export type GeneratedCatalogArtifacts:
     catalogText: string
 
-def createStateMap(blocks: List<BlockTypeSource>, identities: BuiltinIdentities) -> BlockStateMapSource:
+def createStateMap(blocks: List<BlockTypeSource>, identities: BuiltinBlockIdentities) -> BlockStateMapSource:
     // runtimeId 标识的是一个完整方块状态，而不是只标识方块类型。这里先展开
     // 每个方块的全部属性组合，同时检查不同定义没有生成相同的 stateKey。
     const activeKeys: Set<string> = Set()
@@ -41,18 +40,15 @@ def createStateMap(blocks: List<BlockTypeSource>, identities: BuiltinIdentities)
         nextRuntimeId += 1
     return {formatVersion: 2, nextRuntimeId, reservedRuntimeIds: [], states: mappings}
 
-export def generateCatalogArtifacts(manifestText: string, identitiesText: string, sourceTexts: List<string>) -> GeneratedCatalogArtifacts:
-    // identities.yml 是所有命名空间、方块、标签和资源键的统一事实源。先把它
-    // 验证成强类型文档，后面的定义只通过打点路径引用其中的值。
+export def generateCatalogArtifacts(manifestText: string, identityTree: readonly Record<unknown>, sourceTexts: List<string>) -> GeneratedCatalogArtifacts:
+    // 身份树由独立 identities 包提供。方块编译器只消费其中属于方块定义的
+    // 路径，不拥有世界生成器或其他内容域的身份配置。
     const manifestSource = BlockCatalogManifest.parse(parseYaml(manifestText))
-    const identityDocument = BuiltinIdentityDocument.parse(parseYaml(identitiesText))
-    assert identityDocument.formatVersion == 2 else "Unsupported built-in identity format version"
-    const identityTree = identityDocument.identities
-    const identities = BuiltinIdentities.parse(identityTree)
+    const identities = BuiltinBlockIdentities.parse(identityTree)
 
     // 这两个身份由运行时代码直接使用，不会出现在方块 YAML 的引用遍历中，
     // 因此在这里显式登记。其余身份必须从配置中的打点路径被实际读取。
-    const usedIdentityPaths: Set<string> = Set(["generators.survival", "namespaces.base"])
+    const usedIdentityPaths: Set<string> = Set(["namespaces.base"])
     const manifestResolution = IdentityResolution.parse(resolveIdentityReferences({catalogVersion: manifestSource.catalogVersion}, identityTree))
     for path in manifestResolution.usedPaths: usedIdentityPaths.add(path)
     const resolvedCatalogVersion = ResolvedCatalogVersion.parse(manifestResolution.value)
@@ -63,13 +59,6 @@ export def generateCatalogArtifacts(manifestText: string, identitiesText: string
         const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
         for path in resolution.usedPaths: usedIdentityPaths.add(path)
         sourceFiles.append(BlockSourceFile.parse(resolution.value))
-    const leafIndex = IdentityLeafIndex.parse(collectIdentityLeafPaths(identityTree))
-
-    // 声明数量相等仍不足以证明集合相同，所以先做快速数量检查，再逐项确认。
-    // 这能及时发现 identities.yml 中写了却没有任何定义使用的陈旧身份。
-    assert usedIdentityPaths.size == leafIndex.paths.size else "Every built-in identity must be referenced from its declared path"
-    for path in leafIndex.paths:
-        assert path in usedIdentityPaths else f"Built-in identity path {path} is not referenced"
     const blocks = collectBlockTypes(sourceFiles)
     const stateMap = createStateMap(blocks, identities)
     const catalog = compileBuiltinBlockCatalog(manifest, identities, blocks, stateMap)
@@ -77,14 +66,13 @@ export def generateCatalogArtifacts(manifestText: string, identitiesText: string
 
     // 哈希只基于稳定序列化后的运行时事实，不包含源文件路径或 YAML 排版。
     // contentHash 识别完整目录，stateMapHash 单独识别 runtimeId 到状态的映射。
-    const contentHash = sha256Text(Json.stableStringify({identities: identityTree, catalog}))
+    const contentHash = sha256Text(Json.stableStringify(catalog))
     const stateMappings: List<StateIdMapping> = catalog.states.map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
     const stateMapHash = sha256Text(Json.stableStringify(stateMappings.sorted(by=mapping => mapping.runtimeId)))
     const artifact: BlockCatalogArtifact = {
         artifactVersion: 5,
         contentHash,
         stateMapHash,
-        identities: identityTree,
         catalog: packedCatalog,
     }
     return {

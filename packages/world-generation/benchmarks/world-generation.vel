@@ -1,11 +1,15 @@
-/// Reproducible Node-side baseline for comparing future Chunk edge sizes and
-/// generator revisions. It reports rather than hides the checksum so a faster
-/// but semantically different implementation cannot pass unnoticed.
+/// 可复现的 Node 侧性能基线。固定语料连续运行五次并取中位数，既避开一次性的
+/// JIT 抖动，也保留列计划和特征计划在真实运行时会得到的缓存收益。每轮都输出
+/// 同一校验和，防止语义变化伪装成性能提升。
 
 import {monotonic} from "velar/time"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
-import {defaultGenerator, worldGenerator} from "../src/index.vel"
+import {defaultGenerator, defaultGeneratorHash, worldGenerator} from "../src/index.vel"
+
+type BenchmarkRun:
+    elapsed: number
+    checksum: number
 
 @main:
     const manifest = validateWorldManifest({
@@ -15,22 +19,44 @@ import {defaultGenerator, worldGenerator} from "../src/index.vel"
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
+        generatorHash: defaultGeneratorHash,
+        spawn: {x: 0, y: 65, z: 0},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
     })
     const generator = worldGenerator(manifest)
 
     for warmup in range(8): generator.generate({x: warmup - 4, y: 4, z: 0})
 
-    const started = monotonic()
-    let checksum = 0
-    let generated = 0
-    for y in range(2, 6):
-        for x in range(-6, 6):
-            for z in range(-2, 2):
-                const chunk = generator.generate({x, y, z})
-                checksum = (checksum ^ chunkChecksum(chunk)) >>> 0
-                generated += 1
-    const elapsed = monotonic() - started
-    const average = elapsed / generated
+    def runCorpus() -> BenchmarkRun:
+        // 校验和用于证明语义稳定，但它会再次遍历 Chunk 的 4096 个方块。单独
+        // 记录这段时间，报告值只包含 generator.generate；否则“生成优化”会被
+        // 基准自身约两成的读取成本稀释。
+        const started = monotonic()
+        let checksumElapsed = 0
+        let checksum = 0
+        for y in range(2, 6):
+            for x in range(-6, 6):
+                for z in range(-2, 2):
+                    const chunk = generator.generate({x, y, z})
+                    const checksumStarted = monotonic()
+                    checksum = (checksum ^ chunkChecksum(chunk)) >>> 0
+                    checksumElapsed += monotonic() - checksumStarted
+        return {elapsed: monotonic() - started - checksumElapsed, checksum}
 
-    print(f"worldgen chunks={generated} totalMs={elapsed.round()} averageMs={average} checksum={checksum}")
+    // 冷运行单独报告，用于观察首次建列与编译特征计划的成本；吞吐目标使用
+    // 随后的五次稳定运行中位数，避免把缓存地基的一次性构建混入每 Chunk 成本。
+    const cold = runCorpus()
+    const durations: List<number> = []
+    let expectedChecksum: number? = null
+    const generated = 192
+    for runIndex in range(5):
+        const run = runCorpus()
+        durations.append(run.elapsed)
+        if expectedChecksum == null: expectedChecksum = run.checksum
+        else: assert run.checksum == expectedChecksum else "World generation benchmark changed across identical runs"
+    assert cold.checksum == expectedChecksum else "Cold and steady world generation produced different chunks"
+    const median = durations.sorted()[2]
+    const average = median / generated
+    const coldAverage = cold.elapsed / generated
+
+    print(f"worldgen chunks={generated} runs=5 coldAverageMs={coldAverage} medianMs={median.round()} averageMs={average} checksum={expectedChecksum}")

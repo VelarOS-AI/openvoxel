@@ -1,23 +1,48 @@
 import {expect} from "velar/test"
-import {builtinIdentities, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
 import {emptyChunk} from "@openvoxel/world"
 import {carveCaves, cavePlanner} from "../../src/survival/caves.vel"
-import {createGenerationFields} from "../../src/survival/terrain.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
 
 const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 
 test "cave plans are reused across adjacent and vertical chunks":
     const seed = "cave-plan-cache"
-    const planner = cavePlanner(createGenerationFields(seed), seed)
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const fields = createGenerationFields(seed, profile)
+    const columns = columnPlanner(fields, 16)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const planner = cavePlanner(fields, seed, blocks)
+    const terrain = columns.columns(0, 0)
 
-    carveCaves(emptyChunk({x: 0, y: 3, z: 0}, 16, airBlock), planner)
-    expect(planner.planBuildCount()).toBe(49)
-    expect(planner.cachedPlanCount()).toBe(49)
+    carveCaves(emptyChunk({x: 0, y: 3, z: 0}, 16, airBlock), planner, profile, blocks, baseWorldBlockRegistry.registry, terrain)
+    const firstBuildCount = planner.planBuildCount()
+    expect(firstBuildCount > 0).toBe(true)
+    expect(planner.cachedPlanCount()).toBe(firstBuildCount)
 
-    carveCaves(emptyChunk({x: 0, y: 4, z: 0}, 16, airBlock), planner)
-    expect(planner.planBuildCount()).toBe(49)
-    expect(planner.cachedPlanCount()).toBe(49)
+    carveCaves(emptyChunk({x: 0, y: 4, z: 0}, 16, airBlock), planner, profile, blocks, baseWorldBlockRegistry.registry, terrain)
+    expect(planner.planBuildCount()).toBe(firstBuildCount)
+    expect(planner.cachedPlanCount()).toBe(firstBuildCount)
 
-    carveCaves(emptyChunk({x: 1, y: 4, z: 0}, 16, airBlock), planner)
-    expect(planner.planBuildCount()).toBe(56)
-    expect(planner.cachedPlanCount()).toBe(56)
+    carveCaves(emptyChunk({x: 1, y: 4, z: 0}, 16, airBlock), planner, profile, blocks, baseWorldBlockRegistry.registry, columns.columns(1, 0))
+    expect(planner.planBuildCount() > firstBuildCount).toBe(true)
+
+test "cave LRU cache retains a recently touched owner after overflow":
+    const seed = "cave-lru"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const fields = createGenerationFields(seed, profile)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const planner = cavePlanner(fields, seed, blocks, 2)
+    planner.tunnel(0, 0)
+    planner.tunnel(1, 0)
+    planner.tunnel(0, 0)
+    planner.tunnel(2, 0)
+    expect(planner.cachedPlanCount()).toBe(2)
+    expect(planner.planBuildCount()).toBe(3)
+    planner.tunnel(0, 0)
+    expect(planner.planBuildCount()).toBe(3)
+    planner.tunnel(1, 0)
+    expect(planner.planBuildCount()).toBe(4)

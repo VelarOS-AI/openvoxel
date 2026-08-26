@@ -1,4 +1,4 @@
-import {Chunk, ChunkPosition, Coordinate2} from "@openvoxel/world"
+import {Chunk, ChunkPosition, Coordinate2, Coordinate3} from "@openvoxel/world"
 import {TerrainSample} from "./terrain-sample.vel"
 
 /// 世界生成器是纯确定性服务：同一个生成器身份、种子和坐标必须得到相同结果。
@@ -6,3 +6,5 @@ import {TerrainSample} from "./terrain-sample.vel"
 export type WorldGenerator:
     sample: (position: Coordinate2) -> TerrainSample
     generate: (position: ChunkPosition) -> Chunk
+    /// 在配置半径内按安全性和资源评分返回确定性的出生位置。
+    findSpawn: () -> Coordinate3
