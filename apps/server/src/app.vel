@@ -1,4 +1,0 @@
-export {createOpenVoxelApp, startOpenVoxelServer} from "./server.vel"
-export {protocolVersion} from "@openvoxel/protocol"
-
-export const appName = "OpenVoxel"

@@ -14,7 +14,7 @@ npm run validate
 npm start
 ```
 
-服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由根配置 [`apps/server/application.yml`](apps/server/application.yml) 管理；这是框架唯一按约定发现的应用配置文件名。相对配置路径和数据库路径都以服务应用目录解析。VelarScript 启动器与 npm workspace 脚本会把该目录设为工作目录；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定它。可以用 `OPENVOXEL_CONFIG` 选择另一份显式 YAML/JSON 配置，并用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
+服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/application.yml`](apps/server/application.yml) 管理；它的位置由 [`apps/server/velar.json`](apps/server/velar.json) 的 `server.configuration` 明确声明，开发、检查和生产构建使用同一入口。数据库与 Content Pack 的相对路径以服务应用目录解析；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定该运行时数据根。可以用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
 ```sh
 curl http://127.0.0.1:3000/api/health

@@ -13,7 +13,7 @@
 - 世界写入只通过 MessagePack `blocks.apply` 进入运行时原子批量用例。HTTP terrain 资源只返回可重建固定数据。
 - SQLite 当前表结构、世界注册表 JSON、稀疏增量和实时消息归 OpenVoxel 所有；通用数据库操作与 SQLite 连接来自 VelarScript Libraries。
 - 领域值使用 `type`，行为使用普通函数和闭包状态。应用作用域只提供一份已经组合完成的 `OpenVoxelApplication`。
-- `apps/server/application.yml` 是部署配置权威；`velar.json` 只声明构建入口、输出目录和服务端扩展。
+- `apps/server/application.yml` 是部署配置权威；`velar.json` 同时声明构建入口、输出目录、服务端扩展及 `server.configuration` 路径，因此配置位置可见且可修改。
 
 ## 生命周期
 

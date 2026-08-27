@@ -15,6 +15,7 @@ export type OpenVoxelServerOptions:
     maxQueuedBytes: number
     maxPendingSendBytes: number
     maxConnections: number
+    maxConcurrentRequests: number
     realtimeDrainMilliseconds: number
 
 type AccessLogEntry:
@@ -36,7 +37,12 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
     let closing: Task<null>? = null
 
     def log(level: string, message: string, context: unknown):
-        if options.logger: print(Json.stringify({level, message, context}))
+        if not options.logger: return
+        try: print(Json.stringify({level, message, context}))
+        catch _error:
+            // 日志是旁路观察能力。序列化器或输出设备失败时不能改变请求结果，
+            // 更不能让已经监听成功的服务器因为一条启动日志而泄漏。
+            return
 
     def info(message: string, context: unknown): log("info", message, context)
 
@@ -48,9 +54,12 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
     const blockChanges = runtime.subscribeBlockChanges(batch => live.publish(batch.worldId, batch.sequence, encodeWorldBlockChanges(batch)))
 
     async def closeApplication(_cancellation: Cancellation):
-        blockChanges.close()
-        await live.close()
-        await runtime.close()
+        // 三个资源按依赖倒序释放。finally 保证某一步失败也不会跳过更底层的
+        // 世界运行时和数据库；close 的 Task 仍会把第一次失败交给停机调用方。
+        try: blockChanges.close()
+        finally:
+            try: await live.close()
+            finally: await runtime.close()
 
     async def close():
         const existing = closing
@@ -63,22 +72,10 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
 
     return {runtime, options, live, info, warn, access, close}
 
-// ServeApp currently exposes Provider overrides only to server-test. Keep the
-// one production mount at this transport boundary; route modules depend only
-// on the typed Provider below and tests bind it through the public test API.
-let mountedApplication: OpenVoxelApplication? = null
-
-export def mountOpenVoxelApplication(application: OpenVoxelApplication):
-    assert mountedApplication == null else "Only one OpenVoxel application can be mounted in a process"
-    mountedApplication = application
-
-export def unmountOpenVoxelApplication():
-    assert mountedApplication != null else "OpenVoxel application is not mounted"
-    mountedApplication = null
-
 async def resolveOpenVoxelApplication(_values: Record<unknown>) -> OpenVoxelApplication:
-    assert mountedApplication != null else "OpenVoxel application is not mounted"
-    return mountedApplication
+    // 线上启动必须通过 supply 把已经构造好的应用实例绑定进 ServeApp；这个
+    // resolver 只负责在漏配时给出明确错误，不再从进程全局变量读取隐式状态。
+    throw Error("OpenVoxel application Provider was not supplied")
 
 async def releaseOpenVoxelApplication(application: OpenVoxelApplication): await application.close()
 

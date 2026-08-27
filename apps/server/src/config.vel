@@ -1,6 +1,6 @@
 import {get} from "velar/env"
 import {isAbsolute, resolve} from "velar/path"
-import {configuration} from "velar/server"
+import {applicationConfigurationPath, configuration} from "velar/server"
 import {OpenVoxelServerOptions} from "./application.vel"
 
 export def serverApplicationRoot() -> string:
@@ -16,6 +16,7 @@ export type ServerLimitsConfiguration:
     queuedBytes: number
     pendingSendBytes: number
     connections: number
+    concurrentRequests: number
     sessionDrainMilliseconds: number
 
 export type ServerCorsConfiguration:
@@ -40,6 +41,7 @@ export type ContentConfiguration:
     defaultPacks: List<string>
 
 export type WorldRuntimeConfiguration:
+    activeWorldCapacity: number
     activeChunkCapacity: number
     activeOverrideCapacity: number
 
@@ -54,9 +56,45 @@ export def resolveServerPath(path: string) -> string:
     if isAbsolute(path): return path
     return resolve([serverApplicationRoot(), path])
 
-export async def loadOpenVoxelConfiguration(path: string? = null) -> OpenVoxelConfiguration:
-    const resolved = resolveServerPath(path ?? "application.yml")
-    return await configuration(OpenVoxelConfiguration, path=resolved)
+/// 返回框架实际读取的配置文件绝对路径。相对位置只在 velar.json 的
+/// server.configuration 中定义一次；日志、开发运行和生产产物都引用同一事实源。
+export def openVoxelConfigurationPath() -> string: return resolve([applicationConfigurationPath])
+
+export async def loadOpenVoxelConfiguration() -> OpenVoxelConfiguration:
+    return await configuration(OpenVoxelConfiguration)
+
+def requireIntegerRange(value: number, minimum: number, maximum: number, name: string):
+    assert value.isInteger() and value >= minimum and value <= maximum else f"{name} must be an integer from {minimum} through {maximum}"
+
+/// 在打开 Content Pack 或 SQLite 之前一次性验证全部运行参数。底层库仍保留自身
+/// 边界检查，但启动入口不会再构造了一半资源后才从某个适配器得到 RangeError。
+export def validateOpenVoxelConfiguration(configuration: OpenVoxelConfiguration) -> OpenVoxelConfiguration:
+    assert not configuration.server.host.isBlank() and configuration.server.host.size <= 255 else "server.host must contain from 1 through 255 characters"
+    requireIntegerRange(configuration.server.port, 0, 65535, "server.port")
+    assert configuration.server.cors.allowedOrigins.size <= 64 else "server.cors.allowedOrigins cannot contain more than 64 origins"
+    for origin in configuration.server.cors.allowedOrigins:
+        assert origin == "*" or origin.startsWith("http://") or origin.startsWith("https://") else f"Invalid CORS origin {origin}"
+
+    const limits = configuration.server.limits
+    requireIntegerRange(limits.bodyBytes, 1, 16777216, "server.limits.bodyBytes")
+    requireIntegerRange(limits.messageBytes, 1, 67108864, "server.limits.messageBytes")
+    requireIntegerRange(limits.queuedMessages, 1, 10000, "server.limits.queuedMessages")
+    requireIntegerRange(limits.queuedBytes, 1, 67108864, "server.limits.queuedBytes")
+    requireIntegerRange(limits.pendingSendBytes, 1, 67108864, "server.limits.pendingSendBytes")
+    requireIntegerRange(limits.connections, 1, 4096, "server.limits.connections")
+    requireIntegerRange(limits.concurrentRequests, 1, 4096, "server.limits.concurrentRequests")
+    requireIntegerRange(limits.sessionDrainMilliseconds, 0, 2147483647, "server.limits.sessionDrainMilliseconds")
+
+    assert not configuration.database.path.isBlank() else "database.path cannot be blank"
+    requireIntegerRange(configuration.database.busyTimeoutMilliseconds, 1, 60000, "database.busyTimeoutMilliseconds")
+    requireIntegerRange(configuration.database.queueCapacity, 1, 1024, "database.queueCapacity")
+    requireIntegerRange(configuration.database.maxRows, 1, 1000000, "database.maxRows")
+    requireIntegerRange(configuration.database.maxResultBytes, 1, 134217728, "database.maxResultBytes")
+
+    requireIntegerRange(configuration.worldRuntime.activeWorldCapacity, 1, 4096, "worldRuntime.activeWorldCapacity")
+    requireIntegerRange(configuration.worldRuntime.activeChunkCapacity, 1, 1048576, "worldRuntime.activeChunkCapacity")
+    requireIntegerRange(configuration.worldRuntime.activeOverrideCapacity, 1, 16777216, "worldRuntime.activeOverrideCapacity")
+    return configuration
 
 def integerOverride(name: string, fallback: number) -> number:
     const raw = get(name)
@@ -102,5 +140,6 @@ export def serverOptions(configuration: OpenVoxelConfiguration, logger: bool? = 
         maxQueuedBytes: limits.queuedBytes,
         maxPendingSendBytes: limits.pendingSendBytes,
         maxConnections: limits.connections,
+        maxConcurrentRequests: limits.concurrentRequests,
         realtimeDrainMilliseconds: limits.sessionDrainMilliseconds,
     }

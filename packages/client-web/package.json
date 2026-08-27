@@ -30,7 +30,7 @@
     "@velarscript-labs/msgpack": "0.1.6"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.20.0",
-    "@velarscript/web": "0.20.0"
+    "@velarscript/cli": "0.20.1",
+    "@velarscript/web": "0.20.1"
   }
 }

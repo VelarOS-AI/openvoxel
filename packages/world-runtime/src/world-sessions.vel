@@ -28,6 +28,14 @@ export type LoadedWorld:
     contentSnapshot: readonly WorldContentSnapshot
     /// 玩家增量的世界私有热状态；查询、写入和生命周期都通过这里收口。
     state: ActiveWorldState
+    /// 当前进程内这次世界会话已经发布的热事件序号；会话淘汰后从零开始。
+    sequence: number
+
+/// 一次正在使用世界上下文的所有权。调用方必须在 finally 中 close；缓存只会
+/// 淘汰引用数为零的世界，因此生成、查询和持久化期间不会关闭正在使用的热状态。
+export type WorldSessionLease:
+    world: LoadedWorld
+    close: () -> Promise<null>
 
 /// 世界会话缓存负责 LoadedWorld 的完整生命周期。
 ///
@@ -38,9 +46,9 @@ export type LoadedWorld:
 export type WorldSessionCache:
     prepare: (manifest: WorldManifest) -> LoadedWorld
     prepareNew: (command: CreateWorld) -> LoadedWorld
-    remember: (world: LoadedWorld) -> null
-    find: (worldId: string) -> Promise<LoadedWorld?>
-    require: (worldId: string) -> Promise<LoadedWorld>
+    remember: (world: LoadedWorld) -> Promise<null>
+    find: (worldId: string) -> Promise<WorldSessionLease?>
+    require: (worldId: string) -> Promise<WorldSessionLease>
     unload: (worldId: string) -> Promise<null>
     close: () -> Promise<null>
 
@@ -52,11 +60,17 @@ export type WorldSessionCache:
 export def worldSessionCache(
     store: WorldStore,
     contentCatalog: ContentCatalog = baseContentCatalog,
+    activeWorldCapacity: number = 64,
     activeChunkCapacity: number = 2048,
     activeOverrideCapacity: number = 262144,
 ) -> WorldSessionCache:
+    assert activeWorldCapacity.isInteger() and activeWorldCapacity > 0 else "Active world capacity must be a positive integer"
     const loaded: Map<string, LoadedWorld> = Map()
     const loading: Map<string, Promise<LoadedWorld?>> = Map()
+    const closing: Map<string, Promise<null>> = Map()
+    const references: Map<string, number> = Map()
+    let trimming: Promise<null>? = null
+    let closed = false
 
     def activeState(worldId: string, blocks: readonly WorldBlockRegistry) -> ActiveWorldState:
         def validateBlockStateRuntimeId(runtimeId: number): requireWorldBlockStateRuntimeId(blocks.index, runtimeId)
@@ -81,6 +95,7 @@ export def worldSessionCache(
             content: active,
             contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
             state: activeState(manifest.id, blocks),
+            sequence: 0,
         }
 
     /// 新世界先按 worldId 选择内容，再一次性建立两个注册表、生成器哈希和出生点。
@@ -116,15 +131,64 @@ export def worldSessionCache(
             content: active,
             contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
             state: activeState(manifest.id, blocks),
+            sequence: 0,
         }
 
-    def remember(world: LoadedWorld): loaded.set(world.manifest.id, world)
+    def touch(world: LoadedWorld):
+        loaded.remove(world.manifest.id)
+        loaded.set(world.manifest.id, world)
+
+    async def closeLoaded(world: LoadedWorld):
+        loaded.remove(world.manifest.id)
+        const closure = world.state.close()
+        closing.set(world.manifest.id, closure)
+        try: await closure
+        finally:
+            if closing.get(world.manifest.id) == closure: closing.remove(world.manifest.id)
+
+    /// Map 插入顺序记录最近使用顺序。容量超限时跳过仍有租约的世界，只关闭最久
+    /// 未使用的空闲上下文；所有世界都忙时允许短暂超限，最后一个租约释放后立即收敛。
+    async def trimLoaded():
+        while loaded.size > activeWorldCapacity:
+            let candidate: LoadedWorld? = null
+            for worldId in loaded:
+                if (references.get(worldId) ?? 0) == 0:
+                    candidate = loaded.get(worldId)
+                    break
+            if candidate == null: return
+            await closeLoaded(candidate)
+
+    async def trim():
+        const existing = trimming
+        if existing != null:
+            await existing
+            return
+        const owner = trimLoaded()
+        trimming = owner
+        try: await owner
+        finally:
+            if trimming == owner: trimming = null
+
+    async def remember(world: LoadedWorld):
+        assert not closed else "World session cache is closed"
+        const existing = loaded.get(world.manifest.id)
+        assert existing == null or existing == world else f"World {world.manifest.id} already has a different loaded session"
+        touch(world)
+        await trim()
 
     /// 从存储载入清单并重建上下文。Content Pack 构建或注册表状态不一致会直接
     /// 拒绝载入，不在打开世界时改写持久化身份。
     async def activate(worldId: string) -> LoadedWorld?:
         const existing = loaded.get(worldId)
-        if existing != null: return existing
+        if existing != null:
+            touch(existing)
+            return existing
+        const previousClosure = closing.get(worldId)
+        if previousClosure != null: await previousClosure
+        const reopened = loaded.get(worldId)
+        if reopened != null:
+            touch(reopened)
+            return reopened
         const foundManifest = await store.manifests.find(worldId)
         if foundManifest == null: return null
         const manifest: WorldManifest = foundManifest
@@ -141,36 +205,80 @@ export def worldSessionCache(
             content: active,
             contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
             state: activeState(manifest.id, blocks),
+            sequence: 0,
         }
-        loaded.set(worldId, world)
+        touch(world)
         return world
 
-    async def find(worldId: string) -> LoadedWorld?:
+    def retain(worldId: string): references.set(worldId, (references.get(worldId) ?? 0) + 1)
+
+    async def release(worldId: string):
+        const count = references.get(worldId) ?? 0
+        assert count > 0 else f"World {worldId} session lease ownership is unbalanced"
+        if count == 1: references.remove(worldId)
+        else: references.set(worldId, count - 1)
+        await trim()
+
+    def lease(world: LoadedWorld) -> WorldSessionLease:
+        let released = false
+
+        async def closeLease():
+            if released: return
+            released = true
+            await release(world.manifest.id)
+
+        return {world, close: closeLease}
+
+    async def find(worldId: string) -> WorldSessionLease?:
+        assert not closed else "World session cache is closed"
+        // 在等待首次载入前先占用引用，避免另一条已经完成的请求在本请求恢复前
+        // 把同一个上下文当成空闲项淘汰。
+        retain(worldId)
         const pending = loading.get(worldId)
-        if pending != null: return await pending
+        const operation = pending ?? activate(worldId)
+        if pending == null: loading.set(worldId, operation)
+        let referenceOwned = true
+        try:
+            const world = await operation
+            if world == null:
+                referenceOwned = false
+                await release(worldId)
+                return null
+            touch(world)
+            referenceOwned = false
+            return lease(world)
+        catch error:
+            if referenceOwned:
+                referenceOwned = false
+                await release(worldId)
+            throw error
+        finally:
+            const registered = loading.get(worldId)
+            if registered != null and registered == operation: loading.remove(worldId)
 
-        const activation = activate(worldId)
-        loading.set(worldId, activation)
-        try: return await activation
-        finally: loading.remove(worldId)
-
-    async def require(worldId: string) -> LoadedWorld:
-        const world = await find(worldId)
-        if world == null: throw WorldNotFoundError(worldId)
-        return world
+    async def require(worldId: string) -> WorldSessionLease:
+        const retained = await find(worldId)
+        if retained == null: throw WorldNotFoundError(worldId)
+        return retained
 
     /// 卸载只释放可重建的运行时状态，不删除清单或玩家修改。
     /// 如果这个世界正在首次载入，先等待该过程完成，再删除最终缓存结果。
     async def unload(worldId: string):
         const pending = loading.get(worldId)
         if pending != null: await pending
+        if (references.get(worldId) ?? 0) > 0:
+            throw WorldRequestError(f"World {worldId} is active and cannot be unloaded")
         const world = loaded.get(worldId)
-        if world != null: await world.state.close()
-        loaded.remove(worldId)
+        if world != null: await closeLoaded(world)
 
     /// 关闭缓存时先加入所有在途载入，避免存储已经关闭后仍有注册表快照写回。
     async def close():
+        if closed: return
+        closed = true
         await Promise.all(loading.values())
+        const currentTrim = trimming
+        if currentTrim != null: await currentTrim
+        assert references.size == 0 else "World session cache cannot close while worlds are still in use"
         const closures: List<Promise<null>> = []
         for worldId in loaded:
             const world = loaded.get(worldId)
@@ -178,5 +286,7 @@ export def worldSessionCache(
         await Promise.all(closures)
         loaded.clear()
         loading.clear()
+        closing.clear()
+        references.clear()
 
     return {prepare, prepareNew, remember, find, require, unload, close}

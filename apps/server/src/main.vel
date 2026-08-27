@@ -1,30 +1,41 @@
-import {get} from "velar/env"
-import {WebSocketServer} from "velar/websocket"
-import {appName, startOpenVoxelServer} from "./app.vel"
+import {run} from "velar/websocket"
+import {startOpenVoxelServer} from "./server.vel"
 import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
 import {loadContentCatalog} from "./adapters/content-catalog.vel"
-import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
-import {worldRuntime} from "@openvoxel/world-runtime"
+import {loadOpenVoxelConfiguration, openVoxelConfigurationPath, serverOptions, validateOpenVoxelConfiguration, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
+import {WorldRuntime, worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelApplication} from "./application.vel"
 
-export async def start() -> WebSocketServer:
-    const configuredPath = get("OPENVOXEL_CONFIG")
-    const configurationPath = resolveServerPath(configuredPath ?? "application.yml")
-    const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configuredPath)))
+const appName = "OpenVoxel"
+
+@main:
+    const configurationPath = openVoxelConfigurationPath()
+    const configuration = validateOpenVoxelConfiguration(withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration())))
     const content = await loadContentCatalog(configuration.content)
     const store = await sqliteWorldStore(configuration.database)
-    const application = openVoxelApplication(worldRuntime(store, content, {
-        activeChunkCapacity: configuration.worldRuntime.activeChunkCapacity,
-        activeOverrideCapacity: configuration.worldRuntime.activeOverrideCapacity,
-    }), serverOptions(configuration))
+    let runtime: WorldRuntime? = null
+    try:
+        runtime = worldRuntime(store, content, {
+            activeWorldCapacity: configuration.worldRuntime.activeWorldCapacity,
+            activeChunkCapacity: configuration.worldRuntime.activeChunkCapacity,
+            activeOverrideCapacity: configuration.worldRuntime.activeOverrideCapacity,
+        })
+    catch error:
+        // SQLite 已经打开但还没有移交给 WorldRuntime；构造失败时由本层回收，
+        // 同时保留原始构造错误，不让次要的清理异常把根因覆盖掉。
+        try: await store.close()
+        catch _cleanupError: pass
+        throw error
+    const application = openVoxelApplication(runtime, serverOptions(configuration))
     const server = await startOpenVoxelServer(application)
     application.info("server.configuration", {
         databasePath: configuration.database.path,
         configurationPath,
         defaultContentHash: content.defaultContent().identity.contentHash.slice(0, 12),
         installedContentPacks: configuration.content.packArtifacts.size,
+        activeWorldCapacity: configuration.worldRuntime.activeWorldCapacity,
         activeChunkCapacity: configuration.worldRuntime.activeChunkCapacity,
         activeOverrideCapacity: configuration.worldRuntime.activeOverrideCapacity,
     })
     print(f"{appName} is running at http://{configuration.server.host}:{server.port}")
-    return server
+    await run(server)

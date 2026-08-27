@@ -15,6 +15,7 @@ server:
     queuedBytes: 1048576
     pendingSendBytes: 1048576
     connections: 128
+    concurrentRequests: 256
     sessionDrainMilliseconds: 5000
 
 database:
@@ -31,6 +32,8 @@ content:
   defaultPacks: []
 
 worldRuntime:
+  # 完整世界上下文包含注册表、生成器和热状态；空闲世界按 LRU 自动卸载。
+  activeWorldCapacity: 64
   # 只缓存玩家修改的稀疏 Chunk；固定地形始终由种子按需生成。
   activeChunkCapacity: 2048
   # 同时限制稀疏覆盖总数，避免少量被完全改写的 Chunk 占用无界内存。

@@ -45,33 +45,39 @@ export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
 
     async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:
         validateBatch(positions)
-        const world = await sessions.require(worldId)
-        const output: List<Chunk> = []
-        for position in positions: output.append(world.generator.generate(position))
-        return output
+        const lease = await sessions.require(worldId)
+        try:
+            const output: List<Chunk> = []
+            for position in positions: output.append(lease.world.generator.generate(position))
+            return output
+        finally: await lease.close()
 
     async def chunkDeltas(worldId: string, positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ChunkDelta>:
         validateBatch(positions)
-        const world = await sessions.require(worldId)
-        return await world.state.deltas(positions)
+        const lease = await sessions.require(worldId)
+        try: return await lease.world.state.deltas(positions)
+        finally: await lease.close()
 
     async def chunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:
         validateBatch(positions)
 
         // 一次批量查询只取得一份 LoadedWorld，确保整批 Chunk 使用完全相同的
         // 生成器、注册表和目录 revision。
-        const world = await sessions.require(worldId)
-        const stored = await world.state.deltas(positions)
-        assert stored.size == positions.size else "Active world state returned an incomplete Chunk batch"
+        const lease = await sessions.require(worldId)
+        try:
+            const world = lease.world
+            const stored = await world.state.deltas(positions)
+            assert stored.size == positions.size else "Active world state returned an incomplete Chunk batch"
 
-        const output: List<Chunk> = []
-        for position, index in positions:
-            const chunk = world.generator.generate(position)
-            const delta = stored[index]
-            assert chunkKey(delta.position) == chunkKey(position) else "Active world state changed Chunk batch order"
-            applyDelta(world.blocks, chunk, delta)
-            output.append(chunk)
-        return output
+            const output: List<Chunk> = []
+            for position, index in positions:
+                const chunk = world.generator.generate(position)
+                const delta = stored[index]
+                assert chunkKey(delta.position) == chunkKey(position) else "Active world state changed Chunk batch order"
+                applyDelta(world.blocks, chunk, delta)
+                output.append(chunk)
+            return output
+        finally: await lease.close()
 
     async def chunk(worldId: string, position: readonly ChunkPosition) -> Chunk:
         const found = await chunks(worldId, [position])
@@ -82,7 +88,8 @@ export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
             throw WorldRequestError("Terrain sample coordinates must be integers")
         if position.x.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
             throw WorldRequestError("Terrain sample coordinates exceed the supported world boundary")
-        const world = await sessions.require(worldId)
-        return world.generator.sample(position)
+        const lease = await sessions.require(worldId)
+        try: return lease.world.generator.sample(position)
+        finally: await lease.close()
 
     return {chunk, chunks, terrainChunks, chunkDeltas, terrainSample}

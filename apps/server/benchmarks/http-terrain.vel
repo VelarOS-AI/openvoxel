@@ -1,0 +1,63 @@
+import {http} from "velar/http"
+import {monotonic} from "velar/time"
+import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {ChunkPosition} from "@openvoxel/world"
+import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
+import {OpenVoxelServerOptions, openVoxelApplication} from "../src/application.vel"
+import {startOpenVoxelServer} from "../src/server.vel"
+
+def positions(count: number) -> List<ChunkPosition>:
+    const output: List<ChunkPosition> = []
+    for index in range(count): output.append({x: index, y: 1, z: 0})
+    return output
+
+/// 测量真实 HTTP 监听器上的 JSON 序列化、gzip 和传输成本。1/16/64 Chunk
+/// 分别覆盖常规视距拉取的三个数量级；每组先预热一次，再报告五次运行中位数。
+@main:
+    const configuration = await loadOpenVoxelConfiguration()
+    const configured = serverOptions(configuration, logger=false)
+    const options = OpenVoxelServerOptions.from(configured, {host: "127.0.0.1", port: 0, logger: false})
+    const application = openVoxelApplication(worldRuntime(memoryWorldStore()), options)
+    const world = await application.runtime.createWorld({id: "transport-benchmark", name: "Transport Benchmark", seed: "http-terrain"})
+    const server = await startOpenVoxelServer(application)
+    try:
+        for count in [1, 16, 64]:
+            const body = {positions: positions(count)}
+            const url = f"http://127.0.0.1:{server.port}/api/worlds/{world.id}/terrain/chunks"
+
+            // 预热生成器列计划、路由和 HTTP 连接，不把一次性初始化计入样本。
+            await http.post(url, {
+                headers: Map([["content-type", "application/json"], ["accept-encoding", "gzip"]]),
+                body,
+                maxBytes: 64 * 1024 * 1024,
+            }).bytes()
+
+            const durations: List<number> = []
+            let compressedBytes = 0
+            for runIndex in range(5):
+                const started = monotonic()
+                const response = await http.post(url, {
+                    headers: Map([["content-type", "application/json"], ["accept-encoding", "gzip"]]),
+                    body,
+                    maxBytes: 64 * 1024 * 1024,
+                }).response()
+                const payload = await response.bytes()
+                durations.append(monotonic() - started)
+                compressedBytes = payload.size
+                assert response.headers.get("content-encoding") == "gzip" else "Terrain response was not compressed"
+
+            const identity = await http.post(url, {
+                headers: Map([["content-type", "application/json"], ["accept-encoding", "identity"]]),
+                body,
+                maxBytes: 64 * 1024 * 1024,
+            }).bytes()
+            const median = durations.sorted()[2]
+            print(Json.stringify({
+                chunks: count,
+                runs: 5,
+                medianMilliseconds: median,
+                compressedBytes,
+                identityBytes: identity.size,
+                compressionRatio: compressedBytes / identity.size,
+            }))
+    finally: await server.stop()

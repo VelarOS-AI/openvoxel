@@ -48,77 +48,76 @@ export def worldBlockCommands(
     publish: (batch: readonly BlockChangeBatch) -> null,
 ) -> WorldBlockCommands:
     const pending: Map<string, Promise<BlockChangeBatch>> = Map()
-    const sequences: Map<string, number> = Map()
     let closed = false
 
     async def performEdit(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
         if edits.size < 1: throw WorldRequestError("A block edit batch cannot be empty")
         if edits.size > maximumBlockEditBatchSize:
             throw WorldRequestError(f"A block edit batch cannot exceed {maximumBlockEditBatchSize} entries")
-        const world = await sessions.require(worldId)
-        const generatedChunks: Map<string, Chunk> = Map()
-        const seenPositions: Set<string> = Set()
-        const chunks: List<ChunkPosition> = []
-        const locals: List<LocalPosition> = []
-        const bases: List<number> = []
-        const writes: List<BlockOverrideWrite> = []
+        const lease = await sessions.require(worldId)
+        try:
+            const world = lease.world
+            const generatedChunks: Map<string, Chunk> = Map()
+            const seenPositions: Set<string> = Set()
+            const chunks: List<ChunkPosition> = []
+            const locals: List<LocalPosition> = []
+            const bases: List<number> = []
+            const writes: List<BlockOverrideWrite> = []
 
-        for edit in edits:
-            const position = edit.position
-            if not (position.x.isInteger() and position.y.isInteger() and position.z.isInteger()):
-                throw WorldRequestError("Block edit coordinates must be integers")
-            if position.x.abs() > maximumWorldCoordinate or position.y.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
-                throw WorldRequestError("Block edit coordinates exceed the supported world boundary")
-            // registry 验证当前有完整定义；index 再验证数字身份确实属于这个世界。
-            world.blocks.registry.requireStateByRuntimeId(edit.blockStateRuntimeId)
-            world.blocks.index.requireRuntimeId(edit.blockStateRuntimeId)
+            for edit in edits:
+                const position = edit.position
+                if not (position.x.isInteger() and position.y.isInteger() and position.z.isInteger()):
+                    throw WorldRequestError("Block edit coordinates must be integers")
+                if position.x.abs() > maximumWorldCoordinate or position.y.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
+                    throw WorldRequestError("Block edit coordinates exceed the supported world boundary")
+                // registry 验证当前有完整定义；index 再验证数字身份确实属于这个世界。
+                world.blocks.registry.requireStateByRuntimeId(edit.blockStateRuntimeId)
+                world.blocks.index.requireRuntimeId(edit.blockStateRuntimeId)
 
-            const located = locateBlock(edit.position, world.manifest.chunkEdge)
-            const positionKey = f"{located.chunk.x}:{located.chunk.y}:{located.chunk.z}:{located.local.x}:{located.local.y}:{located.local.z}"
-            if positionKey in seenPositions:
-                throw WorldRequestError(f"A block edit batch contains duplicate position {edit.position.x},{edit.position.y},{edit.position.z}")
-            seenPositions.add(positionKey)
+                const located = locateBlock(edit.position, world.manifest.chunkEdge)
+                const positionKey = f"{located.chunk.x}:{located.chunk.y}:{located.chunk.z}:{located.local.x}:{located.local.y}:{located.local.z}"
+                if positionKey in seenPositions:
+                    throw WorldRequestError(f"A block edit batch contains duplicate position {edit.position.x},{edit.position.y},{edit.position.z}")
+                seenPositions.add(positionKey)
 
-            const generatedKey = chunkKey(located.chunk)
-            let generated = generatedChunks.get(generatedKey)
-            if generated == null:
-                generated = world.generator.generate(located.chunk)
-                generatedChunks.set(generatedKey, generated)
-            const baseBlockStateRuntimeId = chunkBlock(generated!, located.local)
+                const generatedKey = chunkKey(located.chunk)
+                let generated = generatedChunks.get(generatedKey)
+                if generated == null:
+                    generated = world.generator.generate(located.chunk)
+                    generatedChunks.set(generatedKey, generated)
+                const baseBlockStateRuntimeId = chunkBlock(generated!, located.local)
 
-            chunks.append(located.chunk)
-            locals.append(located.local)
-            bases.append(baseBlockStateRuntimeId)
-            writes.append({
-                chunk: located.chunk,
-                local: located.local,
-                // 恢复到固定地形时删除覆盖，数据库只保存与种子生成结果不同的值。
-                blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId ? null : edit.blockStateRuntimeId,
-            })
+                chunks.append(located.chunk)
+                locals.append(located.local)
+                bases.append(baseBlockStateRuntimeId)
+                writes.append({
+                    chunk: located.chunk,
+                    local: located.local,
+                    // 恢复到固定地形时删除覆盖，数据库只保存与种子生成结果不同的值。
+                    blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId ? null : edit.blockStateRuntimeId,
+                })
 
-        const commits = await world.state.commitBlocks(writes)
-        assert commits.size == edits.size else "World delta store returned an incomplete block edit batch"
-        const changes: List<BlockChange> = []
-        for index in range(edits.size):
-            const edit = edits[index]
-            const commit = commits[index]
-            changes.append({
-                position: edit.position,
-                chunk: chunks[index],
-                local: locals[index],
-                previousBlockStateRuntimeId: commit.previousOverrideBlockStateRuntimeId ?? bases[index],
-                blockStateRuntimeId: edit.blockStateRuntimeId,
-                revision: commit.revision,
-                changed: commit.changed,
-            })
-        let sequence = sequences.get(worldId) ?? 0
-        const changed = changes.some(change => change.changed)
-        if changed:
-            sequence += 1
-            sequences.set(worldId, sequence)
-        const batch: BlockChangeBatch = {worldId, sequence, changes}
-        if changed: publish(batch)
-        return batch
+            const commits = await world.state.commitBlocks(writes)
+            assert commits.size == edits.size else "World delta store returned an incomplete block edit batch"
+            const changes: List<BlockChange> = []
+            for index in range(edits.size):
+                const edit = edits[index]
+                const commit = commits[index]
+                changes.append({
+                    position: edit.position,
+                    chunk: chunks[index],
+                    local: locals[index],
+                    previousBlockStateRuntimeId: commit.previousOverrideBlockStateRuntimeId ?? bases[index],
+                    blockStateRuntimeId: edit.blockStateRuntimeId,
+                    revision: commit.revision,
+                    changed: commit.changed,
+                })
+            const changed = changes.some(change => change.changed)
+            if changed: world.sequence += 1
+            const batch: BlockChangeBatch = {worldId, sequence: world.sequence, changes}
+            if changed: publish(batch)
+            return batch
+        finally: await lease.close()
 
     async def editBlocks(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
         assert not closed else "World block command service is closed"
@@ -150,6 +149,5 @@ export def worldBlockCommands(
             try: await operation
             catch _error: pass
         pending.clear()
-        sequences.clear()
 
     return {editBlocks, drain, close}

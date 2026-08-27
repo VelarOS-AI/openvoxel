@@ -19,7 +19,7 @@ export type WorldLiveSubscription:
 /// Channel 和转发任务。发布仍是非阻塞的：某个玩家的队列已满时，只关闭并移除
 /// 该玩家，不让慢连接阻塞同一世界中的其他玩家。
 export type WorldLiveState:
-    subscribe: (worldId: string, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription
+    subscribe: (worldId: string, sequence: number, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription
     publish: (worldId: string, sequence: number, message: Bytes) -> null
     close: () -> Promise<null>
 
@@ -38,30 +38,39 @@ export def worldLiveState(maximumSubscriptions: number, warning: (message: strin
         const worldSubscriptions = subscriptionsByWorld.get(subscription.worldId)
         if worldSubscriptions == null: return
         worldSubscriptions.remove(id)
-        if worldSubscriptions.size == 0: subscriptionsByWorld.remove(subscription.worldId)
+        if worldSubscriptions.size == 0:
+            subscriptionsByWorld.remove(subscription.worldId)
+            sequences.remove(subscription.worldId)
 
-    def subscribe(worldId: string, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription:
+    def subscribe(worldId: string, sequence: number, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription:
         assert not closed else "World live state is closed"
         assert subscriptions.size < maximumSubscriptions else "World live subscription capacity is exhausted"
+        assert sequence.isInteger() and sequence >= 0 else "World live sequence must be a non-negative integer"
         const id = nextId
         nextId += 1
         if nextId > 9007199254740991: nextId = 1
         assert not subscriptions.has(id) else "World live subscription identifier space is exhausted"
         subscriptions.set(id, {worldId, peer})
-        const empty: Set<number> = Set()
-        subscriptionsByWorld.getOrSet(worldId, empty).add(id)
+        const current = subscriptionsByWorld.get(worldId)
+        if current == null:
+            subscriptionsByWorld.set(worldId, Set([id]))
+            sequences.set(worldId, sequence)
+        else:
+            assert sequences.get(worldId) == sequence else f"World {worldId} live subscriptions disagree about sequence"
+            current.add(id)
 
         async def closeSubscription(): remove(id)
 
-        return {sequence: sequences.get(worldId) ?? 0, close: closeSubscription}
+        return {sequence, close: closeSubscription}
 
     def publish(worldId: string, sequence: number, message: Bytes):
         if closed: return
-        const previous = sequences.get(worldId) ?? 0
-        assert sequence == previous + 1 else f"World {worldId} realtime sequence must advance from {previous} to {previous + 1}"
-        sequences.set(worldId, sequence)
         const worldSubscriptions = subscriptionsByWorld.get(worldId)
         if worldSubscriptions == null: return
+        const previous = sequences.get(worldId)
+        assert previous != null else f"World {worldId} live sequence is missing"
+        assert sequence == previous + 1 else f"World {worldId} realtime sequence must advance from {previous} to {previous + 1}"
+        sequences.set(worldId, sequence)
         const failed: List<number> = []
         // 发布只遍历当前世界的玩家，不再扫描其他所有已连接世界。
         for id in worldSubscriptions:
@@ -70,7 +79,16 @@ export def worldLiveState(maximumSubscriptions: number, warning: (message: strin
         for id in failed:
             const subscription = subscriptions.get(id)
             remove(id)
-            if subscription != null: async subscription.peer.close(1013, "Realtime event backlog exceeded")
+            if subscription != null:
+                const failedSubscription = subscription
+                async def closeBackpressuredPeer():
+                    try: await failedSubscription.peer.close(1013, "Realtime event backlog exceeded")
+                    catch value:
+                        warning("realtime.subscriber.close_failed", {
+                            worldId,
+                            message: (value is Error) ? value.message : "Non-Error value was thrown",
+                        })
+                async closeBackpressuredPeer()
             warning("realtime.subscriber.backpressure", {worldId})
 
     async def close():
@@ -78,7 +96,16 @@ export def worldLiveState(maximumSubscriptions: number, warning: (message: strin
         closed = true
         const closings: List<Promise<null>> = []
         for subscription in subscriptions.values():
-            closings.append(subscription.peer.close(1001, "Server shutting down"))
+            async def closePeer():
+                try: await subscription.peer.close(1001, "Server shutting down")
+                catch value:
+                    // 单个传输已经损坏时仍要等待并关闭其余连接，不能让 Promise.all
+                    // 因第一条拒绝而让应用提前进入 WorldRuntime 关闭阶段。
+                    warning("realtime.subscriber.close_failed", {
+                        worldId: subscription.worldId,
+                        message: (value is Error) ? value.message : "Non-Error value was thrown",
+                    })
+            closings.append(closePeer())
         subscriptions.clear()
         subscriptionsByWorld.clear()
         sequences.clear()

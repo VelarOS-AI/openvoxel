@@ -1,6 +1,7 @@
 import {Bytes} from "velar/binary"
 import {TestResponse, client} from "velar/server-test"
 import {Provider} from "velar/serve"
+import {http} from "velar/http"
 import {WebSocketConnection, connect} from "velar/websocket"
 import {encode, parse} from "@velarscript-labs/msgpack"
 import {expect} from "velar/test"
@@ -10,7 +11,7 @@ import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, open
 import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {defaultGenerator} from "@openvoxel/world-generation"
-import {WorldManifest, chunkBlock} from "@openvoxel/world"
+import {ChunkPosition, WorldManifest, chunkBlock} from "@openvoxel/world"
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
 import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 
@@ -84,12 +85,12 @@ def providerOverride(application: OpenVoxelApplication) -> Map<Provider, unknown
     overrides.set(Provider.parse(openVoxelApplicationProvider), value)
     return overrides
 
-async def testApplication() -> OpenVoxelApplication:
-    const configuration = await loadOpenVoxelConfiguration("application.yml")
+async def testApplication(port: number = 0) -> OpenVoxelApplication:
+    const configuration = await loadOpenVoxelConfiguration()
     const configured = serverOptions(configuration, logger=false)
     const options = OpenVoxelServerOptions.from(configured, {
         host: "127.0.0.1",
-        port: 0,
+        port,
         logger: false,
     })
     return openVoxelApplication(worldRuntime(memoryWorldStore()), options)
@@ -222,6 +223,55 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
     finally:
         await api.close()
         await application.close()
+
+test "native HTTP compresses large cold terrain batches":
+    const application = await testApplication()
+    const world = await application.runtime.createWorld({id: "compressed", name: "Compressed", seed: "transport-compression"})
+    const server = await startOpenVoxelServer(application)
+    try:
+        const positions: List<ChunkPosition> = []
+        for x in range(16): positions.append({x, y: 1, z: 0})
+        const url = f"http://127.0.0.1:{server.port}/api/worlds/{world.id}/terrain/chunks"
+        const compressed = await http.post(url, {
+            headers: Map([
+                ["content-type", "application/json"],
+                ["accept-encoding", "gzip"],
+            ]),
+            body: {positions},
+            maxBytes: 16 * 1024 * 1024,
+        }).response()
+        const compressedBytes = await compressed.bytes()
+        expect(compressed.headers.get("content-encoding")).toBe("gzip")
+
+        const identity = await http.post(url, {
+            headers: Map([
+                ["content-type", "application/json"],
+                ["accept-encoding", "identity"],
+            ]),
+            body: {positions},
+            maxBytes: 16 * 1024 * 1024,
+        }).response()
+        const identityBytes = await identity.bytes()
+        expect(identity.headers.get("content-encoding")).toBe(null)
+        expect(compressedBytes.size < identityBytes.size).toBe(true)
+    finally: await server.stop()
+
+test "failed native listen releases its supplied application and preserves the listen error":
+    const owner = await testApplication()
+    const running = await startOpenVoxelServer(owner)
+    try:
+        const rejected = await testApplication(running.port)
+        await rejected.runtime.createWorld({id: "listen-failure", name: "Listen Failure", seed: "listen-failure"})
+        let listenMessage = ""
+        try: await startOpenVoxelServer(rejected)
+        catch error: listenMessage = error.message
+        expect(not listenMessage.isBlank()).toBe(true)
+
+        let runtimeMessage = ""
+        try: await rejected.runtime.requireWorld("listen-failure")
+        catch error: runtimeMessage = error.message
+        expect(runtimeMessage.has("closed")).toBe(true)
+    finally: await running.stop()
 
 test "world-scoped WebSocket synchronizes hot deltas and applies atomic batches":
     const application = await testApplication()

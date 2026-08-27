@@ -1,0 +1,12 @@
+import {expect} from "velar/test"
+import {WorldRequestError} from "@openvoxel/world-runtime"
+import {publicApplicationError} from "../src/error-handler.vel"
+
+test "public errors expose only declared domain failures":
+    const invalid = publicApplicationError(WorldRequestError("Bad world command"))
+    expect(invalid).toEqual({code: "request.invalid", message: "Bad world command"})
+
+    // 普通 Error 代表代码、存储或适配器故障。即使 message 很具体，也只能在
+    // 服务端日志出现，不能因为错误类型碰巧类似验证错误就对外伪装成客户端问题。
+    const internal = publicApplicationError(Error("Sensitive internal failure"))
+    expect(internal).toEqual({code: "server.internal", message: "The request could not be completed"})

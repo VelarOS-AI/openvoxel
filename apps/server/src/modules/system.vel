@@ -1,12 +1,12 @@
 import {input} from "velar/serve"
-import {protocolVersion} from "@openvoxel/protocol"
+import {protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {openVoxelApplicationProvider} from "../application.vel"
 import {clientContractResponse} from "../presentation/client-contract.vel"
 
 export server systemRoutes:
     /// 报告服务是否就绪以及当前协议版本。
     @get health(p"/api/health"):
-        return {status: "ready", service: "openvoxel", protocolVersion}
+        return {status: "ready", service: protocolServiceName, protocolVersion}
 
     /// API 根资源只发布能力和编码；HTTP 路由由框架生成的 OpenAPI 描述。
     @get clientContract(p"/api", application = input.dependency(openVoxelApplicationProvider)):

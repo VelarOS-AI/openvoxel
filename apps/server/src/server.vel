@@ -1,4 +1,4 @@
-import {HttpProblem, Request, ServeApp, bodyLimit, docs, lifecycle, middleware, use} from "velar/serve"
+import {HttpProblem, Request, ServeApp, bodyLimit, docs, middleware, supply, use} from "velar/serve"
 import {WebSocketServer, listen} from "velar/websocket"
 import {protocolVersion} from "@openvoxel/protocol"
 import {realtimeRoutes} from "./modules/realtime.vel"
@@ -6,7 +6,7 @@ import {blockRoutes} from "./modules/block.vel"
 import {chunkRoutes} from "./modules/chunk.vel"
 import {systemRoutes} from "./modules/system.vel"
 import {worldRoutes} from "./modules/world.vel"
-import {OpenVoxelApplication, mountOpenVoxelApplication, unmountOpenVoxelApplication} from "./application.vel"
+import {OpenVoxelApplication, openVoxelApplicationProvider} from "./application.vel"
 
 server openVoxelRoutes:
     ...systemRoutes
@@ -39,36 +39,28 @@ export def createOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
     ))
     app = use(app, middleware.requestId())
     app = use(app, middleware.securityHeaders())
-    app = use(app, middleware.concurrency(256))
+    // 地形批量响应通常远大于 1 KiB。压缩在 HTTP 冷数据边界完成，不改变世界
+    // 生成器或协议对象，也不会把传输策略耦合进 world-runtime。
+    app = use(app, middleware.compression(minimumBytes=1024))
+    app = use(app, middleware.concurrency(application.options.maxConcurrentRequests))
     if application.options.logger: app = use(app, middleware.accessLog(application.access))
 
-    return app
-
-def ownedOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
-    const app = createOpenVoxelApp(application)
-
-    async def startup(): mountOpenVoxelApplication(application)
-
-    async def shutdown(): unmountOpenVoxelApplication()
-
-    return lifecycle(app, startup=startup, shutdown=shutdown)
+    // supply 把实例与 Provider 一起交给框架。路由仍只依赖静态 Provider，关闭
+    // HTTP/WS 服务器时框架会调用 Provider.release，统一关闭整个应用资源树。
+    return supply(app, openVoxelApplicationProvider, application)
 
 export async def startOpenVoxelServer(application: OpenVoxelApplication) -> WebSocketServer:
-    try:
-        const server = await listen({
-            host: application.options.host,
-            port: application.options.port,
-            http: ownedOpenVoxelApp(application),
-            origins: application.options.corsAllowedOrigins,
-            maxBodyBytes: application.options.bodyLimit,
-            maxMessageBytes: application.options.maxMessageBytes,
-            maxQueuedMessages: application.options.maxQueuedMessages,
-            maxQueuedBytes: application.options.maxQueuedBytes,
-            maxPendingSendBytes: application.options.maxPendingSendBytes,
-            maxConnections: application.options.maxConnections,
-        })
-        application.info("server.started", {host: application.options.host, port: server.port})
-        return server
-    catch error:
-        await application.close()
-        throw error
+    const server = await listen({
+        host: application.options.host,
+        port: application.options.port,
+        http: createOpenVoxelApp(application),
+        origins: application.options.corsAllowedOrigins,
+        maxBodyBytes: application.options.bodyLimit,
+        maxMessageBytes: application.options.maxMessageBytes,
+        maxQueuedMessages: application.options.maxQueuedMessages,
+        maxQueuedBytes: application.options.maxQueuedBytes,
+        maxPendingSendBytes: application.options.maxPendingSendBytes,
+        maxConnections: application.options.maxConnections,
+    })
+    application.info("server.started", {host: application.options.host, port: server.port})
+    return server

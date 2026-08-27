@@ -25,6 +25,8 @@ export type WorldRuntime:
     chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
     editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
+    /// 为长连接保留世界上下文；关闭租约后世界才重新具备自动淘汰资格。
+    retainWorld: (worldId: string) -> Promise<WorldRuntimeLease>
     subscribeBlockChanges: (listener: (batch: readonly BlockChangeBatch) -> null) -> WorldRuntimeSubscription
     /// 释放一个世界的可重建运行时上下文，不删除任何持久化数据。
     unloadWorld: (worldId: string) -> Promise<null>
@@ -33,13 +35,21 @@ export type WorldRuntime:
 export type WorldRuntimeSubscription:
     close: () -> null
 
+export type WorldRuntimeLease:
+    manifest: readonly WorldManifest
+    sequence: () -> number
+    close: () -> Promise<null>
+
 export type WorldRuntimeOptions:
+    /// 同时保留的完整世界上下文数量；忙碌世界在租约释放前不会被淘汰。
+    activeWorldCapacity: number
     /// 每个活动世界最多驻留多少个玩家增量 Chunk；固定地形不进入这个缓存。
     activeChunkCapacity: number
     /// 每个活动世界最多驻留多少条稀疏方块覆盖，防止少量极密 Chunk 耗尽内存。
     activeOverrideCapacity: number
 
 export const defaultWorldRuntimeOptions: readonly WorldRuntimeOptions = {
+    activeWorldCapacity: 64,
     activeChunkCapacity: 2048,
     activeOverrideCapacity: 262144,
 }
@@ -49,12 +59,13 @@ export def worldRuntime(
     content: ContentCatalog? = null,
     options: readonly WorldRuntimeOptions = defaultWorldRuntimeOptions,
 ) -> WorldRuntime:
+    assert options.activeWorldCapacity.isInteger() and options.activeWorldCapacity > 0 else "Active world capacity must be a positive integer"
     assert options.activeChunkCapacity.isInteger() and options.activeChunkCapacity > 0 else "Active Chunk capacity must be a positive integer"
     assert options.activeOverrideCapacity.isInteger() and options.activeOverrideCapacity > 0 else "Active override capacity must be a positive integer"
     const sessions = (
         content == null
-            ? worldSessionCache(store, activeChunkCapacity=options.activeChunkCapacity, activeOverrideCapacity=options.activeOverrideCapacity)
-            : worldSessionCache(store, content, options.activeChunkCapacity, options.activeOverrideCapacity)
+            ? worldSessionCache(store, activeWorldCapacity=options.activeWorldCapacity, activeChunkCapacity=options.activeChunkCapacity, activeOverrideCapacity=options.activeOverrideCapacity)
+            : worldSessionCache(store, content, options.activeWorldCapacity, options.activeChunkCapacity, options.activeOverrideCapacity)
     )
     const queries = worldChunkQueries(sessions)
     const listeners: Map<number, (batch: readonly BlockChangeBatch) -> null> = Map()
@@ -73,14 +84,21 @@ export def worldRuntime(
 
     async def persistWorld(command: CreateWorld) -> WorldManifest:
         const world = sessions.prepareNew(command)
-        const existing = await store.manifests.find(world.manifest.id)
-        if existing != null: throw WorldAlreadyExistsError(world.manifest.id)
+        let remembered = false
+        try:
+            const existing = await store.manifests.find(world.manifest.id)
+            if existing != null: throw WorldAlreadyExistsError(world.manifest.id)
 
-        // prepare 会先把当前 Mod 目录编译进清单，但不会提前写入缓存。只有存储
-        // 成功后才 remember，防止保存失败却让后续请求读到并不存在的世界。
-        await store.manifests.save(world.manifest)
-        sessions.remember(world)
-        return world.manifest
+            // prepare 会先把当前 Mod 目录编译进清单，但不会提前写入缓存。只有存储
+            // 成功后才 remember，防止保存失败却让后续请求读到并不存在的世界。
+            await store.manifests.save(world.manifest)
+            await sessions.remember(world)
+            remembered = true
+            return world.manifest
+        finally:
+            // 重复身份或持久化失败时，prepareNew 创建的热状态不属于缓存，必须
+            // 在这里释放，不能等到整个进程退出。
+            if not remembered: await world.state.close()
 
     async def createWorld(command: CreateWorld) -> WorldManifest:
         const worldId = command.id.trim()
@@ -96,12 +114,25 @@ export def worldRuntime(
         try: return await creation
         finally: creations.remove(worldId)
 
-    async def findWorld(worldId: string) -> WorldManifest?: return (await sessions.find(worldId))?.manifest
+    async def findWorld(worldId: string) -> WorldManifest?:
+        const lease = await sessions.find(worldId)
+        if lease == null: return null
+        try: return lease.world.manifest
+        finally: await lease.close()
 
-    async def requireWorld(worldId: string) -> WorldManifest: return (await sessions.require(worldId)).manifest
+    async def requireWorld(worldId: string) -> WorldManifest:
+        const lease = await sessions.require(worldId)
+        try: return lease.world.manifest
+        finally: await lease.close()
 
     async def worldContent(worldId: string) -> readonly WorldContentSnapshot:
-        return (await sessions.require(worldId)).contentSnapshot
+        const lease = await sessions.require(worldId)
+        try: return lease.world.contentSnapshot
+        finally: await lease.close()
+
+    async def retainWorld(worldId: string) -> WorldRuntimeLease:
+        const lease = await sessions.require(worldId)
+        return {manifest: lease.world.manifest, sequence: () => lease.world.sequence, close: lease.close}
 
     async def unloadWorld(worldId: string):
         await commands.drain(worldId)
@@ -120,11 +151,14 @@ export def worldRuntime(
     /// 先停止会话缓存，再关闭存储。这样在途世界载入可以完成必要的注册表快照
     /// 写回，不会与数据库连接关闭发生竞态。
     async def close():
-        await Promise.all(creations.values())
-        await commands.close()
-        await sessions.close()
-        await store.close()
-        listeners.clear()
+        try: await Promise.all(creations.values())
+        finally:
+            try: await commands.close()
+            finally:
+                try: await sessions.close()
+                finally:
+                    try: await store.close()
+                    finally: listeners.clear()
 
     return {
         createWorld,
@@ -137,6 +171,7 @@ export def worldRuntime(
         chunkDeltas: queries.chunkDeltas,
         terrainSample: queries.terrainSample,
         editBlocks: commands.editBlocks,
+        retainWorld,
         subscribeBlockChanges,
         unloadWorld,
         close,

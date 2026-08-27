@@ -1,5 +1,4 @@
 import {Chunk, Coordinate3, chunkBlockAtIndex, paintChunkBlockAtIndex} from "@openvoxel/world"
-import {survivalBlocks} from "./block-palette.vel"
 
 /// 生成特征始终用世界坐标描述，写入时裁剪到当前目标 Chunk。
 /// 这样一个特征可以跨越边界，但生成过程不读取或修改相邻 Chunk。
@@ -21,8 +20,10 @@ def worldIndex(chunk: readonly Chunk, position: readonly Coordinate3) -> number:
     const localZ = position.z - chunkMinimumZ(chunk)
     return localX + chunk.edge * (localZ + chunk.edge * localY)
 
-export def generatedBlock(chunk: readonly Chunk, position: readonly Coordinate3) -> number:
-    if not insideChunk(chunk, position): return survivalBlocks.air
+/// 读取当前 Chunk 内的方块。越界时返回什么由调用方明确决定，笔刷层不持有
+/// 任何世界注册表或“空气”身份，因此不会把某个世界的 runtimeId 泄漏成全局值。
+export def generatedBlock(chunk: readonly Chunk, position: readonly Coordinate3, outside: number) -> number:
+    if not insideChunk(chunk, position): return outside
     return chunkBlockAtIndex(chunk, worldIndex(chunk, position))
 
 export def paintGeneratedBlock(chunk: Chunk, position: readonly Coordinate3, runtimeId: number):

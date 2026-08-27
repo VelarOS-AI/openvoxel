@@ -48,7 +48,7 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.20.0"
+    "@velarscript/cli": "0.20.1"
   },
   "allowScripts": {
     "esbuild": false,

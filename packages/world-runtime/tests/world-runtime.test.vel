@@ -195,6 +195,46 @@ test "world runtime shares an in-flight world load and supports explicit unloadi
     expect(reloaded.id).toBe("session")
     expect(catalogResolutions).toBe(2)
 
+test "world runtime bounds complete world sessions and never evicts an active lease":
+    const store = memoryWorldStore()
+    const baseCatalog = createContentCatalog()
+    let catalogResolutions = 0
+
+    def defaultContent(): return baseCatalog.defaultContent()
+
+    def select(owners: readonly List<string>): return baseCatalog.select(owners)
+
+    def resolve(identity: readonly WorldContentIdentity):
+        catalogResolutions += 1
+        return baseCatalog.resolve(identity)
+
+    def requirePack(owner: string): return baseCatalog.requirePack(owner)
+
+    const countedCatalog: ContentCatalog = {defaultContent, select, resolve, requirePack}
+    const runtime = worldRuntime(store, countedCatalog, {
+        activeWorldCapacity: 1,
+        activeChunkCapacity: 16,
+        activeOverrideCapacity: 1024,
+    })
+    await runtime.createWorld({id: "bounded-a", name: "Bounded A", seed: "a"})
+    await runtime.createWorld({id: "bounded-b", name: "Bounded B", seed: "b"})
+
+    // 创建 B 后 A 是最久未使用的空闲上下文，重新访问时只重建一次。
+    await runtime.requireWorld("bounded-a")
+    await runtime.requireWorld("bounded-a")
+    expect(catalogResolutions).toBe(1)
+
+    const retained = await runtime.retainWorld("bounded-a")
+    await expect(runtime.unloadWorld("bounded-a")).toReject()
+    await runtime.createWorld({id: "bounded-c", name: "Bounded C", seed: "c"})
+    expect(retained.manifest.id).toBe("bounded-a")
+
+    await retained.close()
+    await runtime.unloadWorld("bounded-a")
+    await runtime.requireWorld("bounded-a")
+    expect(catalogResolutions).toBe(2)
+    await runtime.close()
+
 test "world runtime pins the exact content pack build in the world manifest":
     const store = memoryWorldStore()
     const firstCatalog = createContentCatalog([tomatoPack()])
@@ -257,7 +297,7 @@ test "active world state caches sparse Chunk reads and evicts by configured LRU 
         deltas: {findChunks, commitChunks},
         close: backing.close,
     }
-    const runtime = worldRuntime(counted, options={activeChunkCapacity: 1, activeOverrideCapacity: 1024})
+    const runtime = worldRuntime(counted, options={activeWorldCapacity: 64, activeChunkCapacity: 1, activeOverrideCapacity: 1024})
     const world = await runtime.createWorld({id: "lru", name: "LRU", seed: "cache"})
     const first = {x: 0, y: 1, z: 0}
     const second = {x: 1, y: 1, z: 0}

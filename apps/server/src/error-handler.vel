@@ -16,8 +16,6 @@ export def publicApplicationError(error: Error) -> PublicApplicationError:
     if error is UnknownBlockStateRuntimeIdError: return {code: "block.unknown_state", message: error.message}
     if error is ReservedBlockStateRuntimeIdError: return {code: "block.reserved_state", message: error.message}
     if error is UnknownWorldBlockStateRuntimeIdError: return {code: "block.unknown_world_state", message: error.message}
-    if error.code == "TypeError" or error.code == "RangeError" or error.code == "SyntaxError" or error.code == "ValidationError" or error.code == "NarrowingError":
-        return {code: "request.invalid", message: "The request is invalid"}
     return {code: "server.internal", message: "The request could not be completed"}
 
 def applicationHttpProblem(error: Error) -> HttpProblem?:
@@ -30,8 +28,6 @@ def applicationHttpProblem(error: Error) -> HttpProblem?:
         return HttpProblem({status: 422, code: publicError.code, title: "Invalid request", detail: publicError.message})
     if (error is InvalidBlockStateRuntimeIdError) or (error is UnknownBlockStateRuntimeIdError) or (error is ReservedBlockStateRuntimeIdError) or (error is UnknownWorldBlockStateRuntimeIdError):
         return HttpProblem({status: 422, code: publicError.code, title: "Invalid block state", detail: publicError.message})
-    if publicError.code == "request.invalid":
-        return HttpProblem({status: 422, code: publicError.code, title: "Invalid request", detail: publicError.message})
     return null
 
 /// 在框架之外抛出的领域错误通过这个很窄的边界变成 HttpProblem。成功值仍由路由
