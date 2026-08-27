@@ -1,25 +1,16 @@
 import {input} from "velar/serve"
-import {clientContractResponse, protocolVersion} from "@openvoxel/protocol"
-import {ok} from "../responses.vel"
+import {protocolVersion} from "@openvoxel/protocol"
 import {openVoxelApplicationProvider} from "../application.vel"
+import {clientContractResponse} from "../presentation/client-contract.vel"
 
 export server systemRoutes:
-    /// Reports service readiness and the active protocol version.
-    @get(p"/api/health"):
-        return ok(
-            {status: "ready", service: "openvoxel", protocolVersion},
-            Map([["x-openvoxel-protocol-version", str(protocolVersion)]]),
-        )
+    /// 报告服务是否就绪以及当前协议版本。
+    @get health(p"/api/health"):
+        return {status: "ready", service: "openvoxel", protocolVersion}
 
-    /// Publishes the client transport and world-data contract.
-    @get(p"/api/client-contract", application=input.dependency(openVoxelApplicationProvider)):
-        return ok(
-            clientContractResponse({
-                requestBodyBytes: application.options.bodyLimit,
-                realtimeMessageBytes: application.options.maxMessageBytes,
-            }),
-            Map([
-                ["cache-control", "no-store"],
-                ["x-openvoxel-protocol-version", str(protocolVersion)],
-            ]),
-        )
+    /// API 根资源只发布能力和编码；HTTP 路由由框架生成的 OpenAPI 描述。
+    @get clientContract(p"/api", application = input.dependency(openVoxelApplicationProvider)):
+        return clientContractResponse({
+            requestBodyBytes: application.options.bodyLimit,
+            realtimeMessageBytes: application.options.maxMessageBytes,
+        })

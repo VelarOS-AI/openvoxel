@@ -5,4 +5,4 @@ export {BlockPosition, ChunkPosition, Coordinate2, Coordinate3, LocatedBlock, Lo
 export {Chunk, ChunkPaletteTemplate, blockIndex, chunk, chunkBlock, chunkBlockAtIndex, chunkChecksum, chunkPaletteTemplate, chunkVolume, emptyChunk, emptyPaletteChunk, paintChunkBlockAtIndex, setChunkBlock} from "./chunk/chunk.vel"
 
 /// 清单层：世界持久化身份与格式不变量。
-export {WorldManifest, WorldSpawn, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"
+export {WorldContentIdentity, WorldContentPackReference, WorldManifest, WorldSpawn, initialChunkEdge, validateWorldContentIdentity, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"

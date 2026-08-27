@@ -1,6 +1,6 @@
 {
   "name": "@openvoxel/world",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
@@ -26,8 +26,8 @@
     "build": "velar build"
   },
   "dependencies": {
-    "@openvoxel/blocks": "0.1.0",
-    "@openvoxel/identities": "0.1.0"
+    "@openvoxel/blocks": "0.2.0",
+    "@openvoxel/identities": "0.2.0"
   },
   "devDependencies": {
     "fast-check": "4.9.0"

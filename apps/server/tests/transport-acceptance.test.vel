@@ -1,19 +1,21 @@
 import {Bytes} from "velar/binary"
 import {TestResponse, client} from "velar/server-test"
 import {Provider} from "velar/serve"
-import {connect} from "velar/websocket"
+import {WebSocketConnection, connect} from "velar/websocket"
 import {encode, parse} from "@velarscript-labs/msgpack"
 import {expect} from "velar/test"
 import {loadOpenVoxelConfiguration, serverOptions} from "../src/config.vel"
 import {createOpenVoxelApp, startOpenVoxelServer} from "../src/server.vel"
 import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, openVoxelApplicationProvider} from "../src/application.vel"
-import {blockCatalogVersion, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {defaultGenerator} from "@openvoxel/world-generation"
 import {WorldManifest, chunkBlock} from "@openvoxel/world"
-import {ApiResponse, BlockCatalogResponse, BlockChangedEvent, ChunkBatchResponse, ChunkResponse, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, WorldBootstrapResponse} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
 import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 
+// velar/websocket 的客户端目前不允许设置握手 Origin。这个宿主契约只用于验证
+// 服务端拒绝不受信任的浏览器来源，不参与 OpenVoxel 的生产连接实现。
 extern js`
     import WebSocket from "ws"
 
@@ -43,20 +45,38 @@ extern js`
     export def rejectedWebSocketStatus(url: string, origin: string) -> Promise<number>
 
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 
 type HealthResponse:
     status: string
     service: string
     protocolVersion: number
 
-type RouteFailureData:
-    method: string
-    path: string
+type ProblemResponse:
+    type: string
+    title: string
+    status: number
+    code: string
+    detail: string?
+    instance: string?
 
-type WorldFailureData:
-    worldId: string
+type OpenApiResponse:
+    openapi: string
+    paths: Record<OpenApiPathItem>
 
-async def envelope(response: TestResponse) -> ApiResponse: return ApiResponse.parse(await response.json())
+type OpenApiOperation:
+    operationId: string
+
+type OpenApiPathItem:
+    get: OpenApiOperation?
+    post: OpenApiOperation?
+
+async def problem(response: TestResponse) -> ProblemResponse: return ProblemResponse.parse(await response.json())
+
+async def nextBinary(connection: WebSocketConnection) -> Bytes:
+    const message = await connection.next()
+    if not (message is Bytes): throw Error("Expected a binary realtime message")
+    return message
 
 def providerOverride(application: OpenVoxelApplication) -> Map<Provider, unknown>:
     const overrides: Map<Provider, unknown> = Map()
@@ -74,29 +94,35 @@ async def testApplication() -> OpenVoxelApplication:
     })
     return openVoxelApplication(worldRuntime(memoryWorldStore()), options)
 
-test "native HTTP modules complete the backend vertical slice":
+test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route truth":
     const application = await testApplication()
-    const api = await client(
-        createOpenVoxelApp(application),
-        providerOverride(application),
-    )
+    const api = await client(createOpenVoxelApp(application), providerOverride(application))
     try:
         const healthResponse = await api.get("/api/health")
         expect(healthResponse.status).toBe(200)
-        const health = HealthResponse.parse((await envelope(healthResponse)).data)
+        const health = HealthResponse.parse(await healthResponse.json())
         expect(health.status).toBe("ready")
-        expect(health.protocolVersion).toBe(4)
-        expect(healthResponse.headers.get("x-openvoxel-protocol-version")).toBe("4")
+        expect(health.protocolVersion).toBe(protocolVersion)
 
-        const contractResponse = await api.get("/api/client-contract")
-        const contract = ClientContractResponse.parse((await envelope(contractResponse)).data)
-        expect(contract.contractVersion).toBe(5)
-        expect(contract.http.routes.queryChunk.path).toBe("/api/chunks/query")
+        const contractResponse = await api.get("/api")
+        const contract = ClientContractResponse.parse(await contractResponse.json())
+        expect(contract.contractVersion).toBe(clientContractVersion)
+        expect(contract.http).toEqual({encoding: "json", descriptionFormat: "openapi-3.1"})
+        expect(contract.realtime.commands).toEqual(["chunks.sync", "blocks.apply"])
         expect(contract.chunks.indexOrder).toBe("x + edge * (z + edge * y)")
-        expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
-        expect(contract.blockCatalog.catalogVersion).toBe(blockCatalogVersion)
         expect(contract.limits.requestBodyBytes).toBe(65536)
-        expect(contractResponse.headers.get("cache-control")).toBe("no-store")
+
+        const openApiResponse = await api.get("/api/openapi.json")
+        const openApi = OpenApiResponse.parse(await openApiResponse.json())
+        expect(openApi.openapi).toBe("3.1.0")
+        expect(openApi.paths.has("/api/worlds/{worldId}/terrain/chunks")).toBe(true)
+        expect(openApi.paths.has("/api/worlds/{worldId}/terrain/samples/{blockX}/{blockZ}")).toBe(true)
+        expect(openApi.paths["/api"]!.get!.operationId).toBe("clientContract")
+        expect(openApi.paths["/api/worlds/{worldId}/bootstrap"]!.get!.operationId).toBe("worldBootstrap")
+        expect(openApi.paths["/api/worlds/{worldId}/content"]!.get!.operationId).toBe("worldContent")
+        expect(openApi.paths["/api/worlds/{worldId}/terrain/chunks"]!.post!.operationId).toBe("terrainChunks")
+        expect(openApi.paths["/api/worlds/{worldId}/realtime"]!.get!.operationId).toBe("worldRealtime")
+        expect(openApi.paths.keys().some(path => path.has("/blocks/{blockX}"))).toBe(false)
 
         const worldResponse = await api.post("/api/worlds", {json: {
             id: "transport",
@@ -104,12 +130,14 @@ test "native HTTP modules complete the backend vertical slice":
             seed: "transport-seed",
         }})
         expect(worldResponse.status).toBe(201)
-        const worldEnvelope = await envelope(worldResponse)
-        expect(worldEnvelope.code).toBe("CREATED")
-        const world = WorldManifest.parse(worldEnvelope.data)
+        const world = WorldManifest.parse(await worldResponse.json())
         expect(world.chunkEdge).toBe(16)
         expect(world.generator).toBe(defaultGenerator)
         expect(world.blockRegistry.states.size).toBe(183)
+        expect(worldResponse.headers.get("location")).toBe("/api/worlds/transport")
+
+        const worldResourceResponse = await api.get("/api/worlds/transport")
+        expect(WorldManifest.parse(await worldResourceResponse.json())).toEqual(world)
 
         const duplicateResponse = await api.post("/api/worlds", {json: {
             id: "transport",
@@ -117,83 +145,68 @@ test "native HTTP modules complete the backend vertical slice":
             seed: "transport-seed",
         }})
         expect(duplicateResponse.status).toBe(409)
-        const duplicate = await envelope(duplicateResponse)
-        expect(duplicate.code).toBe("WorldAlreadyExistsError")
-        expect(WorldFailureData.parse(duplicate.data).worldId).toBe(world.id)
+        expect((await problem(duplicateResponse)).code).toBe("world.already_exists")
 
-        const catalogResponse = await api.get("/api/blocks")
-        const catalog = BlockCatalogResponse.parse((await envelope(catalogResponse)).data)
+        const unknownGeneratorResponse = await api.post("/api/worlds", {json: {
+            id: "unknown-generator",
+            name: "Unknown Generator",
+            seed: "transport-seed",
+            generator: "openvoxel:missing",
+        }})
+        expect(unknownGeneratorResponse.status).toBe(422)
+        expect((await problem(unknownGeneratorResponse)).code).toBe("request.invalid")
+
+        const catalogResponse = await api.get(f"/api/worlds/{world.id}/content")
+        const catalog = WorldContentResponse.parse(await catalogResponse.json())
         expect(catalog.schemaVersion).toBe(3)
-        expect(catalog.catalogVersion).toBe(blockCatalogVersion)
-        expect(catalog.contentHash.size).toBe(64)
+        expect(catalog.content.contentHash).toBe(world.content.contentHash)
         expect(catalog.blocks.size).toBe(38)
         expect(catalog.componentProfiles.size).toBe(38)
         expect(catalog.states.size).toBe(183)
-        expect(catalog.stateMapHash.size).toBe(64)
-        expect(catalog.resources.textures.size).toBe(43)
-        expect(catalog.resources.models.size).toBe(6)
-        expect(catalog.resources.models).toEqual(catalog.resources.models.sorted())
         const catalogEtag = catalogResponse.headers.get("etag")
-        expect(catalogEtag).toBe(f`"{catalog.contentHash}"`)
-        const cachedCatalogResponse = await api.get("/api/blocks", {headers: Map([["if-none-match", catalogEtag ?? ""]])})
+        expect(catalogEtag).toBe(f`"{catalog.content.contentHash}-{catalog.stateMapHash}"`)
+        const cachedCatalogResponse = await api.get(f"/api/worlds/{world.id}/content", {headers: Map([["if-none-match", catalogEtag ?? ""]])})
         expect(cachedCatalogResponse.status).toBe(304)
-        expect(cachedCatalogResponse.headers.get("etag")).toBe(catalogEtag)
 
         const bootstrapResponse = await api.get(f"/api/worlds/{world.id}/bootstrap")
-        const bootstrap = WorldBootstrapResponse.parse((await envelope(bootstrapResponse)).data)
-        expect(bootstrap.protocolVersion).toBe(4)
-        expect(bootstrap.clientContractVersion).toBe(5)
-        expect(bootstrap.blockCatalogPath).toBe("/api/blocks")
+        const bootstrap = WorldBootstrapResponse.parse(await bootstrapResponse.json())
+        expect(bootstrap.protocolVersion).toBe(protocolVersion)
+        expect(bootstrap.clientContractVersion).toBe(clientContractVersion)
         expect(bootstrap.blockRegistry).toEqual(world.blockRegistry)
-        expect(bootstrap.blockCatalogContentHash).toBe(catalog.contentHash)
-        expect(bootstrap.blockCatalogStateMapHash).toBe(catalog.stateMapHash)
+        expect(bootstrap.content.contentHash).toBe(catalog.content.contentHash)
+        expect(bootstrap.contentStateMapHash).toBe(catalog.stateMapHash)
         expect(bootstrap.maximumChunkBatchSize).toBe(64)
 
-        const unknownBlockResponse = await api.post("/api/blocks", {json: {
-            worldId: world.id,
-            position: {x: 0, y: 30, z: 0},
-            blockStateRuntimeId: 65535,
-        }})
-        expect(unknownBlockResponse.status).toBe(400)
-        expect((await envelope(unknownBlockResponse)).code).toBe("UnknownBlockStateRuntimeIdError")
+        const invalidBatchResponse = await api.post(f"/api/worlds/{world.id}/terrain/chunks", {json: {}})
+        expect(invalidBatchResponse.status).toBe(422)
+        expect((await problem(invalidBatchResponse)).code).toBe("request.invalid.request")
 
-        const invalidBlockResponse = await api.post("/api/blocks", {json: {worldId: world.id}})
-        expect(invalidBlockResponse.status).toBe(400)
-        expect((await envelope(invalidBlockResponse)).code).toBe("InvalidRequest")
-
-        const sampleResponse = await api.post("/api/generation/sample", {json: {
-            worldId: world.id,
-            position: {x: 0, z: 0},
+        const fractionalBatchResponse = await api.post(f"/api/worlds/{world.id}/terrain/chunks", {json: {
+            positions: [{x: 0.5, y: 1, z: 0}],
         }})
-        const sample = GenerationSampleResponse.parse((await envelope(sampleResponse)).data)
+        expect(fractionalBatchResponse.status).toBe(422)
+        expect((await problem(fractionalBatchResponse)).code).toBe("request.invalid")
+
+        const terrainResponse = await api.post(f"/api/worlds/{world.id}/terrain/chunks", {json: {
+            positions: [{x: 0, y: 1, z: 0}, {x: -1, y: 1, z: 2}],
+        }})
+        const terrain = TerrainChunkBatchResponse.parse(await terrainResponse.json())
+        expect(terrain.worldId).toBe(world.id)
+        expect(terrain.chunks.size).toBe(2)
+        expect(terrain.chunks[0].indices.size).toBe(4096)
+        expect(terrain.chunks[1].position).toEqual({x: -1, y: 1, z: 2})
+
+        const sampleResponse = await api.get(f"/api/worlds/{world.id}/terrain/samples/0/0")
+        const sample = GenerationSampleResponse.parse(await sampleResponse.json())
         expect(sample.position).toEqual({x: 0, z: 0})
         expect(sample.surfaceY).toBe(61)
         expect(sample.biome).toBe(builtinIdentities.biomes.ocean)
 
-        const beforeResponse = await api.post("/api/chunks/query", {json: {
-            worldId: world.id,
-            position: {x: 0, y: 1, z: 0},
-        }})
-        const before = ChunkResponse.parse((await envelope(beforeResponse)).data)
-        expect(before.indices.size).toBe(4096)
-        expect(before.palette.size > 0).toBe(true)
-
-        const batchResponse = await api.post("/api/chunks/batch", {json: {
-            worldId: world.id,
-            positions: [{x: 0, y: 3, z: 0}, {x: 0, y: 4, z: 0}],
-        }})
-        const batch = ChunkBatchResponse.parse((await envelope(batchResponse)).data)
-        expect(batch.chunks.size).toBe(2)
-        expect(batch.chunks[0].position.y).toBe(3)
-        expect(batch.chunks[1].position.y).toBe(4)
-
         const missing = await api.get("/api/missing")
         expect(missing.status).toBe(404)
-        const missingEnvelope = await envelope(missing)
-        expect(missingEnvelope.code).toBe("RouteNotFound")
-        expect(RouteFailureData.parse(missingEnvelope.data).path).toBe("/api/missing")
+        expect((await problem(missing)).code).toBe("route.not_found")
 
-        const preflight = await api.request("OPTIONS", "/api/blocks", {headers: Map([
+        const preflight = await api.request("OPTIONS", f"/api/worlds/{world.id}/content", {headers: Map([
             ["origin", "http://127.0.0.1:5173"],
             ["access-control-request-method", "GET"],
             ["access-control-request-headers", "if-none-match"],
@@ -201,7 +214,7 @@ test "native HTTP modules complete the backend vertical slice":
         expect(preflight.status).toBe(204)
         expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5173")
 
-        const deniedPreflight = await api.request("OPTIONS", "/api/blocks", {headers: Map([
+        const deniedPreflight = await api.request("OPTIONS", f"/api/worlds/{world.id}/content", {headers: Map([
             ["origin", "https://untrusted.example"],
             ["access-control-request-method", "GET"],
         ])})
@@ -210,74 +223,137 @@ test "native HTTP modules complete the backend vertical slice":
         await api.close()
         await application.close()
 
-test "native shared-port WebSocket transport preserves MessagePack realtime behavior":
+test "world-scoped WebSocket synchronizes hot deltas and applies atomic batches":
     const application = await testApplication()
-    const world = await application.runtime.createWorld({
-        id: "realtime",
-        name: "Realtime",
-        seed: "realtime-seed",
-    })
+    const world = await application.runtime.createWorld({id: "realtime", name: "Realtime", seed: "realtime-seed"})
+    const otherWorld = await application.runtime.createWorld({id: "other", name: "Other", seed: "other-seed"})
+    const generated = await application.runtime.terrainChunks(world.id, [{x: 0, y: 1, z: 0}])
+    const firstBase = chunkBlock(generated[0], {x: 0, y: 14, z: 0})
+    const secondBase = chunkBlock(generated[0], {x: 1, y: 14, z: 0})
+    const firstReplacement = firstBase == stoneBlock ? dirtBlock : stoneBlock
+    const secondReplacement = secondBase == stoneBlock ? dirtBlock : stoneBlock
     const server = await startOpenVoxelServer(application)
     try:
         const deniedStatus = await rejectedWebSocketStatus(
-            f"ws://127.0.0.1:{server.port}/api/events",
+            f"ws://127.0.0.1:{server.port}/api/worlds/{world.id}/realtime",
             "https://untrusted.example",
         )
         expect(deniedStatus).toBe(403)
 
-        using sender = await connect(f"ws://127.0.0.1:{server.port}/api/events")
-        using observer = await connect(f"ws://127.0.0.1:{server.port}/api/events")
+        using missing = await connect(f"ws://127.0.0.1:{server.port}/api/worlds/missing/realtime")
+        expect(parse(await nextBinary(missing), SocketErrorEvent).code).toBe("world.not_found")
+        const missingClose = await missing.closeInfo()
+        expect(missingClose.code).toBe(1008)
+        expect(missingClose.reason).toBe("World is unavailable")
+
+        using sender = await connect(f"ws://127.0.0.1:{server.port}/api/worlds/{world.id}/realtime")
+        using observer = await connect(f"ws://127.0.0.1:{server.port}/api/worlds/{world.id}/realtime")
+        using isolated = await connect(f"ws://127.0.0.1:{server.port}/api/worlds/{otherWorld.id}/realtime")
+        const senderReady = parse(await nextBinary(sender), WorldReadyEvent)
+        const observerReady = parse(await nextBinary(observer), WorldReadyEvent)
+        const isolatedReady = parse(await nextBinary(isolated), WorldReadyEvent)
+        expect(senderReady.worldId).toBe(world.id)
+        expect(observerReady.worldId).toBe(world.id)
+        expect(isolatedReady.worldId).toBe(otherWorld.id)
+        expect(senderReady.sequence).toBe(0)
+        expect(observerReady.sequence).toBe(0)
+        expect(isolatedReady.sequence).toBe(0)
+
+        await sender.send(encode({operation: "delete-world", requestId: "unsupported"}))
+        const unsupported = parse(await nextBinary(sender), SocketErrorEvent)
+        expect(unsupported.requestId).toBe("unsupported")
+        expect(unsupported.code).toBe("realtime.unsupported_operation")
+
+        await sender.send(encode({operation: "blocks.apply", requestId: "malformed"}))
+        expect(parse(await nextBinary(sender), SocketErrorEvent).code).toBe("request.invalid")
+
+        await sender.send("blocks.apply")
+        expect(parse(await nextBinary(sender), SocketErrorEvent).code).toBe("realtime.text_unsupported")
 
         await sender.send(encode({
-            operation: "delete-world",
-            worldId: world.id,
-            position: {x: 0, y: 30, z: 0},
-            blockStateRuntimeId: stoneBlock,
+            operation: "blocks.apply",
+            requestId: "invalid-state",
+            edits: [{position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: 65535}],
         }))
-        const unsupportedMessage = await sender.next()
-        if not (unsupportedMessage is Bytes): throw Error("Expected a binary unsupported-operation event")
-        expect(parse(unsupportedMessage, SocketErrorEvent).code).toBe("UnsupportedRealtimeOperation")
-
-        await sender.send(encode({operation: "set-block"}))
-        const malformedMessage = await sender.next()
-        if not (malformedMessage is Bytes): throw Error("Expected a binary invalid-request event")
-        expect(parse(malformedMessage, SocketErrorEvent).code).toBe("InvalidRequest")
-
-        await sender.send("set-block")
-        const textMessage = await sender.next()
-        if not (textMessage is Bytes): throw Error("Expected a binary text-message error event")
-        expect(parse(textMessage, SocketErrorEvent).code).toBe("TextMessageUnsupported")
+        expect(parse(await nextBinary(sender), SocketErrorEvent).code).toBe("block.unknown_state")
 
         await sender.send(encode({
-            operation: "set-block",
-            worldId: world.id,
-            position: {x: 0, y: 30, z: 0},
-            blockStateRuntimeId: 65535,
+            operation: "chunks.sync",
+            requestId: "initial-sync",
+            positions: [{x: 0, y: 1, z: 0}],
         }))
-        const invalidMessage = await sender.next()
-        if not (invalidMessage is Bytes): throw Error("Expected a binary realtime error event")
-        expect(parse(invalidMessage, SocketErrorEvent).code).toBe("UnknownBlockStateRuntimeIdError")
+        const initialSync = parse(await nextBinary(sender), ChunksSyncedEvent)
+        expect(initialSync.worldId).toBe(world.id)
+        expect(initialSync.chunks[0].revision).toBe(0)
+        expect(initialSync.chunks[0].overrides.size).toBe(0)
+
+        const coldBeforeResponse = await client(createOpenVoxelApp(application), providerOverride(application))
+        let coldBefore: TerrainChunkBatchResponse? = null
+        try:
+            const response = await coldBeforeResponse.post(f"/api/worlds/{world.id}/terrain/chunks", {json: {
+                positions: [{x: 0, y: 1, z: 0}],
+            }})
+            coldBefore = TerrainChunkBatchResponse.parse(await response.json())
+        finally: await coldBeforeResponse.close()
 
         await sender.send(encode({
-            operation: "set-block",
-            worldId: world.id,
-            position: {x: 0, y: 30, z: 0},
-            blockStateRuntimeId: stoneBlock,
+            operation: "blocks.apply",
+            requestId: "edit-batch",
+            edits: [
+                {position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: firstReplacement},
+                {position: {x: 1, y: 30, z: 0}, blockStateRuntimeId: secondReplacement},
+            ],
         }))
-        const message = await sender.next()
-        if not (message is Bytes): throw Error("Expected a binary block change event")
-        const event = parse(message, BlockChangedEvent)
-        expect(event.position).toEqual({x: 0, y: 30, z: 0})
-        expect(event.blockStateRuntimeId).toBe(stoneBlock)
-        expect(event.revision).toBe(1)
+        const senderChanged = parse(await nextBinary(sender), WorldBlocksChangedEvent)
+        const applied = parse(await nextBinary(sender), BlockEditsAppliedEvent)
+        const observed = parse(await nextBinary(observer), WorldBlocksChangedEvent)
+        expect(applied.requestId).toBe("edit-batch")
+        expect(applied.worldId).toBe(world.id)
+        expect(applied.sequence).toBe(1)
+        expect(applied.changes.size).toBe(2)
+        expect(applied.changes.every(change => change.revision == 1)).toBe(true)
+        expect(senderChanged).toEqual(observed)
+        expect(observed.sequence).toBe(applied.sequence)
+        expect(observed.changes).toEqual(applied.changes)
 
-        const observedMessage = await observer.next()
-        if not (observedMessage is Bytes): throw Error("Expected the second client to receive the block change")
-        const observed = parse(observedMessage, BlockChangedEvent)
-        expect(observed.worldId).toBe(world.id)
-        expect(observed.revision).toBe(event.revision)
+        // 新连接的 ready 必须携带订阅瞬间的世界游标。客户端会先以该游标建立
+        // 新连接代际，再同步自己跟踪的 Chunk，因此不会把重连前的序号误判为缺口。
+        using reconnected = await connect(f"ws://127.0.0.1:{server.port}/api/worlds/{world.id}/realtime")
+        const reconnectedReady = parse(await nextBinary(reconnected), WorldReadyEvent)
+        expect(reconnectedReady.worldId).toBe(world.id)
+        expect(reconnectedReady.sequence).toBe(1)
 
-        const after = await application.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
-        expect(after.revision).toBe(1)
-        expect(chunkBlock(after, {x: 0, y: 14, z: 0})).toBe(stoneBlock)
+        // 另一个世界没有收到上面的广播；它的下一条消息只能是自己的同步响应。
+        await isolated.send(encode({
+            operation: "chunks.sync",
+            requestId: "isolated-sync",
+            positions: [{x: 0, y: 1, z: 0}],
+        }))
+        const isolatedSync = parse(await nextBinary(isolated), ChunksSyncedEvent)
+        expect(isolatedSync.requestId).toBe("isolated-sync")
+        expect(isolatedSync.worldId).toBe(otherWorld.id)
+
+        await sender.send(encode({
+            operation: "chunks.sync",
+            requestId: "updated-sync",
+            positions: [{x: 0, y: 1, z: 0}],
+        }))
+        const updatedSync = parse(await nextBinary(sender), ChunksSyncedEvent)
+        expect(updatedSync.chunks[0].revision).toBe(1)
+        expect(updatedSync.chunks[0].overrides.size).toBe(2)
+
+        const resolved = await application.runtime.chunk(world.id, {x: 0, y: 1, z: 0})
+        expect(resolved.revision).toBe(1)
+        expect(chunkBlock(resolved, {x: 0, y: 14, z: 0})).toBe(firstReplacement)
+        expect(chunkBlock(resolved, {x: 1, y: 14, z: 0})).toBe(secondReplacement)
+
+        const coldAfterClient = await client(createOpenVoxelApp(application), providerOverride(application))
+        try:
+            const response = await coldAfterClient.post(f"/api/worlds/{world.id}/terrain/chunks", {json: {
+                positions: [{x: 0, y: 1, z: 0}],
+            }})
+            const coldAfter = TerrainChunkBatchResponse.parse(await response.json())
+            assert coldBefore != null else "Expected the fixed terrain baseline"
+            expect(coldAfter).toEqual(coldBefore)
+        finally: await coldAfterClient.close()
     finally: await server.stop()

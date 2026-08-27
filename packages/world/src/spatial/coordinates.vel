@@ -26,16 +26,16 @@ export def requireChunkEdge(edge: number):
     assert edge.isInteger() else "Chunk edge must be an integer"
     assert edge >= 4 and edge <= 64 else "Chunk edge must be between 4 and 64"
 
-export def requireCoordinate2(position: Coordinate2, label: string = "Coordinate"):
+export def requireCoordinate2(position: readonly Coordinate2, label: string = "Coordinate"):
     requireCoordinate(position.x, f"{label} x")
     requireCoordinate(position.z, f"{label} z")
 
-export def requireCoordinate3(position: Coordinate3, label: string = "Coordinate"):
+export def requireCoordinate3(position: readonly Coordinate3, label: string = "Coordinate"):
     requireCoordinate(position.x, f"{label} x")
     requireCoordinate(position.y, f"{label} y")
     requireCoordinate(position.z, f"{label} z")
 
-export def requireChunkPosition(position: ChunkPosition): requireCoordinate3(position, "Chunk")
+export def requireChunkPosition(position: readonly ChunkPosition): requireCoordinate3(position, "Chunk")
 
 export def chunkCoordinate(value: number, edge: number) -> number:
     requireCoordinate(value, "World coordinate")
@@ -46,7 +46,7 @@ export def localCoordinate(value: number, edge: number) -> number:
     const chunk = chunkCoordinate(value, edge)
     return value - chunk * edge
 
-export def locateBlock(position: BlockPosition, edge: number) -> LocatedBlock:
+export def locateBlock(position: readonly BlockPosition, edge: number) -> LocatedBlock:
     return {
         chunk: {
             x: chunkCoordinate(position.x, edge),
@@ -60,6 +60,6 @@ export def locateBlock(position: BlockPosition, edge: number) -> LocatedBlock:
         },
     }
 
-export def chunkKey(position: ChunkPosition) -> string:
+export def chunkKey(position: readonly ChunkPosition) -> string:
     requireChunkPosition(position)
     return f"{position.x}:{position.y}:{position.z}"

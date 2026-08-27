@@ -75,47 +75,53 @@ export type BiomeIdentities:
     desert: string
     tundra: string
 
-/// 生成器只认识这些语义槽位。槽位中的字符串在编译期从 identities.yml
-/// 解析为真实方块 key，构造世界生成器时再由该世界注册表解析为 runtimeId。
-export type GeneratorBlockIdentities:
-    air: string
-    basalt: string
-    birchLeaves: string
-    birchLog: string
-    cactus: string
-    clay: string
-    coalOre: string
-    copperOre: string
-    diamondOre: string
-    dirt: string
-    dryBush: string
-    germaniumOre: string
-    granite: string
-    grass: string
-    gravel: string
-    ice: string
-    ironOre: string
-    limestone: string
-    magma: string
-    mimosaLeaves: string
-    mimosaLog: string
-    oakLeaves: string
-    oakLog: string
-    poplarLeaves: string
-    poplarLog: string
-    purpleFlower: string
-    redFlower: string
-    saltpeterOre: string
-    sand: string
-    sandstone: string
-    snow: string
-    spruceLeaves: string
-    spruceLog: string
-    stone: string
-    sulphurOre: string
-    tallGrass: string
-    water: string
-    whiteFlower: string
+/// 生成器会在三个阶段使用同一批语义槽位：配置编译后保存方块 key，生成器启动
+/// 时保存当前世界的 runtimeId，创建 Chunk 模板时再保存调色板索引。字段名称和
+/// 数量只在这个泛型记录中定义一次，三个阶段仅替换字段值类型，新增方块槽位时
+/// 不需要同步维护多份形状相同的记录。
+export type GeneratorBlockSlots<T>:
+    air: T
+    basalt: T
+    birchLeaves: T
+    birchLog: T
+    cactus: T
+    clay: T
+    coalOre: T
+    copperOre: T
+    diamondOre: T
+    dirt: T
+    dryBush: T
+    germaniumOre: T
+    granite: T
+    grass: T
+    gravel: T
+    ice: T
+    ironOre: T
+    limestone: T
+    magma: T
+    mimosaLeaves: T
+    mimosaLog: T
+    oakLeaves: T
+    oakLog: T
+    poplarLeaves: T
+    poplarLog: T
+    purpleFlower: T
+    redFlower: T
+    saltpeterOre: T
+    sand: T
+    sandstone: T
+    snow: T
+    spruceLeaves: T
+    spruceLog: T
+    stone: T
+    sulphurOre: T
+    tallGrass: T
+    water: T
+    whiteFlower: T
+
+/// YAML 身份路径编译后得到的方块 key。构造世界生成器时，这些 key 会通过当前
+/// 世界自己的 BlockRegistry 一次性解析，Mod 世界不会依赖基础世界的 runtimeId。
+export type GeneratorBlockIdentities = GeneratorBlockSlots<string>
 
 export type SurfaceConfig:
     rockSlope: number
@@ -216,10 +222,3 @@ export type WorldGeneratorCatalogArtifact:
 export type WorldGeneratorCatalogContribution:
     owner: string
     catalog: WorldGeneratorCatalogSource
-
-/// Mod 构建目录中的 JSON 包装；哈希覆盖 owner 和完整生成器目录，可直接并入
-/// WorldContentSet.revision 的计算。
-export type WorldGeneratorContributionArtifact:
-    artifactVersion: number
-    contentHash: string
-    contribution: WorldGeneratorCatalogContribution

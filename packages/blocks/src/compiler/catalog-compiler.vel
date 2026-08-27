@@ -1,5 +1,5 @@
 import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShapeKind, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockTypeSource} from "../definition/block.vel"
-import {BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateAlias, BlockStateDefinition, BlockStateMapSource, BlockStateMapping} from "../definition/catalog.vel"
+import {BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockDefinition, BlockStateDefinition, BlockStateMapSource, BlockStateMapping} from "../definition/catalog.vel"
 import {BuiltinBlockIdentities} from "@openvoxel/identities"
 import {requireUInt32, validateBlockType, validateBuiltinBlockIdentities} from "./block-validation.vel"
 import {canonicalStateKey} from "./state-key.vel"
@@ -197,9 +197,8 @@ export def compileModBlockCatalog(owner: string, catalogVersion: string, sourceB
     return compileCatalogWithStateMap(3, catalogVersion, sourceBlocks, stateMap)
 
 /// 直接生成世界注册表可消费的 Mod contribution，避免 Mod 加载器手工拼接目录结构。
-export def compileModBlockCatalogContribution(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateAliases: List<BlockStateAlias> = []) -> BlockCatalogContribution:
+export def compileModBlockCatalogContribution(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>) -> BlockCatalogContribution:
     return {
         owner,
         catalog: compileModBlockCatalog(owner, catalogVersion, sourceBlocks),
-        stateAliases,
     }

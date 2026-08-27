@@ -1,0 +1,94 @@
+import {exists, removeFile} from "velar/fs"
+import {monotonic} from "velar/time"
+import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {BlockEdit, BlockOverrideMutation, BlockOverrideWrite, ChunkDeltaCommit, activeWorldState, worldRuntime} from "@openvoxel/world-runtime"
+import {chunkBlock} from "@openvoxel/world"
+import {sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
+
+const databasePath = "openvoxel-sqlite-performance.sqlite"
+const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+
+async def removeDatabase():
+    for path in [databasePath, f"{databasePath}-wal", f"{databasePath}-shm"]:
+        if await exists(path): await removeFile(path)
+
+/// 直接测量一次 1024 方块原子批次。固定语料交替写入和恢复同一 Chunk，既覆盖
+/// upsert 也覆盖 delete；地形只在准备阶段生成一次，不混入数据库计时。
+@main:
+    await removeDatabase()
+    const store = await sqliteWorldStore({
+        path: databasePath,
+        busyTimeoutMilliseconds: 2000,
+        queueCapacity: 64,
+        maxRows: 262144,
+        maxResultBytes: 64 * 1024 * 1024,
+    })
+    const runtime = worldRuntime(store)
+    try:
+        const world = await runtime.createWorld({id: "benchmark", name: "Benchmark", seed: "sqlite-performance"})
+        const storageWorld = await runtime.createWorld({id: "storage", name: "Storage", seed: "sqlite-storage"})
+        const activeWorld = await runtime.createWorld({id: "active", name: "Active", seed: "sqlite-active"})
+        const chunk = await runtime.chunk(world.id, {x: 0, y: 1, z: 0})
+        const replacements: List<BlockEdit> = []
+        const bases: List<BlockEdit> = []
+        const savedWrites: List<BlockOverrideMutation> = []
+        const removedWrites: List<BlockOverrideMutation> = []
+        const savedStateWrites: List<BlockOverrideWrite> = []
+        const removedStateWrites: List<BlockOverrideWrite> = []
+        for localY in range(4):
+            for localZ in range(16):
+                for localX in range(16):
+                    const base = chunkBlock(chunk, {x: localX, y: localY, z: localZ})
+                    const replacement = base == stoneBlock ? dirtBlock : stoneBlock
+                    const position = {x: localX, y: 16 + localY, z: localZ}
+                    replacements.append({position, blockStateRuntimeId: replacement})
+                    bases.append({position, blockStateRuntimeId: base})
+                    const local = {x: localX, y: localY, z: localZ}
+                    savedWrites.append({position: local, blockStateRuntimeId: replacement})
+                    removedWrites.append({position: local, blockStateRuntimeId: null})
+                    savedStateWrites.append({chunk: {x: 0, y: 1, z: 0}, local, blockStateRuntimeId: replacement})
+                    removedStateWrites.append({chunk: {x: 0, y: 1, z: 0}, local, blockStateRuntimeId: null})
+
+        const storageDurations: List<number> = []
+        for runIndex in range(5):
+            const revision = runIndex + 1
+            const writes = runIndex % 2 == 0 ? savedWrites : removedWrites
+            const commits: List<ChunkDeltaCommit> = [{
+                position: {x: 0, y: 1, z: 0},
+                expectedRevision: revision - 1,
+                revision,
+                writes,
+            }]
+            const started = monotonic()
+            await store.deltas.commitChunks(storageWorld.id, commits)
+            storageDurations.append(monotonic() - started)
+
+        const runtimeDurations: List<number> = []
+        for runIndex in range(5):
+            const edits = runIndex % 2 == 0 ? replacements : bases
+            const started = monotonic()
+            const batch = await runtime.editBlocks(world.id, edits)
+            runtimeDurations.append(monotonic() - started)
+            assert batch.changes.size == 1024 else "SQLite benchmark lost block changes"
+        const storageMedian = storageDurations.sorted()[2]
+        def validateBlockStateRuntimeId(_runtimeId: number): pass
+
+        const active = activeWorldState(activeWorld.id, store.deltas, 64, 4096, validateBlockStateRuntimeId)
+        const activeDurations: List<number> = []
+        try:
+            for runIndex in range(5):
+                const writes = runIndex % 2 == 0 ? savedStateWrites : removedStateWrites
+                const started = monotonic()
+                const committed = await active.commitBlocks(writes)
+                activeDurations.append(monotonic() - started)
+                assert committed.size == 1024 else "Active state benchmark lost block changes"
+        finally: await active.close()
+
+        const activeMedian = activeDurations.sorted()[2]
+        const runtimeMedian = runtimeDurations.sorted()[2]
+        print(f"sqlite edits=1024 runs=5 storageMedianMs={storageMedian} activeMedianMs={activeMedian} runtimeMedianMs={runtimeMedian} averageEditMs={runtimeMedian / 1024}")
+    finally:
+        await runtime.close()
+        await removeDatabase()

@@ -2,10 +2,10 @@ import {exists, removeFile} from "velar/fs"
 import {sqlConcat, trustedSql, trustedSqlTemplate} from "@velarscript-labs/database"
 import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sqlite"
 import {expect} from "velar/test"
-import {WorldBlockRegistrySnapshot, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {chunkBlock} from "@openvoxel/world"
-import {BlockChange, worldRuntime} from "@openvoxel/world-runtime"
+import {BlockEdit, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
@@ -117,10 +117,16 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
             const before = await firstRuntime.chunk("persistent", {x: -1, y: 1, z: 2})
             baseBlockStateRuntimeId = chunkBlock(before, {x: 15, y: 14, z: 0})
             replacementBlockStateRuntimeId = baseBlockStateRuntimeId == stoneBlock ? dirtBlock : stoneBlock
-            const change = await firstRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, replacementBlockStateRuntimeId)
+            const change = (await firstRuntime.editBlocks("persistent", [{
+                position: {x: -1, y: 30, z: 32},
+                blockStateRuntimeId: replacementBlockStateRuntimeId,
+            }])).changes[0]
             expect(change.previousBlockStateRuntimeId).toBe(baseBlockStateRuntimeId)
             expect(change.revision).toBe(1)
-            const repeated = await firstRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, replacementBlockStateRuntimeId)
+            const repeated = (await firstRuntime.editBlocks("persistent", [{
+                position: {x: -1, y: 30, z: 32},
+                blockStateRuntimeId: replacementBlockStateRuntimeId,
+            }])).changes[0]
             expect(repeated.revision).toBe(1)
         finally: await firstRuntime.close()
 
@@ -137,7 +143,10 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
             expect(restored.revision).toBe(1)
             expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockStateRuntimeId)
 
-            const reverted = await reopenedRuntime.setBlock("persistent", {x: -1, y: 30, z: 32}, baseBlockStateRuntimeId)
+            const reverted = (await reopenedRuntime.editBlocks("persistent", [{
+                position: {x: -1, y: 30, z: 32},
+                blockStateRuntimeId: baseBlockStateRuntimeId,
+            }])).changes[0]
             expect(reverted.previousBlockStateRuntimeId).toBe(replacementBlockStateRuntimeId)
             expect(reverted.revision).toBe(2)
         finally: await reopenedRuntime.close()
@@ -147,7 +156,7 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
         expect(await fullChunkTableCount(databasePath)).toBe(0)
     finally: await removeDatabase(databasePath)
 
-test "SQLite adapter serializes concurrent block transactions":
+test "SQLite adapter commits a multi-block batch with one Chunk revision":
     const databasePath = "openvoxel-concurrent-overrides-test.sqlite"
     await removeDatabase(databasePath)
     try:
@@ -156,18 +165,19 @@ test "SQLite adapter serializes concurrent block transactions":
         try:
             await runtime.createWorld({id: "concurrent", name: "Concurrent", seed: "openvoxel"})
             const before = await runtime.chunk("concurrent", {x: 0, y: 1, z: 0})
-            const tasks: List<Promise<BlockChange>> = []
+            const edits: List<BlockEdit> = []
             const replacements: List<number> = []
             for x in range(16):
                 const baseBlockStateRuntimeId = chunkBlock(before, {x, y: 14, z: 0})
                 const replacementBlockStateRuntimeId = baseBlockStateRuntimeId == stoneBlock ? dirtBlock : stoneBlock
                 replacements.append(replacementBlockStateRuntimeId)
-                tasks.append(runtime.setBlock("concurrent", {x, y: 30, z: 0}, replacementBlockStateRuntimeId))
+                edits.append({position: {x, y: 30, z: 0}, blockStateRuntimeId: replacementBlockStateRuntimeId})
 
-            const changes = await Promise.all(tasks)
-            expect(changes.size).toBe(16)
+            const batch = await runtime.editBlocks("concurrent", edits)
+            expect(batch.changes.size).toBe(16)
+            expect(batch.changes.every(change => change.revision == 1)).toBe(true)
             const after = await runtime.chunk("concurrent", {x: 0, y: 1, z: 0})
-            expect(after.revision).toBe(16)
+            expect(after.revision).toBe(1)
             for x in range(16): expect(chunkBlock(after, {x, y: 14, z: 0})).toBe(replacements[x])
         finally: await runtime.close()
 
@@ -175,21 +185,41 @@ test "SQLite adapter serializes concurrent block transactions":
         expect(await tableCount(databasePath, "block_overrides")).toBe(16)
     finally: await removeDatabase(databasePath)
 
+test "SQLite adapter commits the maximum block batch without per-row statements":
+    const databasePath = "openvoxel-maximum-overrides-test.sqlite"
+    await removeDatabase(databasePath)
+    try:
+        const runtime = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
+        try:
+            await runtime.createWorld({id: "maximum", name: "Maximum", seed: "maximum-batch"})
+            const before = await runtime.chunk("maximum", {x: 0, y: 1, z: 0})
+            const edits: List<BlockEdit> = []
+            for localY in range(4):
+                for localZ in range(16):
+                    for localX in range(16):
+                        const base = chunkBlock(before, {x: localX, y: localY, z: localZ})
+                        edits.append({
+                            position: {x: localX, y: 16 + localY, z: localZ},
+                            blockStateRuntimeId: base == stoneBlock ? dirtBlock : stoneBlock,
+                        })
+            const batch = await runtime.editBlocks("maximum", edits)
+            expect(batch.changes.size).toBe(1024)
+            expect(batch.changes.every(change => change.revision == 1)).toBe(true)
+        finally: await runtime.close()
+
+        expect(await tableCount(databasePath, "chunk_states")).toBe(1)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(1024)
+    finally: await removeDatabase(databasePath)
+
 test "SQLite adapter persists the complete world block registry":
     const databasePath = "openvoxel-world-registry-test.sqlite"
     await removeDatabase(databasePath)
     try:
-        const firstStore = await sqliteWorldStore(testDatabase(databasePath))
-        const first = worldRuntime(firstStore)
+        const first = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
+        let createdContentHash = ""
         try:
             const created = await first.createWorld({id: "registry", name: "Registry", seed: "openvoxel"})
-            const states = created.blockRegistry.states.copy()
-            states.append({runtimeId: firstModBlockStateRuntimeId, stateKey: "farming:missing_crop"})
-            const updated = WorldBlockRegistrySnapshot.from(created.blockRegistry, {
-                nextModRuntimeId: firstModBlockStateRuntimeId + 1,
-                states,
-            })
-            await firstStore.manifests.updateBlockRegistry(created.id, updated)
+            createdContentHash = created.content.contentHash
         finally: await first.close()
 
         const reopened = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)))
@@ -197,9 +227,10 @@ test "SQLite adapter persists the complete world block registry":
             const manifest = await reopened.requireWorld("registry")
             expect(manifest.generatorHash.size).toBe(64)
             expect(manifest.spawn.y > 0).toBe(true)
-            expect(manifest.blockRegistry.states.size).toBe(184)
+            expect(manifest.content.contentHash).toBe(createdContentHash)
+            expect(manifest.content.packs.size).toBe(0)
+            expect(manifest.blockRegistry.states.size).toBe(183)
             expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
-            expect(manifest.blockRegistry.states[183]).toEqual({runtimeId: firstModBlockStateRuntimeId, stateKey: "farming:missing_crop"})
         finally: await reopened.close()
         expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion)
     finally: await removeDatabase(databasePath)
@@ -212,7 +243,10 @@ test "SQLite adapter rejects a persisted runtime id outside the world registry":
         const firstRuntime = worldRuntime(firstStore)
         try:
             await firstRuntime.createWorld({id: "unknown", name: "Unknown", seed: "openvoxel"})
-            await firstRuntime.setBlock("unknown", {x: 0, y: 30, z: 0}, dirtBlock)
+            await firstRuntime.editBlocks("unknown", [{
+                position: {x: 0, y: 30, z: 0},
+                blockStateRuntimeId: dirtBlock,
+            }])
         finally: await firstRuntime.close()
 
         using database = await openSqlite(databasePath)

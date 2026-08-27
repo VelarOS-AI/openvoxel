@@ -1,14 +1,12 @@
-import {Request, input} from "velar/serve"
-import {SetBlockRequest, blockCatalogResponse, protocolVersion} from "@openvoxel/protocol"
-import {notModified, ok} from "../responses.vel"
+import {input, respond, text} from "velar/serve"
+import {protocolVersion} from "@openvoxel/protocol"
 import {openVoxelApplicationProvider} from "../application.vel"
+import {applicationResult} from "../error-handler.vel"
+import {worldContentResponse} from "../presentation/world-content.vel"
 
-const catalogPayload = blockCatalogResponse()
-const catalogEtag = f`"{catalogPayload.contentHash}"`
-
-def catalogHeaders() -> Map<string, string>:
+def catalogHeaders(etag: string) -> Map<string, string>:
     return Map([
-        ["etag", catalogEtag],
+        ["etag", etag],
         ["cache-control", "public, max-age=0, must-revalidate"],
         ["access-control-expose-headers", "etag, x-openvoxel-protocol-version"],
         ["x-openvoxel-protocol-version", str(protocolVersion)],
@@ -22,17 +20,11 @@ def matchesEtag(value: string?, expected: string) -> bool:
     return false
 
 export server blockRoutes:
-    /// Returns the authoritative block catalog with validator headers.
-    @get(p"/api/blocks", ifNoneMatch=input.header("if-none-match", default=null)):
-        const headers = catalogHeaders()
-        if matchesEtag(ifNoneMatch, catalogEtag):
-            return notModified(headers)
-        return ok(catalogPayload, headers)
-
-    /// Persists one block override and broadcasts the resulting revision.
-    @post(p"/api/blocks", request: Request, application=input.dependency(openVoxelApplicationProvider)):
-        const command = await request.parse(SetBlockRequest)
-        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockStateRuntimeId)
-        await application.realtime.publishChange(change)
-        application.info("block.changed", {worldId: change.worldId, revision: change.revision})
-        return ok(change)
+    /// 返回指定世界的 Content Pack、方块 runtimeId 和生成器事实。ETag 同时包含
+    /// 内容构建身份与状态映射身份，客户端不能把一个世界的目录复用于另一个世界。
+    @get worldContent(p"/api/worlds/{worldId:string}/content", ifNoneMatch = input.header("if-none-match", default=null), application = input.dependency(openVoxelApplicationProvider)):
+        const snapshot = await applicationResult(application.runtime.worldContent(worldId))
+        const etag = f`"{snapshot.content.contentHash}-{snapshot.stateMapHash}"`
+        const headers = catalogHeaders(etag)
+        if matchesEtag(ifNoneMatch, etag): return text("", status=304, headers=headers)
+        return respond(worldContentResponse(snapshot), headers=headers)

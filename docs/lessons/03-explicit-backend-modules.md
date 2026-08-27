@@ -8,6 +8,6 @@ OpenVoxel 使用 VelarScript 原生 ServeApp，但世界生成代码仍然不知
 2. `apps/server/src/server.vel` 只负责组合路由、中间件、生命周期和共享端口。
 3. `apps/server/src/application.vel` 用普通工厂闭包组合 WorldRuntime、实时广播、部署限额和幂等关闭，并由一个 eager 应用级 Provider 负责释放。
 4. `apps/server/src/error-handler.vel` 把领域错误归一为稳定公共信封，不泄露宿主内部错误名。
-5. `apps/server/src/realtime-sessions.vel` 用 Vel 的结构化 `Task` 接纳和排空实时会话；`modules/realtime.vel` 只消费有界的拉取式 WebSocket 队列，并继续复用同一个世界运行时。
+5. `apps/server/src/modules/realtime.vel` 用 `velar/realtime.realtimeSession` 组合 MessagePack codec、顺序命令处理和生命周期回调；`world-live-state.vel` 只登记框架提供的 `RealtimePeer` 并按世界广播。这样应用不再重复实现发送队列、writer、背压和清理，同时仍复用同一个世界运行时。
 
 测试同样沿边界分层：多数 HTTP 行为通过 `velar/server-test` 的 Provider 覆盖验证真实 ServeApp 路由，不占端口或挂载进程状态；WebSocket 验收才启动真实共享端口。快速反馈与真实传输证据仍然是两层互补证明。

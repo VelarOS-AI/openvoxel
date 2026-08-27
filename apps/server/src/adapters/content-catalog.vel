@@ -1,0 +1,16 @@
+import {readText} from "velar/fs"
+import {ContentCatalog, ContentPackArtifact, createContentCatalog} from "@openvoxel/content"
+import {ContentConfiguration} from "../config.vel"
+
+const maximumContentPackBytes = 8 * 1024 * 1024
+
+/// 服务器启动时一次性载入构建后的 Content Pack JSON。
+///
+/// 每份产物都会经过结构校验和内容哈希复算；运行中的世界随后只从这个不可变目录
+/// 解析自身清单，不会在请求路径读取 YAML、扫描目录或接受同 owner 的另一个构建。
+export async def loadContentCatalog(configuration: readonly ContentConfiguration) -> ContentCatalog:
+    const artifacts: List<ContentPackArtifact> = []
+    for path in configuration.packArtifacts:
+        const text = await readText(path, maximumContentPackBytes)
+        artifacts.append(ContentPackArtifact.parse(Json.parse(text)))
+    return createContentCatalog(artifacts, configuration.defaultPacks)

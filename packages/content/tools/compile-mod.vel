@@ -1,0 +1,13 @@
+import {get} from "velar/env"
+import {resolve} from "velar/path"
+import {compileModContentDirectory} from "./mod-directory.vel"
+
+/// Mod 构建入口只接受两个明确目录：人工源目录和独立产物目录。宿主构建系统可
+/// 通过环境变量调用，不需要让每个 Mod 复制文件扫描和 JSON 写入模板。
+@main:
+    const source = get("OPENVOXEL_CONTENT_SOURCE")
+    const build = get("OPENVOXEL_CONTENT_BUILD")
+    assert source != null and not source.isBlank() else "OPENVOXEL_CONTENT_SOURCE is required"
+    assert build != null and not build.isBlank() else "OPENVOXEL_CONTENT_BUILD is required"
+    const output = await compileModContentDirectory(resolve([source]), resolve([build]))
+    print(output)

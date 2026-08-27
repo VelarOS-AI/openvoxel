@@ -1,6 +1,6 @@
 /// 定义层：人工方块、身份树、编译目录和世界快照的数据契约。
 export {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPlacementStrategy, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockRenderLayer, BlockShape, BlockShapeKind, BlockSkylightMode, BlockSourceFile, BlockStateProperty, BlockStateVariant, BlockSupportFace, BlockTextures, BlockTypeSource} from "./definition/block.vel"
-export {BlockCatalogArtifact, BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockComponentProfile, BlockDefinition, BlockStateAlias, BlockStateDefinition, BlockStateMapSource, BlockStateMapping, PackedBlockCatalogSource, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, WorldBlockStateMapping} from "./definition/catalog.vel"
+export {BlockCatalogArtifact, BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockComponentProfile, BlockDefinition, BlockStateDefinition, BlockStateMapSource, BlockStateMapping, PackedBlockCatalogSource, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, WorldBlockStateMapping} from "./definition/catalog.vel"
 
 /// 编译层：规范状态键、方块语义验证和有限状态目录编译。
 export {canonicalStateKey} from "./compiler/state-key.vel"

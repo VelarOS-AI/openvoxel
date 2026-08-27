@@ -1,36 +1,45 @@
-import {Request, RequestBodyTooLargeError, ServeResponse} from "velar/serve"
+import {HttpProblem} from "velar/serve"
 import {InvalidBlockStateRuntimeIdError, ReservedBlockStateRuntimeIdError, UnknownBlockStateRuntimeIdError, UnknownWorldBlockStateRuntimeIdError} from "@openvoxel/blocks"
-import {WorldAlreadyExistsError, WorldNotFoundError} from "@openvoxel/world-runtime"
-import {failure} from "./responses.vel"
+import {WorldAlreadyExistsError, WorldNotFoundError, WorldRequestError} from "@openvoxel/world-runtime"
 
 export type PublicApplicationError:
     code: string
     message: string
 
+/// 把领域错误翻译成稳定的公开错误身份。HTTP 和实时通道共享这张表，但各自选择
+/// 合适的传输表示；领域层不需要依赖服务端框架或 MessagePack。
 export def publicApplicationError(error: Error) -> PublicApplicationError:
-    if (error is WorldNotFoundError) or (error is WorldAlreadyExistsError) or (error is InvalidBlockStateRuntimeIdError) or (error is UnknownBlockStateRuntimeIdError) or (error is ReservedBlockStateRuntimeIdError) or (error is UnknownWorldBlockStateRuntimeIdError):
-        return {code: error.code, message: error.message}
-    if error.code == "TypeError" or error.code == "RangeError" or error.code == "SyntaxError" or error.code == "AssertionError" or error.code == "ValidationError" or error.code == "NarrowingError":
-        return {code: "InvalidRequest", message: error.message}
-    return {code: "InternalError", message: "The request could not be completed"}
+    if error is WorldNotFoundError: return {code: "world.not_found", message: error.message}
+    if error is WorldAlreadyExistsError: return {code: "world.already_exists", message: error.message}
+    if error is WorldRequestError: return {code: "request.invalid", message: error.message}
+    if error is InvalidBlockStateRuntimeIdError: return {code: "block.invalid_state", message: error.message}
+    if error is UnknownBlockStateRuntimeIdError: return {code: "block.unknown_state", message: error.message}
+    if error is ReservedBlockStateRuntimeIdError: return {code: "block.reserved_state", message: error.message}
+    if error is UnknownWorldBlockStateRuntimeIdError: return {code: "block.unknown_world_state", message: error.message}
+    if error.code == "TypeError" or error.code == "RangeError" or error.code == "SyntaxError" or error.code == "ValidationError" or error.code == "NarrowingError":
+        return {code: "request.invalid", message: "The request is invalid"}
+    return {code: "server.internal", message: "The request could not be completed"}
 
-export async def handleApplicationError(value: unknown, request: Request) -> ServeResponse:
-    if not (value is Error):
-        return failure(500, "InternalError", {method: request.method, path: request.path}, "The request could not be completed")
-    const error = value
-    if error is WorldNotFoundError: return failure(404, error.code, {worldId: error.worldId}, error.message)
-    if error is WorldAlreadyExistsError: return failure(409, error.code, {worldId: error.worldId}, error.message)
-    if error is InvalidBlockStateRuntimeIdError:
-        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
-    if error is UnknownBlockStateRuntimeIdError:
-        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
-    if error is ReservedBlockStateRuntimeIdError:
-        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
-    if error is UnknownWorldBlockStateRuntimeIdError:
-        return failure(400, error.code, {runtimeId: error.runtimeId}, error.message)
-    if error is RequestBodyTooLargeError:
-        return failure(413, "PayloadTooLarge", {method: request.method, path: request.path}, error.message)
+def applicationHttpProblem(error: Error) -> HttpProblem?:
     const publicError = publicApplicationError(error)
-    if publicError.code == "InvalidRequest":
-        return failure(400, publicError.code, {method: request.method, path: request.path}, publicError.message)
-    return failure(500, publicError.code, {method: request.method, path: request.path}, publicError.message)
+    if error is WorldNotFoundError:
+        return HttpProblem({status: 404, code: publicError.code, title: "World not found", detail: publicError.message})
+    if error is WorldAlreadyExistsError:
+        return HttpProblem({status: 409, code: publicError.code, title: "World already exists", detail: publicError.message})
+    if error is WorldRequestError:
+        return HttpProblem({status: 422, code: publicError.code, title: "Invalid request", detail: publicError.message})
+    if (error is InvalidBlockStateRuntimeIdError) or (error is UnknownBlockStateRuntimeIdError) or (error is ReservedBlockStateRuntimeIdError) or (error is UnknownWorldBlockStateRuntimeIdError):
+        return HttpProblem({status: 422, code: publicError.code, title: "Invalid block state", detail: publicError.message})
+    if publicError.code == "request.invalid":
+        return HttpProblem({status: 422, code: publicError.code, title: "Invalid request", detail: publicError.message})
+    return null
+
+/// 在框架之外抛出的领域错误通过这个很窄的边界变成 HttpProblem。成功值仍由路由
+/// 直接返回，交给框架内容协商；未知异常继续抛出，由框架记录并生成不泄密的 500。
+export async def applicationResult<T>(operation: Promise<T>) -> T:
+    try: return await operation
+    catch value:
+        if value is Error:
+            const problem = applicationHttpProblem(value)
+            if problem != null: throw problem
+        throw value

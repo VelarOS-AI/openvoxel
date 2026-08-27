@@ -1,0 +1,18 @@
+import {WorldBootstrapResponse, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
+import {WorldManifest} from "@openvoxel/world"
+import {WorldContentSnapshot, maximumChunkBatchSize} from "@openvoxel/world-runtime"
+
+/// 构造客户端在读取 Chunk 前需要的完整世界启动信息。
+///
+/// WorldManifest 仍是稳定世界模型；目录哈希、生成高度和查询限制属于当前运行的
+/// 服务实例。presentation 层在一个边界上组合它们，协议包不读取任何运行时状态。
+export def worldBootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+    return WorldBootstrapResponse.from(manifest, {
+        clientContractVersion,
+        protocolVersion,
+        contentStateMapHash: content.stateMapHash,
+        minimumWorldY: content.definition.world.minimumY,
+        maximumWorldY: content.definition.world.maximumY,
+        seaLevel: content.definition.world.seaLevel,
+        maximumChunkBatchSize,
+    })

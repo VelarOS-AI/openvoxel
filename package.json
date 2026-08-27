@@ -1,12 +1,15 @@
 {
   "name": "openvoxel",
   "description": "A teaching voxel world built from first principles with VelarScript.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "workspaces": [
     "packages/identities",
     "packages/blocks",
+    "packages/content",
+    "packages/client",
+    "packages/client-web",
     "packages/protocol",
     "packages/world",
     "packages/world-generation",
@@ -30,15 +33,25 @@
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/world-generation",
     "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/world-generation",
     "benchmark:columns": "npm run benchmark:columns --workspace @openvoxel/world-generation",
+    "benchmark:runtime": "npm run benchmark --workspace @openvoxel/world-runtime",
+    "benchmark:sqlite": "npm run benchmark:sqlite --workspace @openvoxel/server",
+    "benchmark:presentation": "npm run benchmark:presentation --workspace @openvoxel/server",
     "validate": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check && npm run check && npm test && npm run build"
   },
   "dependencies": {
-    "@openvoxel/protocol": "0.1.0",
-    "@openvoxel/world": "0.1.0",
-    "@openvoxel/world-generation": "0.1.0",
-    "@openvoxel/world-runtime": "0.1.0"
+    "@openvoxel/content": "0.2.0",
+    "@openvoxel/client": "0.2.0",
+    "@openvoxel/client-web": "0.2.0",
+    "@openvoxel/protocol": "0.2.0",
+    "@openvoxel/world": "0.2.0",
+    "@openvoxel/world-generation": "0.2.0",
+    "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.16.0"
+    "@velarscript/cli": "0.20.0"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "msgpackr-extract": false
   }
 }

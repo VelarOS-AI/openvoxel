@@ -1,8 +1,8 @@
 import {get} from "velar/env"
 import {WebSocketServer} from "velar/websocket"
-import {blockCatalogHash, blockCatalogVersion, blockStateMapHash} from "@openvoxel/blocks"
 import {appName, startOpenVoxelServer} from "./app.vel"
 import {sqliteWorldStore} from "./adapters/sqlite-world-store.vel"
+import {loadContentCatalog} from "./adapters/content-catalog.vel"
 import {loadOpenVoxelConfiguration, resolveServerPath, serverOptions, withEnvironmentOverrides, withResolvedRuntimePaths} from "./config.vel"
 import {worldRuntime} from "@openvoxel/world-runtime"
 import {openVoxelApplication} from "./application.vel"
@@ -11,15 +11,20 @@ export async def start() -> WebSocketServer:
     const configuredPath = get("OPENVOXEL_CONFIG")
     const configurationPath = resolveServerPath(configuredPath ?? "application.yml")
     const configuration = withResolvedRuntimePaths(withEnvironmentOverrides(await loadOpenVoxelConfiguration(configuredPath)))
+    const content = await loadContentCatalog(configuration.content)
     const store = await sqliteWorldStore(configuration.database)
-    const application = openVoxelApplication(worldRuntime(store), serverOptions(configuration))
+    const application = openVoxelApplication(worldRuntime(store, content, {
+        activeChunkCapacity: configuration.worldRuntime.activeChunkCapacity,
+        activeOverrideCapacity: configuration.worldRuntime.activeOverrideCapacity,
+    }), serverOptions(configuration))
     const server = await startOpenVoxelServer(application)
     application.info("server.configuration", {
         databasePath: configuration.database.path,
         configurationPath,
-        blockCatalogVersion,
-        blockStateMapHash: blockStateMapHash.slice(0, 12),
-        blockCatalogHash: blockCatalogHash.slice(0, 12),
+        defaultContentHash: content.defaultContent().identity.contentHash.slice(0, 12),
+        installedContentPacks: configuration.content.packArtifacts.size,
+        activeChunkCapacity: configuration.worldRuntime.activeChunkCapacity,
+        activeOverrideCapacity: configuration.worldRuntime.activeOverrideCapacity,
     })
     print(f"{appName} is running at http://{configuration.server.host}:{server.port}")
     return server

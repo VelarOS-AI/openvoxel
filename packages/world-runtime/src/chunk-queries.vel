@@ -1,53 +1,88 @@
 import {WorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
 import {TerrainSample} from "@openvoxel/world-generation"
-import {Chunk, ChunkPosition, Coordinate2, chunkKey, setChunkBlock} from "@openvoxel/world"
-import {ChunkDelta, WorldStore} from "./contracts.vel"
+import {Chunk, ChunkPosition, Coordinate2, chunkKey, maximumWorldCoordinate, setChunkBlock} from "@openvoxel/world"
+import {ChunkDelta} from "./contracts.vel"
 import {maximumChunkBatchSize} from "./runtime-limits.vel"
+import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
 
 /// 区块查询服务集中实现所有只读世界查询。
 /// 调用方不需要知道一个 Chunk 是现场生成的，也不需要知道玩家修改按稀疏增量保存。
 export type WorldChunkQueries:
-    chunk: (worldId: string, position: ChunkPosition) -> Promise<Chunk>
-    chunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<Chunk>>
-    terrainSample: (worldId: string, position: Coordinate2) -> Promise<TerrainSample>
+    chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
+    chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
+    /// 只返回由世界种子和生成器决定的固定地形，不叠加玩家覆盖。
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
+    /// 返回与固定地形分离的当前热状态；缺少覆盖的坐标也会返回 revision 0。
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
+    terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
 
 /// 把一个持久化增量覆盖到刚生成的基础 Chunk 上。
 /// 每个 runtimeId 都先经过当前世界注册表验证，损坏或不属于该世界的数据会在
 /// 存储边界附近立即失败，不会悄悄进入后续渲染或网络响应。
-def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: ChunkDelta):
+def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: readonly ChunkDelta):
     assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
     for entry in delta.overrides:
         requireWorldBlockStateRuntimeId(blocks.index, entry.blockStateRuntimeId)
         setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
     chunk.revision = delta.revision
 
-export def worldChunkQueries(sessions: WorldSessionCache, store: WorldStore) -> WorldChunkQueries:
-    async def chunks(worldId: string, positions: List<ChunkPosition>) -> List<Chunk>:
-        assert positions.size > 0 else "A chunk batch cannot be empty"
-        assert positions.size <= maximumChunkBatchSize else f"A chunk batch cannot contain more than {maximumChunkBatchSize} positions"
+export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
+    def validateBatch(positions: readonly List<readonly ChunkPosition>):
+        if positions.size == 0: throw WorldRequestError("A chunk batch cannot be empty")
+        if positions.size > maximumChunkBatchSize:
+            throw WorldRequestError(f"A chunk batch cannot contain more than {maximumChunkBatchSize} positions")
+        const seen: Set<string> = Set()
+        for position in positions:
+            if not (position.x.isInteger() and position.y.isInteger() and position.z.isInteger()):
+                throw WorldRequestError("Chunk coordinates must be integers")
+            if position.x.abs() > maximumWorldCoordinate or position.y.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
+                throw WorldRequestError("Chunk coordinates exceed the supported world boundary")
+            const key = chunkKey(position)
+            if key in seen:
+                throw WorldRequestError(f"A chunk batch contains duplicate position {position.x},{position.y},{position.z}")
+            seen.add(key)
+
+    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:
+        validateBatch(positions)
+        const world = await sessions.require(worldId)
+        const output: List<Chunk> = []
+        for position in positions: output.append(world.generator.generate(position))
+        return output
+
+    async def chunkDeltas(worldId: string, positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ChunkDelta>:
+        validateBatch(positions)
+        const world = await sessions.require(worldId)
+        return await world.state.deltas(positions)
+
+    async def chunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:
+        validateBatch(positions)
 
         // 一次批量查询只取得一份 LoadedWorld，确保整批 Chunk 使用完全相同的
         // 生成器、注册表和目录 revision。
         const world = await sessions.require(worldId)
-        const stored = await store.deltas.findChunks(worldId, positions)
-        const deltas: Map<string, ChunkDelta> = Map()
-        for delta in stored: deltas.set(chunkKey(delta.position), delta)
+        const stored = await world.state.deltas(positions)
+        assert stored.size == positions.size else "Active world state returned an incomplete Chunk batch"
 
         const output: List<Chunk> = []
-        for position in positions:
+        for position, index in positions:
             const chunk = world.generator.generate(position)
-            const delta = deltas.get(chunkKey(position))
-            if delta != null: applyDelta(world.blocks, chunk, delta)
+            const delta = stored[index]
+            assert chunkKey(delta.position) == chunkKey(position) else "Active world state changed Chunk batch order"
+            applyDelta(world.blocks, chunk, delta)
             output.append(chunk)
         return output
 
-    async def chunk(worldId: string, position: ChunkPosition) -> Chunk:
+    async def chunk(worldId: string, position: readonly ChunkPosition) -> Chunk:
         const found = await chunks(worldId, [position])
         return found[0]
 
-    async def terrainSample(worldId: string, position: Coordinate2) -> TerrainSample:
+    async def terrainSample(worldId: string, position: readonly Coordinate2) -> TerrainSample:
+        if not (position.x.isInteger() and position.z.isInteger()):
+            throw WorldRequestError("Terrain sample coordinates must be integers")
+        if position.x.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
+            throw WorldRequestError("Terrain sample coordinates exceed the supported world boundary")
         const world = await sessions.require(worldId)
         return world.generator.sample(position)
 
-    return {chunk, chunks, terrainSample}
+    return {chunk, chunks, terrainChunks, chunkDeltas, terrainSample}

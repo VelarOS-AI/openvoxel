@@ -1,49 +1,141 @@
 import {Bytes} from "velar/binary"
-import {WebSocketConnection, WebSocketServer} from "velar/websocket"
-import {encode, parse} from "@velarscript-labs/msgpack"
-import {SocketBlockCommand} from "@openvoxel/protocol"
+import {RealtimeCodec, RealtimeFailure, RealtimeFailureAction, RealtimePeer, realtimeSession} from "velar/realtime"
+import {WebSocketClose, WebSocketConnection} from "velar/websocket"
+import {input} from "velar/serve"
+import {decode, encode} from "@velarscript-labs/msgpack"
+import {ApplyBlockEditsCommand, RealtimeCommandEnvelope, SocketErrorEvent, SyncChunksCommand, protocolVersion} from "@openvoxel/protocol"
+import {OpenVoxelApplication, openVoxelApplicationProvider} from "../application.vel"
 import {publicApplicationError} from "../error-handler.vel"
-import {OpenVoxelApplication} from "../application.vel"
+import {realtimeBlockChanges, realtimeChunkDeltas} from "../presentation/realtime.vel"
+import {WorldLiveSubscription} from "../world-live-state.vel"
 
-async def sendError(connection: WebSocketConnection, error: Error):
-    const publicError = publicApplicationError(error)
-    await connection.send(encode({event: "error", code: publicError.code, message: publicError.message}))
+/// OpenVoxel 的线上协议只接受 MessagePack 二进制帧。这个 codec 只负责把框架
+/// 收到的物理帧收窄成 Bytes，并把已经编码好的应用事件交还给框架发送；具体命令
+/// 和事件仍由 @openvoxel/protocol 定义，不让通用服务器框架知道游戏协议。
+def decodeMessagePackFrame(message: string | Bytes) -> Bytes:
+    if message is Bytes: return message
+    throw Error("Realtime commands must use MessagePack")
 
-async def handleMessage(application: OpenVoxelApplication, connection: WebSocketConnection, message: Bytes):
+def encodeMessagePackFrame(message: Bytes) -> string | Bytes: return message
+
+const messagePackCodec: RealtimeCodec<Bytes, Bytes> = {
+    decode: decodeMessagePackFrame,
+    encode: encodeMessagePackFrame,
+}
+
+async def sendError(peer: RealtimePeer<Bytes>, requestId: string?, code: string, message: string):
+    const event: SocketErrorEvent = {event: "error", requestId, code, message}
+    await peer.send(encode(event))
+
+/// 命令按连接顺序串行执行；`RealtimePeer` 是此连接唯一的发送入口。框架内部只有
+/// 一个 writer，所以命令响应和世界广播可以安全汇入同一有界队列，不会并发调用
+/// WebSocketConnection.send。
+async def handleBinaryCommand(application: OpenVoxelApplication, worldId: string, peer: RealtimePeer<Bytes>, message: Bytes):
+    let requestId: string? = null
     try:
-        const command = parse(message, SocketBlockCommand)
-        if command.operation != "set-block":
-            await connection.send(encode({event: "error", code: "UnsupportedRealtimeOperation", message: f"Unsupported realtime operation {command.operation}"}))
+        // nesting 扫描和 MessagePack 解码只做一次；随后针对同一份不可信文档先读
+        // 最小信封，再按 operation 验证完整命令。此前 parse 两次会重复扫描和解码。
+        const payload = decode(message)
+        const envelope = RealtimeCommandEnvelope.parse(payload)
+        requestId = envelope.requestId
+        if envelope.operation == "chunks.sync":
+            const command = SyncChunksCommand.parse(payload)
+            const deltas = await application.runtime.chunkDeltas(worldId, command.positions)
+            await peer.send(encode({
+                event: "chunks.synced",
+                requestId: command.requestId,
+                worldId,
+                chunks: realtimeChunkDeltas(deltas),
+            }))
             return
-        const change = await application.runtime.setBlock(command.worldId, command.position, command.blockStateRuntimeId)
-        await application.realtime.publishChange(change)
-        application.info("realtime.block.changed", {worldId: change.worldId, revision: change.revision})
-    catch error:
-        application.warn("realtime.command.failed", {code: error.code, message: error.message})
-        await sendError(connection, error)
 
-export async def handleRealtimeConnection(application: OpenVoxelApplication, connection: WebSocketConnection):
-    application.realtime.join(connection)
-    try:
-        let message = await connection.next()
-        while message != null:
-            if message is Bytes: await handleMessage(application, connection, message)
-            else:
-                await connection.send(encode({event: "error", code: "TextMessageUnsupported", message: "Realtime commands must use MessagePack"}))
-            message = await connection.next()
-    catch error: application.warn("realtime.connection.failed", {code: error.code, message: error.message})
-    finally:
-        application.realtime.leave(connection)
-        try: await connection.close(1000, "Connection finished")
-        catch error: application.warn("realtime.connection.close.failed", {code: error.code, message: error.message})
+        if envelope.operation == "blocks.apply":
+            const command = ApplyBlockEditsCommand.parse(payload)
+            const batch = await application.runtime.editBlocks(worldId, command.edits)
+            const changes = realtimeBlockChanges(batch)
+            await peer.send(encode({
+                event: "blocks.applied",
+                requestId: command.requestId,
+                worldId,
+                sequence: batch.sequence,
+                changes,
+            }))
+            application.info("realtime.blocks.applied", {worldId, changes: changes.size})
+            return
 
-export async def acceptRealtimeConnections(server: WebSocketServer, application: OpenVoxelApplication):
-    try:
-        let connection = await server.next()
-        while connection != null:
-            if not application.sessions.start(connection, current => handleRealtimeConnection(application, current)):
-                await connection.close(1013, "Realtime capacity is unavailable")
-            connection = await server.next()
-    catch error:
-        application.warn("realtime.accept.failed", {code: error.code, message: error.message})
-        await server.stop()
+        await sendError(
+            peer,
+            requestId,
+            "realtime.unsupported_operation",
+            f"Unsupported realtime operation {envelope.operation}",
+        )
+    catch value:
+        if value is Error:
+            const publicError = publicApplicationError(value)
+            application.warn("realtime.command.failed", {code: publicError.code, message: publicError.message})
+            await sendError(peer, requestId, publicError.code, publicError.message)
+        else: await sendError(peer, requestId, "server.internal", "The realtime command could not be completed")
+
+export async def handleRealtimeConnection(application: OpenVoxelApplication, worldId: string, connection: WebSocketConnection):
+    /// opened 在接收首条命令前验证世界、注册热世界订阅并发送 ready。它返回的
+    /// cleanup 由框架保证恰好执行一次，因此正常关闭、协议错误和发送失败都不会
+    /// 遗留订阅。
+    async def opened(peer: RealtimePeer<Bytes>):
+        try: await application.runtime.requireWorld(worldId)
+        catch value:
+            if value is Error:
+                const publicError = publicApplicationError(value)
+                await sendError(peer, null, publicError.code, publicError.message)
+            async peer.close(1008, "World is unavailable")
+            return null
+
+        const subscription: WorldLiveSubscription = application.live.subscribe(worldId, peer)
+        await peer.send(encode({
+            event: "world.ready",
+            worldId,
+            protocolVersion,
+            sequence: subscription.sequence,
+        }))
+
+        async def cleanup(): await subscription.close()
+
+        return cleanup
+
+    async def receive(message: Bytes, peer: RealtimePeer<Bytes>):
+        await handleBinaryCommand(application, worldId, peer, message)
+
+    async def failed(failure: RealtimeFailure, peer: RealtimePeer<Bytes>):
+        // codec 只在客户端发来文本帧时失败。该错误是可恢复的，向客户端说明
+        // MessagePack 约束后继续读取；传输、发送和未知处理器错误直接结束会话。
+        if failure.phase == "decode" and failure.recoverable:
+            await sendError(peer, null, "realtime.text_unsupported", "Realtime commands must use MessagePack")
+            return RealtimeFailureAction.continue
+        application.warn("realtime.connection.failed", {
+            worldId,
+            phase: failure.phase,
+            message: failure.error.message,
+        })
+        return RealtimeFailureAction.close
+
+    async def closed(_peer: RealtimePeer<Bytes>, close: WebSocketClose):
+        application.info("realtime.connection.closed", {worldId, code: close.code, reason: close.reason})
+
+    await realtimeSession(
+        connection,
+        messagePackCodec,
+        receive,
+        opened = opened,
+        failed = failed,
+        closed = closed,
+        options = {
+            maxQueuedMessages: application.options.maxQueuedMessages,
+            maxQueuedBytes: application.options.maxQueuedBytes,
+            drainTimeout: 1ms * application.options.realtimeDrainMilliseconds,
+        },
+    )
+
+export server realtimeRoutes:
+    /// 一个连接只属于路径中的世界。worldId 是内联 RoutePattern 投影出的只读变量，
+    /// 命令体不能重新提供另一个世界身份。
+    @websocket worldRealtime(p"/api/worlds/{worldId:string}/realtime", connection: WebSocketConnection, application = input.dependency(openVoxelApplicationProvider)):
+        await handleRealtimeConnection(application, worldId, connection)

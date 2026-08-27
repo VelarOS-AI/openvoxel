@@ -1,0 +1,83 @@
+import {uint16Buffer} from "velar/binary"
+import {RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkResponse} from "@openvoxel/protocol"
+import {ChunkPosition, LocalPosition, blockIndex, chunkKey, chunkVolume, requireChunkEdge} from "@openvoxel/world"
+
+/// 客户端中的一个组合 Chunk。固定地形始终保持只读，玩家和系统形成的热变化只
+/// 进入 overrides；重连同步时整体替换 overrides，不会在旧增量上继续打补丁。
+export type ClientChunkState:
+    readonly position: readonly ChunkPosition
+    readonly edge: number
+    revision: () -> number
+    blockAtIndex: (index: number) -> number
+    block: (position: readonly LocalPosition) -> number
+    replaceDelta: (delta: readonly RealtimeChunkDelta) -> null
+    applyChange: (change: readonly RealtimeBlockChange) -> bool
+
+def sameChunk(left: readonly ChunkPosition, right: readonly ChunkPosition) -> bool:
+    return chunkKey(left) == chunkKey(right)
+
+def requireRuntimeId(value: number):
+    assert value.isInteger() and value >= 0 and value <= 0xffffffff else "Client Chunk runtime ids must be UInt32 values"
+
+/// 从不可信线上地形创建客户端 Chunk。这里完整验证一次调色板和局部索引；后续
+/// 热事件只验证自己携带的坐标、runtimeId 和 revision，不再重复扫描 4096 项。
+export def clientChunkState(terrain: readonly TerrainChunkResponse) -> ClientChunkState:
+    requireChunkEdge(terrain.edge)
+    assert terrain.palette.size >= 1 and terrain.palette.size <= 0x10000 else "Client Chunk palette size is invalid"
+    const palette = terrain.palette.copy()
+    for runtimeId in palette: requireRuntimeId(runtimeId)
+    assert terrain.indices.size == chunkVolume(terrain.edge) else "Client Chunk indices have the wrong size"
+    // JSON/MessagePack 边界使用普通 List；完成一次不可信输入验证后立即压进定长
+    // UInt16Buffer。16³ Chunk 的基础索引由 4096 个 number 槽位降为 8192 字节，
+    // 后续方块查询和重连都复用这份紧凑冷数据。
+    const indices = uint16Buffer(terrain.indices.size)
+    for index, offset in terrain.indices:
+        assert index.isInteger() and index >= 0 and index < palette.size else "Client Chunk contains an invalid palette index"
+        indices[offset] = index
+
+    let currentRevision = 0
+    const overrides: Map<number, number> = Map()
+
+    def requireIndex(index: number):
+        assert index.isInteger() and index >= 0 and index < indices.size else "Client Chunk index is outside the Chunk"
+
+    def blockAtIndex(index: number) -> number:
+        requireIndex(index)
+        return overrides.get(index) ?? palette[indices[index]]
+
+    def block(position: readonly LocalPosition) -> number: return blockAtIndex(blockIndex(position, terrain.edge))
+
+    def replaceDelta(delta: readonly RealtimeChunkDelta):
+        assert sameChunk(delta.position, terrain.position) else "Client Chunk delta targets a different Chunk"
+        assert delta.revision.isInteger() and delta.revision >= 0 else "Client Chunk revision must be a non-negative integer"
+        const replacement: Map<number, number> = Map()
+        for entry in delta.overrides:
+            requireRuntimeId(entry.blockStateRuntimeId)
+            const index = blockIndex(entry.position, terrain.edge)
+            assert not replacement.has(index) else "Client Chunk delta repeats one local position"
+            replacement.set(index, entry.blockStateRuntimeId)
+        overrides.clear()
+        for index, runtimeId in replacement: overrides.set(index, runtimeId)
+        currentRevision = delta.revision
+
+    /// 返回 false 表示 revision 跨过了至少一个未见版本。当前变化仍会应用，方便
+    /// 画面尽快接近服务端；世界状态同时进入 requiresResync，随后用完整增量覆盖。
+    def applyChange(change: readonly RealtimeBlockChange) -> bool:
+        assert sameChunk(change.chunk, terrain.position) else "Client block change targets a different Chunk"
+        requireRuntimeId(change.blockStateRuntimeId)
+        assert change.revision.isInteger() and change.revision >= 0 else "Client block change revision must be a non-negative integer"
+        if change.revision < currentRevision: return true
+        const contiguous = change.revision <= currentRevision + 1
+        overrides.set(blockIndex(change.local, terrain.edge), change.blockStateRuntimeId)
+        if change.revision > currentRevision: currentRevision = change.revision
+        return contiguous
+
+    return {
+        position: terrain.position,
+        edge: terrain.edge,
+        revision: () => currentRevision,
+        blockAtIndex,
+        block,
+        replaceDelta,
+        applyChange,
+    }

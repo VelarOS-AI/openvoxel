@@ -1,0 +1,70 @@
+import {expect} from "velar/test"
+import {WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog} from "@openvoxel/world-generation"
+import {BlockCatalogManifest, BlockDefinition, BlockSourceFile, BlockTypeSource, blockTypeDefinition} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {ContentPackArtifact, createContentCatalog, createContentPackArtifact} from "../src/index.vel"
+import {compileModContentPack} from "../tools/content-compiler.vel"
+import {compileModContentDirectory} from "../tools/mod-directory.vel"
+
+def terrainPack() -> ContentPackArtifact:
+    const definition = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {
+        key: "terrainmod:survival",
+        palette: "terrainmod:palette",
+    })
+    const palette = WorldGeneratorPaletteDefinition.from(baseWorldGeneratorCatalog.palettes[0], {key: "terrainmod:palette"})
+    return createContentPackArtifact("terrainmod", worldGeneration={
+        owner: "terrainmod",
+        catalog: {schemaVersion: 2, generators: [definition], palettes: [palette]},
+    })
+
+test "content catalog computes stable world identities from installed pack payloads":
+    const pack = terrainPack()
+    const catalog = createContentCatalog([pack], ["terrainmod"])
+    const selected = catalog.defaultContent()
+    expect(selected.identity.contentHash.size).toBe(64)
+    expect(selected.identity.packs).toEqual([{owner: "terrainmod", contentHash: pack.contentHash}])
+    expect(selected.generatorContributions.size).toBe(1)
+    expect(catalog.resolve(selected.identity).identity).toEqual(selected.identity)
+
+test "content catalog rejects a changed or missing pack build":
+    const pack = terrainPack()
+    const catalog = createContentCatalog([pack])
+    const selected = catalog.select(["terrainmod"])
+    const tampered = ContentPackArtifact.from(pack, {contentHash: "0".repeat(64)})
+    expect(() => createContentCatalog([tampered])).toThrow()
+    expect(() => createContentCatalog().resolve(selected.identity)).toThrow()
+
+test "unified Mod compiler builds block content from one owner and identity source":
+    const stone = BlockDefinition.parse(blockTypeDefinition(builtinIdentities.blocks.stone))
+    const tomato = BlockTypeSource.from(stone, {
+        key: "farming:tomato_crop",
+        translationKey: "block.farming.tomato_crop",
+        tags: [],
+        properties: [],
+        defaultState: [],
+        variants: [],
+    })
+    const blockManifest: BlockCatalogManifest = {
+        schemaVersion: 3,
+        catalogVersion: "farming:catalog-v1",
+        sources: ["blocks/crops.yml"],
+    }
+    const blockSource: BlockSourceFile = {blocks: [tomato]}
+    const artifact = compileModContentPack({
+        manifestText: `{"formatVersion":1,"owner":"farming","blocks":true,"worldGeneration":false}`,
+        identitiesText: `{"formatVersion":3,"identities":{}}`,
+        blockManifestText: Json.stableStringify(blockManifest),
+        blockSourceTexts: [Json.stableStringify(blockSource)],
+        generatorManifestText: null,
+        generatorSourceTexts: [],
+        paletteSourceTexts: [],
+    })
+    expect(artifact.owner).toBe("farming")
+    const blocks = artifact.blocks
+    assert blocks != null else "Expected the compiled block contribution"
+    expect(blocks.catalog.blocks[0].key).toBe("farming:tomato_crop")
+    expect(artifact.worldGeneration).toBe(null)
+    expect(createContentCatalog([artifact]).select(["farming"]).identity.packs[0].contentHash).toBe(artifact.contentHash)
+
+test "Mod directory compiler requires a separate runtime artifact directory":
+    await expect(compileModContentDirectory("same-content-root", "same-content-root")).toReject()

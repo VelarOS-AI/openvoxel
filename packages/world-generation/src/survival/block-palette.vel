@@ -1,51 +1,14 @@
 import {BlockRegistry} from "@openvoxel/blocks"
-import {GeneratorBlockIdentities} from "../definition/catalog.vel"
+import {GeneratorBlockIdentities, GeneratorBlockSlots} from "../definition/catalog.vel"
 
-/// 生存生成器需要的内建状态集中在这里解析。各阶段只引用语义字段，避免在地形、
-/// 洞穴、矿物和植被模块中重复查找身份或散落数字 runtimeId。
-export type SurvivalBlockPalette:
-    air: number
-    basalt: number
-    birchLeaves: number
-    birchLog: number
-    cactus: number
-    clay: number
-    coalOre: number
-    copperOre: number
-    diamondOre: number
-    dirt: number
-    dryBush: number
-    germaniumOre: number
-    granite: number
-    grass: number
-    gravel: number
-    ice: number
-    ironOre: number
-    limestone: number
-    magma: number
-    mimosaLeaves: number
-    mimosaLog: number
-    oakLeaves: number
-    oakLog: number
-    poplarLeaves: number
-    poplarLog: number
-    purpleFlower: number
-    redFlower: number
-    saltpeterOre: number
-    sand: number
-    sandstone: number
-    snow: number
-    spruceLeaves: number
-    spruceLog: number
-    stone: number
-    sulphurOre: number
-    tallGrass: number
-    water: number
-    whiteFlower: number
+/// 生存生成器只读取已经解析好的数字槽位。具体字段来自 GeneratorBlockSlots，
+/// 因而配置 key、runtimeId 和 Chunk 索引始终拥有完全相同的字段集合。
+export type SurvivalBlockPalette = GeneratorBlockSlots<number>
 
 /// Chunk 模板需要 runtimeId 列表，基础密度填充需要同一顺序对应的 UInt16 索引。
-/// 两者在一个构造函数中同步产生，增加或重排材料时只有这一处事实源，不会出现
-/// “列表改了而索引记录没改”的漂移。
+/// `mapFrom` 严格按照 SurvivalBlockPalette 的声明顺序访问每个 runtimeId，并把
+/// append 返回的索引写回同名字段。字段表由编译器读取，不再手写第二份 39 项
+/// 映射，因此增加或重排槽位时，runtimeIds 与 indices 会自动保持一致。
 export type SurvivalChunkPalette:
     runtimeIds: List<number>
     indices: readonly SurvivalBlockPalette
@@ -58,46 +21,7 @@ export def survivalChunkPalette(blocks: readonly SurvivalBlockPalette) -> Surviv
         runtimeIds.append(runtimeId)
         return index
 
-    const indices: SurvivalBlockPalette = {
-        air: append(blocks.air),
-        basalt: append(blocks.basalt),
-        birchLeaves: append(blocks.birchLeaves),
-        birchLog: append(blocks.birchLog),
-        cactus: append(blocks.cactus),
-        clay: append(blocks.clay),
-        coalOre: append(blocks.coalOre),
-        copperOre: append(blocks.copperOre),
-        diamondOre: append(blocks.diamondOre),
-        dirt: append(blocks.dirt),
-        dryBush: append(blocks.dryBush),
-        germaniumOre: append(blocks.germaniumOre),
-        granite: append(blocks.granite),
-        grass: append(blocks.grass),
-        gravel: append(blocks.gravel),
-        ice: append(blocks.ice),
-        ironOre: append(blocks.ironOre),
-        limestone: append(blocks.limestone),
-        magma: append(blocks.magma),
-        mimosaLeaves: append(blocks.mimosaLeaves),
-        mimosaLog: append(blocks.mimosaLog),
-        oakLeaves: append(blocks.oakLeaves),
-        oakLog: append(blocks.oakLog),
-        poplarLeaves: append(blocks.poplarLeaves),
-        poplarLog: append(blocks.poplarLog),
-        purpleFlower: append(blocks.purpleFlower),
-        redFlower: append(blocks.redFlower),
-        saltpeterOre: append(blocks.saltpeterOre),
-        sand: append(blocks.sand),
-        sandstone: append(blocks.sandstone),
-        snow: append(blocks.snow),
-        spruceLeaves: append(blocks.spruceLeaves),
-        spruceLog: append(blocks.spruceLog),
-        stone: append(blocks.stone),
-        sulphurOre: append(blocks.sulphurOre),
-        tallGrass: append(blocks.tallGrass),
-        water: append(blocks.water),
-        whiteFlower: append(blocks.whiteFlower),
-    }
+    const indices = SurvivalBlockPalette.mapFrom(blocks, append)
     return {runtimeIds, indices}
 
 /// 在生成器构造时把语义方块 key 一次性解析成当前世界的 runtimeId。之后所有
@@ -105,43 +29,4 @@ export def survivalChunkPalette(blocks: readonly SurvivalBlockPalette) -> Surviv
 export def createSurvivalBlockPalette(registry: readonly BlockRegistry, keys: readonly GeneratorBlockIdentities) -> SurvivalBlockPalette:
     def resolve(key: string) -> number: return registry.defaultStateRuntimeIdForKey(key)
 
-    return {
-        air: resolve(keys.air),
-        basalt: resolve(keys.basalt),
-        birchLeaves: resolve(keys.birchLeaves),
-        birchLog: resolve(keys.birchLog),
-        cactus: resolve(keys.cactus),
-        clay: resolve(keys.clay),
-        coalOre: resolve(keys.coalOre),
-        copperOre: resolve(keys.copperOre),
-        diamondOre: resolve(keys.diamondOre),
-        dirt: resolve(keys.dirt),
-        dryBush: resolve(keys.dryBush),
-        germaniumOre: resolve(keys.germaniumOre),
-        granite: resolve(keys.granite),
-        grass: resolve(keys.grass),
-        gravel: resolve(keys.gravel),
-        ice: resolve(keys.ice),
-        ironOre: resolve(keys.ironOre),
-        limestone: resolve(keys.limestone),
-        magma: resolve(keys.magma),
-        mimosaLeaves: resolve(keys.mimosaLeaves),
-        mimosaLog: resolve(keys.mimosaLog),
-        oakLeaves: resolve(keys.oakLeaves),
-        oakLog: resolve(keys.oakLog),
-        poplarLeaves: resolve(keys.poplarLeaves),
-        poplarLog: resolve(keys.poplarLog),
-        purpleFlower: resolve(keys.purpleFlower),
-        redFlower: resolve(keys.redFlower),
-        saltpeterOre: resolve(keys.saltpeterOre),
-        sand: resolve(keys.sand),
-        sandstone: resolve(keys.sandstone),
-        snow: resolve(keys.snow),
-        spruceLeaves: resolve(keys.spruceLeaves),
-        spruceLog: resolve(keys.spruceLog),
-        stone: resolve(keys.stone),
-        sulphurOre: resolve(keys.sulphurOre),
-        tallGrass: resolve(keys.tallGrass),
-        water: resolve(keys.water),
-        whiteFlower: resolve(keys.whiteFlower),
-    }
+    return SurvivalBlockPalette.mapFrom(keys, resolve)

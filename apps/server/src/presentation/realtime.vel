@@ -1,0 +1,27 @@
+import {RealtimeBlockChange, RealtimeChunkDelta} from "@openvoxel/protocol"
+import {BlockChangeBatch, ChunkDelta} from "@openvoxel/world-runtime"
+import {Bytes} from "velar/binary"
+import {encode} from "@velarscript-labs/msgpack"
+
+/// 广播只携带真实改变的项；幂等重放仍会得到请求方响应，但不会让其他玩家处理
+/// 一条没有改变世界的伪事件。
+export def realtimeBlockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
+    const changes: List<RealtimeBlockChange> = []
+    for change in batch.changes:
+        if change.changed: changes.append(RealtimeBlockChange.from(change))
+    return changes
+
+/// 运行时已在世界命令的顺序边界内分配 sequence；这里仅做线上形状投影和编码。
+export def encodeWorldBlockChanges(batch: readonly BlockChangeBatch) -> Bytes:
+    return encode({
+        event: "blocks.changed",
+        worldId: batch.worldId,
+        sequence: batch.sequence,
+        changes: realtimeBlockChanges(batch),
+    })
+
+/// 把持久化增量投影成纯数据消息，保留请求顺序和每个 Chunk 的最终 revision。
+export def realtimeChunkDeltas(deltas: readonly List<readonly ChunkDelta>) -> List<RealtimeChunkDelta>:
+    const output: List<RealtimeChunkDelta> = []
+    for delta in deltas: output.append(RealtimeChunkDelta.from(delta))
+    return output

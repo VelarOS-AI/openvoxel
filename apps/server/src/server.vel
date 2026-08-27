@@ -1,9 +1,7 @@
-import {Request, ServeApp, bodyLimit, lifecycle, middleware, use} from "velar/serve"
+import {HttpProblem, Request, ServeApp, bodyLimit, docs, lifecycle, middleware, use} from "velar/serve"
 import {WebSocketServer, listen} from "velar/websocket"
-import {realtimeEventsPath} from "@openvoxel/protocol"
-import {failure} from "./responses.vel"
-import {handleApplicationError} from "./error-handler.vel"
-import {acceptRealtimeConnections} from "./modules/realtime.vel"
+import {protocolVersion} from "@openvoxel/protocol"
+import {realtimeRoutes} from "./modules/realtime.vel"
 import {blockRoutes} from "./modules/block.vel"
 import {chunkRoutes} from "./modules/chunk.vel"
 import {systemRoutes} from "./modules/system.vel"
@@ -15,13 +13,26 @@ server openVoxelRoutes:
     ...worldRoutes
     ...chunkRoutes
     ...blockRoutes
+    ...realtimeRoutes
 
     @notFound(request: Request):
-        return failure(404, "RouteNotFound", {method: request.method, path: request.path}, "Route not found")
+        throw HttpProblem({
+            status: 404,
+            code: "route.not_found",
+            title: "Route not found",
+            detail: f"No route accepts {request.method} {request.path}",
+        })
 
 export def createOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
-    let app = bodyLimit(openVoxelRoutes, application.options.bodyLimit)
-    app = use(app, middleware.errors(handleApplicationError))
+    // OpenAPI 从上面的真实注解生成。协议包不再维护平行的 method/path 字符串表。
+    let app = docs(
+        openVoxelRoutes,
+        title = "OpenVoxel API",
+        version = str(protocolVersion),
+        path = "/api/docs",
+        openapiPath = "/api/openapi.json",
+    )
+    app = bodyLimit(app, application.options.bodyLimit)
     app = use(app, middleware.cors(
         origins = application.options.corsAllowedOrigins,
         headers = ["content-type", "if-none-match"],
@@ -48,7 +59,6 @@ export async def startOpenVoxelServer(application: OpenVoxelApplication) -> WebS
             host: application.options.host,
             port: application.options.port,
             http: ownedOpenVoxelApp(application),
-            path: realtimeEventsPath,
             origins: application.options.corsAllowedOrigins,
             maxBodyBytes: application.options.bodyLimit,
             maxMessageBytes: application.options.maxMessageBytes,
@@ -57,7 +67,6 @@ export async def startOpenVoxelServer(application: OpenVoxelApplication) -> WebS
             maxPendingSendBytes: application.options.maxPendingSendBytes,
             maxConnections: application.options.maxConnections,
         })
-        async acceptRealtimeConnections(server, application)
         application.info("server.started", {host: application.options.host, port: server.port})
         return server
     catch error:

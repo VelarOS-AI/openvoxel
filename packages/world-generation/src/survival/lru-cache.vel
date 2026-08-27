@@ -1,10 +1,10 @@
 /// 删除 Map 插入顺序中的最旧项目。
 ///
-/// VelarScript 的 Map 迭代器直接包裹宿主 Map 的 key iterator，取第一个 key 是
-/// O(1)；`keys()[0]` 会先复制完整 key 列表，缓存越大，淘汰一次制造的临时对象
-/// 越多。各规划器在命中时都会把项目 remove 后重新 set，因此插入顺序就是 LRU
-/// 顺序，这个公共动作可被所有缓存安全复用。
+/// `iterator()` 创建按插入顺序读取 key 的增量游标，`next()` 只前进一步，因此
+/// 取得最旧 key 是 O(1)，不会像 `keys()[0]` 那样先复制完整 key 列表。外层 null
+/// 表示 Map 为空，`?? ""` 会把它变成一次无副作用的删除；如果真实 key 本身是空
+/// 字符串，删除同一个 key 仍然正确。各规划器在命中时都会把项目 remove 后重新 set，
+/// 因此 Map 的插入顺序就是 LRU 顺序。
 export def evictOldest<T>(entries: Map<string, T>):
-    for key in entries:
-        entries.remove(key)
-        break
+    const oldest = entries.iterator().next()?.value ?? ""
+    entries.remove(oldest)

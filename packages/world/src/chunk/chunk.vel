@@ -6,7 +6,7 @@ export def chunkVolume(edge: number) -> number:
     requireChunkEdge(edge)
     return edge * edge * edge
 
-export def blockIndex(local: LocalPosition, edge: number) -> number:
+export def blockIndex(local: readonly LocalPosition, edge: number) -> number:
     requireChunkEdge(edge)
     assert local.x.isInteger() and local.y.isInteger() and local.z.isInteger() else "Local coordinates must be integers"
     assert local.x >= 0 and local.x < edge else "Local x is outside the chunk"
@@ -15,7 +15,7 @@ export def blockIndex(local: LocalPosition, edge: number) -> number:
     return local.x + edge * (local.z + edge * local.y)
 
 export type Chunk:
-    position: ChunkPosition
+    readonly position: readonly ChunkPosition
     edge: number
     palette: List<number>
     indices: UInt16Buffer
@@ -26,7 +26,7 @@ export type Chunk:
 /// runtimeId 顺序；每个 Chunk 仍拥有自己的可变 palette 和 paletteIndex。
 export type ChunkPaletteTemplate:
     runtimeIds: readonly List<number>
-    instantiate: (position: ChunkPosition, edge: number) -> Chunk
+    instantiate: (position: readonly ChunkPosition, edge: number) -> Chunk
 
 /// paletteIndex 是由 palette 重建的进程内加速索引，不属于 Chunk 的存储或网络格式。
 /// 对外投影只使用 position、edge、palette、indices 和 revision。
@@ -44,7 +44,7 @@ def buildPaletteIndex(palette: readonly List<number>) -> Map<number, number>:
     return paletteIndex
 
 export def chunk(
-    position: ChunkPosition,
+    position: readonly ChunkPosition,
     edge: number,
     palette: List<number>,
     indices: UInt16Buffer,
@@ -63,7 +63,7 @@ export def chunkBlockAtIndex(chunk: readonly Chunk, index: number) -> number:
     requireStorageIndex(chunk, index)
     return chunk.palette[chunk.indices[index]]
 
-export def chunkBlock(chunk: readonly Chunk, local: LocalPosition) -> number:
+export def chunkBlock(chunk: readonly Chunk, local: readonly LocalPosition) -> number:
     return chunkBlockAtIndex(chunk, blockIndex(local, chunk.edge))
 
 def paletteEntryFor(chunk: Chunk, runtimeId: number) -> number:
@@ -82,7 +82,7 @@ export def paintChunkBlockAtIndex(chunk: Chunk, index: number, runtimeId: number
     requireStorageIndex(chunk, index)
     chunk.indices[index] = paletteEntryFor(chunk, runtimeId)
 
-export def setChunkBlock(chunk: Chunk, local: LocalPosition, runtimeId: number) -> number:
+export def setChunkBlock(chunk: Chunk, local: readonly LocalPosition, runtimeId: number) -> number:
     const index = blockIndex(local, chunk.edge)
     const previous = chunkBlockAtIndex(chunk, index)
     if previous != runtimeId:
@@ -91,14 +91,14 @@ export def setChunkBlock(chunk: Chunk, local: LocalPosition, runtimeId: number) 
     return previous
 
 /// 空 Chunk 本身不知道哪个方块代表空气；调用方必须从当前内容目录提供填充值。
-export def emptyChunk(position: ChunkPosition, edge: number, fill: number) -> Chunk:
+export def emptyChunk(position: readonly ChunkPosition, edge: number, fill: number) -> Chunk:
     requireBlockStateRuntimeId(fill)
     return emptyPaletteChunk(position, edge, [fill])
 
 /// 生成器预先知道自己可能写入的全部方块时，可以一次性建立局部调色板。新分配的
 /// UInt16Buffer 保证全部索引为 0，因此这里无需像反序列化入口 chunk() 那样再扫描
 /// 4096 个索引；外部不可信数据仍必须使用完整验证入口。
-export def emptyPaletteChunk(position: ChunkPosition, edge: number, palette: List<number>) -> Chunk:
+export def emptyPaletteChunk(position: readonly ChunkPosition, edge: number, palette: List<number>) -> Chunk:
     return chunkPaletteTemplate(palette).instantiate(position, edge)
 
 /// 生成器构造时创建一次模板，后续每个 Chunk 只复制已经验证的几十项映射，
@@ -107,7 +107,7 @@ export def chunkPaletteTemplate(runtimeIds: List<number>) -> ChunkPaletteTemplat
     buildPaletteIndex(runtimeIds)
     const stableRuntimeIds = runtimeIds.slice()
 
-    def instantiate(position: ChunkPosition, edge: number) -> Chunk:
+    def instantiate(position: readonly ChunkPosition, edge: number) -> Chunk:
         requireChunkPosition(position)
         requireChunkEdge(edge)
         const palette = stableRuntimeIds.slice()

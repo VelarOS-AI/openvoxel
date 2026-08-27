@@ -1,0 +1,18 @@
+import {WorldContentResponse} from "@openvoxel/protocol"
+import {WorldContentSnapshot} from "@openvoxel/world-runtime"
+
+/// 把某个 LoadedWorld 的活动内容投影成网络目录。服务端不再缓存一份全局目录，
+/// 因为两个世界可以选择不同 Content Pack，也可以拥有不同的 runtimeId 快照。
+export def worldContentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResponse:
+    // snapshot 已在 LoadedWorld 装配边界完成验证并保持只读。这里使用精确浅投影，
+    // 复用其中的大型状态表；parse 会为每次 HTTP 请求再次深拷贝整个方块目录。
+    return WorldContentResponse.from(snapshot, {
+        schemaVersion: snapshot.catalog.schemaVersion,
+        catalogVersion: snapshot.catalog.catalogVersion,
+        minimumWorldY: snapshot.definition.world.minimumY,
+        maximumWorldY: snapshot.definition.world.maximumY,
+        seaLevel: snapshot.definition.world.seaLevel,
+        blocks: snapshot.catalog.blocks,
+        componentProfiles: snapshot.catalog.componentProfiles,
+        states: snapshot.catalog.states,
+    })

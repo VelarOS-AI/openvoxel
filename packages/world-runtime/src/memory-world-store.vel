@@ -1,58 +1,55 @@
-import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
-import {BlockOverride, BlockOverrideCommit, ChunkDelta, WorldStore} from "./contracts.vel"
+import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldStore} from "./contracts.vel"
 
-def sameLocal(left: LocalPosition, right: LocalPosition) -> bool:
-    return left.x == right.x and left.y == right.y and left.z == right.z
+def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
+
+def localOrder(entry: readonly BlockOverride) -> number:
+    return entry.position.x + 1024 * entry.position.z + 1048576 * entry.position.y
 
 export def memoryWorldStore() -> WorldStore:
     const worlds: Map<string, WorldManifest> = Map()
     const chunks: Map<string, ChunkDelta> = Map()
 
-    def deltaKey(worldId: string, position: ChunkPosition) -> string: return f"{worldId}:{chunkKey(position)}"
+    def deltaKey(worldId: string, position: readonly ChunkPosition) -> string: return f"{worldId}:{chunkKey(position)}"
 
     async def saveManifest(manifest: WorldManifest): worlds.set(manifest.id, manifest)
 
     async def findManifest(worldId: string) -> WorldManifest?: return worlds.get(worldId)
 
-    async def updateBlockRegistry(worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot):
-        const manifest = worlds.get(worldId)
-        assert manifest != null else f"World '{worldId}' was not found while updating its block registry"
-        worlds.set(worldId, WorldManifest.from(manifest, {blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry)}))
-
-    async def findChunks(worldId: string, positions: List<ChunkPosition>) -> List<ChunkDelta>:
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<ChunkDelta>:
         const found: List<ChunkDelta> = []
         for position in positions:
             const delta = chunks.get(deltaKey(worldId, position))
             if delta != null: found.append(delta)
         return found
 
-    async def commitBlock(worldId: string, chunk: ChunkPosition, local: LocalPosition, blockStateRuntimeId: number?) -> BlockOverrideCommit:
-        const key = deltaKey(worldId, chunk)
-        const current = chunks.get(key)
-        let previousOverrideBlockStateRuntimeId: number? = null
-        if current != null:
-            for entry in current.overrides:
-                if sameLocal(entry.position, local): previousOverrideBlockStateRuntimeId = entry.blockStateRuntimeId
+    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+        // 先验证并构建所有 Chunk 的私有副本，最后才一次性发布。任何 revision
+        // 冲突都会让整个批次保持原状，这与 SQLite 事务的可见性一致。
+        const pending: Map<string, ChunkDelta> = Map()
+        for commit in commits:
+            const key = deltaKey(worldId, commit.position)
+            const current = chunks.get(key) ?? {position: commit.position, revision: 0, overrides: []}
+            assert current.revision == commit.expectedRevision else f"Chunk revision conflict at {chunkKey(commit.position)}"
+            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
+            const byPosition: Map<string, readonly BlockOverride> = Map()
+            for entry in current.overrides: byPosition.set(localKey(entry.position), entry)
+            for write in commit.writes:
+                if write.blockStateRuntimeId != null:
+                    byPosition.set(localKey(write.position), BlockOverride.from(write, {blockStateRuntimeId: write.blockStateRuntimeId}))
+                else: byPosition.remove(localKey(write.position))
+            const overrides = byPosition.values().sorted(by=localOrder)
+            pending.set(key, ChunkDelta.from(commit, {overrides}))
 
-        const revision = current == null ? 0 : current.revision
-        if previousOverrideBlockStateRuntimeId == blockStateRuntimeId:
-            return {previousOverrideBlockStateRuntimeId, revision, changed: false}
-
-        const overrides: List<BlockOverride> = []
-        if current != null:
-            for entry in current.overrides:
-                if not sameLocal(entry.position, local): overrides.append(entry)
-        if blockStateRuntimeId != null: overrides.append({position: local, blockStateRuntimeId})
-
-        const nextRevision = revision + 1
-        chunks.set(key, {position: chunk, revision: nextRevision, overrides})
-        return {previousOverrideBlockStateRuntimeId, revision: nextRevision, changed: true}
+        for key in pending:
+            const delta = pending.get(key)
+            assert delta != null else "Pending in-memory Chunk disappeared before publication"
+            chunks.set(key, delta)
 
     async def close(): pass
 
     return {
-        manifests: {save: saveManifest, find: findManifest, updateBlockRegistry},
-        deltas: {findChunks, commitBlock},
+        manifests: {save: saveManifest, find: findManifest},
+        deltas: {findChunks, commitChunks},
         close,
     }

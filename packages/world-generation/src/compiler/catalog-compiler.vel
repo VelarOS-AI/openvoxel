@@ -1,4 +1,4 @@
-import {BuiltinIdentityDocument, IdentityResolution, resolveIdentityReferences} from "@openvoxel/identities"
+import {BuiltinIdentityDocument, IdentityResolution, mergeIdentityTrees, resolveIdentityReferences} from "@openvoxel/identities"
 import {parseYaml} from "@velarscript-labs/yaml"
 import {sha256Text} from "velar/hash"
 import {CurvePoint, WorldGeneratorCatalogArtifact, WorldGeneratorCatalogContribution, WorldGeneratorCatalogManifest, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../definition/catalog.vel"
@@ -129,20 +129,6 @@ export def compileWorldGeneratorCatalog(
 
 /// Mod 编译入口接收已经由上层目录读取器整理出的 YAML 文本。owner 必须与
 /// 每个生成器 key 的命名空间一致，防止一个 Mod 覆盖其他内容所有者。
-def mergeIdentityRecords(base: readonly Record<unknown>, contribution: readonly Record<unknown>, prefix: string = "") -> Record<unknown>:
-    const merged: Record<unknown> = {}
-    for key, value in base: merged[key] = value
-    for key in contribution.keys():
-        const incoming = contribution[key]
-        const existing = merged[key]
-        const path = prefix == "" ? key : f"{prefix}.{key}"
-        if (existing is Record<unknown>) and (incoming is Record<unknown>):
-            merged[key] = mergeIdentityRecords(existing, incoming, path)
-        else:
-            assert existing == null else f"Mod identity path {path} conflicts with an existing identity"
-            merged[key] = incoming
-    return merged
-
 export def compileModWorldGeneratorContribution(
     owner: string,
     manifestText: string,
@@ -154,7 +140,7 @@ export def compileModWorldGeneratorContribution(
     assert Text.matches(owner, r"^[a-z][a-z0-9_.-]*$") else "World generator contribution owner must be a lowercase namespace"
     const identityDocument = BuiltinIdentityDocument.parse(parseYaml(identitiesText))
     assert identityDocument.formatVersion == 3 else "Unsupported Mod identity format version"
-    const mergedIdentities = mergeIdentityRecords(baseIdentities, identityDocument.identities)
+    const mergedIdentities = mergeIdentityTrees(baseIdentities, identityDocument.identities)
     const artifact = compileWorldGeneratorCatalog(manifestText, generatorSourceTexts, paletteSourceTexts, mergedIdentities)
     for generator in artifact.catalog.generators:
         assert generator.key.split(":")[0] == owner else f"World generator {generator.key} is outside contribution namespace {owner}"

@@ -1,0 +1,25 @@
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {ChunkPosition} from "@openvoxel/world"
+
+/// 一个已经绑定到具体世界的实时连接。
+///
+/// ready 是连接建立后的第一条权威消息；实现必须在返回连接前完成它的验证，且在
+/// 返回之后才把 blocks.changed 交给 listener。这样客户端状态机可以先安装本次
+/// 连接的 sequence 游标，再处理后续广播。
+export type WorldBackendConnection:
+    readonly ready: readonly WorldReadyEvent
+    syncChunks: (requestId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly ChunksSyncedEvent>
+    applyBlocks: (requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
+    close: () -> Promise<null>
+
+/// 客户端面对的统一后端端口。
+///
+/// OnlineBackend 用 HTTP、WebSocket 和 MessagePack 实现它；后续 LocalBackend 会
+/// 在浏览器 Worker 内直接组合 WorldRuntime。客户端会话只消费这个端口，因此
+/// 冷热数据合并、重连和 revision 规则不会随运行模式复制两份。
+export type WorldBackend:
+    contract: () -> Promise<readonly ClientContractResponse>
+    bootstrap: (worldId: string) -> Promise<readonly WorldBootstrapResponse>
+    content: (worldId: string) -> Promise<readonly WorldContentResponse>
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly TerrainChunkBatchResponse>
+    connect: (worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> Promise<WorldBackendConnection>

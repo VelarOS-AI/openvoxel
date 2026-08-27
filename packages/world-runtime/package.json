@@ -1,6 +1,6 @@
 {
   "name": "@openvoxel/world-runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
@@ -19,6 +19,7 @@
     }
   },
   "scripts": {
+    "benchmark": "velar run benchmarks/active-world-state.vel",
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
@@ -26,9 +27,10 @@
     "build": "velar build"
   },
   "dependencies": {
-    "@openvoxel/blocks": "0.1.0",
-    "@openvoxel/identities": "0.1.0",
-    "@openvoxel/world": "0.1.0",
-    "@openvoxel/world-generation": "0.1.0"
+    "@openvoxel/blocks": "0.2.0",
+    "@openvoxel/content": "0.2.0",
+    "@openvoxel/identities": "0.2.0",
+    "@openvoxel/world": "0.2.0",
+    "@openvoxel/world-generation": "0.2.0"
   }
 }

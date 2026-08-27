@@ -100,11 +100,11 @@ export def survivalWorldGenerator(
         minimumMineralY = Math.min(minimumMineralY, mineral.minimumY)
         maximumMineralY = Math.max(maximumMineralY, mineral.maximumY)
 
-    def sample(position: Coordinate2) -> TerrainSample:
+    def sample(position: readonly Coordinate2) -> TerrainSample:
         const plan = columns.columns((position.x / edge).floor(), (position.z / edge).floor())
         return TerrainSample.parse(plan.sampleAt(position.x, position.z))
 
-    def generate(position: ChunkPosition) -> Chunk:
+    def generate(position: readonly ChunkPosition) -> Chunk:
         const minimumY = position.y * edge
         const maximumY = minimumY + edge - 1
         if maximumY < profile.world.minimumY or minimumY > profile.world.maximumY:

@@ -1,6 +1,6 @@
 {
   "name": "@openvoxel/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
@@ -9,6 +9,8 @@
     "src"
   ],
   "scripts": {
+    "benchmark:sqlite": "velar run benchmarks/sqlite-deltas.vel",
+    "benchmark:presentation": "velar run benchmarks/presentation.vel",
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
@@ -18,19 +20,20 @@
     "build": "velar build"
   },
   "dependencies": {
-    "@openvoxel/blocks": "0.1.0",
-    "@openvoxel/identities": "0.1.0",
-    "@openvoxel/protocol": "0.1.0",
-    "@openvoxel/world": "0.1.0",
-    "@openvoxel/world-generation": "0.1.0",
-    "@openvoxel/world-runtime": "0.1.0",
-    "@velarscript/server": "0.16.0",
-    "@velarscript-labs/database": "0.3.2",
-    "@velarscript-labs/msgpack": "0.1.5",
-    "@velarscript-labs/sql": "0.1.2",
-    "@velarscript-labs/sqlite": "0.3.2"
+    "@openvoxel/blocks": "0.2.0",
+    "@openvoxel/content": "0.2.0",
+    "@openvoxel/identities": "0.2.0",
+    "@openvoxel/protocol": "0.2.0",
+    "@openvoxel/world": "0.2.0",
+    "@openvoxel/world-generation": "0.2.0",
+    "@openvoxel/world-runtime": "0.2.0",
+    "@velarscript-labs/database": "0.3.3",
+    "@velarscript-labs/msgpack": "0.1.6",
+    "@velarscript-labs/sql": "0.1.3",
+    "@velarscript-labs/sqlite": "0.3.3",
+    "@velarscript/server": "0.20.0"
   },
   "devDependencies": {
-    "ws": "8.21.1"
+    "ws": "8.21.3"
   }
 }

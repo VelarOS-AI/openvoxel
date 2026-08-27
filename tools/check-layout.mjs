@@ -14,6 +14,18 @@ const npmToolchainPackages = new Set([
 ]);
 const labsScope = "@velarscript-labs/";
 const labsRegistryPrefix = "https://registry.npmjs.org/@velarscript-labs/";
+const allowedOpenVoxelDependencies = new Map([
+  ["@openvoxel/identities", new Set()],
+  ["@openvoxel/blocks", new Set(["@openvoxel/identities"])],
+  ["@openvoxel/world", new Set(["@openvoxel/blocks", "@openvoxel/identities"])],
+  ["@openvoxel/world-generation", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world"])],
+  ["@openvoxel/content", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
+  ["@openvoxel/protocol", new Set(["@openvoxel/blocks", "@openvoxel/world"])],
+  ["@openvoxel/client", new Set(["@openvoxel/protocol", "@openvoxel/world"])],
+  ["@openvoxel/client-web", new Set(["@openvoxel/client", "@openvoxel/protocol", "@openvoxel/world"])],
+  ["@openvoxel/world-runtime", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
+  ["@openvoxel/server", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-generation", "@openvoxel/world-runtime"])],
+]);
 const violations = [];
 
 function inspectDependencyFields(owner, manifest) {
@@ -26,6 +38,16 @@ function inspectDependencyFields(owner, manifest) {
         && (typeof specification !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(specification))) {
         violations.push(`${owner}: Labs package ${name} must pin an exact npm registry version`);
       }
+    }
+  }
+}
+
+function inspectOpenVoxelBoundary(owner, manifest) {
+  const allowed = allowedOpenVoxelDependencies.get(manifest.name);
+  if (allowed === undefined) return;
+  for (const name of Object.keys(manifest.dependencies ?? {})) {
+    if (name.startsWith("@openvoxel/") && !allowed.has(name)) {
+      violations.push(`${owner}: ${manifest.name} cannot depend on ${name}`);
     }
   }
 }
@@ -50,6 +72,7 @@ async function inspect(directory) {
     if (entry.name === "package.json") {
       const manifest = JSON.parse(await readFile(path, "utf8"));
       inspectDependencyFields(projectPath, manifest);
+      inspectOpenVoxelBoundary(projectPath, manifest);
     }
   }
 }

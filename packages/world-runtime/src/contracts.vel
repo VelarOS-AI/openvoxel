@@ -1,29 +1,52 @@
-import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/world"
 
 export type BlockOverride:
-    position: LocalPosition
-    blockStateRuntimeId: number
+    readonly position: readonly LocalPosition
+    readonly blockStateRuntimeId: number
 
 export type ChunkDelta:
-    position: ChunkPosition
-    revision: number
-    overrides: List<BlockOverride>
+    readonly position: readonly ChunkPosition
+    readonly revision: number
+    readonly overrides: readonly List<readonly BlockOverride>
 
 export type BlockOverrideCommit:
-    previousOverrideBlockStateRuntimeId: number?
-    revision: number
-    changed: bool
+    readonly previousOverrideBlockStateRuntimeId: number?
+    readonly revision: number
+    readonly changed: bool
+
+/// 运行时已经完成世界坐标换算和生成器基线比较后的单项持久化写入。
+/// null 表示目标状态等于固定地形，应删除稀疏覆盖而不是保存冗余方块。
+export type BlockOverrideWrite:
+    readonly chunk: readonly ChunkPosition
+    readonly local: readonly LocalPosition
+    readonly blockStateRuntimeId: number?
+
+/// ActiveWorldState 在内存中完成比较后，交给持久化适配器的单项变更。
+/// null 表示删除稀疏覆盖，使该位置重新继承固定地形。
+export type BlockOverrideMutation:
+    readonly position: readonly LocalPosition
+    readonly blockStateRuntimeId: number?
+
+/// 一个 Chunk 的乐观并发提交单元。
+///
+/// expectedRevision 必须与存储中的当前版本完全相等；revision 必须恰好是
+/// expectedRevision + 1。这样 SQLite 和内存适配器只负责可靠落盘，不再各自
+/// 重复推导业务版本，也不会出现同一批次内多个中间 revision。
+export type ChunkDeltaCommit:
+    readonly position: readonly ChunkPosition
+    readonly expectedRevision: number
+    readonly revision: number
+    readonly writes: readonly List<readonly BlockOverrideMutation>
 
 export type WorldManifestStore:
     save: (manifest: WorldManifest) -> Promise<null>
     find: (worldId: string) -> Promise<WorldManifest?>
-    /// Mod 集合变化后只替换这个世界的注册表快照；世界身份和生成参数保持不变。
-    updateBlockRegistry: (worldId: string, blockRegistry: readonly WorldBlockRegistrySnapshot) -> Promise<null>
 
 export type WorldDeltaStore:
-    findChunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<ChunkDelta>>
-    commitBlock: (worldId: string, chunk: ChunkPosition, local: LocalPosition, blockStateRuntimeId: number?) -> Promise<BlockOverrideCommit>
+    findChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<ChunkDelta>>
+    /// 在一个存储事务中提交完整 Chunk 批次。任意 Chunk 版本不匹配时拒绝整个
+    /// 批次；适配器不得部分写入，也不得自行吞掉冲突后继续覆盖新数据。
+    commitChunks: (worldId: string, commits: readonly List<readonly ChunkDeltaCommit>) -> Promise<null>
 
 export type WorldStore:
     manifests: WorldManifestStore

@@ -1,15 +1,19 @@
 import {expect} from "velar/test"
 import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
+import {ContentCatalog, ContentPackArtifact, createContentCatalog, createContentPackArtifact} from "@openvoxel/content"
 import {builtinIdentities} from "@openvoxel/identities"
 import {WorldGeneratorCatalogContribution, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog, worldGeneratorDefinitionHash} from "@openvoxel/world-generation"
-import {WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
+import {BlockPosition, ChunkPosition, WorldContentIdentity, WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
-import {WorldAlreadyExistsError, WorldContentSet, worldRuntime} from "../src/index.vel"
+import {BlockChange, BlockChangeBatch, BlockOverrideWrite, ChunkDeltaCommit, WorldAlreadyExistsError, WorldRuntime, WorldStore, activeWorldState, worldRuntime} from "../src/index.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
 
-def tomatoContribution() -> BlockCatalogContribution:
+async def editOne(runtime: WorldRuntime, worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> readonly BlockChange:
+    return (await runtime.editBlocks(worldId, [{position, blockStateRuntimeId}])).changes[0]
+
+def tomatoContribution(catalogVersion: string = "farming:catalog-v1") -> BlockCatalogContribution:
     const stone = BlockDefinition.parse(blockTypeDefinition(builtinIdentities.blocks.stone))
     const tomato = BlockTypeSource.from(stone, {
         key: "farming:tomato_crop",
@@ -19,12 +23,18 @@ def tomatoContribution() -> BlockCatalogContribution:
         defaultState: [],
         variants: [],
     })
-    return compileModBlockCatalogContribution("farming", "farming:catalog-v1", [tomato])
+    return compileModBlockCatalogContribution("farming", catalogVersion, [tomato])
+
+def tomatoPack(catalogVersion: string = "farming:catalog-v1") -> ContentPackArtifact:
+    return createContentPackArtifact("farming", blocks=tomatoContribution(catalogVersion))
 
 def terrainGeneratorContribution() -> WorldGeneratorCatalogContribution:
     const definition = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "terrainmod:survival", palette: "terrainmod:palette"})
     const palette = WorldGeneratorPaletteDefinition.from(baseWorldGeneratorCatalog.palettes[0], {key: "terrainmod:palette"})
     return {owner: "terrainmod", catalog: {schemaVersion: 2, generators: [definition], palettes: [palette]}}
+
+def terrainGeneratorPack() -> ContentPackArtifact:
+    return createContentPackArtifact("terrainmod", worldGeneration=terrainGeneratorContribution())
 
 test "world runtime creates generates modifies and restores":
     const store = memoryWorldStore()
@@ -36,13 +46,13 @@ test "world runtime creates generates modifies and restores":
     const generatedChecksum = chunkChecksum(generated)
     const baseBlockStateRuntimeId = chunkBlock(generated, {x: 15, y: 14, z: 0})
     const replacementBlockStateRuntimeId = baseBlockStateRuntimeId == stoneBlock ? dirtBlock : stoneBlock
-    const change = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
+    const change = await editOne(firstRuntime, manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
     expect(change.chunk).toEqual({x: -1, y: 1, z: 0})
     expect(change.local).toEqual({x: 15, y: 14, z: 0})
     expect(change.previousBlockStateRuntimeId).toBe(baseBlockStateRuntimeId)
     expect(change.revision).toBe(1)
 
-    const repeated = await firstRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
+    const repeated = await editOne(firstRuntime, manifest.id, {x: -1, y: 30, z: 0}, replacementBlockStateRuntimeId)
     expect(repeated.revision).toBe(change.revision)
 
     const restartedRuntime = worldRuntime(store)
@@ -51,7 +61,7 @@ test "world runtime creates generates modifies and restores":
     expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockStateRuntimeId)
     expect(chunkChecksum(restored) == generatedChecksum).toBe(false)
 
-    const reverted = await restartedRuntime.setBlock(manifest.id, {x: -1, y: 30, z: 0}, baseBlockStateRuntimeId)
+    const reverted = await editOne(restartedRuntime, manifest.id, {x: -1, y: 30, z: 0}, baseBlockStateRuntimeId)
     expect(reverted.previousBlockStateRuntimeId).toBe(replacementBlockStateRuntimeId)
     expect(reverted.revision).toBe(2)
     const regenerated = await restartedRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
@@ -59,36 +69,29 @@ test "world runtime creates generates modifies and restores":
     expect(chunkChecksum(regenerated)).toBe(generatedChecksum)
 
 test "world runtime resolves and caches a separate active block registry for every world":
-    const farming = tomatoContribution()
-
-    def catalogs(worldId: string) -> readonly WorldContentSet:
-        if worldId == "modded":
-            return {revision: "farming-v1", blockContributions: [farming], generatorContributions: []}
-        return {revision: "base", blockContributions: [], generatorContributions: []}
-
+    const catalog = createContentCatalog([tomatoPack()])
     const store = memoryWorldStore()
-    const runtime = worldRuntime(store, catalogs)
+    const runtime = worldRuntime(store, catalog)
     const vanilla = await runtime.createWorld({id: "vanilla", name: "Vanilla", seed: "plain"})
-    const modded = await runtime.createWorld({id: "modded", name: "Modded", seed: "farming"})
+    const modded = await runtime.createWorld({id: "modded", name: "Modded", seed: "farming", contentPacks: ["farming"]})
     expect(vanilla.blockRegistry.states.size).toBe(183)
     expect(modded.blockRegistry.states.size).toBe(184)
     expect(modded.blockRegistry.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
+    const moddedContent = await runtime.worldContent(modded.id)
+    expect(moddedContent.content).toEqual(modded.content)
+    expect(moddedContent.catalog.states.size).toBe(184)
+    expect(moddedContent.catalog.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
+    // 内容目录只在 LoadedWorld 装配时压缩和聚合一次；重复查询直接返回同一份
+    // 不可变快照，不能在每个 HTTP 请求中重新遍历完整方块状态表。
+    expect(await runtime.worldContent(modded.id) == moddedContent).toBe(true)
 
-    def withoutMods(worldId: string) -> readonly WorldContentSet:
-        return {revision: "without-mods", blockContributions: [], generatorContributions: []}
+    const unavailableRuntime = worldRuntime(store)
+    await expect(unavailableRuntime.requireWorld(modded.id)).toReject()
 
-    const unavailableRuntime = worldRuntime(store, withoutMods)
-    const unavailable = await unavailableRuntime.requireWorld(modded.id)
-    expect(unavailable.blockRegistry.states.size).toBe(184)
-    let rejectedMissingState = false
-    try: await unavailableRuntime.setBlock(modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
-    catch error: rejectedMissingState = true
-    expect(rejectedMissingState).toBe(true)
-
-    const restoredRuntime = worldRuntime(store, catalogs)
+    const restoredRuntime = worldRuntime(store, catalog)
     const restored = await restoredRuntime.requireWorld(modded.id)
     expect(restored.blockRegistry.states.size).toBe(184)
-    const change = await restoredRuntime.setBlock(modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
+    const change = await editOne(restoredRuntime, modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
     expect(change.blockStateRuntimeId).toBe(firstModBlockStateRuntimeId)
 
 test "world runtime exposes deterministic samples and bounded chunk batches":
@@ -105,17 +108,79 @@ test "world runtime exposes deterministic samples and bounded chunk batches":
     expect(chunks[0].position.y).toBe(3)
     expect(chunks[1].position.y).toBe(4)
 
+test "world runtime keeps fixed terrain separate from atomic hot deltas":
+    const runtime = worldRuntime(memoryWorldStore())
+    const manifest = await runtime.createWorld({id: "hot-deltas", name: "Hot Deltas", seed: "delta-seed"})
+    const position = {x: 0, y: 1, z: 0}
+    const fixedBefore = (await runtime.terrainChunks(manifest.id, [position]))[0]
+    const firstBase = chunkBlock(fixedBefore, {x: 0, y: 14, z: 0})
+    const secondBase = chunkBlock(fixedBefore, {x: 1, y: 14, z: 0})
+    const firstReplacement = firstBase == stoneBlock ? dirtBlock : stoneBlock
+    const secondReplacement = secondBase == stoneBlock ? dirtBlock : stoneBlock
+
+    const batch = await runtime.editBlocks(manifest.id, [
+        {position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: firstReplacement},
+        {position: {x: 1, y: 30, z: 0}, blockStateRuntimeId: secondReplacement},
+    ])
+    expect(batch.changes.size).toBe(2)
+    expect(batch.changes.every(change => change.changed and change.revision == 1)).toBe(true)
+
+    const fixedAfter = (await runtime.terrainChunks(manifest.id, [position]))[0]
+    expect(chunkChecksum(fixedAfter)).toBe(chunkChecksum(fixedBefore))
+    const deltas = await runtime.chunkDeltas(manifest.id, [position])
+    expect(deltas[0].revision).toBe(1)
+    expect(deltas[0].overrides.size).toBe(2)
+    const resolved = await runtime.chunk(manifest.id, position)
+    expect(resolved.revision).toBe(1)
+    expect(chunkBlock(resolved, {x: 0, y: 14, z: 0})).toBe(firstReplacement)
+    expect(chunkBlock(resolved, {x: 1, y: 14, z: 0})).toBe(secondReplacement)
+
+test "world runtime rejects the complete edit batch before any partial write":
+    const runtime = worldRuntime(memoryWorldStore())
+    const manifest = await runtime.createWorld({id: "reject-batch", name: "Reject Batch", seed: "reject-seed"})
+
+    let rejectedDuplicate = false
+    try:
+        await runtime.editBlocks(manifest.id, [
+            {position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: dirtBlock},
+            {position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: stoneBlock},
+        ])
+    catch error: rejectedDuplicate = error.message.has("duplicate position")
+    expect(rejectedDuplicate).toBe(true)
+
+    let rejectedState = false
+    try:
+        await runtime.editBlocks(manifest.id, [
+            {position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: dirtBlock},
+            {position: {x: 1, y: 30, z: 0}, blockStateRuntimeId: 65535},
+        ])
+    catch error: rejectedState = true
+    expect(rejectedState).toBe(true)
+
+    const deltas = await runtime.chunkDeltas(manifest.id, [{x: 0, y: 1, z: 0}])
+    expect(deltas[0].revision).toBe(0)
+    expect(deltas[0].overrides.size).toBe(0)
+
 test "world runtime shares an in-flight world load and supports explicit unloading":
     const store = memoryWorldStore()
     const creator = worldRuntime(store)
     await creator.createWorld({id: "session", name: "Session", seed: "shared-load"})
 
     let catalogResolutions = 0
-    def catalogs(worldId: string) -> readonly WorldContentSet:
-        catalogResolutions += 1
-        return {revision: "base", blockContributions: [], generatorContributions: []}
+    const baseCatalog = createContentCatalog()
 
-    const runtime = worldRuntime(store, catalogs)
+    def defaultContent(): return baseCatalog.defaultContent()
+
+    def select(owners: readonly List<string>): return baseCatalog.select(owners)
+
+    def resolve(identity: readonly WorldContentIdentity):
+        catalogResolutions += 1
+        return baseCatalog.resolve(identity)
+
+    def requirePack(owner: string): return baseCatalog.requirePack(owner)
+
+    const countedCatalog: ContentCatalog = {defaultContent, select, resolve, requirePack}
+    const runtime = worldRuntime(store, countedCatalog)
     const worlds = await Promise.all([
         runtime.requireWorld("session"),
         runtime.requireWorld("session"),
@@ -130,31 +195,24 @@ test "world runtime shares an in-flight world load and supports explicit unloadi
     expect(reloaded.id).toBe("session")
     expect(catalogResolutions).toBe(2)
 
-test "world runtime refreshes one loaded registry when its catalog revision changes":
-    const farming = tomatoContribution()
-    let revision = "base"
+test "world runtime pins the exact content pack build in the world manifest":
+    const store = memoryWorldStore()
+    const firstCatalog = createContentCatalog([tomatoPack()])
+    const firstRuntime = worldRuntime(store, firstCatalog)
+    const created = await firstRuntime.createWorld({
+        id: "pinned-content",
+        name: "Pinned Content",
+        seed: "catalog-hash",
+        contentPacks: ["farming"],
+    })
+    expect(created.blockRegistry.states.size).toBe(184)
 
-    def catalogs(worldId: string) -> readonly WorldContentSet:
-        if revision == "farming-v1": return {revision, blockContributions: [farming], generatorContributions: []}
-        return {revision, blockContributions: [], generatorContributions: []}
+    const changedCatalog = createContentCatalog([tomatoPack("farming:catalog-v2")])
+    const changedRuntime = worldRuntime(store, changedCatalog)
+    await expect(changedRuntime.requireWorld(created.id)).toReject()
 
-    const runtime = worldRuntime(memoryWorldStore(), catalogs)
-    const created = await runtime.createWorld({id: "refresh", name: "Refresh", seed: "catalog-refresh"})
-    expect(created.blockRegistry.states.size).toBe(183)
-
-    revision = "farming-v1"
-    const expanded = await runtime.requireWorld(created.id)
-    expect(expanded.blockRegistry.states.size).toBe(184)
-    const change = await runtime.setBlock(created.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
-    expect(change.blockStateRuntimeId).toBe(firstModBlockStateRuntimeId)
-
-    revision = "base-again"
-    const retained = await runtime.requireWorld(created.id)
-    expect(retained.blockRegistry.states.size).toBe(184)
-    let rejectedMissingState = false
-    try: await runtime.setBlock(created.id, {x: 1, y: 80, z: 0}, firstModBlockStateRuntimeId)
-    catch error: rejectedMissingState = true
-    expect(rejectedMissingState).toBe(true)
+    const restoredRuntime = worldRuntime(store, firstCatalog)
+    expect((await restoredRuntime.requireWorld(created.id)).content).toEqual(created.content)
 
 test "world runtime serializes concurrent creation for the same world identity":
     const runtime = worldRuntime(memoryWorldStore())
@@ -170,20 +228,116 @@ test "world runtime serializes concurrent creation for the same world identity":
 
 test "world runtime composes Mod content before saving a new world":
     const contribution = terrainGeneratorContribution()
-
-    def content(worldId: string) -> readonly WorldContentSet:
-        if worldId == "mod-generator":
-            return {revision: "terrainmod-v1", blockContributions: [], generatorContributions: [contribution]}
-        return {revision: "base", blockContributions: [], generatorContributions: []}
-
-    const runtime = worldRuntime(memoryWorldStore(), content)
+    const runtime = worldRuntime(memoryWorldStore(), createContentCatalog([terrainGeneratorPack()]))
     const manifest = await runtime.createWorld({
         id: "mod-generator",
         name: "Mod Generator",
         seed: "mod-seed",
         generator: "terrainmod:survival",
+        contentPacks: ["terrainmod"],
     })
     expect(manifest.generator).toBe("terrainmod:survival")
     expect(manifest.generatorHash).toBe(worldGeneratorDefinitionHash(contribution.catalog.generators[0], contribution.catalog.palettes[0]))
     expect(manifest.spawn.y > 0).toBe(true)
     expect((await runtime.chunk(manifest.id, {x: 0, y: 4, z: 0})).indices.size).toBe(4096)
+
+test "active world state caches sparse Chunk reads and evicts by configured LRU capacity":
+    const backing = memoryWorldStore()
+    let storageReads = 0
+
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>):
+        storageReads += 1
+        return await backing.deltas.findChunks(worldId, positions)
+
+    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+        await backing.deltas.commitChunks(worldId, commits)
+
+    const counted: WorldStore = {
+        manifests: backing.manifests,
+        deltas: {findChunks, commitChunks},
+        close: backing.close,
+    }
+    const runtime = worldRuntime(counted, options={activeChunkCapacity: 1, activeOverrideCapacity: 1024})
+    const world = await runtime.createWorld({id: "lru", name: "LRU", seed: "cache"})
+    const first = {x: 0, y: 1, z: 0}
+    const second = {x: 1, y: 1, z: 0}
+    const concurrent = await Promise.all([
+        runtime.chunkDeltas(world.id, [first]),
+        runtime.chunkDeltas(world.id, [first]),
+        runtime.chunkDeltas(world.id, [first]),
+    ])
+    expect(concurrent.every(deltas => deltas[0].revision == 0)).toBe(true)
+    expect(storageReads).toBe(1)
+    const pair = await runtime.chunkDeltas(world.id, [first, second])
+    expect(pair.size).toBe(2)
+    expect(storageReads).toBe(2)
+    const repeatedSecond = await runtime.chunkDeltas(world.id, [second])
+    expect(repeatedSecond[0] == pair[1]).toBe(true)
+    expect(storageReads).toBe(2)
+    await runtime.chunkDeltas(world.id, [first])
+    expect(storageReads).toBe(3)
+    await runtime.unloadWorld(world.id)
+    await runtime.chunkDeltas(world.id, [first])
+    expect(storageReads).toBe(4)
+
+test "active world state also bounds dense override memory":
+    const backing = memoryWorldStore()
+
+    def validateBlockStateRuntimeId(_runtimeId: number): pass
+
+    const state = activeWorldState("dense", backing.deltas, 64, 1, validateBlockStateRuntimeId)
+    const writes: List<BlockOverrideWrite> = [
+        {chunk: {x: 0, y: 1, z: 0}, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: stoneBlock},
+        {chunk: {x: 1, y: 1, z: 0}, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: dirtBlock},
+    ]
+    await state.commitBlocks(writes)
+    expect(state.cachedChunkCount()).toBe(1)
+    expect(state.cachedOverrideCount()).toBe(1)
+    expect(state.storageLoadCount()).toBe(1)
+    await state.deltas([{x: 0, y: 1, z: 0}])
+    expect(state.storageLoadCount()).toBe(2)
+    await state.close()
+
+test "active world commits are ordered and storage failure never leaks into cache":
+    const backing = memoryWorldStore()
+    let failNextCommit = true
+
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>):
+        return await backing.deltas.findChunks(worldId, positions)
+
+    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+        if failNextCommit:
+            failNextCommit = false
+            throw Error("injected storage failure")
+        await backing.deltas.commitChunks(worldId, commits)
+
+    const failing: WorldStore = {
+        manifests: backing.manifests,
+        deltas: {findChunks, commitChunks},
+        close: backing.close,
+    }
+    const runtime = worldRuntime(failing)
+    const world = await runtime.createWorld({id: "ordered-hot", name: "Ordered Hot", seed: "ordered"})
+    const generated = await runtime.chunk(world.id, {x: 0, y: 1, z: 0})
+    const base = chunkBlock(generated, {x: 0, y: 14, z: 0})
+    const replacement = base == stoneBlock ? dirtBlock : stoneBlock
+    const secondBase = chunkBlock(generated, {x: 1, y: 14, z: 0})
+    const secondReplacement = secondBase == stoneBlock ? dirtBlock : stoneBlock
+    await expect(runtime.editBlocks(world.id, [{position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: replacement}])).toReject()
+    const unchanged = await runtime.chunkDeltas(world.id, [{x: 0, y: 1, z: 0}])
+    expect(unchanged[0].revision).toBe(0)
+    expect(unchanged[0].overrides.size).toBe(0)
+
+    const events: List<number> = []
+    def brokenListener(_batch: readonly BlockChangeBatch): throw Error("injected listener failure")
+    const brokenSubscription = runtime.subscribeBlockChanges(brokenListener)
+    const subscription = runtime.subscribeBlockChanges(batch => events.append(batch.sequence))
+    const batches = await Promise.all([
+        runtime.editBlocks(world.id, [{position: {x: 0, y: 30, z: 0}, blockStateRuntimeId: replacement}]),
+        runtime.editBlocks(world.id, [{position: {x: 1, y: 30, z: 0}, blockStateRuntimeId: secondReplacement}]),
+    ])
+    expect(batches.map(batch => batch.sequence)).toEqual([1, 2])
+    expect(batches.map(batch => batch.changes[0].revision)).toEqual([1, 2])
+    expect(events).toEqual([1, 2])
+    brokenSubscription.close()
+    subscription.close()

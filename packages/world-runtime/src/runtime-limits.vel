@@ -1,2 +1,8 @@
 /// 这是一次应用查询允许请求的最大 Chunk 数量，不是世界格式或 Chunk 模型约束。
 export const maximumChunkBatchSize = 64
+
+/// 一条实时命令最多可以原子修改的方块数。
+///
+/// 这个上限同时约束验证、生成器采样、数据库事务和广播消息的工作量。它属于
+/// 应用运行时的防滥用边界，不进入世界格式；以后调整不会改变已有世界身份。
+export const maximumBlockEditBatchSize = 1024

@@ -1,32 +1,59 @@
 import {WorldBlockRegistrySnapshot, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {requireChunkEdge} from "../spatial/coordinates.vel"
 
-export const worldFormatVersion = 2
+export const worldFormatVersion = 3
 export const initialChunkEdge = 16
+
+/// 一个内容包在世界清单中的不可变身份。owner 用于选择已安装产物，contentHash
+/// 用于证明选择到的是创建或配置这个世界时的确切内容，而不是同名的另一份构建。
+export type WorldContentPackReference:
+    readonly owner: string
+    readonly contentHash: string
+
+/// 世界内容集合把基础目录和全部 Mod 产物绑定为一个确定性哈希。
+/// packs 按 owner 排序，使配置文件顺序不会改变世界身份。
+export type WorldContentIdentity:
+    readonly contentHash: string
+    readonly packs: readonly List<readonly WorldContentPackReference>
 
 /// 世界清单只保存能够决定世界身份和重建结果的稳定事实。
 /// 默认值选择、创建命令和存储流程由 world-runtime 负责。
 export type WorldManifest:
-    id: string
-    name: string
-    seed: string
-    formatVersion: number
-    chunkEdge: number
-    generator: string
+    readonly id: string
+    readonly name: string
+    readonly seed: string
+    readonly formatVersion: number
+    readonly chunkEdge: number
+    readonly generator: string
     /// 创建世界时所用生成器定义的确定性哈希。
-    generatorHash: string
+    readonly generatorHash: string
     /// 已由生成器评分并验证过的世界出生点。
-    spawn: WorldSpawn
-    blockRegistry: WorldBlockRegistrySnapshot
+    readonly spawn: readonly WorldSpawn
+    /// 创建世界时解析完成的内容集合。载入时必须找到完全相同的构建产物。
+    readonly content: readonly WorldContentIdentity
+    readonly blockRegistry: readonly WorldBlockRegistrySnapshot
 
 export type WorldSpawn:
-    x: number
-    y: number
-    z: number
+    readonly x: number
+    readonly y: number
+    readonly z: number
 
 def requireBoundedText(value: string, label: string, maximum: number):
     assert not value.isBlank() else f"{label} cannot be blank"
     assert value.size <= maximum else f"{label} is too long"
+
+export def validateWorldContentIdentity(identity: readonly WorldContentIdentity) -> readonly WorldContentIdentity:
+    assert Text.matches(identity.contentHash, r"^[0-9a-f]{64}$") else "World content hash must be a lowercase SHA-256 value"
+    const owners: Set<string> = Set()
+    let previousOwner: string? = null
+    for pack in identity.packs:
+        assert Text.matches(pack.owner, r"^[a-z][a-z0-9_.-]*$") else "World content pack owner must be a lowercase namespace"
+        assert Text.matches(pack.contentHash, r"^[0-9a-f]{64}$") else f"World content pack {pack.owner} hash must be a lowercase SHA-256 value"
+        assert not (pack.owner in owners) else f"World content repeats content pack {pack.owner}"
+        if previousOwner != null: assert previousOwner < pack.owner else "World content packs must be sorted by owner"
+        owners.add(pack.owner)
+        previousOwner = pack.owner
+    return identity
 
 export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     requireBoundedText(manifest.id, "World id", 64)
@@ -39,5 +66,6 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     assert Text.matches(manifest.generatorHash, r"^[0-9a-f]{64}$") else "World generator hash must be a lowercase SHA-256 value"
     assert manifest.spawn.x.isInteger() and manifest.spawn.y.isInteger() and manifest.spawn.z.isInteger() else "World spawn coordinates must be integers"
     assert manifest.spawn.y >= 0 and manifest.spawn.y <= 255 else "World spawn y is outside world height"
+    validateWorldContentIdentity(manifest.content)
     validateWorldBlockRegistrySnapshot(manifest.blockRegistry)
     return manifest

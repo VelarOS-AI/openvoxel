@@ -23,6 +23,7 @@ def manifest() -> WorldManifest:
         generator: builtinIdentities.generators.survival,
         generatorHash: "0000000000000000000000000000000000000000000000000000000000000000",
         spawn: {x: 0, y: 65, z: 0},
+        content: {contentHash: "0".repeat(64), packs: []},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
     })
 

@@ -1,14 +1,73 @@
-import {BlockMutation} from "./http.vel"
+import {BlockPosition, ChunkPosition, LocalPosition} from "@openvoxel/world"
 
-export type SocketBlockCommand extends BlockMutation:
-    operation: string
+/// 所有实时命令先读取这个最小信封，再按 operation 解析完整数据。
+/// requestId 由客户端生成，服务端在响应和错误中原样返回，允许多个在途批次并发。
+export type RealtimeCommandEnvelope:
+    readonly operation: string
+    readonly requestId: string
 
-export type BlockChangedEvent extends BlockMutation:
+/// 客户端只先读取事件名，再选择下面的精确事件类型；MessagePack 文档只解码一次。
+export type RealtimeEventEnvelope:
+    readonly event: string
+
+export type RealtimeBlockEdit:
+    readonly position: readonly BlockPosition
+    readonly blockStateRuntimeId: number
+
+export type ApplyBlockEditsCommand extends RealtimeCommandEnvelope:
+    readonly edits: readonly List<readonly RealtimeBlockEdit>
+
+export type SyncChunksCommand extends RealtimeCommandEnvelope:
+    readonly positions: readonly List<readonly ChunkPosition>
+
+export type RealtimeBlockChange:
+    readonly position: readonly BlockPosition
+    readonly chunk: readonly ChunkPosition
+    readonly local: readonly LocalPosition
+    readonly previousBlockStateRuntimeId: number
+    readonly blockStateRuntimeId: number
+    readonly revision: number
+
+export type RealtimeBlockOverride:
+    readonly position: readonly LocalPosition
+    readonly blockStateRuntimeId: number
+
+export type RealtimeChunkDelta:
+    readonly position: readonly ChunkPosition
+    readonly revision: number
+    readonly overrides: readonly List<readonly RealtimeBlockOverride>
+
+export type WorldReadyEvent:
     event: string
-    previousBlockStateRuntimeId: number
-    revision: number
+    worldId: string
+    protocolVersion: number
+    /// 当前连接订阅成功时，这个世界已经发布到的最后一个热事件序号。
+    /// 客户端以它作为本次连接的游标起点，再同步自己正在跟踪的 Chunk。
+    sequence: number
+
+export type ChunksSyncedEvent:
+    event: string
+    requestId: string
+    worldId: string
+    chunks: List<RealtimeChunkDelta>
+
+export type BlockEditsAppliedEvent:
+    event: string
+    requestId: string
+    worldId: string
+    sequence: number
+    changes: List<RealtimeBlockChange>
+
+/// 世界广播与命令确认分离。广播不携带某个玩家的 requestId，所有订阅者只按
+/// sequence 应用同一条有序事实；请求方另收 blocks.applied 作为命令确认。
+export type WorldBlocksChangedEvent:
+    event: string
+    worldId: string
+    sequence: number
+    changes: List<RealtimeBlockChange>
 
 export type SocketErrorEvent:
     event: string
+    requestId: string?
     code: string
     message: string

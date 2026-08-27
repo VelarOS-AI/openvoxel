@@ -1,0 +1,242 @@
+import {WorldBackend, WorldBackendConnection} from "@openvoxel/client"
+import {ApplyBlockEditsCommand, BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockEdit, RealtimeEventEnvelope, SocketErrorEvent, SyncChunksCommand, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, apiOperationNames} from "@openvoxel/protocol"
+import {ChunkPosition} from "@openvoxel/world"
+import {Bytes} from "velar/binary"
+import {http} from "velar/http"
+import {RealtimeClient, RealtimeClientFailureAction, RealtimeCodec, RealtimeFailure, realtimeClient} from "velar/realtime"
+import {Channel, channel} from "velar/task"
+import {encode as encodeUrl, join as joinUrl, parse as parseUrl} from "velar/url"
+import {WebSocketClose} from "velar/websocket"
+import {decode, encode} from "@velarscript-labs/msgpack"
+
+type OpenApiOperation:
+    readonly operationId: string
+
+type OpenApiPathItem:
+    readonly get: readonly OpenApiOperation?
+    readonly post: readonly OpenApiOperation?
+    readonly put: readonly OpenApiOperation?
+    readonly patch: readonly OpenApiOperation?
+    readonly delete: readonly OpenApiOperation?
+
+type OpenApiDocument:
+    readonly openapi: string
+    readonly paths: readonly Record<readonly OpenApiPathItem>
+
+type DiscoveredOperation:
+    readonly method: string
+    readonly path: string
+
+type DiscoveredApi:
+    readonly origin: string
+    readonly operations: Map<string, readonly DiscoveredOperation>
+
+type RealtimeIncoming = readonly WorldReadyEvent | readonly ChunksSyncedEvent | readonly BlockEditsAppliedEvent | readonly WorldBlocksChangedEvent | readonly SocketErrorEvent
+type RealtimeOutgoing = readonly SyncChunksCommand | readonly ApplyBlockEditsCommand
+
+type OpeningResult:
+    readonly ready: readonly WorldReadyEvent?
+    readonly error: readonly SocketErrorEvent?
+    readonly transportError: string?
+
+type PendingResult:
+    readonly chunks: readonly ChunksSyncedEvent?
+    readonly blocks: readonly BlockEditsAppliedEvent?
+    readonly error: readonly SocketErrorEvent?
+    readonly transportError: string?
+
+/// 把框架生成的 OpenAPI 编译成按 operationId 查询的客户端目录。路径只在服务端
+/// 注解中出现一次；这里保存的是启动时发现的结果，不维护第二套手写路由表。
+async def discoverApi(openApiUrl: string) -> DiscoveredApi:
+    const description = await http.get(openApiUrl).parse(OpenApiDocument)
+    assert description.openapi.startsWith("3.1.") else "OpenVoxel requires an OpenAPI 3.1 description"
+    const operations: Map<string, readonly DiscoveredOperation> = Map()
+
+    def remember(path: string, method: string, operation: readonly OpenApiOperation?):
+        if operation == null: return
+        assert not operations.has(operation.operationId) else f"OpenAPI repeats operationId {operation.operationId}"
+        operations.set(operation.operationId, {method, path})
+
+    for path, item in description.paths:
+        remember(path, "GET", item.get)
+        remember(path, "POST", item.post)
+        remember(path, "PUT", item.put)
+        remember(path, "PATCH", item.patch)
+        remember(path, "DELETE", item.delete)
+
+    const origin = parseUrl(openApiUrl).origin
+    return {origin, operations}
+
+def requireOperation(api: readonly DiscoveredApi, name: string, method: string) -> readonly DiscoveredOperation:
+    const operation = api.operations.get(name)
+    assert operation != null else f"OpenAPI does not publish operation {name}"
+    assert operation.method == method else f"OpenAPI operation {name} changed its HTTP method"
+    return operation
+
+def operationUrl(api: readonly DiscoveredApi, name: string, method: string, worldId: string? = null) -> string:
+    const operation = requireOperation(api, name, method)
+    let path = operation.path
+    if worldId != null: path = path.replaceAll("{worldId}", encodeUrl(worldId))
+    assert not path.has("{") else f"OpenAPI operation {name} still requires route parameters"
+    return joinUrl(api.origin, path)
+
+def realtimeUrl(api: readonly DiscoveredApi, worldId: string) -> string:
+    const httpUrl = operationUrl(api, apiOperationNames.worldRealtime, "GET", worldId)
+    if httpUrl.startsWith("https://"): return f"wss://{httpUrl.slice(8)}"
+    assert httpUrl.startsWith("http://") else "OpenVoxel realtime requires an HTTP or HTTPS OpenAPI origin"
+    return f"ws://{httpUrl.slice(7)}"
+
+def decodeRealtime(message: string | Bytes) -> RealtimeIncoming:
+    if not (message is Bytes): throw Error("OpenVoxel realtime requires MessagePack binary frames")
+    const value = decode(message)
+    const envelope = RealtimeEventEnvelope.parse(value)
+    if envelope.event == "world.ready": return WorldReadyEvent.parse(value)
+    if envelope.event == "chunks.synced": return ChunksSyncedEvent.parse(value)
+    if envelope.event == "blocks.applied": return BlockEditsAppliedEvent.parse(value)
+    if envelope.event == "blocks.changed": return WorldBlocksChangedEvent.parse(value)
+    if envelope.event == "error": return SocketErrorEvent.parse(value)
+    throw Error(f"OpenVoxel realtime sent an unsupported event {envelope.event}")
+
+def encodeRealtime(message: RealtimeOutgoing) -> string | Bytes: return encode(message)
+
+const realtimeCodec: RealtimeCodec<RealtimeIncoming, RealtimeOutgoing> = {
+    decode: decodeRealtime,
+    encode: encodeRealtime,
+}
+
+def responseError(result: readonly PendingResult) -> Error?:
+    if result.error != null: return Error(f"{result.error.code}: {result.error.message}")
+    if result.transportError != null: return Error(result.transportError)
+    return null
+
+/// 浏览器线上适配器。调用方只提供 OpenAPI 地址；HTTP、WebSocket 路径均由服务
+/// 端的同一份真实路由描述发现，修改 URL 时无需同步客户端源码。
+export def onlineBackend(openApiUrl: string) -> WorldBackend:
+    let discovered: Promise<DiscoveredApi>? = null
+
+    def api() -> Promise<DiscoveredApi>:
+        const existing = discovered
+        if existing != null: return existing
+        const loading = discoverApi(openApiUrl)
+        discovered = loading
+        return loading
+
+    async def contract():
+        const routes = await api()
+        return await http.get(operationUrl(routes, apiOperationNames.clientContract, "GET")).parse(ClientContractResponse)
+
+    async def bootstrap(worldId: string):
+        const routes = await api()
+        return await http.get(operationUrl(routes, apiOperationNames.worldBootstrap, "GET", worldId)).parse(WorldBootstrapResponse)
+
+    async def content(worldId: string):
+        const routes = await api()
+        return await http.get(operationUrl(routes, apiOperationNames.worldContent, "GET", worldId)).parse(WorldContentResponse)
+
+    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>):
+        const routes = await api()
+        return await http.post(
+            operationUrl(routes, apiOperationNames.terrainChunks, "POST", worldId),
+            {body: {positions}},
+        ).parse(TerrainChunkBatchResponse)
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null):
+        const routes = await api()
+        const opening = channel(OpeningResult, capacity=1)
+        const pending: Map<string, Channel<PendingResult>> = Map()
+        let didOpen = false
+
+        def settle(requestId: string, result: PendingResult):
+            const target = pending.get(requestId)
+            if target != null: target.trySend(result)
+
+        def failPending(message: string):
+            for _, target in pending: target.trySend({transportError: message})
+            if not didOpen: opening.trySend({transportError: message})
+
+        async def receive(message: RealtimeIncoming, _client: RealtimeClient<RealtimeOutgoing>):
+            if message is WorldReadyEvent:
+                if not didOpen:
+                    didOpen = true
+                    opening.trySend({ready: message})
+                return
+            if message is ChunksSyncedEvent:
+                settle(message.requestId, {chunks: message})
+                return
+            // blocks.applied 是 blocks.changed 的结构超集，必须先判断，避免把命令
+            // 确认误投递成世界广播。
+            if message is BlockEditsAppliedEvent:
+                settle(message.requestId, {blocks: message})
+                return
+            if message is WorldBlocksChangedEvent:
+                listener(message)
+                return
+            if message is SocketErrorEvent:
+                if message.requestId != null: settle(message.requestId, {error: message})
+                else if not didOpen: opening.trySend({error: message})
+                else: failPending(f"{message.code}: {message.message}")
+
+        async def failed(failure: RealtimeFailure, _client: RealtimeClient<RealtimeOutgoing>):
+            failPending(failure.error.message)
+            return RealtimeClientFailureAction.stop
+
+        async def closed(_client: RealtimeClient<RealtimeOutgoing>, close: WebSocketClose):
+            failPending(f"Realtime connection closed ({close.code}): {close.reason}")
+
+        const realtime = realtimeClient(
+            realtimeUrl(routes, worldId),
+            realtimeCodec,
+            receive,
+            failed = failed,
+            closed = closed,
+            options = {retryInitial: false},
+        )
+        await realtime.start()
+        const opened = await opening.next()
+        assert opened != null else "Realtime connection closed before world.ready"
+        if opened.error != null:
+            await realtime.close()
+            throw Error(f"{opened.error.code}: {opened.error.message}")
+        if opened.transportError != null:
+            await realtime.close()
+            throw Error(opened.transportError)
+        const ready = opened.ready!
+        assert ready.worldId == worldId else "Realtime connection opened a different world"
+
+        async def request(requestId: string, message: RealtimeOutgoing):
+            assert not pending.has(requestId) else f"Realtime requestId {requestId} is already active"
+            const responses = channel(PendingResult, capacity=1)
+            pending.set(requestId, responses)
+            try:
+                await realtime.send(message)
+                const result = await responses.next()
+                assert result != null else "Realtime response channel closed before a response"
+                const failure = responseError(result)
+                if failure != null: throw failure
+                return result
+            finally:
+                pending.remove(requestId)
+                responses.close()
+
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>):
+            const command: SyncChunksCommand = {operation: "chunks.sync", requestId, positions}
+            const result = await request(requestId, command)
+            assert result.chunks != null else "Realtime returned the wrong response to chunks.sync"
+            assert result.chunks.worldId == worldId else "Realtime chunks.sync returned a different world"
+            return result.chunks
+
+        async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>):
+            const command: ApplyBlockEditsCommand = {operation: "blocks.apply", requestId, edits}
+            const result = await request(requestId, command)
+            assert result.blocks != null else "Realtime returned the wrong response to blocks.apply"
+            assert result.blocks.worldId == worldId else "Realtime blocks.apply returned a different world"
+            return result.blocks
+
+        async def close():
+            failPending("Realtime connection is closing")
+            await realtime.close()
+
+        const connection: WorldBackendConnection = {ready, syncChunks, applyBlocks, close}
+        return connection
+
+    return {contract, bootstrap, content, terrainChunks, connect}

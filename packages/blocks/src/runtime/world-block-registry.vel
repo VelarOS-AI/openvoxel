@@ -23,17 +23,16 @@ export type WorldBlockRegistryIndex:
     /// 只验证一个 ID 是否存在，避免调用方为了校验而取得未使用的字符串。
     requireRuntimeId: (runtimeId: number) -> null
 
-/// 世界注册表的三个结果：当前可查询内容、需要持久化的完整快照，以及缺失内容。
-/// missingStates 保留当前缺失 Mod 的历史映射，重装对应 Mod 后可恢复原 ID。
+/// 世界注册表把当前可查询内容与需要持久化的完整快照绑定在一起。
 export type WorldBlockRegistry:
+    /// 基础目录与当前世界 Mod 贡献合成后的完整活动定义。
+    source: readonly BlockCatalogSource
     /// 只包含当前可用基础内容和已安装 Mod 内容的运行时索引。
     registry: BlockRegistry
     /// 包含活动与缺失映射的完整持久化快照。
     snapshot: readonly WorldBlockRegistrySnapshot
-    /// 当前世界完整映射的常数时间索引，包含缺失 Mod 状态。
+    /// 当前世界完整映射的常数时间索引。
     index: WorldBlockRegistryIndex
-    /// 快照中仍有 ID、但当前目录中没有定义的状态。
-    missingStates: readonly List<readonly WorldBlockStateMapping>
 
 def requireOwner(owner: string):
     assert Text.matches(owner, r"^[a-z][a-z0-9_.-]*$") else "Block catalog contribution owner must be a lowercase namespace"
@@ -85,7 +84,6 @@ export def createWorldBlockRegistryIndex(snapshot: readonly WorldBlockRegistrySn
 
     return {snapshot: checked, stateKeyForRuntimeId, runtimeIdForStateKey, requireRuntimeId}
 
-/// 缺失 Mod 状态也保留在索引中，因此仍然可以解释其历史 runtimeId。
 export def worldBlockStateKey(index: readonly WorldBlockRegistryIndex, runtimeId: number) -> string:
     return index.stateKeyForRuntimeId(runtimeId)
 
@@ -115,33 +113,8 @@ def registerCatalogContent(
         assert blocksByKey.get(block.key) == null else f"Duplicate contributed block type {block.key}"
         blocksByKey.set(block.key, block)
 
-/// 显式状态别名只移动既有映射，确保内容改名时 runtimeId 保持稳定。
-/// 只有旧状态已经从当前目录消失、新状态真实存在时，别名才是有效的。
-def applyAliases(contributions: readonly List<readonly BlockCatalogContribution>, mappings: List<WorldBlockStateMapping>, activeStateKeys: Set<string>):
-    const aliasSources: Set<string> = Set()
-    const aliasTargets: Set<string> = Set()
-    for contribution in contributions:
-        for alias in contribution.stateAliases:
-            assert belongsToOwner(alias.from, contribution.owner) else f"State alias {alias.from} is outside contribution namespace {contribution.owner}"
-            assert belongsToOwner(alias.to, contribution.owner) else f"State alias {alias.to} is outside contribution namespace {contribution.owner}"
-            assert alias.from != alias.to else f"State alias {alias.from} cannot target itself"
-            assert not (alias.from in aliasSources) else f"Duplicate state alias source {alias.from}"
-            assert not (alias.to in aliasTargets) else f"Duplicate state alias target {alias.to}"
-            assert not (alias.from in activeStateKeys) else f"State alias source {alias.from} is still active"
-            assert alias.to in activeStateKeys else f"State alias target {alias.to} is not active"
-            aliasSources.add(alias.from)
-            aliasTargets.add(alias.to)
-            let sourceIndex: number? = null
-            for mapping, index in mappings:
-                if mapping.stateKey == alias.from:
-                    sourceIndex = index
-                    break
-            if sourceIndex == null: continue
-            assert not mappings.some(mapping => mapping.stateKey == alias.to) else f"State alias target {alias.to} already has a runtime id"
-            mappings[sourceIndex] = {runtimeId: mappings[sourceIndex].runtimeId, stateKey: alias.to}
-
-/// 合成当前世界的完整注册表：恢复历史映射、应用别名，再追加新 Mod 状态。
-/// previous 为空表示创建新世界；非空表示打开已有世界并以快照为 ID 权威。
+/// 合成当前世界的完整注册表。previous 为空表示创建新世界；非空表示打开已有
+/// 世界，并要求快照与清单锁定的 Content Pack 状态集合完全一致。
 export def createWorldBlockRegistry(
     baseCatalog: readonly BlockCatalogSource,
     contributions: readonly List<readonly BlockCatalogContribution> = [],
@@ -163,8 +136,8 @@ export def createWorldBlockRegistry(
         owners.add(contribution.owner)
         registerCatalogContent(contribution.catalog, contribution.owner, statesByKey, blocksByKey)
 
-    // 第二步：新世界从基础映射开始；已有世界完整恢复快照中的历史映射。
-    const mappings: List<WorldBlockStateMapping> = []
+    // 第二步：新世界从基础映射开始；已有世界读取清单中的精确快照。
+    const mappings: List<readonly WorldBlockStateMapping> = []
     let nextModRuntimeId = firstModBlockStateRuntimeId
     if previous == null:
         for state in baseCatalog.states:
@@ -172,12 +145,16 @@ export def createWorldBlockRegistry(
             mappings.append(WorldBlockStateMapping.from(state))
     else:
         const snapshot = WorldBlockRegistrySnapshot.parse(validateWorldBlockRegistrySnapshot(previous))
-        mappings.extend(snapshot.states)
+        for mapping in snapshot.states: mappings.append(mapping)
         nextModRuntimeId = snapshot.nextModRuntimeId
 
-    // 第三步：先应用显式改名，再检查所有历史映射仍然一一对应。
+    // 第三步：已存在世界必须与清单锁定的 Content Pack 状态集合完全一致；
+    // 同 owner 的其他构建会在进入注册表前按内容哈希拒绝。
     const activeStateKeys = Set(statesByKey.keys())
-    applyAliases(contributions, mappings, activeStateKeys)
+    if previous != null:
+        assert mappings.size == activeStateKeys.size else "World block registry snapshot does not match the active content set"
+        for mapping in mappings:
+            assert mapping.stateKey in activeStateKeys else f"World block registry contains inactive state {mapping.stateKey}"
 
     const mappedRuntimeIds: Set<number> = Set()
     const mappedStateKeys: Set<string> = Set()
@@ -187,7 +164,7 @@ export def createWorldBlockRegistry(
         mappedRuntimeIds.add(mapping.runtimeId)
         mappedStateKeys.add(mapping.stateKey)
 
-    // 第四步：低位区间只属于基础目录；世界快照不能把缺失 Mod 或任意状态塞进该区间。
+    // 第四步：低位区间只属于基础目录；世界快照不能把 Mod 状态塞进该区间。
     for mapping in mappings:
         if mapping.runtimeId >= firstModBlockStateRuntimeId: continue
         const base = baseCatalog.states.find(state => state.runtimeId == mapping.runtimeId)
@@ -238,10 +215,7 @@ export def createWorldBlockRegistry(
         const mutableBlock = BlockDefinition.parse(block)
         activeBlocks.append(BlockDefinition.from(mutableBlock, {defaultStateRuntimeId}))
 
-    // 第七步：保留缺失内容的映射，生成完整快照和当前可用运行时目录。
-    const missingStates = mappings
-        .filter(mapping => not (mapping.stateKey in activeStateKeys))
-        .sorted(by=mapping => mapping.runtimeId)
+    // 第七步：生成完整快照和当前可用运行时目录。
     const snapshot: WorldBlockRegistrySnapshot = {
         formatVersion: 1,
         nextModRuntimeId,
@@ -255,4 +229,4 @@ export def createWorldBlockRegistry(
         blocks: activeBlocks,
         states: activeStates.sorted(by=state => state.runtimeId),
     }
-    return {registry: createBlockRegistry(source), snapshot: index.snapshot, index, missingStates}
+    return {source, registry: createBlockRegistry(source), snapshot: index.snapshot, index}

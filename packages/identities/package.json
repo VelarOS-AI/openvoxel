@@ -1,6 +1,6 @@
 {
   "name": "@openvoxel/identities",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
@@ -33,10 +33,10 @@
     "build": "velar build"
   },
   "dependencies": {
-    "@velarscript-labs/yaml": "0.1.4"
+    "@velarscript-labs/yaml": "0.1.5"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.16.0",
-    "@velarscript/node": "0.16.0"
+    "@velarscript/cli": "0.20.0",
+    "@velarscript/node": "0.20.0"
   }
 }

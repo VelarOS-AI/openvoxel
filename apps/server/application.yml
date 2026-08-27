@@ -1,5 +1,3 @@
-configVersion: 1
-
 server:
   host: 127.0.0.1
   port: 3000
@@ -17,6 +15,7 @@ server:
     queuedBytes: 1048576
     pendingSendBytes: 1048576
     connections: 128
+    sessionDrainMilliseconds: 5000
 
 database:
   path: openvoxel.sqlite
@@ -24,3 +23,15 @@ database:
   queueCapacity: 64
   maxRows: 262144
   maxResultBytes: 67108864
+
+# Content Pack 是构建后的 JSON 产物。这里仅决定服务器安装哪些产物，以及新世界
+# 在未显式选择时启用哪些 owner；人工 YAML 仍留在各 Mod 源目录中。
+content:
+  packArtifacts: []
+  defaultPacks: []
+
+worldRuntime:
+  # 只缓存玩家修改的稀疏 Chunk；固定地形始终由种子按需生成。
+  activeChunkCapacity: 2048
+  # 同时限制稀疏覆盖总数，避免少量被完全改写的 Chunk 占用无界内存。
+  activeOverrideCapacity: 262144

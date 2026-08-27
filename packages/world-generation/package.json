@@ -1,6 +1,6 @@
 {
   "name": "@openvoxel/world-generation",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
@@ -44,10 +44,10 @@
     "quality": "velar run tools/quality-report.vel"
   },
   "dependencies": {
-    "@openvoxel/blocks": "0.1.0",
-    "@openvoxel/identities": "0.1.0",
-    "@openvoxel/world": "0.1.0",
-    "@velarscript-labs/yaml": "0.1.4",
-    "@velarscript-labs/noise": "0.1.5"
+    "@openvoxel/blocks": "0.2.0",
+    "@openvoxel/identities": "0.2.0",
+    "@openvoxel/world": "0.2.0",
+    "@velarscript-labs/yaml": "0.1.5",
+    "@velarscript-labs/noise": "0.1.6"
   }
 }

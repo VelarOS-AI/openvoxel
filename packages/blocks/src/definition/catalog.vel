@@ -107,30 +107,23 @@ export type BlockCatalogArtifact:
     /// 已完成状态展开和语义验证、并对重复组件做过归并的紧凑目录。
     catalog: PackedBlockCatalogSource
 
-/// 状态改名的显式声明。世界注册表会把 from 的既有 runtimeId 移动到 to。
-export type BlockStateAlias:
-    from: string
-    to: string
-
 /// Mod 以自己的命名空间贡献内容，世界注册表负责分配最终 runtimeId。
 export type BlockCatalogContribution:
     /// Mod 拥有的命名空间，例如 farming；所有贡献 key 都必须属于它。
     owner: string
     /// Mod 编译后的类型和状态内容，其中临时 runtimeId 不会直接写入世界。
     catalog: BlockCatalogSource
-    /// 内容改名时用于保留已有世界 runtimeId 的显式映射。
-    stateAliases: List<BlockStateAlias>
 
 /// 世界快照中的最小持久化单元，只保存数字 ID 与稳定状态键。
 export type WorldBlockStateMapping:
-    runtimeId: number
-    stateKey: string
+    readonly runtimeId: number
+    readonly stateKey: string
 
-/// 世界快照持久化完整状态映射，使暂时缺少的 Mod 内容仍能保留原 ID。
+/// 世界快照持久化当前 Content Pack 集合的完整状态映射。
 export type WorldBlockRegistrySnapshot:
     /// 世界注册表快照格式版本。
-    formatVersion: number
+    readonly formatVersion: number
     /// 下一个可用于新 Mod 状态的 UInt32 ID。
-    nextModRuntimeId: number
-    /// 基础状态、活动 Mod 状态和缺失 Mod 状态的完整映射。
-    states: List<WorldBlockStateMapping>
+    readonly nextModRuntimeId: number
+    /// 基础状态与当前 Content Pack 中 Mod 状态的完整映射。
+    readonly states: readonly List<readonly WorldBlockStateMapping>

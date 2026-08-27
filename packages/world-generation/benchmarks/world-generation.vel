@@ -21,6 +21,7 @@ type BenchmarkRun:
         generator: defaultGenerator,
         generatorHash: defaultGeneratorHash,
         spawn: {x: 0, y: 65, z: 0},
+        content: {contentHash: "0".repeat(64), packs: []},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
     })
     const generator = worldGenerator(manifest)

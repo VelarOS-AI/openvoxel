@@ -1,0 +1,27 @@
+import {monotonic} from "velar/time"
+import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {worldContentResponse} from "../src/presentation/world-content.vel"
+import {worldBootstrapResponse} from "../src/presentation/world.vel"
+
+/// 内容目录和世界启动信息是高频只读投影。基准重复构造响应，检查 presentation
+/// 层是否意外深拷贝已经由 LoadedWorld 保证不可变的方块目录与注册表。
+@main:
+    const runtime = worldRuntime(memoryWorldStore())
+    try:
+        const manifest = await runtime.createWorld({id: "benchmark", name: "Benchmark", seed: "presentation"})
+        const content = await runtime.worldContent(manifest.id)
+        const durations: List<number> = []
+        let expectedChecksum: number? = null
+        for runIndex in range(5):
+            const started = monotonic()
+            let checksum = 0
+            for iteration in range(1000):
+                const catalog = worldContentResponse(content)
+                const bootstrap = worldBootstrapResponse(manifest, content)
+                checksum += catalog.states.size + bootstrap.blockRegistry.states.size
+            durations.append(monotonic() - started)
+            if expectedChecksum == null: expectedChecksum = checksum
+            else: assert checksum == expectedChecksum else "Presentation benchmark result changed"
+        const median = durations.sorted()[2]
+        print(f"presentation projections=2000 runs=5 medianMs={median} averageProjectionMs={median / 2000} checksum={expectedChecksum}")
+    finally: await runtime.close()

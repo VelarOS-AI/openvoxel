@@ -1,0 +1,133 @@
+import {expect} from "velar/test"
+import {blockCatalogVersion, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {ClientContractResponse, GenerationSampleResponse, RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBootstrapResponse, WorldContentResponse, chunkBlockIndexOrder, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
+import {TerrainSample, defaultGenerator, sampleTerrain} from "@openvoxel/world-generation"
+import {emptyChunk, setChunkBlock} from "@openvoxel/world"
+import {BlockChangeBatch, ChunkDelta, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {worldContentResponse} from "../src/presentation/world-content.vel"
+import {generationSampleResponse, terrainChunkBatchResponse, terrainChunkResponse} from "../src/presentation/chunk.vel"
+import {clientContractResponse} from "../src/presentation/client-contract.vel"
+import {realtimeBlockChanges, realtimeChunkDeltas} from "../src/presentation/realtime.vel"
+import {worldBootstrapResponse} from "../src/presentation/world.vel"
+
+const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+
+test "server presentation projects fixed terrain into the wire palette":
+    const chunk = emptyChunk({x: -1, y: 2, z: 3}, 16, airBlock)
+    setChunkBlock(chunk, {x: 15, y: 0, z: 1}, stoneBlock)
+    const response = terrainChunkResponse(chunk)
+    expect(TerrainChunkResponse.is(response)).toBe(true)
+    expect(response.position).toEqual({x: -1, y: 2, z: 3})
+    expect(response.palette).toEqual([0, stoneBlock])
+    expect(response.indices.size).toBe(4096)
+    expect(response.indices[31]).toBe(1)
+
+test "server presentation assembles current generation and client metadata":
+    const runtime = worldRuntime(memoryWorldStore())
+    const manifest = await runtime.createWorld({id: "bootstrap", name: "Bootstrap", seed: "protocol-seed"})
+    const content = await runtime.worldContent(manifest.id)
+    const catalog = worldContentResponse(content)
+    expect(WorldContentResponse.is(catalog)).toBe(true)
+    expect(catalog.schemaVersion).toBe(3)
+    expect(catalog.catalogVersion).toBe(blockCatalogVersion)
+    expect(catalog.stateMapHash.size).toBe(64)
+    expect(catalog.content.contentHash.size).toBe(64)
+    expect(catalog.generator).toBe(defaultGenerator)
+    expect(catalog.generatorHash.size).toBe(64)
+    expect(catalog.generatorCatalogHash.size).toBe(64)
+    expect(catalog.seaLevel).toBe(64)
+    expect(catalog.blocks.size).toBe(38)
+    expect(catalog.componentProfiles.size).toBe(38)
+    expect(catalog.states.size).toBe(183)
+    // presentation 只改变外层线上形状，大型不可变目录必须直接复用世界快照。
+    expect(catalog.states == content.catalog.states).toBe(true)
+    expect(catalog.resources == content.resources).toBe(true)
+    expect(catalog.states.every(state => state.componentProfileId >= 0 and state.componentProfileId < catalog.componentProfiles.size)).toBe(true)
+    expect(catalog.resources.materials).toEqual(catalog.resources.materials.sorted())
+    expect(catalog.resources.models).toEqual(catalog.resources.models.sorted())
+    expect(catalog.resources.tints).toEqual(catalog.resources.tints.sorted())
+    expect(catalog.resources.animations).toEqual(catalog.resources.animations.sorted())
+
+    const sample = generationSampleResponse("protocol", sampleTerrain("protocol-seed", {x: 0, z: 0}))
+    expect(sample.worldId).toBe("protocol")
+    expect(sample.temperature >= 0 and sample.temperature <= 15).toBe(true)
+    expect(sample.humidity >= 0 and sample.humidity <= 15).toBe(true)
+    expect(GenerationSampleResponse.is(sample)).toBe(true)
+    expect(TerrainSample.is(sample)).toBe(true)
+
+    const bootstrap = worldBootstrapResponse(manifest, content)
+    expect(WorldBootstrapResponse.is(bootstrap)).toBe(true)
+    expect(bootstrap.protocolVersion).toBe(protocolVersion)
+    expect(bootstrap.clientContractVersion).toBe(clientContractVersion)
+    expect(bootstrap.blockRegistry.states.size).toBe(catalog.states.size)
+    expect(bootstrap.blockRegistry == manifest.blockRegistry).toBe(true)
+    expect(bootstrap.content.contentHash).toBe(catalog.content.contentHash)
+    expect(bootstrap.contentStateMapHash).toBe(catalog.stateMapHash)
+    expect(bootstrap.maximumChunkBatchSize).toBe(64)
+
+    const contract = clientContractResponse({requestBodyBytes: 65536, realtimeMessageBytes: 65536})
+    expect(ClientContractResponse.is(contract)).toBe(true)
+    expect(contract.contractVersion).toBe(clientContractVersion)
+    expect(contract.http).toEqual({encoding: "json", descriptionFormat: "openapi-3.1"})
+    expect(contract.realtime.encoding).toBe("messagepack")
+    expect(contract.realtime.commands).toEqual(["chunks.sync", "blocks.apply"])
+    expect(contract.realtime.events).toEqual(["world.ready", "chunks.synced", "blocks.applied", "blocks.changed", "error"])
+    expect(contract.capabilities).toContain("terrain-chunk-batches")
+    expect(contract.capabilities).toContain("world-scoped-realtime")
+    expect(contract.chunks.indexOrder).toBe(chunkBlockIndexOrder)
+    expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
+    expect(contract.chunks.localIndices).toBe("uint16-list")
+    expect(contract.errorCodes).toContain("request.invalid")
+    await runtime.close()
+
+test "server batch presentation preserves world-runtime order":
+    const first = emptyChunk({x: 2, y: 3, z: 4}, 16, airBlock)
+    const second = emptyChunk({x: -2, y: 1, z: 0}, 16, airBlock)
+    const response = terrainChunkBatchResponse("protocol", [first, second])
+    expect(TerrainChunkBatchResponse.is(response)).toBe(true)
+    expect(response.worldId).toBe("protocol")
+    expect(response.chunks.size).toBe(2)
+    expect(response.chunks[0].position.x).toBe(2)
+    expect(response.chunks[1].position.x).toBe(-2)
+
+test "realtime presentation sends only committed changes and preserves delta order":
+    const batch: BlockChangeBatch = {
+        worldId: "protocol",
+        sequence: 4,
+        changes: [
+            {
+                position: {x: 0, y: 30, z: 0},
+                chunk: {x: 0, y: 1, z: 0},
+                local: {x: 0, y: 14, z: 0},
+                previousBlockStateRuntimeId: airBlock,
+                blockStateRuntimeId: stoneBlock,
+                revision: 4,
+                changed: true,
+            },
+            {
+                position: {x: 1, y: 30, z: 0},
+                chunk: {x: 0, y: 1, z: 0},
+                local: {x: 1, y: 14, z: 0},
+                previousBlockStateRuntimeId: stoneBlock,
+                blockStateRuntimeId: stoneBlock,
+                revision: 4,
+                changed: false,
+            },
+        ],
+    }
+    const changes = realtimeBlockChanges(batch)
+    expect(changes.size).toBe(1)
+    expect(RealtimeBlockChange.is(changes[0])).toBe(true)
+    expect(changes[0].revision).toBe(4)
+
+    const deltas: List<ChunkDelta> = [
+        {position: {x: 2, y: 1, z: 0}, revision: 7, overrides: []},
+        {position: {x: -2, y: 1, z: 0}, revision: 0, overrides: []},
+    ]
+    const projected = realtimeChunkDeltas(deltas)
+    expect(projected.size).toBe(2)
+    expect(RealtimeChunkDelta.is(projected[0])).toBe(true)
+    expect(projected[0].position.x).toBe(2)
+    expect(projected[1].position.x).toBe(-2)

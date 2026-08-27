@@ -9,3 +9,8 @@ export class WorldNotFoundError extends Error:
 /// 存储适配器只负责实现清单的保存能力。
 export class WorldAlreadyExistsError extends Error:
     constructor(const worldId: string): super(f"World '{worldId}' already exists")
+
+/// 世界用例的结构已经通过 Runtime Type，但语义值不满足公开命令约束。
+/// 这类错误可以安全映射为客户端输入错误；存储和生成器内部断言仍保持内部故障。
+export class WorldRequestError extends Error:
+    constructor(text: string): super(text)

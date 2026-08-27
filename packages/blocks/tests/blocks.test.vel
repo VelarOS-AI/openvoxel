@@ -68,7 +68,7 @@ test "Mod compiler expands finite source states before world id allocation":
     expect(farming.catalog.states[0].stateKey).toBe("farming:tomato_crop[age=0]")
     expect(farming.catalog.states[3].stateKey).toBe("farming:tomato_crop[age=3]")
 
-test "world registry assigns Mod states above the built-in range and keeps missing mappings":
+test "world registry assigns Mod states above the built-in range and requires exact content":
     const farming = contribution("farming", "farming:tomato_crop")
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [farming])
     const tomatoRuntimeId = worldBlockStateRuntimeId(installed.index, "farming:tomato_crop")
@@ -76,23 +76,12 @@ test "world registry assigns Mod states above the built-in range and keeps missi
     expect(tomatoRuntimeId > 0xffff).toBe(true)
     expect(installed.registry.requireStateByRuntimeId(tomatoRuntimeId).blockKey).toBe("farming:tomato_crop")
 
-    const unavailable = createWorldBlockRegistry(baseBlockCatalogSource, [], installed.snapshot)
-    expect(unavailable.missingStates.size).toBe(1)
-    expect(unavailable.missingStates[0].runtimeId).toBe(tomatoRuntimeId)
-
-    const restored = createWorldBlockRegistry(baseBlockCatalogSource, [farming], unavailable.snapshot)
+    expect(() => createWorldBlockRegistry(baseBlockCatalogSource, [], installed.snapshot)).toThrow()
+    const restored = createWorldBlockRegistry(baseBlockCatalogSource, [farming], installed.snapshot)
     expect(worldBlockStateRuntimeId(restored.index, "farming:tomato_crop")).toBe(tomatoRuntimeId)
-    expect(restored.missingStates.size).toBe(0)
 
-test "explicit Mod aliases move an existing world mapping to the renamed state":
+test "world registry rejects a renamed state against an existing snapshot":
     const original = contribution("farming", "farming:tomato_crop")
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [original])
-    const originalRuntimeId = worldBlockStateRuntimeId(installed.index, "farming:tomato_crop")
-    const renamed: BlockCatalogContribution = {
-        owner: "farming",
-        catalog: contribution("farming", "farming:tomato_plant").catalog,
-        stateAliases: [{from: "farming:tomato_crop", to: "farming:tomato_plant"}],
-    }
-    const updated = createWorldBlockRegistry(baseBlockCatalogSource, [renamed], installed.snapshot)
-    expect(worldBlockStateRuntimeId(updated.index, "farming:tomato_plant")).toBe(originalRuntimeId)
-    expect(updated.missingStates.size).toBe(0)
+    const renamed = contribution("farming", "farming:tomato_plant")
+    expect(() => createWorldBlockRegistry(baseBlockCatalogSource, [renamed], installed.snapshot)).toThrow()

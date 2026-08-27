@@ -1,11 +1,13 @@
 import {TerrainSample} from "@openvoxel/world-generation"
+import {ContentCatalog} from "@openvoxel/content"
 import {BlockPosition, Chunk, ChunkPosition, Coordinate2, WorldManifest} from "@openvoxel/world"
-import {BlockChange, worldBlockCommands} from "./block-commands.vel"
+import {BlockChangeBatch, BlockEdit, worldBlockCommands} from "./block-commands.vel"
 import {worldChunkQueries} from "./chunk-queries.vel"
-import {WorldStore} from "./contracts.vel"
+import {ChunkDelta, WorldStore} from "./contracts.vel"
 import {CreateWorld} from "./world-creation.vel"
 import {WorldAlreadyExistsError} from "./world-errors.vel"
-import {WorldContentProvider, worldSessionCache} from "./world-sessions.vel"
+import {worldSessionCache} from "./world-sessions.vel"
+import {WorldContentSnapshot} from "./world-content.vel"
 
 /// WorldRuntime 是世界应用层的唯一公开门面。
 ///
@@ -16,22 +18,57 @@ export type WorldRuntime:
     createWorld: (command: CreateWorld) -> Promise<WorldManifest>
     findWorld: (worldId: string) -> Promise<WorldManifest?>
     requireWorld: (worldId: string) -> Promise<WorldManifest>
-    chunk: (worldId: string, position: ChunkPosition) -> Promise<Chunk>
-    chunks: (worldId: string, positions: List<ChunkPosition>) -> Promise<List<Chunk>>
-    terrainSample: (worldId: string, position: Coordinate2) -> Promise<TerrainSample>
-    setBlock: (worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> Promise<BlockChange>
+    worldContent: (worldId: string) -> Promise<readonly WorldContentSnapshot>
+    chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
+    chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
+    terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
+    editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
+    subscribeBlockChanges: (listener: (batch: readonly BlockChangeBatch) -> null) -> WorldRuntimeSubscription
     /// 释放一个世界的可重建运行时上下文，不删除任何持久化数据。
     unloadWorld: (worldId: string) -> Promise<null>
     close: () -> Promise<null>
 
-export def worldRuntime(store: WorldStore, content: WorldContentProvider? = null) -> WorldRuntime:
+export type WorldRuntimeSubscription:
+    close: () -> null
+
+export type WorldRuntimeOptions:
+    /// 每个活动世界最多驻留多少个玩家增量 Chunk；固定地形不进入这个缓存。
+    activeChunkCapacity: number
+    /// 每个活动世界最多驻留多少条稀疏方块覆盖，防止少量极密 Chunk 耗尽内存。
+    activeOverrideCapacity: number
+
+export const defaultWorldRuntimeOptions: readonly WorldRuntimeOptions = {
+    activeChunkCapacity: 2048,
+    activeOverrideCapacity: 262144,
+}
+
+export def worldRuntime(
+    store: WorldStore,
+    content: ContentCatalog? = null,
+    options: readonly WorldRuntimeOptions = defaultWorldRuntimeOptions,
+) -> WorldRuntime:
+    assert options.activeChunkCapacity.isInteger() and options.activeChunkCapacity > 0 else "Active Chunk capacity must be a positive integer"
+    assert options.activeOverrideCapacity.isInteger() and options.activeOverrideCapacity > 0 else "Active override capacity must be a positive integer"
     const sessions = (
         content == null
-            ? worldSessionCache(store)
-            : worldSessionCache(store, content)
+            ? worldSessionCache(store, activeChunkCapacity=options.activeChunkCapacity, activeOverrideCapacity=options.activeOverrideCapacity)
+            : worldSessionCache(store, content, options.activeChunkCapacity, options.activeOverrideCapacity)
     )
-    const queries = worldChunkQueries(sessions, store)
-    const commands = worldBlockCommands(sessions, store)
+    const queries = worldChunkQueries(sessions)
+    const listeners: Map<number, (batch: readonly BlockChangeBatch) -> null> = Map()
+    let nextListenerId = 1
+
+    def publishBlockChanges(batch: readonly BlockChangeBatch):
+        // 事件订阅是提交后的通知，不是持久化事务的一部分。某个宿主监听器失败时
+        // 不能把已经可靠提交的命令伪装成失败，也不能阻断其他订阅者；客户端可用
+        // chunks.sync 按 revision 重新收敛。
+        for listener in listeners.values():
+            try: listener(batch)
+            catch _error: pass
+
+    const commands = worldBlockCommands(sessions, publishBlockChanges)
     const creations: Map<string, Promise<WorldManifest>> = Map()
 
     async def persistWorld(command: CreateWorld) -> WorldManifest:
@@ -63,23 +100,44 @@ export def worldRuntime(store: WorldStore, content: WorldContentProvider? = null
 
     async def requireWorld(worldId: string) -> WorldManifest: return (await sessions.require(worldId)).manifest
 
-    async def unloadWorld(worldId: string): await sessions.unload(worldId)
+    async def worldContent(worldId: string) -> readonly WorldContentSnapshot:
+        return (await sessions.require(worldId)).contentSnapshot
+
+    async def unloadWorld(worldId: string):
+        await commands.drain(worldId)
+        await sessions.unload(worldId)
+
+    def subscribeBlockChanges(listener: (batch: readonly BlockChangeBatch) -> null) -> WorldRuntimeSubscription:
+        const id = nextListenerId
+        nextListenerId += 1
+        assert not listeners.has(id) else "World runtime listener identifier space is exhausted"
+        listeners.set(id, listener)
+
+        def closeSubscription(): listeners.remove(id)
+
+        return {close: closeSubscription}
 
     /// 先停止会话缓存，再关闭存储。这样在途世界载入可以完成必要的注册表快照
     /// 写回，不会与数据库连接关闭发生竞态。
     async def close():
         await Promise.all(creations.values())
+        await commands.close()
         await sessions.close()
         await store.close()
+        listeners.clear()
 
     return {
         createWorld,
         findWorld,
         requireWorld,
+        worldContent,
         chunk: queries.chunk,
         chunks: queries.chunks,
+        terrainChunks: queries.terrainChunks,
+        chunkDeltas: queries.chunkDeltas,
         terrainSample: queries.terrainSample,
-        setBlock: commands.setBlock,
+        editBlocks: commands.editBlocks,
+        subscribeBlockChanges,
         unloadWorld,
         close,
     }

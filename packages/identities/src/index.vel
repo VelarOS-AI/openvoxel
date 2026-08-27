@@ -1,4 +1,4 @@
 export {IdentityCatalogArtifact} from "./catalog.vel"
 export {BuiltinAnimationKeys, BuiltinBiomeKeys, BuiltinBlockIdentities, BuiltinBlockKeys, BuiltinBlockLootKeys, BuiltinBlockModelKeys, BuiltinBlockTags, BuiltinBlockTextureKeys, BuiltinCatalogKeys, BuiltinFluidKeys, BuiltinHandlerKeys, BuiltinIdentities, BuiltinIdentityDocument, BuiltinLootKeys, BuiltinMaterialKeys, BuiltinModelKeys, BuiltinNamespaces, BuiltinShapeKeys, BuiltinSoundKeys, BuiltinTerrainTypeKeys, BuiltinTextureKeys, BuiltinTintKeys, BuiltinToolKeys, BuiltinTranslationKeys, BuiltinWorldGeneratorPalettes, BuiltinWorldGenerators} from "./identities.vel"
-export {IdentityLeafIndex, IdentityResolution, collectIdentityLeafPaths, resolveIdentityReferences} from "./identity-resolution.vel"
+export {IdentityLeafIndex, IdentityResolution, collectIdentityLeafPaths, mergeIdentityTrees, resolveIdentityReferences} from "./identity-resolution.vel"
 export {builtinBlockIdentities, builtinIdentities, identityCatalogHash, identityTree} from "./runtime.vel"

@@ -1,52 +1,155 @@
-import {BlockPosition, ChunkPosition, LocalPosition, chunkBlock, locateBlock} from "@openvoxel/world"
-import {WorldStore} from "./contracts.vel"
+import {BlockPosition, Chunk, ChunkPosition, LocalPosition, chunkBlock, chunkKey, locateBlock, maximumWorldCoordinate} from "@openvoxel/world"
+import {BlockOverrideWrite} from "./contracts.vel"
+import {maximumBlockEditBatchSize} from "./runtime-limits.vel"
+import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
 
-/// 一次方块修改完成后的应用结果。
-/// 它同时给出世界坐标、所属 Chunk、本地坐标和前后状态，协议层可以直接把它
-/// 投影成 HTTP 响应或实时事件，不需要再次查询世界或重复坐标换算。
+/// 一条批量修改命令中的目标状态。
+///
+/// 世界身份不放在每一项里：调用者先选择世界，再提交这个世界内的编辑列表。
+/// 这样实时连接绑定世界后不会反复携带、校验可能互相矛盾的 worldId。
+export type BlockEdit:
+    readonly position: readonly BlockPosition
+    readonly blockStateRuntimeId: number
+
+/// 一项方块修改完成后的应用结果。
+///
+/// revision 是所属 Chunk 在整个批次提交后的最终版本。同一批次修改同一 Chunk
+/// 的多个方块时，这些结果拥有相同 revision，客户端不会看到批次内部的中间态。
 export type BlockChange:
-    worldId: string
-    position: BlockPosition
-    chunk: ChunkPosition
-    local: LocalPosition
-    previousBlockStateRuntimeId: number
-    blockStateRuntimeId: number
-    revision: number
+    readonly position: readonly BlockPosition
+    readonly chunk: readonly ChunkPosition
+    readonly local: readonly LocalPosition
+    readonly previousBlockStateRuntimeId: number
+    readonly blockStateRuntimeId: number
+    readonly revision: number
+    readonly changed: bool
 
-/// 方块命令服务只负责会改变世界状态的应用操作。
-/// 具体事务和并发写入顺序由 WorldDeltaStore 实现，运行层只计算需要保存的
-/// 稀疏覆盖值，并返回对客户端有意义的修改结果。
+/// 一次原子批量修改的完整结果。
+export type BlockChangeBatch:
+    readonly worldId: string
+    /// 同一世界内只对真实变化递增的有序事件号；幂等重放返回当前值。
+    readonly sequence: number
+    readonly changes: readonly List<readonly BlockChange>
+
+/// 世界命令服务只负责会改变世界状态的应用操作。
+///
+/// 具体事务和并发写入顺序由 WorldDeltaStore 实现；这里一次解析世界会话、验证
+/// 全部输入并计算稀疏覆盖，任何一项非法都会在写入前拒绝完整批次。
 export type WorldBlockCommands:
-    setBlock: (worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> Promise<BlockChange>
+    editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
+    drain: (worldId: string) -> Promise<null>
+    close: () -> Promise<null>
 
-export def worldBlockCommands(sessions: WorldSessionCache, store: WorldStore) -> WorldBlockCommands:
-    async def setBlock(worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> BlockChange:
+/// publish 在世界命令仍持有该世界顺序所有权时同步执行。这样两个连接同时编辑时，
+/// 持久化 revision、返回 sequence 和广播入队顺序三者严格一致。
+export def worldBlockCommands(
+    sessions: WorldSessionCache,
+    publish: (batch: readonly BlockChangeBatch) -> null,
+) -> WorldBlockCommands:
+    const pending: Map<string, Promise<BlockChangeBatch>> = Map()
+    const sequences: Map<string, number> = Map()
+    let closed = false
+
+    async def performEdit(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
+        if edits.size < 1: throw WorldRequestError("A block edit batch cannot be empty")
+        if edits.size > maximumBlockEditBatchSize:
+            throw WorldRequestError(f"A block edit batch cannot exceed {maximumBlockEditBatchSize} entries")
         const world = await sessions.require(worldId)
+        const generatedChunks: Map<string, Chunk> = Map()
+        const seenPositions: Set<string> = Set()
+        const chunks: List<ChunkPosition> = []
+        const locals: List<LocalPosition> = []
+        const bases: List<number> = []
+        const writes: List<BlockOverrideWrite> = []
 
-        // registry 验证这个状态当前有完整方块定义；index 再验证它确实属于这个
-        // 世界的数字身份空间。缺失 Mod 的历史 ID 仍保留在 index 中，但不能被
-        // 新命令主动写入，因为运行时已经没有对应方块行为和渲染定义。
-        world.blocks.registry.requireStateByRuntimeId(blockStateRuntimeId)
-        world.blocks.index.requireRuntimeId(blockStateRuntimeId)
+        for edit in edits:
+            const position = edit.position
+            if not (position.x.isInteger() and position.y.isInteger() and position.z.isInteger()):
+                throw WorldRequestError("Block edit coordinates must be integers")
+            if position.x.abs() > maximumWorldCoordinate or position.y.abs() > maximumWorldCoordinate or position.z.abs() > maximumWorldCoordinate:
+                throw WorldRequestError("Block edit coordinates exceed the supported world boundary")
+            // registry 验证当前有完整定义；index 再验证数字身份确实属于这个世界。
+            world.blocks.registry.requireStateByRuntimeId(edit.blockStateRuntimeId)
+            world.blocks.index.requireRuntimeId(edit.blockStateRuntimeId)
 
-        const located = locateBlock(position, world.manifest.chunkEdge)
-        const generated = world.generator.generate(located.chunk)
-        const baseBlockStateRuntimeId = chunkBlock(generated, located.local)
+            const located = locateBlock(edit.position, world.manifest.chunkEdge)
+            const positionKey = f"{located.chunk.x}:{located.chunk.y}:{located.chunk.z}:{located.local.x}:{located.local.y}:{located.local.z}"
+            if positionKey in seenPositions:
+                throw WorldRequestError(f"A block edit batch contains duplicate position {edit.position.x},{edit.position.y},{edit.position.z}")
+            seenPositions.add(positionKey)
 
-        // 玩家设置回生成器原值时不保存冗余覆盖；存储适配器会删除已有覆盖，
-        // 但仍推进 Chunk revision，让并发客户端能够观察到这次真实变化。
-        const overrideBlockStateRuntimeId = blockStateRuntimeId == baseBlockStateRuntimeId ? null : blockStateRuntimeId
-        const commit = await store.deltas.commitBlock(worldId, located.chunk, located.local, overrideBlockStateRuntimeId)
-        const previousBlockStateRuntimeId = commit.previousOverrideBlockStateRuntimeId ?? baseBlockStateRuntimeId
-        return {
-            worldId,
-            position,
-            chunk: located.chunk,
-            local: located.local,
-            previousBlockStateRuntimeId,
-            blockStateRuntimeId,
-            revision: commit.revision,
-        }
+            const generatedKey = chunkKey(located.chunk)
+            let generated = generatedChunks.get(generatedKey)
+            if generated == null:
+                generated = world.generator.generate(located.chunk)
+                generatedChunks.set(generatedKey, generated)
+            const baseBlockStateRuntimeId = chunkBlock(generated!, located.local)
 
-    return {setBlock}
+            chunks.append(located.chunk)
+            locals.append(located.local)
+            bases.append(baseBlockStateRuntimeId)
+            writes.append({
+                chunk: located.chunk,
+                local: located.local,
+                // 恢复到固定地形时删除覆盖，数据库只保存与种子生成结果不同的值。
+                blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId ? null : edit.blockStateRuntimeId,
+            })
+
+        const commits = await world.state.commitBlocks(writes)
+        assert commits.size == edits.size else "World delta store returned an incomplete block edit batch"
+        const changes: List<BlockChange> = []
+        for index in range(edits.size):
+            const edit = edits[index]
+            const commit = commits[index]
+            changes.append({
+                position: edit.position,
+                chunk: chunks[index],
+                local: locals[index],
+                previousBlockStateRuntimeId: commit.previousOverrideBlockStateRuntimeId ?? bases[index],
+                blockStateRuntimeId: edit.blockStateRuntimeId,
+                revision: commit.revision,
+                changed: commit.changed,
+            })
+        let sequence = sequences.get(worldId) ?? 0
+        const changed = changes.some(change => change.changed)
+        if changed:
+            sequence += 1
+            sequences.set(worldId, sequence)
+        const batch: BlockChangeBatch = {worldId, sequence, changes}
+        if changed: publish(batch)
+        return batch
+
+    async def editBlocks(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
+        assert not closed else "World block command service is closed"
+        const previous = pending.get(worldId)
+
+        async def runInOrder() -> BlockChangeBatch:
+            if previous != null:
+                try: await previous
+                catch _error: pass
+            return await performEdit(worldId, edits)
+
+        const operation = runInOrder()
+        pending.set(worldId, operation)
+        try: return await operation
+        finally:
+            if pending.get(worldId) == operation: pending.remove(worldId)
+
+    async def drain(worldId: string):
+        const operation = pending.get(worldId)
+        if operation == null: return
+        try: await operation
+        catch _error: pass
+
+    async def close():
+        if closed: return
+        closed = true
+        const active = pending.values()
+        for operation in active:
+            try: await operation
+            catch _error: pass
+        pending.clear()
+        sequences.clear()
+
+    return {editBlocks, drain, close}

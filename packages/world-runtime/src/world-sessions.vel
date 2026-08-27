@@ -1,24 +1,12 @@
-import {BlockCatalogContribution, WorldBlockRegistry, WorldBlockRegistrySnapshot, baseBlockCatalogSource, blockCatalogHash, createWorldBlockRegistry} from "@openvoxel/blocks"
-import {WorldGenerator, WorldGeneratorCatalogContribution, WorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator, worldGenerator, worldGeneratorCatalogHash} from "@openvoxel/world-generation"
+import {WorldBlockRegistry, baseBlockCatalogSource, createWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
+import {ContentCatalog, WorldContentSet, baseContentCatalog} from "@openvoxel/content"
+import {WorldGenerator, WorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator, worldGenerator} from "@openvoxel/world-generation"
 import {WorldManifest, initialChunkEdge} from "@openvoxel/world"
 import {WorldStore} from "./contracts.vel"
+import {ActiveWorldState, activeWorldState} from "./active-world-state.vel"
 import {CreateWorld, assembleWorldManifest} from "./world-creation.vel"
-import {WorldNotFoundError} from "./world-errors.vel"
-
-/// 一个目录集合描述某个世界当前启用的全部 Mod 方块内容。
-///
-/// revision 是这组输入的版本身份。任一 Mod 内容或 Mod 集合发生变化时，
-/// 调用方都必须给出新的 revision。运行时只比较这个稳定值，不需要反复扫描
-/// 和序列化整组目录，因此能够快速判断已加载世界是否需要刷新注册表。
-export type WorldContentSet:
-    revision: string
-    blockContributions: readonly List<readonly BlockCatalogContribution>
-    generatorContributions: readonly List<readonly WorldGeneratorCatalogContribution>
-
-/// 方块目录提供器以世界清单为输入，因此每个世界可以拥有不同的 Mod 集合。
-/// 它只回答“这个世界当前启用了什么”，不负责分配 runtimeId；runtimeId 的
-/// 延续、追加和持久化仍由 blocks 包的世界注册表完成。
-export type WorldContentProvider = (worldId: string) -> readonly WorldContentSet
+import {WorldNotFoundError, WorldRequestError} from "./world-errors.vel"
+import {WorldContentSnapshot, createWorldContentSnapshot} from "./world-content.vel"
 
 /// 已加载世界是 world-runtime 内部统一使用的世界上下文。
 ///
@@ -34,8 +22,12 @@ export type LoadedWorld:
     generator: WorldGenerator
     /// 当前世界合成后的生成器注册表。
     generators: WorldGeneratorRegistry
-    /// 构建 blocks 和 generator 时所使用的统一内容集合版本。
-    contentRevision: string
+    /// 与 manifest.content 完全匹配的已解析内容集合。
+    content: readonly WorldContentSet
+    /// 已压缩并聚合完成的客户端内容目录；与世界会话同生命周期。
+    contentSnapshot: readonly WorldContentSnapshot
+    /// 玩家增量的世界私有热状态；查询、写入和生命周期都通过这里收口。
+    state: ActiveWorldState
 
 /// 世界会话缓存负责 LoadedWorld 的完整生命周期。
 ///
@@ -52,24 +44,6 @@ export type WorldSessionCache:
     unload: (worldId: string) -> Promise<null>
     close: () -> Promise<null>
 
-/// 基础运行时没有 Mod；基础方块目录哈希就是它的缓存版本。
-def baseWorldContent(worldId: string) -> readonly WorldContentSet:
-    return {revision: f"{blockCatalogHash}:{worldGeneratorCatalogHash}", blockContributions: [], generatorContributions: []}
-
-/// 固定目录集合适合服务器启动时已经确定 Mod 列表的场景。
-/// revision 由装载 Mod 的上层编译入口提供，world-runtime 不猜测它的来源。
-export def fixedWorldContentProvider(
-    revision: string,
-    blockContributions: readonly List<readonly BlockCatalogContribution>,
-    generatorContributions: readonly List<readonly WorldGeneratorCatalogContribution> = [],
-) -> WorldContentProvider:
-    assert not revision.isBlank() else "World content revision cannot be blank"
-
-    def provide(worldId: string) -> readonly WorldContentSet:
-        return {revision, blockContributions, generatorContributions}
-
-    return provide
-
 /// 创建一个按世界隔离的会话缓存。
 ///
 /// loaded 保存已经完成的上下文；loading 保存正在进行的载入 Promise。同一个
@@ -77,79 +51,96 @@ export def fixedWorldContentProvider(
 /// 生成器和持久化快照最多构建一次。
 export def worldSessionCache(
     store: WorldStore,
-    content: WorldContentProvider = baseWorldContent,
+    contentCatalog: ContentCatalog = baseContentCatalog,
+    activeChunkCapacity: number = 2048,
+    activeOverrideCapacity: number = 262144,
 ) -> WorldSessionCache:
     const loaded: Map<string, LoadedWorld> = Map()
     const loading: Map<string, Promise<LoadedWorld?>> = Map()
 
+    def activeState(worldId: string, blocks: readonly WorldBlockRegistry) -> ActiveWorldState:
+        def validateBlockStateRuntimeId(runtimeId: number): requireWorldBlockStateRuntimeId(blocks.index, runtimeId)
+
+        return activeWorldState(worldId, store.deltas, activeChunkCapacity, activeOverrideCapacity, validateBlockStateRuntimeId)
+
     def requireContentSet(manifest: readonly WorldManifest) -> readonly WorldContentSet:
-        const active = content(manifest.id)
-        assert not active.revision.isBlank() else f"World {manifest.id} content revision cannot be blank"
-        return active
+        return contentCatalog.resolve(manifest.content)
 
-    def snapshotsEqual(left: readonly WorldBlockRegistrySnapshot, right: readonly WorldBlockRegistrySnapshot) -> bool:
-        return Json.stableStringify(left) == Json.stableStringify(right)
-
-    /// 把世界清单与当前目录集合合成为一份原子上下文。
-    /// createWorldBlockRegistry 会保留清单中缺失 Mod 的历史映射，并只为新增状态
-    /// 追加 runtimeId。生成器也在这里创建，确保它和 manifest 永远成对出现。
+    /// 把世界清单与其锁定的 Content Pack 集合合成为一份原子上下文。目录哈希
+    /// 和状态集合必须与清单完全一致；生成器也在这里创建，确保它和 manifest
+    /// 永远成对出现。
     def prepare(manifest: WorldManifest) -> LoadedWorld:
         const active = requireContentSet(manifest)
         const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions, manifest.blockRegistry)
         const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
-        const activeManifest = (
-            snapshotsEqual(manifest.blockRegistry, blocks.snapshot)
-                ? manifest
-                : WorldManifest.from(manifest, {blockRegistry: WorldBlockRegistrySnapshot.parse(blocks.snapshot)})
-        )
         return {
-            manifest: activeManifest,
+            manifest,
             blocks,
-            generator: worldGenerator(activeManifest, blocks, generators),
+            generator: worldGenerator(manifest, blocks, generators),
             generators,
-            contentRevision: active.revision,
+            content: active,
+            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
+            state: activeState(manifest.id, blocks),
         }
 
     /// 新世界先按 worldId 选择内容，再一次性建立两个注册表、生成器哈希和出生点。
     /// 返回值尚未进入缓存，调用方只有在清单保存成功后才调用 remember。
     def prepareNew(command: CreateWorld) -> LoadedWorld:
         const worldId = command.id.trim()
-        const active = content(worldId)
-        assert not active.revision.isBlank() else f"World {worldId} content revision cannot be blank"
+        const worldName = command.name.trim()
+        const worldSeed = command.seed.trim()
+        if worldId.isBlank() or worldId.size > 64:
+            throw WorldRequestError("World id must contain from 1 through 64 characters")
+        if worldName.isBlank() or worldName.size > 80:
+            throw WorldRequestError("World name must contain from 1 through 80 characters")
+        if worldSeed.isBlank() or worldSeed.size > 128:
+            throw WorldRequestError("World seed must contain from 1 through 128 characters")
+        const active = (
+            command.contentPacks == null
+                ? contentCatalog.defaultContent()
+                : contentCatalog.select(command.contentPacks)
+        )
         const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions)
         const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
         const generatorKey = command.generator ?? defaultGenerator
+        if generatorKey.isBlank() or generatorKey.size > 128 or not generators.catalog.generators.some(definition => definition.key == generatorKey):
+            throw WorldRequestError(f"Unknown world generator {generatorKey}")
         const generatorHash = generators.definitionHash(generatorKey)
         const generator = instantiateWorldGenerator(generatorKey, command.seed.trim(), initialChunkEdge, blocks, generators)
-        const manifest = assembleWorldManifest(command, blocks.snapshot, generatorHash, generator.findSpawn())
-        return {manifest, blocks, generator, generators, contentRevision: active.revision}
+        const manifest = assembleWorldManifest(command, blocks.snapshot, active.identity, generatorHash, generator.findSpawn())
+        return {
+            manifest,
+            blocks,
+            generator,
+            generators,
+            content: active,
+            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
+            state: activeState(manifest.id, blocks),
+        }
 
     def remember(world: LoadedWorld): loaded.set(world.manifest.id, world)
 
-    /// 从存储载入清单，或在目录 revision 改变后重建上下文。
-    /// 注册表快照发生变化时先写回存储，再替换内存缓存；外部永远看不到一份
-    /// 尚未持久化完成的活动注册表。
+    /// 从存储载入清单并重建上下文。Content Pack 构建或注册表状态不一致会直接
+    /// 拒绝载入，不在打开世界时改写持久化身份。
     async def activate(worldId: string) -> LoadedWorld?:
         const existing = loaded.get(worldId)
-        const foundManifest = existing?.manifest ?? await store.manifests.find(worldId)
+        if existing != null: return existing
+        const foundManifest = await store.manifests.find(worldId)
         if foundManifest == null: return null
-        let manifest: WorldManifest = foundManifest
+        const manifest: WorldManifest = foundManifest
 
         const active = requireContentSet(manifest)
-        if existing != null and existing.contentRevision == active.revision: return existing
 
         const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions, manifest.blockRegistry)
         const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
-        if not snapshotsEqual(manifest.blockRegistry, blocks.snapshot):
-            await store.manifests.updateBlockRegistry(manifest.id, blocks.snapshot)
-            manifest = WorldManifest.from(manifest, {blockRegistry: WorldBlockRegistrySnapshot.parse(blocks.snapshot)})
-
         const world: LoadedWorld = {
             manifest,
             blocks,
             generator: worldGenerator(manifest, blocks, generators),
             generators,
-            contentRevision: active.revision,
+            content: active,
+            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
+            state: activeState(manifest.id, blocks),
         }
         loaded.set(worldId, world)
         return world
@@ -173,11 +164,18 @@ export def worldSessionCache(
     async def unload(worldId: string):
         const pending = loading.get(worldId)
         if pending != null: await pending
+        const world = loaded.get(worldId)
+        if world != null: await world.state.close()
         loaded.remove(worldId)
 
     /// 关闭缓存时先加入所有在途载入，避免存储已经关闭后仍有注册表快照写回。
     async def close():
         await Promise.all(loading.values())
+        const closures: List<Promise<null>> = []
+        for worldId in loaded:
+            const world = loaded.get(worldId)
+            if world != null: closures.append(world.state.close())
+        await Promise.all(closures)
         loaded.clear()
         loading.clear()
 

@@ -1,32 +1,28 @@
-import {Request, input} from "velar/serve"
-import {WorldQuery, protocolVersion, worldBootstrapResponse} from "@openvoxel/protocol"
-import {CreateWorld, WorldNotFoundError} from "@openvoxel/world-runtime"
-import {created, ok} from "../responses.vel"
+import {created, input} from "velar/serve"
+import {CreateWorld} from "@openvoxel/world-runtime"
 import {openVoxelApplicationProvider} from "../application.vel"
+import {applicationResult} from "../error-handler.vel"
+import {worldBootstrapResponse} from "../presentation/world.vel"
 
 export server worldRoutes:
-    /// Creates one deterministic world manifest.
-    @post(p"/api/worlds", request: Request, application=input.dependency(openVoxelApplicationProvider)):
-        const command = await request.parse(CreateWorld)
-        const manifest = await application.runtime.createWorld(command)
+    /// 在世界集合中创建一个确定性世界，并通过 Location 指向新资源。
+    @post createWorld(p"/api/worlds", command: CreateWorld, application = input.dependency(openVoxelApplicationProvider)):
+        const manifest = await applicationResult(application.runtime.createWorld(command))
         application.info("world.created", {worldId: manifest.id, seed: manifest.seed})
-        return created(manifest)
-
-    /// Finds a world manifest by identifier.
-    @post(p"/api/worlds/find", request: Request, application=input.dependency(openVoxelApplicationProvider)):
-        const query = await request.parse(WorldQuery)
-        const manifest = await application.runtime.findWorld(query.worldId)
-        if manifest == null:
-            throw WorldNotFoundError(query.worldId)
-        return ok(manifest)
-
-    /// Returns the world bootstrap contract consumed before chunk loading.
-    @get(p"/api/worlds/{worldId:string}/bootstrap", application=input.dependency(openVoxelApplicationProvider)):
-        const manifest = await application.runtime.requireWorld(worldId)
-        return ok(
-            worldBootstrapResponse(manifest),
+        return created(
+            manifest,
             Map([
-                ["cache-control", "no-store"],
-                ["x-openvoxel-protocol-version", str(protocolVersion)],
+                ["location", f"/api/worlds/{manifest.id}"],
+                ["access-control-expose-headers", "location"],
             ]),
         )
+
+    /// 通过资源标识直接读取世界清单。
+    @get findWorld(p"/api/worlds/{worldId:string}", application = input.dependency(openVoxelApplicationProvider)):
+        return await applicationResult(application.runtime.requireWorld(worldId))
+
+    /// 返回读取地形和建立实时连接前需要校验的世界事实。
+    @get worldBootstrap(p"/api/worlds/{worldId:string}/bootstrap", application = input.dependency(openVoxelApplicationProvider)):
+        const manifest = await applicationResult(application.runtime.requireWorld(worldId))
+        const content = await applicationResult(application.runtime.worldContent(worldId))
+        return worldBootstrapResponse(manifest, content)

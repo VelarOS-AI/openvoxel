@@ -1,0 +1,136 @@
+import {BlockEditsAppliedEvent, ClientContractResponse, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, clientContractVersion, httpEncoding, protocolServiceName, protocolVersion, realtimeEncoding} from "@openvoxel/protocol"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {WorldBackend, WorldBackendConnection} from "./backend.vel"
+import {ClientChunkState} from "./chunk-state.vel"
+import {ClientWorldState, clientWorldState} from "./world-state.vel"
+
+/// 客户端世界会话拥有后端连接、当前世界事实和冷热 Chunk 状态。
+/// 调用者不直接操作 requestId、sequence 或增量重同步。
+export type ClientWorldSession:
+    readonly worldId: string
+    readonly contract: readonly ClientContractResponse
+    readonly bootstrap: readonly WorldBootstrapResponse
+    readonly content: readonly WorldContentResponse
+    readonly state: ClientWorldState
+    loadChunks: (positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ClientChunkState>>
+    applyBlocks: (edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
+    reconnect: () -> Promise<null>
+    close: () -> Promise<null>
+
+/// 建立统一世界会话。OnlineBackend 与未来 LocalBackend 都必须返回相同的协议
+/// 事实；这里在下载任何 Chunk 前一次性验证版本、内容哈希和世界身份。
+export async def openClientWorld(backend: WorldBackend, worldId: string) -> ClientWorldSession:
+    const contract = await backend.contract()
+    assert contract.service == protocolServiceName else "Backend is not an OpenVoxel service"
+    assert contract.contractVersion == clientContractVersion else "Client contract version does not match the backend"
+    assert contract.protocolVersion == protocolVersion else "Client protocol version does not match the backend"
+    assert contract.http.encoding == httpEncoding else "Backend uses an unsupported HTTP encoding"
+    assert contract.realtime.encoding == realtimeEncoding else "Backend uses an unsupported realtime encoding"
+    assert contract.chunks.maximumBatchSize.isInteger() and contract.chunks.maximumBatchSize > 0 else "Backend Chunk batch limit must be positive"
+    const bootstrap = await backend.bootstrap(worldId)
+    assert bootstrap.id == worldId else "World bootstrap returned a different world"
+    assert bootstrap.clientContractVersion == contract.contractVersion else "World bootstrap changed the client contract version"
+    assert bootstrap.protocolVersion == contract.protocolVersion else "World bootstrap changed the protocol version"
+    assert bootstrap.maximumChunkBatchSize == contract.chunks.maximumBatchSize else "World bootstrap changed the Chunk batch limit"
+    const content = await backend.content(worldId)
+    assert content.content.contentHash == bootstrap.content.contentHash else "World content hash does not match bootstrap"
+    assert content.stateMapHash == bootstrap.contentStateMapHash else "World state map hash does not match bootstrap"
+    assert content.generator == bootstrap.generator else "World content generator does not match bootstrap"
+    assert content.generatorHash == bootstrap.generatorHash else "World generator hash does not match bootstrap"
+
+    const state = clientWorldState(worldId, bootstrap.chunkEdge)
+    let activeConnection: WorldBackendConnection? = null
+    let nextRequestId = 1
+    let synchronizationDepth = 0
+    const deferredChanges: List<readonly WorldBlocksChangedEvent> = []
+    let closed = false
+
+    def requestId(prefix: string) -> string:
+        const value = f"{prefix}-{nextRequestId}"
+        nextRequestId += 1
+        return value
+
+    def connection() -> WorldBackendConnection:
+        const value = activeConnection
+        assert value != null and not closed else "Client world session is not connected"
+        return value
+
+    def receiveChanges(event: readonly WorldBlocksChangedEvent):
+        // 完整增量与世界广播可能在网络上交错。同步期间先保留广播，等所有增量
+        // 批次替换完成后按原始到达顺序重放，旧快照便不会覆盖刚收到的热变化。
+        if synchronizationDepth > 0: deferredChanges.append(event)
+        else: state.applyChanges(event)
+
+    def replayDeferredChanges():
+        if synchronizationDepth > 0: return
+        const pending = deferredChanges.slice()
+        deferredChanges.clear()
+        for event in pending: state.applyChanges(event)
+
+    async def connect():
+        const opened = await backend.connect(worldId, receiveChanges)
+        state.beginConnection(opened.ready)
+        activeConnection = opened
+
+    async def synchronize(positions: readonly List<readonly ChunkPosition>):
+        if positions.size == 0: return
+        synchronizationDepth += 1
+        try:
+            const limit = contract.chunks.maximumBatchSize
+            let start = 0
+            while start < positions.size:
+                let end = start + limit
+                if end > positions.size: end = positions.size
+                const batch = positions.slice(start, end)
+                const event = await connection().syncChunks(requestId("sync"), batch)
+                state.replaceDeltas(event)
+                start = end
+        finally:
+            synchronizationDepth -= 1
+            replayDeferredChanges()
+
+    async def loadChunks(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ClientChunkState>:
+        assert positions.size > 0 else "Client Chunk load cannot be empty"
+        const seen: Set<string> = Set()
+        const output: List<readonly ClientChunkState> = []
+        const limit = contract.chunks.maximumBatchSize
+        let start = 0
+        while start < positions.size:
+            let end = start + limit
+            if end > positions.size: end = positions.size
+            const batch = positions.slice(start, end)
+            for position in batch:
+                const key = chunkKey(position)
+                assert key not in seen else "Client Chunk load repeats one position"
+                seen.add(key)
+            const terrain = await backend.terrainChunks(worldId, batch)
+            for chunk in state.rememberTerrain(terrain): output.append(chunk)
+            await synchronize(batch)
+            start = end
+        return output
+
+    async def applyBlocks(edits: readonly List<readonly RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
+        assert edits.size > 0 else "Client block edit batch cannot be empty"
+        const event = await connection().applyBlocks(requestId("edit"), edits)
+        // 服务端会向请求方广播同一批变化；若适配器先交付广播，这里是幂等确认，
+        // 若广播尚未到达，这里先让本地视图收敛到已提交结果。
+        state.applyAcknowledgement(event)
+        return event
+
+    async def reconnect():
+        if closed: return
+        const previous = activeConnection
+        activeConnection = null
+        if previous != null: await previous.close()
+        await connect()
+        await synchronize(state.trackedPositions())
+
+    async def close():
+        if closed: return
+        closed = true
+        const previous = activeConnection
+        activeConnection = null
+        if previous != null: await previous.close()
+
+    await connect()
+    return {worldId, contract, bootstrap, content, state, loadChunks, applyBlocks, reconnect, close}

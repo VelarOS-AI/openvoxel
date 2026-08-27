@@ -1,0 +1,184 @@
+import {expect} from "velar/test"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "@openvoxel/protocol"
+import {Chunk, ChunkPosition, WorldManifest} from "@openvoxel/world"
+import {BlockChangeBatch, BlockEdit, ChunkDelta, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {WorldBackend, WorldBackendConnection} from "../src/backend.vel"
+import {ClientWorldSession, openClientWorld} from "../src/session.vel"
+
+type BackendHarness:
+    backend: WorldBackend
+    runtime: WorldRuntime
+    world: WorldManifest
+    injectDuringNextSync: (edit: readonly RealtimeBlockEdit) -> null
+
+def contractResponse() -> ClientContractResponse:
+    return {
+        service: protocolServiceName,
+        contractVersion: clientContractVersion,
+        protocolVersion,
+        capabilities: clientCapabilities,
+        errorCodes: protocolErrorCodes,
+        http: {encoding: httpEncoding, descriptionFormat: "openapi-3.1"},
+        realtime: {encoding: realtimeEncoding, commands: realtimeCommandNames, events: realtimeEventNames},
+        chunks: {
+            paletteEntries: chunkPaletteEntryEncoding,
+            localIndices: chunkLocalIndexEncoding,
+            indexOrder: chunkBlockIndexOrder,
+            // 故意把测试限制设为 1，强制会话走多批次同步路径。
+            maximumBatchSize: 1,
+        },
+        limits: {requestBodyBytes: 65536, realtimeMessageBytes: 1048576},
+    }
+
+def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResponse:
+    return WorldContentResponse.from(snapshot, {
+        schemaVersion: snapshot.catalog.schemaVersion,
+        catalogVersion: snapshot.catalog.catalogVersion,
+        minimumWorldY: snapshot.definition.world.minimumY,
+        maximumWorldY: snapshot.definition.world.maximumY,
+        seaLevel: snapshot.definition.world.seaLevel,
+        blocks: snapshot.catalog.blocks,
+        componentProfiles: snapshot.catalog.componentProfiles,
+        states: snapshot.catalog.states,
+    })
+
+def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+    return WorldBootstrapResponse.from(manifest, {
+        clientContractVersion,
+        protocolVersion,
+        contentStateMapHash: content.stateMapHash,
+        minimumWorldY: content.definition.world.minimumY,
+        maximumWorldY: content.definition.world.maximumY,
+        seaLevel: content.definition.world.seaLevel,
+        maximumChunkBatchSize: 1,
+    })
+
+def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
+    return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
+
+def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
+    const output: List<RealtimeBlockChange> = []
+    for change in batch.changes:
+        if change.changed: output.append(RealtimeBlockChange.from(change))
+    return output
+
+async def backendHarness() -> BackendHarness:
+    const runtime = worldRuntime(memoryWorldStore())
+    const world = await runtime.createWorld({id: "client-session", name: "Client Session", seed: "client-session-seed"})
+    const listeners: Map<number, (event: readonly WorldBlocksChangedEvent) -> null> = Map()
+    let nextListenerId = 1
+    let currentSequence = 0
+    let injectedEdit: RealtimeBlockEdit? = null
+
+    def publish(batch: readonly BlockChangeBatch):
+        currentSequence = batch.sequence
+        const event: WorldBlocksChangedEvent = {
+            event: "blocks.changed",
+            worldId: batch.worldId,
+            sequence: batch.sequence,
+            changes: blockChanges(batch),
+        }
+        for listener in listeners.values(): listener(event)
+
+    runtime.subscribeBlockChanges(publish)
+
+    async def contract() -> ClientContractResponse: return contractResponse()
+
+    async def bootstrap(worldId: string) -> WorldBootstrapResponse:
+        const manifest = await runtime.requireWorld(worldId)
+        return bootstrapResponse(manifest, await runtime.worldContent(worldId))
+
+    async def content(worldId: string) -> WorldContentResponse:
+        return contentResponse(await runtime.worldContent(worldId))
+
+    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> TerrainChunkBatchResponse:
+        const chunks = await runtime.terrainChunks(worldId, positions)
+        const output: List<TerrainChunkResponse> = []
+        for chunk in chunks: output.append(terrainResponse(chunk))
+        return {worldId, chunks: output}
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        await runtime.requireWorld(worldId)
+        const listenerId = nextListenerId
+        nextListenerId += 1
+        listeners.set(listenerId, listener)
+        let connectionClosed = false
+        const ready: WorldReadyEvent = {event: "world.ready", worldId, protocolVersion, sequence: currentSequence}
+
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>) -> ChunksSyncedEvent:
+            const deltas = await runtime.chunkDeltas(worldId, positions)
+            // 模拟最危险的交错：服务端先取得旧增量，另一玩家随后提交修改并广播，
+            // 当前同步响应最后才到达。会话必须先落旧快照，再重放暂存的广播。
+            const pending = injectedEdit
+            injectedEdit = null
+            if pending != null: await runtime.editBlocks(worldId, [pending])
+            const output: List<RealtimeChunkDelta> = []
+            for delta in deltas: output.append(RealtimeChunkDelta.from(delta))
+            return {event: "chunks.synced", requestId, worldId, chunks: output}
+
+        async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
+            const commands: List<readonly BlockEdit> = edits.copy()
+            const batch = await runtime.editBlocks(worldId, commands)
+            return {
+                event: "blocks.applied",
+                requestId,
+                worldId,
+                sequence: batch.sequence,
+                changes: blockChanges(batch),
+            }
+
+        async def close():
+            if connectionClosed: return
+            connectionClosed = true
+            listeners.remove(listenerId)
+
+        return {ready, syncChunks, applyBlocks, close}
+
+    def injectDuringNextSync(edit: readonly RealtimeBlockEdit):
+        assert injectedEdit == null else "Test backend already has a pending injected edit"
+        injectedEdit = RealtimeBlockEdit.parse(edit)
+
+    const backend: WorldBackend = {contract, bootstrap, content, terrainChunks, connect}
+    return {backend, runtime, world, injectDuringNextSync}
+
+def replacementState(session: readonly ClientWorldSession, current: number) -> number:
+    const replacement = session.content.states.find(state => state.runtimeId != current)
+    assert replacement != null else "Expected at least two world block states"
+    return replacement.runtimeId
+
+test "client sessions share hot changes and preserve broadcasts that cross a complete sync":
+    const harness = await backendHarness()
+    const first = await openClientWorld(harness.backend, harness.world.id)
+    const second = await openClientWorld(harness.backend, harness.world.id)
+    try:
+        const positions: List<ChunkPosition> = [{x: 0, y: 1, z: 0}, {x: 1, y: 1, z: 0}]
+        await first.loadChunks(positions)
+        await second.loadChunks(positions)
+        expect(first.state.trackedPositions().size).toBe(2)
+        expect(first.state.requiresResync()).toBe(false)
+
+        const target = {x: 0, y: 30, z: 0}
+        const current = first.state.block(target)
+        assert current != null else "Expected the loaded target block"
+        const replacement = replacementState(first, current)
+        const applied = await first.applyBlocks([{position: target, blockStateRuntimeId: replacement}])
+        expect(applied.sequence).toBe(1)
+        expect(first.state.block(target)).toBe(replacement)
+        expect(second.state.block(target)).toBe(replacement)
+
+        const crossedTarget = {x: 16, y: 30, z: 0}
+        const crossedCurrent = first.state.block(crossedTarget)
+        assert crossedCurrent != null else "Expected the second loaded target block"
+        const crossedReplacement = replacementState(first, crossedCurrent)
+        harness.injectDuringNextSync({position: crossedTarget, blockStateRuntimeId: crossedReplacement})
+        await first.reconnect()
+
+        expect(first.state.generation()).toBe(2)
+        expect(first.state.sequence()).toBe(2)
+        expect(first.state.requiresResync()).toBe(false)
+        expect(first.state.block(crossedTarget)).toBe(crossedReplacement)
+        expect(second.state.block(crossedTarget)).toBe(crossedReplacement)
+    finally:
+        await first.close()
+        await second.close()
+        await harness.runtime.close()

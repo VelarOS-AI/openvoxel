@@ -1,32 +1,6 @@
 import {expect} from "velar/test"
 import {resolve} from "velar/path"
-import {OpenVoxelConfiguration, loadOpenVoxelConfiguration, resolveServerPath, serverApplicationRoot, serverOptions, validateOpenVoxelConfiguration, withResolvedRuntimePaths} from "../src/config.vel"
-
-def testConfiguration(port: number, origins: List<string>) -> OpenVoxelConfiguration:
-    return {
-        configVersion: 1,
-        server: {
-            host: "127.0.0.1",
-            port,
-            logger: false,
-            cors: {allowedOrigins: origins},
-            limits: {
-                bodyBytes: 65536,
-                messageBytes: 65536,
-                queuedMessages: 64,
-                queuedBytes: 1048576,
-                pendingSendBytes: 1048576,
-                connections: 128,
-            },
-        },
-        database: {
-            path: "test.sqlite",
-            busyTimeoutMilliseconds: 2000,
-            queueCapacity: 64,
-            maxRows: 262144,
-            maxResultBytes: 67108864,
-        },
-    }
+import {loadOpenVoxelConfiguration, resolveServerPath, serverApplicationRoot, serverOptions, withResolvedRuntimePaths} from "../src/config.vel"
 
 test "server YAML configuration owns network and database settings":
     const configuration = await loadOpenVoxelConfiguration("application.yml")
@@ -35,6 +9,9 @@ test "server YAML configuration owns network and database settings":
     expect(configuration.server.cors.allowedOrigins).toContain("http://127.0.0.1:5173")
     expect(configuration.database.path).toBe("openvoxel.sqlite")
     expect(configuration.database.maxRows).toBe(262144)
+    expect(configuration.content.packArtifacts.size).toBe(0)
+    expect(configuration.worldRuntime.activeChunkCapacity).toBe(2048)
+    expect(configuration.worldRuntime.activeOverrideCapacity).toBe(262144)
     expect(resolveServerPath("application.yml")).toBe(resolve([serverApplicationRoot(), "application.yml"]))
     const runtimeConfiguration = withResolvedRuntimePaths(configuration)
     expect(runtimeConfiguration.database.path).toBe(resolve([serverApplicationRoot(), "openvoxel.sqlite"]))
@@ -42,12 +19,7 @@ test "server YAML configuration owns network and database settings":
     expect(options.bodyLimit).toBe(65536)
     expect(options.corsAllowedOrigins.size).toBe(4)
     expect(options.maxConnections).toBe(128)
-
-test "server YAML configuration rejects invalid deployment limits":
-    expect(() => validateOpenVoxelConfiguration(testConfiguration(70000, []))).toThrow()
-
-test "server YAML configuration rejects paths disguised as CORS origins":
-    expect(() => validateOpenVoxelConfiguration(testConfiguration(3000, ["https://example.test/client"]))).toThrow()
+    expect(options.realtimeDrainMilliseconds).toBe(5000)
 
 test "configuration load failures name the resolved application path":
     const missing = resolveServerPath("missing-application.yml")

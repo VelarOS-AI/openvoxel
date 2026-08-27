@@ -17,6 +17,26 @@ export type IdentityResolution:
 export type IdentityLeafIndex:
     paths: List<string>
 
+/// 把 Mod 的开放身份树合并到基础树。叶子身份只能由一个所有者声明；两个记录节点
+/// 可以递归合并。方块和世界生成编译器共享这条冲突规则。
+export def mergeIdentityTrees(
+    base: readonly Record<unknown>,
+    contribution: readonly Record<unknown>,
+    prefix: string = "",
+) -> Record<unknown>:
+    const merged: Record<unknown> = {}
+    for key, value in base: merged[key] = value
+    for key in contribution.keys():
+        const incoming = contribution[key]
+        const existing = merged[key]
+        const path = prefix == "" ? key : f"{prefix}.{key}"
+        if (existing is Record<unknown>) and (incoming is Record<unknown>):
+            merged[key] = mergeIdentityTrees(existing, incoming, path)
+        else:
+            assert existing == null else f"Mod identity path {path} conflicts with an existing identity"
+            merged[key] = incoming
+    return merged
+
 // 至少包含一个点才会被识别为身份引用。普通字符串不会被误当成身份路径。
 const identityReferencePattern = "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)+$"
 

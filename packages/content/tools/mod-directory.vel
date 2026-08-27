@@ -1,0 +1,54 @@
+import {exists, makeDirectory, readText, writeText} from "velar/fs"
+import {resolve} from "velar/path"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {BlockCatalogManifest} from "@openvoxel/blocks"
+import {WorldGeneratorCatalogManifest} from "@openvoxel/world-generation"
+import {ContentPackManifest, ContentPackSourceTexts, compileModContentPack} from "./content-compiler.vel"
+
+/// 编译完整 Mod 目录。人工源固定在 sourceRoot，唯一运行时 JSON 固定写到 buildRoot，
+/// 不会在 blocks/ 或 world-generation/ 的 YAML 旁边产生文件。
+export async def compileModContentDirectory(sourceRoot: string, buildRoot: string) -> string:
+    assert not sourceRoot.isBlank() and not buildRoot.isBlank() else "Content pack source and build roots cannot be blank"
+    assert resolve([sourceRoot]) != resolve([buildRoot]) else "Content pack build output must use a directory separate from its YAML sources"
+    const manifestText = await readText(f"{sourceRoot}/content.yml", 64 * 1024)
+    const identitiesText = await readText(f"{sourceRoot}/identities.yml", 512 * 1024)
+    const manifest = ContentPackManifest.parse(parseYaml(manifestText))
+
+    let blockManifestText: string? = null
+    const blockSourceTexts: List<string> = []
+    if manifest.blocks:
+        blockManifestText = await readText(f"{sourceRoot}/blocks/catalog.yml", 64 * 1024)
+        const blockManifest = BlockCatalogManifest.parse(parseYaml(blockManifestText))
+        for source in blockManifest.sources:
+            assert Text.matches(source, r"^blocks/[a-z0-9-]+\.yml$") else f"Invalid Mod block source path {source}"
+            blockSourceTexts.append(await readText(f"{sourceRoot}/{source}", 512 * 1024))
+
+    let generatorManifestText: string? = null
+    const generatorSourceTexts: List<string> = []
+    const paletteSourceTexts: List<string> = []
+    if manifest.worldGeneration:
+        generatorManifestText = await readText(f"{sourceRoot}/world-generation/catalog.yml", 64 * 1024)
+        const generatorManifest = WorldGeneratorCatalogManifest.parse(parseYaml(generatorManifestText))
+        for source in generatorManifest.generatorSources:
+            assert Text.matches(source, r"^generators/[a-z0-9-]+\.yml$") else f"Invalid Mod world generator source path {source}"
+            generatorSourceTexts.append(await readText(f"{sourceRoot}/world-generation/{source}", 512 * 1024))
+        for source in generatorManifest.paletteSources:
+            assert Text.matches(source, r"^palettes/[a-z0-9-]+\.yml$") else f"Invalid Mod world generator palette source path {source}"
+            paletteSourceTexts.append(await readText(f"{sourceRoot}/world-generation/{source}", 512 * 1024))
+
+    const inputs: ContentPackSourceTexts = {
+        manifestText,
+        identitiesText,
+        blockManifestText,
+        blockSourceTexts,
+        generatorManifestText,
+        generatorSourceTexts,
+        paletteSourceTexts,
+    }
+    const artifact = compileModContentPack(inputs)
+    if not await exists(buildRoot): await makeDirectory(buildRoot)
+    const outputPath = f"{buildRoot}/content-pack.json"
+    const output = f"{Json.stableStringify(artifact, 2)}\n"
+    if not await exists(outputPath) or await readText(outputPath, 8 * 1024 * 1024) != output:
+        await writeText(outputPath, output)
+    return outputPath

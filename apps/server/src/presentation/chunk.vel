@@ -1,0 +1,21 @@
+import {GenerationSampleResponse, TerrainChunkBatchResponse, TerrainChunkResponse} from "@openvoxel/protocol"
+import {TerrainSample} from "@openvoxel/world-generation"
+import {Chunk} from "@openvoxel/world"
+
+/// 将进程内 Chunk 存储投影成线上调色板格式。
+///
+/// Chunk 内部使用定长 UInt16Buffer 保存局部索引；HTTP/MessagePack 边界需要独立
+/// List，避免把可变二进制存储和进程内方法泄露给客户端。
+export def terrainChunkResponse(chunk: Chunk) -> TerrainChunkResponse:
+    const indices = chunk.indices.values()
+    return TerrainChunkResponse.from(chunk, {indices})
+
+/// 保持世界运行时返回的 Chunk 顺序，不在传输层重新排序或二次查询。
+export def terrainChunkBatchResponse(worldId: string, chunks: List<Chunk>) -> TerrainChunkBatchResponse:
+    const responses: List<TerrainChunkResponse> = []
+    for chunk in chunks: responses.append(terrainChunkResponse(chunk))
+    return {worldId, chunks: responses}
+
+/// 只复制协议公开的 TerrainSample 字段，并补上这次查询所属的世界身份。
+export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
+    return GenerationSampleResponse.from(sample, {worldId})

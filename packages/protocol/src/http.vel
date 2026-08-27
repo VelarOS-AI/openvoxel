@@ -1,29 +1,32 @@
-import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition, WorldBlockRegistrySnapshot, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateMapHash, collectBlockRenderResources, packedBlockCatalog} from "@openvoxel/blocks"
-import {TerrainSample, defaultGenerator, defaultGeneratorHash, maximumWorldY, minimumWorldY, seaLevel, worldGeneratorCatalogHash} from "@openvoxel/world-generation"
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, WorldManifest} from "@openvoxel/world"
-import {maximumChunkBatchSize} from "@openvoxel/world-runtime"
-import {batchChunksPath, blockCatalogPath, changeBlockPath, clientContractPath, createWorldPath, findWorldPath, generationSamplePath, healthPath, queryChunkPath, realtimeEventsPath, worldBootstrapPathTemplate} from "./routes.vel"
+import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition} from "@openvoxel/blocks"
+import {ChunkPosition, Coordinate2, WorldContentIdentity, WorldManifest} from "@openvoxel/world"
 
-export const protocolVersion = 4
-export const clientContractVersion = 5
-export const httpEnvelopeVersion = 1
+/// HTTP 与实时消息共同遵循的当前线上语义代际。
+///
+/// 路由不是协议包里的字符串常量。HTTP 路由由服务端注解直接声明，并由框架生成
+/// OpenAPI；这个包只拥有可以在网络上传输的数据形状和稳定版本事实。
+export const protocolVersion = 8
+export const clientContractVersion = 8
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
+export const protocolServiceName = "openvoxel"
+export const httpEncoding = "json"
+export const realtimeEncoding = "messagepack"
+export const chunkPaletteEntryEncoding = "uint32-runtime-id"
+export const chunkLocalIndexEncoding = "uint16-list"
 
-export type ApiEndpointContract:
-    method: string
-    path: string
-
-export type ClientApiRoutes:
-    health: ApiEndpointContract
-    clientContract: ApiEndpointContract
-    blockCatalog: ApiEndpointContract
-    createWorld: ApiEndpointContract
-    findWorld: ApiEndpointContract
-    worldBootstrap: ApiEndpointContract
-    queryChunk: ApiEndpointContract
-    batchChunks: ApiEndpointContract
-    generationSample: ApiEndpointContract
-    changeBlock: ApiEndpointContract
+/// 客户端按这些稳定身份从 OpenAPI 查找能力；URL、HTTP 方法和参数仍只由服务端
+/// 路由注解声明。这里集中的是协议语义名，不复制任何传输地址。
+export const apiOperationNames = {
+    health: "health",
+    clientContract: "clientContract",
+    createWorld: "createWorld",
+    findWorld: "findWorld",
+    worldBootstrap: "worldBootstrap",
+    worldContent: "worldContent",
+    terrainChunks: "terrainChunks",
+    generationSample: "generationSample",
+    worldRealtime: "worldRealtime",
+}
 
 export type ClientTransportLimits:
     requestBodyBytes: number
@@ -31,12 +34,10 @@ export type ClientTransportLimits:
 
 export type ClientHttpContract:
     encoding: string
-    envelopeVersion: number
-    routes: ClientApiRoutes
+    descriptionFormat: string
 
 export type ClientRealtimeContract:
     encoding: string
-    path: string
     commands: readonly List<string>
     events: readonly List<string>
 
@@ -46,12 +47,10 @@ export type ClientChunkContract:
     indexOrder: string
     maximumBatchSize: number
 
-export type BlockCatalogIdentity:
-    schemaVersion: number
-    catalogVersion: string
-    stateMapHash: string
-    contentHash: string
-
+/// API 根资源发布能力和编码，不再复制一份 HTTP 路由表。
+///
+/// HTTP 的完整权威描述来自服务端生成的 OpenAPI。这样修改注解时，客户端看到的
+/// 路径、必选参数和类型会一起变化，不存在“代码已改、协议字符串忘了改”的漂移。
 export type ClientContractResponse:
     service: string
     contractVersion: number
@@ -61,194 +60,100 @@ export type ClientContractResponse:
     http: ClientHttpContract
     realtime: ClientRealtimeContract
     chunks: ClientChunkContract
-    blockCatalog: BlockCatalogIdentity
     limits: ClientTransportLimits
 
-export type ApiResponse:
-    code: string
-    data: unknown
-    message: string
+export type TerrainChunkBatchRequest:
+    readonly positions: readonly List<readonly ChunkPosition>
 
-export type WorldScoped:
-    worldId: string
+export type TerrainChunkResponse:
+    readonly position: readonly ChunkPosition
+    readonly edge: number
+    readonly palette: readonly List<number>
+    readonly indices: readonly List<number>
 
-export type WorldQuery = WorldScoped
+export type TerrainChunkBatchResponse:
+    readonly worldId: string
+    readonly chunks: readonly List<readonly TerrainChunkResponse>
 
-export type ChunkQuery extends WorldScoped:
-    position: ChunkPosition
+/// 地形采样的线上数据形状。
+///
+/// 这里显式列出可公开字段，避免协议包依赖完整生成器实现。服务端 presentation
+/// 层负责把当前 TerrainSample 投影成这份稳定的传输契约。
+export type GenerationSampleResponse:
+    readonly worldId: string
+    readonly position: readonly Coordinate2
+    readonly surfaceY: number
+    readonly slope: number
+    readonly continentalness: number
+    readonly erosion: number
+    readonly ridge: number
+    readonly riverStrength: number
+    readonly temperature: number
+    readonly humidity: number
+    readonly forestDensity: number
+    readonly terrainType: string
+    readonly biome: string
 
-export type ChunkBatchQuery extends WorldScoped:
-    positions: List<ChunkPosition>
+export type WorldContentResponse:
+    readonly content: readonly WorldContentIdentity
+    readonly schemaVersion: number
+    readonly catalogVersion: string
+    readonly stateMapHash: string
+    readonly generator: string
+    readonly generatorHash: string
+    readonly generatorCatalogHash: string
+    readonly minimumWorldY: number
+    readonly maximumWorldY: number
+    readonly seaLevel: number
+    readonly resources: readonly BlockRenderResources
+    readonly blocks: readonly List<readonly BlockDefinition>
+    readonly componentProfiles: readonly List<readonly BlockComponentProfile>
+    readonly states: readonly List<readonly PackedBlockStateDefinition>
 
-export type GenerationSampleQuery extends WorldScoped:
-    position: Coordinate2
-
-export type BlockMutation extends WorldScoped:
-    position: BlockPosition
-    blockStateRuntimeId: number
-
-export type SetBlockRequest = BlockMutation
-
-export type ChunkResponse extends WorldScoped:
-    position: ChunkPosition
-    edge: number
-    revision: number
-    palette: List<number>
-    indices: List<number>
-
-export type ChunkBatchResponse extends WorldScoped:
-    chunks: List<ChunkResponse>
-
-export type GenerationSampleResponse extends TerrainSample:
-    worldId: string
-
-export type BlockCatalogResponse:
-    schemaVersion: number
-    catalogVersion: string
-    stateMapHash: string
-    contentHash: string
-    generator: string
-    generatorHash: string
-    generatorCatalogHash: string
-    minimumWorldY: number
-    maximumWorldY: number
-    seaLevel: number
-    resources: BlockRenderResources
-    blocks: readonly List<readonly BlockDefinition>
-    componentProfiles: readonly List<readonly BlockComponentProfile>
-    states: readonly List<readonly PackedBlockStateDefinition>
-
+/// 世界启动数据只携带需要校验的事实，不发布另一套手写路由模板。
 export type WorldBootstrapResponse extends WorldManifest:
-    clientContractVersion: number
-    protocolVersion: number
-    clientContractPath: string
-    blockCatalogPath: string
-    realtimeEventsPath: string
-    blockCatalogSchemaVersion: number
-    blockCatalogContentHash: string
-    blockCatalogStateMapHash: string
-    minimumWorldY: number
-    maximumWorldY: number
-    seaLevel: number
-    maximumChunkBatchSize: number
+    readonly clientContractVersion: number
+    readonly protocolVersion: number
+    readonly contentStateMapHash: string
+    readonly minimumWorldY: number
+    readonly maximumWorldY: number
+    readonly seaLevel: number
+    readonly maximumChunkBatchSize: number
 
-const routes: ClientApiRoutes = {
-    health: {method: "GET", path: healthPath},
-    clientContract: {method: "GET", path: clientContractPath},
-    blockCatalog: {method: "GET", path: blockCatalogPath},
-    createWorld: {method: "POST", path: createWorldPath},
-    findWorld: {method: "POST", path: findWorldPath},
-    worldBootstrap: {method: "GET", path: worldBootstrapPathTemplate},
-    queryChunk: {method: "POST", path: queryChunkPath},
-    batchChunks: {method: "POST", path: batchChunksPath},
-    generationSample: {method: "POST", path: generationSamplePath},
-    changeBlock: {method: "POST", path: changeBlockPath},
-}
-
-const stableErrorCodes: readonly List<string> = [
-    "WorldNotFoundError",
-    "WorldAlreadyExistsError",
-    "InvalidBlockStateRuntimeIdError",
-    "UnknownBlockStateRuntimeIdError",
-    "ReservedBlockStateRuntimeIdError",
-    "UnknownWorldBlockStateRuntimeIdError",
-    "InvalidRequest",
-    "RouteNotFound",
-    "BadRequest",
-    "PayloadTooLarge",
-    "HttpError",
-    "UnsupportedRealtimeOperation",
-    "TextMessageUnsupported",
-    "InternalError",
+/// 客户端可以稳定分支处理的公共错误码。
+export const protocolErrorCodes: readonly List<string> = [
+    "world.not_found",
+    "world.already_exists",
+    "block.invalid_state",
+    "block.unknown_state",
+    "block.reserved_state",
+    "block.unknown_world_state",
+    "request.invalid",
+    "request.invalid.request",
+    "request.invalid.json",
+    "request.request.too.large",
+    "request.unsupported.media.type",
+    "request.body_too_large",
+    "route.not_found",
+    "route.method_not_allowed",
+    "security.origin_not_allowed",
+    "realtime.unsupported_operation",
+    "realtime.text_unsupported",
+    "server.internal",
 ]
 
-export def blockCatalogIdentity() -> BlockCatalogIdentity:
-    return {
-        schemaVersion: blockCatalogSchemaVersion,
-        catalogVersion: blockCatalogVersion,
-        stateMapHash: blockStateMapHash,
-        contentHash: blockCatalogHash,
-    }
+export const clientCapabilities: readonly List<string> = [
+    "openapi-3.1",
+    "world-content-etag",
+    "block-component-profiles",
+    "world-block-registry",
+    "world-generator-hash",
+    "terrain-chunk-batches",
+    "world-scoped-realtime",
+    "atomic-block-edit-batches",
+    "chunk-delta-sync",
+    "realtime-sequence-cursor",
+]
 
-export def clientContractResponse(limits: ClientTransportLimits) -> ClientContractResponse:
-    return {
-        service: "openvoxel",
-        contractVersion: clientContractVersion,
-        protocolVersion,
-        capabilities: [
-            "block-catalog-etag",
-            "block-component-profiles",
-            "world-block-registry",
-            "world-generator-hash",
-            "chunk-palettes",
-            "world-bootstrap",
-            "chunk-batch",
-            "realtime-block-updates",
-        ],
-        errorCodes: stableErrorCodes,
-        http: {encoding: "json", envelopeVersion: httpEnvelopeVersion, routes},
-        realtime: {
-            encoding: "messagepack",
-            path: realtimeEventsPath,
-            commands: ["set-block"],
-            events: ["block.changed", "error"],
-        },
-        chunks: {
-            paletteEntries: "uint32-runtime-id",
-            localIndices: "uint16-list",
-            indexOrder: chunkBlockIndexOrder,
-            maximumBatchSize: maximumChunkBatchSize,
-        },
-        blockCatalog: blockCatalogIdentity(),
-        limits,
-    }
-
-export def chunkResponse(worldId: string, chunk: Chunk) -> ChunkResponse:
-    const indices = chunk.indices.values()
-    return ChunkResponse.from(chunk, {worldId, indices})
-
-export def chunkBatchResponse(worldId: string, chunks: List<Chunk>) -> ChunkBatchResponse:
-    const responses: List<ChunkResponse> = []
-    for chunk in chunks: responses.append(chunkResponse(worldId, chunk))
-    return {worldId, chunks: responses}
-
-export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:
-    return GenerationSampleResponse.from(sample, {worldId})
-
-const packedCatalog = packedBlockCatalog()
-const sharedBlockCatalogResponse: BlockCatalogResponse = {
-    schemaVersion: blockCatalogSchemaVersion,
-    catalogVersion: blockCatalogVersion,
-    stateMapHash: blockStateMapHash,
-    contentHash: blockCatalogHash,
-    generator: defaultGenerator,
-    generatorHash: defaultGeneratorHash,
-    generatorCatalogHash: worldGeneratorCatalogHash,
-    minimumWorldY,
-    maximumWorldY,
-    seaLevel,
-    resources: collectBlockRenderResources(blockStateCatalog()),
-    blocks: packedCatalog.blocks,
-    componentProfiles: packedCatalog.componentProfiles,
-    states: packedCatalog.states,
-}
-
-export def blockCatalogResponse() -> readonly BlockCatalogResponse: return sharedBlockCatalogResponse
-
-export def worldBootstrapResponse(manifest: readonly WorldManifest) -> WorldBootstrapResponse:
-    return WorldBootstrapResponse.from(manifest, {
-        clientContractVersion,
-        protocolVersion,
-        clientContractPath,
-        blockCatalogPath,
-        realtimeEventsPath,
-        blockCatalogSchemaVersion,
-        blockCatalogContentHash: blockCatalogHash,
-        blockCatalogStateMapHash: blockStateMapHash,
-        blockRegistry: WorldBlockRegistrySnapshot.parse(manifest.blockRegistry),
-        spawn: {x: manifest.spawn.x, y: manifest.spawn.y, z: manifest.spawn.z},
-        minimumWorldY,
-        maximumWorldY,
-        seaLevel,
-        maximumChunkBatchSize,
-    })
+export const realtimeCommandNames: readonly List<string> = ["chunks.sync", "blocks.apply"]
+export const realtimeEventNames: readonly List<string> = ["world.ready", "chunks.synced", "blocks.applied", "blocks.changed", "error"]

@@ -1,6 +1,7 @@
 import {WorldBlockRegistrySnapshot, baseBlockCatalogSource, baseWorldBlockRegistrySnapshot, createWorldBlockRegistry} from "@openvoxel/blocks"
+import {baseWorldContent} from "@openvoxel/content"
 import {baseWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator} from "@openvoxel/world-generation"
-import {WorldManifest, WorldSpawn, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {WorldContentIdentity, WorldManifest, WorldSpawn, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
 
 /// 创建命令属于应用用例输入，不进入持久化世界模型。
 export type CreateWorld:
@@ -9,11 +10,14 @@ export type CreateWorld:
     seed: string
     /// 为空时选择内建默认生成器；保存进清单的始终是解析后的稳定身份。
     generator: string?
+    /// 为空时使用服务器默认内容集合；显式列表按 Content Pack owner 选择。
+    contentPacks: List<string>?
 
 /// 创建策略在应用层选择默认 Chunk 尺寸、生成器和基础注册表。
 export def assembleWorldManifest(
     command: CreateWorld,
     blockRegistry: readonly WorldBlockRegistrySnapshot,
+    content: readonly WorldContentIdentity,
     generatorHash: string,
     spawn: readonly WorldSpawn,
 ) -> WorldManifest:
@@ -27,6 +31,7 @@ export def assembleWorldManifest(
         generator: generatorKey,
         generatorHash,
         spawn: WorldSpawn.parse(spawn),
+        content: WorldContentIdentity.parse(content),
         blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry),
     })
 
@@ -40,4 +45,4 @@ export def createWorldManifest(
     const worldBlocks = createWorldBlockRegistry(baseBlockCatalogSource, [], blockRegistry)
     const generatorHash = baseWorldGeneratorRegistry.definitionHash(generatorKey)
     const generator = instantiateWorldGenerator(generatorKey, command.seed.trim(), initialChunkEdge, worldBlocks, baseWorldGeneratorRegistry)
-    return assembleWorldManifest(command, worldBlocks.snapshot, generatorHash, generator.findSpawn())
+    return assembleWorldManifest(command, worldBlocks.snapshot, baseWorldContent.identity, generatorHash, generator.findSpawn())

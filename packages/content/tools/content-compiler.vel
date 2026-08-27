@@ -1,0 +1,76 @@
+import {BlockCatalogContribution, BlockCatalogManifest, BlockSourceFile, BlockTypeSource, compileModBlockCatalogContribution} from "@openvoxel/blocks"
+import {BuiltinIdentityDocument, IdentityResolution, mergeIdentityTrees, resolveIdentityReferences} from "@openvoxel/identities"
+import {identityTree} from "@openvoxel/identities"
+import {WorldGeneratorCatalogContribution, compileModWorldGeneratorContribution} from "@openvoxel/world-generation"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {ContentPackArtifact, createContentPackArtifact} from "../src/content-pack.vel"
+
+/// Mod 原始目录的顶层开关。owner 只在这里声明一次；两个布尔值决定构建工具需要
+/// 读取哪些约定子目录，避免用文件是否碰巧存在来改变产物内容。
+export type ContentPackManifest:
+    formatVersion: number
+    owner: string
+    blocks: bool
+    worldGeneration: bool
+
+export type ContentPackSourceTexts:
+    manifestText: string
+    identitiesText: string
+    blockManifestText: string?
+    blockSourceTexts: List<string>
+    generatorManifestText: string?
+    generatorSourceTexts: List<string>
+    paletteSourceTexts: List<string>
+
+def compileBlockContribution(
+    owner: string,
+    identitiesText: string,
+    manifestText: string,
+    sourceTexts: readonly List<string>,
+    baseIdentities: readonly Record<unknown>,
+) -> BlockCatalogContribution:
+    const identityDocument = BuiltinIdentityDocument.parse(parseYaml(identitiesText))
+    assert identityDocument.formatVersion == 3 else "Unsupported Mod identity format version"
+    const mergedIdentities = mergeIdentityTrees(baseIdentities, identityDocument.identities)
+    const manifestResolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(manifestText), mergedIdentities))
+    const manifest = BlockCatalogManifest.parse(manifestResolution.value)
+    assert manifest.schemaVersion == 3 else "Unsupported Mod block catalog schema version"
+    assert manifest.sources.size == sourceTexts.size else "Mod block source count does not match its manifest"
+    const blocks: List<BlockTypeSource> = []
+    for sourceText in sourceTexts:
+        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), mergedIdentities))
+        blocks.extend(BlockSourceFile.parse(resolution.value).blocks)
+    return compileModBlockCatalogContribution(owner, manifest.catalogVersion, blocks)
+
+/// 两个领域编译器先分别验证自己的配置，再由 Content Pack 统一校验 owner 并计算
+/// 最终哈希。该函数只接收文本，不接触文件系统，因此目录工具和测试使用同一逻辑。
+export def compileModContentPack(
+    inputs: readonly ContentPackSourceTexts,
+    baseIdentities: readonly Record<unknown> = identityTree,
+) -> ContentPackArtifact:
+    const manifest = ContentPackManifest.parse(parseYaml(inputs.manifestText))
+    assert manifest.formatVersion == 1 else "Unsupported content pack manifest version"
+    assert manifest.blocks or manifest.worldGeneration else f"Content pack {manifest.owner} must enable at least one content domain"
+
+    let blocks: BlockCatalogContribution? = null
+    if manifest.blocks:
+        assert inputs.blockManifestText != null else f"Content pack {manifest.owner} is missing blocks/catalog.yml"
+        blocks = compileBlockContribution(manifest.owner, inputs.identitiesText, inputs.blockManifestText, inputs.blockSourceTexts, baseIdentities)
+    else:
+        assert inputs.blockManifestText == null and inputs.blockSourceTexts.size == 0 else f"Content pack {manifest.owner} disables blocks but supplied block sources"
+
+    let worldGeneration: WorldGeneratorCatalogContribution? = null
+    if manifest.worldGeneration:
+        assert inputs.generatorManifestText != null else f"Content pack {manifest.owner} is missing world-generation/catalog.yml"
+        worldGeneration = compileModWorldGeneratorContribution(
+            manifest.owner,
+            inputs.generatorManifestText,
+            inputs.identitiesText,
+            inputs.generatorSourceTexts,
+            inputs.paletteSourceTexts,
+            baseIdentities,
+        )
+    else:
+        assert inputs.generatorManifestText == null and inputs.generatorSourceTexts.size == 0 and inputs.paletteSourceTexts.size == 0 else f"Content pack {manifest.owner} disables world generation but supplied generator sources"
+
+    return createContentPackArtifact(manifest.owner, blocks, worldGeneration)

@@ -1,0 +1,29 @@
+import {ClientContractResponse, ClientTransportLimits, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "@openvoxel/protocol"
+import {maximumChunkBatchSize} from "@openvoxel/world-runtime"
+
+/// 组合机器可读客户端清单。
+///
+/// 消息名、编码和版本来自共享协议事实源；请求大小、实时消息大小、Chunk 批量
+/// 限制和方块目录身份来自当前服务实例。HTTP 路由不在这里重复列举，框架会从
+/// 实际注解生成 OpenAPI 3.1，避免清单和代码成为两个可漂移的事实源。
+export def clientContractResponse(limits: ClientTransportLimits) -> ClientContractResponse:
+    return {
+        service: protocolServiceName,
+        contractVersion: clientContractVersion,
+        protocolVersion,
+        capabilities: clientCapabilities,
+        errorCodes: protocolErrorCodes,
+        http: {encoding: httpEncoding, descriptionFormat: "openapi-3.1"},
+        realtime: {
+            encoding: realtimeEncoding,
+            commands: realtimeCommandNames,
+            events: realtimeEventNames,
+        },
+        chunks: {
+            paletteEntries: chunkPaletteEntryEncoding,
+            localIndices: chunkLocalIndexEncoding,
+            indexOrder: chunkBlockIndexOrder,
+            maximumBatchSize: maximumChunkBatchSize,
+        },
+        limits,
+    }

@@ -1,0 +1,87 @@
+import {Bytes} from "velar/binary"
+import {RealtimePeer} from "velar/realtime"
+
+type StoredSubscription:
+    worldId: string
+    peer: RealtimePeer<Bytes>
+
+export type WorldLiveSubscription:
+    /// 订阅建立这一刻已经发布完成的世界事件序号。subscribe 是同步操作，
+    /// 返回后调用方会立即把 ready 放入同一个 peer 队列，因此后续广播必定位于
+    /// 这个游标之后。
+    sequence: number
+    close: () -> Promise<null>
+
+/// 进程内热世界的有界事件分发器。
+///
+/// 每个连接只订阅一个世界。`velar/realtime` 已经为每个连接提供一条有界发送
+/// 队列和唯一 writer，因此这里直接保存框架的 RealtimePeer，不再叠加一层
+/// Channel 和转发任务。发布仍是非阻塞的：某个玩家的队列已满时，只关闭并移除
+/// 该玩家，不让慢连接阻塞同一世界中的其他玩家。
+export type WorldLiveState:
+    subscribe: (worldId: string, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription
+    publish: (worldId: string, sequence: number, message: Bytes) -> null
+    close: () -> Promise<null>
+
+export def worldLiveState(maximumSubscriptions: number, warning: (message: string, context: unknown) -> null) -> WorldLiveState:
+    assert maximumSubscriptions.isInteger() and maximumSubscriptions >= 1 else "Live subscription capacity must be a positive integer"
+    const subscriptions: Map<number, StoredSubscription> = Map()
+    const subscriptionsByWorld: Map<string, Set<number>> = Map()
+    const sequences: Map<string, number> = Map()
+    let nextId = 1
+    let closed = false
+
+    def remove(id: number):
+        const subscription = subscriptions.get(id)
+        if subscription == null: return
+        subscriptions.remove(id)
+        const worldSubscriptions = subscriptionsByWorld.get(subscription.worldId)
+        if worldSubscriptions == null: return
+        worldSubscriptions.remove(id)
+        if worldSubscriptions.size == 0: subscriptionsByWorld.remove(subscription.worldId)
+
+    def subscribe(worldId: string, peer: RealtimePeer<Bytes>) -> WorldLiveSubscription:
+        assert not closed else "World live state is closed"
+        assert subscriptions.size < maximumSubscriptions else "World live subscription capacity is exhausted"
+        const id = nextId
+        nextId += 1
+        if nextId > 9007199254740991: nextId = 1
+        assert not subscriptions.has(id) else "World live subscription identifier space is exhausted"
+        subscriptions.set(id, {worldId, peer})
+        const empty: Set<number> = Set()
+        subscriptionsByWorld.getOrSet(worldId, empty).add(id)
+
+        async def closeSubscription(): remove(id)
+
+        return {sequence: sequences.get(worldId) ?? 0, close: closeSubscription}
+
+    def publish(worldId: string, sequence: number, message: Bytes):
+        if closed: return
+        const previous = sequences.get(worldId) ?? 0
+        assert sequence == previous + 1 else f"World {worldId} realtime sequence must advance from {previous} to {previous + 1}"
+        sequences.set(worldId, sequence)
+        const worldSubscriptions = subscriptionsByWorld.get(worldId)
+        if worldSubscriptions == null: return
+        const failed: List<number> = []
+        // 发布只遍历当前世界的玩家，不再扫描其他所有已连接世界。
+        for id in worldSubscriptions:
+            const subscription = subscriptions.get(id)
+            if subscription != null and not subscription.peer.trySend(message): failed.append(id)
+        for id in failed:
+            const subscription = subscriptions.get(id)
+            remove(id)
+            if subscription != null: async subscription.peer.close(1013, "Realtime event backlog exceeded")
+            warning("realtime.subscriber.backpressure", {worldId})
+
+    async def close():
+        if closed: return
+        closed = true
+        const closings: List<Promise<null>> = []
+        for subscription in subscriptions.values():
+            closings.append(subscription.peer.close(1001, "Server shutting down"))
+        subscriptions.clear()
+        subscriptionsByWorld.clear()
+        sequences.clear()
+        await Promise.all(closings)
+
+    return {subscribe, publish, close}

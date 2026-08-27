@@ -1,0 +1,55 @@
+import {monotonic} from "velar/time"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldDeltaStore, activeWorldState} from "../src/index.vel"
+
+/// 热状态读取基准使用 64 个带有 256 项稀疏覆盖的 Chunk。它刻意把存储读取放在
+/// 预热阶段之外，稳定态结果只衡量 LRU 命中、快照隔离和批量返回所产生的成本。
+@main:
+    const positions: List<ChunkPosition> = []
+    const stored: Map<string, ChunkDelta> = Map()
+    for chunkX in range(64):
+        const position: ChunkPosition = {x: chunkX, y: 1, z: 0}
+        positions.append(position)
+        const overrides: List<BlockOverride> = []
+        for localIndex in range(256):
+            overrides.append({
+                position: {
+                    x: localIndex % 16,
+                    y: (localIndex / 256).floor(),
+                    z: ((localIndex / 16).floor()) % 16,
+                },
+                blockStateRuntimeId: 1,
+            })
+        stored.set(chunkKey(position), {position, revision: 1, overrides})
+
+    async def findChunks(_worldId: string, requested: readonly List<readonly ChunkPosition>) -> List<ChunkDelta>:
+        const found: List<ChunkDelta> = []
+        for position in requested:
+            const delta = stored.get(chunkKey(position))
+            if delta != null: found.append(delta)
+        return found
+
+    async def commitChunks(_worldId: string, _commits: readonly List<readonly ChunkDeltaCommit>):
+        throw Error("Read benchmark must not write")
+
+    def validateBlockStateRuntimeId(_runtimeId: number): pass
+
+    const store: WorldDeltaStore = {findChunks, commitChunks}
+    const state = activeWorldState("benchmark", store, 64, 16384, validateBlockStateRuntimeId)
+    await state.deltas(positions)
+
+    const durations: List<number> = []
+    let expectedChecksum: number? = null
+    for runIndex in range(5):
+        const started = monotonic()
+        let checksum = 0
+        for iteration in range(50):
+            const deltas = await state.deltas(positions)
+            for delta in deltas: checksum += delta.revision + delta.overrides.size
+        durations.append(monotonic() - started)
+        if expectedChecksum == null: expectedChecksum = checksum
+        else: assert checksum == expectedChecksum else "Active world benchmark result changed"
+
+    const median = durations.sorted()[2]
+    print(f"active-world chunks=64 overrides=16384 reads=50 medianMs={median} averageBatchMs={median / 50} checksum={expectedChecksum}")
+    await state.close()
