@@ -8,12 +8,14 @@ import { chromium } from "playwright";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const velarCli = join(projectRoot, "node_modules", "@velarscript", "cli", "dist", "cli.js");
+const npmCli = process.env.npm_execpath;
+assert.equal(typeof npmCli, "string", "Run browser acceptance through npm run test:browser");
 const runtimeDirectory = await mkdtemp(join(tmpdir(), "openvoxel-browser-"));
 const processes = [];
 
-function start(name, args, options = {}) {
+function start(name, entry, args, options = {}) {
   const output = [];
-  const child = spawn(process.execPath, [velarCli, ...args], {
+  const child = spawn(process.execPath, [entry, ...args], {
     cwd: options.cwd ?? projectRoot,
     env: { ...process.env, ...options.env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -28,6 +30,13 @@ function start(name, args, options = {}) {
   const processInfo = { name, child, output };
   processes.push(processInfo);
   return processInfo;
+}
+
+async function requireSuccess(processInfo) {
+  await new Promise((resolve, reject) => {
+    processInfo.child.once("error", reject);
+    processInfo.child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(processFailure(processInfo))));
+  });
 }
 
 function processFailure(processInfo) {
@@ -73,13 +82,10 @@ async function text(page, selector) {
 
 let browser = null;
 try {
-  const build = start("Web build", ["build", "apps/web"]);
-  await new Promise((resolve, reject) => {
-    build.child.once("error", reject);
-    build.child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(processFailure(build))));
-  });
+  await requireSuccess(start("Source generation", npmCli, ["run", "generate"]));
+  await requireSuccess(start("Web build", velarCli, ["build", "apps/web"]));
 
-  const server = start("OpenVoxel server", ["serve"], {
+  const server = start("OpenVoxel server", velarCli, ["serve"], {
     cwd: join(projectRoot, "apps", "server"),
     env: {
       OPENVOXEL_DB: join(runtimeDirectory, "acceptance.sqlite"),
@@ -88,7 +94,7 @@ try {
   });
   await waitForUrl("http://127.0.0.1:3000/api/health", server);
 
-  const preview = start("Web preview", ["preview", "apps/web", "--port", "4173"]);
+  const preview = start("Web preview", velarCli, ["preview", "apps/web", "--port", "4173"]);
   await waitForUrl("http://127.0.0.1:4173/", preview);
 
   browser = await chromium.launch({ headless: true });
