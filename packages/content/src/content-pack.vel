@@ -1,7 +1,7 @@
 import {BlockCatalogContribution, blockCatalogHash} from "@openvoxel/blocks"
 import {WorldContentIdentity, WorldContentPackReference, validateWorldContentIdentity} from "@openvoxel/world"
 import {WorldGeneratorCatalogContribution, worldGeneratorCatalogHash} from "@openvoxel/world-generation"
-import {sha256Text} from "velar/hash"
+import {sha256Text} from "@openvoxel/hash"
 
 /// 一个 Mod 的统一运行时产物。方块和世界生成配置可以独立缺省，但至少需要贡献
 /// 一个内容域。人工 YAML 由构建工具读取，运行时只解析这份已经验证的 JSON 结构。

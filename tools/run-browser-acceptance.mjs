@@ -80,6 +80,64 @@ async function text(page, selector) {
   return value.trim();
 }
 
+async function selectBackend(page, mode) {
+  await page.locator(`[data-use-${mode}]`).click();
+  await page.locator(`[data-use-${mode}][aria-pressed="true"]`).waitFor();
+  assert.match(await text(page, "[data-backend-mode]"), mode === "local" ? /LocalBackend/u : /OnlineBackend/u);
+}
+
+async function runConformance(page, mode, baseWorldId) {
+  await page.locator("[data-world-id-input]").fill(baseWorldId);
+  await page.locator("[data-world-name-input]").fill(`${mode} Backend Conformance`);
+  await page.locator("[data-seed-input]").fill(`${mode}-backend-conformance-seed`);
+  await page.locator("[data-verify-backend]").click();
+  try {
+    await page.locator('[data-conformance-pass="true"]').waitFor();
+  } catch (error) {
+    const status = await text(page, "[data-status]");
+    const failureNode = page.locator("[data-error]");
+    const failure = await failureNode.count() === 0 ? null : await failureNode.textContent();
+    throw new Error(`${mode} conformance did not pass: ${status}; ${failure ?? "no visible failure"}`, { cause: error });
+  }
+  assert.equal(await text(page, "[data-conformance-world]"), `${baseWorldId}-${mode}-conformance`);
+  assert.equal(await text(page, "[data-conformance-revision]"), "1");
+  assert.equal(await text(page, "[data-conformance-generation]"), "2");
+}
+
+async function createEditReconnect(page, worldId, mode) {
+  await page.locator("[data-world-id-input]").fill(worldId);
+  await page.locator("[data-world-name-input]").fill(`${mode} Browser Acceptance`);
+  await page.locator("[data-seed-input]").fill(`${mode}-browser-acceptance-seed`);
+  await page.locator("[data-create-world]").click();
+  await page.locator('[data-world-ready="true"]').waitFor();
+
+  assert.equal(await text(page, "[data-world-id]"), worldId);
+  assert.equal(await text(page, "[data-revision]"), "0");
+  assert.equal(await text(page, "[data-generation]"), "1");
+  const initialRuntimeId = await text(page, "[data-runtime-id]");
+  assert.notEqual(initialRuntimeId, "-1");
+
+  await page.locator("[data-edit-spawn]").click();
+  await page.locator("[data-revision]").filter({ hasText: "1" }).waitFor();
+  const editedRuntimeId = await text(page, "[data-runtime-id]");
+  assert.notEqual(editedRuntimeId, initialRuntimeId);
+
+  await page.locator("[data-reconnect]").click();
+  await page.locator("[data-generation]").filter({ hasText: "2" }).waitFor();
+  assert.equal(await text(page, "[data-revision]"), "1");
+  assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
+  return editedRuntimeId;
+}
+
+async function openPersisted(page, worldId, editedRuntimeId) {
+  await page.locator("[data-world-id-input]").fill(worldId);
+  await page.locator("[data-open-world]").click();
+  await page.locator('[data-world-ready="true"]').waitFor();
+  assert.equal(await text(page, "[data-world-id]"), worldId);
+  assert.equal(await text(page, "[data-revision]"), "1");
+  assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
+}
+
 let browser = null;
 try {
   await requireSuccess(start("Source generation", npmCli, ["run", "generate"]));
@@ -105,39 +163,27 @@ try {
     if (message.type() === "error") browserFailures.push(`console: ${message.text()}`);
   });
 
-  const worldId = `browser-${Date.now()}`;
+  const runId = Date.now();
+  const onlineWorldId = `online-${runId}`;
+  const localWorldId = `local-${runId}`;
   await page.goto("http://127.0.0.1:4173/", { waitUntil: "networkidle" });
-  await page.locator("[data-world-id-input]").fill(worldId);
-  await page.locator("[data-world-name-input]").fill("Browser Acceptance");
-  await page.locator("[data-seed-input]").fill("browser-acceptance-seed");
-  await page.locator("[data-create-world]").click();
-  await page.locator('[data-world-ready="true"]').waitFor();
 
-  assert.equal(await text(page, "[data-world-id]"), worldId);
-  assert.equal(await text(page, "[data-revision]"), "0");
-  assert.equal(await text(page, "[data-generation]"), "1");
-  const initialRuntimeId = await text(page, "[data-runtime-id]");
-  assert.notEqual(initialRuntimeId, "-1");
-
-  await page.locator("[data-edit-spawn]").click();
-  await page.locator("[data-revision]").filter({ hasText: "1" }).waitFor();
-  const editedRuntimeId = await text(page, "[data-runtime-id]");
-  assert.notEqual(editedRuntimeId, initialRuntimeId);
-
-  await page.locator("[data-reconnect]").click();
-  await page.locator("[data-generation]").filter({ hasText: "2" }).waitFor();
-  assert.equal(await text(page, "[data-revision]"), "1");
-  assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
+  await runConformance(page, "online", `online-contract-${runId}`);
+  const onlineEditedRuntimeId = await createEditReconnect(page, onlineWorldId, "Online");
 
   await page.reload({ waitUntil: "networkidle" });
-  await page.locator("[data-world-id-input]").fill(worldId);
-  await page.locator("[data-open-world]").click();
-  await page.locator('[data-world-ready="true"]').waitFor();
-  assert.equal(await text(page, "[data-revision]"), "1");
-  assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
+  await openPersisted(page, onlineWorldId, onlineEditedRuntimeId);
+
+  await selectBackend(page, "local");
+  await runConformance(page, "local", `local-contract-${runId}`);
+  const localEditedRuntimeId = await createEditReconnect(page, localWorldId, "Local");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await selectBackend(page, "local");
+  await openPersisted(page, localWorldId, localEditedRuntimeId);
   assert.deepEqual(browserFailures, []);
 
-  console.log(`Browser acceptance passed for ${worldId}`);
+  console.log(`Browser acceptance passed for OnlineBackend ${onlineWorldId} and LocalBackend ${localWorldId}`);
 } finally {
   if (browser !== null) await browser.close();
   for (const processInfo of processes.reverse()) await stop(processInfo);

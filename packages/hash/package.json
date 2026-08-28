@@ -1,11 +1,10 @@
 {
-  "name": "@openvoxel/content",
+  "name": "@openvoxel/hash",
   "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [
-    "src",
-    "tools"
+    "src"
   ],
   "velar": {
     "entry": "src/index.vel",
@@ -20,23 +19,13 @@
     }
   },
   "scripts": {
-    "compile:mod": "velar run tools/compile-mod.vel",
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
     "test": "velar test",
     "build": "velar build"
   },
-  "dependencies": {
-    "@openvoxel/blocks": "0.2.0",
-    "@openvoxel/hash": "0.2.0",
-    "@openvoxel/identities": "0.2.0",
-    "@openvoxel/world": "0.2.0",
-    "@openvoxel/world-generation": "0.2.0",
-    "@velarscript-labs/yaml": "0.1.5"
-  },
   "devDependencies": {
-    "@velarscript/cli": "0.22.0",
-    "@velarscript/node": "0.22.0"
+    "@velarscript/cli": "0.22.0"
   }
 }

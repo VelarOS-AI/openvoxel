@@ -1,0 +1,10 @@
+import {expect} from "velar/test"
+import {sha256Text} from "../src/index.vel"
+
+test "portable SHA-256 matches standard ASCII vectors":
+    expect(sha256Text("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    expect(sha256Text("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    expect(sha256Text("hello")).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+
+test "portable SHA-256 encodes Unicode as UTF-8":
+    expect(sha256Text("a😀b")).toBe("6fba5b2ea783ded096fc2444d540ffbdf49168df30993b155b7efb683313f110")

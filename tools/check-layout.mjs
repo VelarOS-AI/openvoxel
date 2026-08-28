@@ -15,17 +15,19 @@ const npmToolchainPackages = new Set([
 const labsScope = "@velarscript-labs/";
 const labsRegistryPrefix = "https://registry.npmjs.org/@velarscript-labs/";
 const allowedOpenVoxelDependencies = new Map([
-  ["@openvoxel/identities", new Set()],
-  ["@openvoxel/blocks", new Set(["@openvoxel/identities"])],
+  ["@openvoxel/hash", new Set()],
+  ["@openvoxel/identities", new Set(["@openvoxel/hash"])],
+  ["@openvoxel/blocks", new Set(["@openvoxel/hash", "@openvoxel/identities"])],
   ["@openvoxel/world", new Set(["@openvoxel/blocks", "@openvoxel/identities"])],
-  ["@openvoxel/world-generation", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world"])],
-  ["@openvoxel/content", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
+  ["@openvoxel/world-generation", new Set(["@openvoxel/blocks", "@openvoxel/hash", "@openvoxel/identities", "@openvoxel/world"])],
+  ["@openvoxel/content", new Set(["@openvoxel/blocks", "@openvoxel/hash", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
   ["@openvoxel/protocol", new Set(["@openvoxel/blocks", "@openvoxel/world"])],
   ["@openvoxel/client", new Set(["@openvoxel/protocol", "@openvoxel/world"])],
   ["@openvoxel/client-web", new Set(["@openvoxel/client", "@openvoxel/protocol", "@openvoxel/world"])],
-  ["@openvoxel/world-runtime", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
+  ["@openvoxel/client-local", new Set(["@openvoxel/client", "@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-runtime"])],
+  ["@openvoxel/world-runtime", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/hash", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
   ["@openvoxel/server", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-generation", "@openvoxel/world-runtime"])],
-  ["@openvoxel/web", new Set(["@openvoxel/client", "@openvoxel/client-web", "@openvoxel/protocol", "@openvoxel/world"])],
+  ["@openvoxel/web", new Set(["@openvoxel/client", "@openvoxel/client-local", "@openvoxel/client-web", "@openvoxel/protocol", "@openvoxel/world"])],
 ]);
 const violations = [];
 

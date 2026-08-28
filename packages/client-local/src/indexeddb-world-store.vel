@@ -1,0 +1,75 @@
+import {Bytes} from "velar/binary"
+import {database} from "velar/storage"
+import {decode, encode} from "@velarscript-labs/msgpack"
+import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
+import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
+
+type DatabaseBatchChange:
+    key: string
+    bytes: Bytes?
+
+def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
+
+def localOrder(entry: readonly BlockOverride) -> number:
+    return entry.position.x + 1024 * entry.position.z + 1048576 * entry.position.y
+
+/// OpenVoxel 的浏览器持久化适配器。一个 LocalBackend 只让自己的专用 Worker
+/// 写入这个实例；WorldRuntime 在该 Worker 内串行化世界命令，batch 再把一次
+/// 多 Chunk 发布收敛成单个 IndexedDB 事务。
+export def indexedDbWorldStore(name: string) -> WorldStore:
+    const storage = database(name)
+
+    def manifestKey(worldId: string) -> string: return f"manifest:{worldId}"
+
+    def deltaKey(worldId: string, position: readonly ChunkPosition) -> string:
+        return f"delta:{worldId}:{chunkKey(position)}"
+
+    async def saveManifest(manifest: WorldManifest): await storage.set(manifestKey(manifest.id), manifest)
+
+    async def findManifest(worldId: string) -> WorldManifest?:
+        return await storage.get(manifestKey(worldId), WorldManifest)
+
+    async def storedDelta(worldId: string, position: readonly ChunkPosition) -> ChunkDelta?:
+        const bytes = await storage.getBytes(deltaKey(worldId, position))
+        if bytes == null: return null
+        return ChunkDelta.parse(decode(bytes))
+
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<ChunkDelta>:
+        const found: List<ChunkDelta> = []
+        for position in positions:
+            const delta = await storedDelta(worldId, position)
+            if delta != null: found.append(delta)
+        return found
+
+    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+        const changes: List<DatabaseBatchChange> = []
+        for commit in commits:
+            const current = await storedDelta(worldId, commit.position) ?? {
+                position: commit.position,
+                revision: 0,
+                overrides: [],
+            }
+            assert current.revision == commit.expectedRevision else f"Chunk revision conflict at {chunkKey(commit.position)}"
+            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
+
+            const byPosition: Map<string, readonly BlockOverride> = Map()
+            for entry in current.overrides: byPosition.set(localKey(entry.position), entry)
+            for write in commit.writes:
+                if write.blockStateRuntimeId != null:
+                    byPosition.set(localKey(write.position), BlockOverride.from(write, {
+                        blockStateRuntimeId: write.blockStateRuntimeId,
+                    }))
+                else: byPosition.remove(localKey(write.position))
+            const overrides = byPosition.values().sorted(by=localOrder)
+            const next = ChunkDelta.from(commit, {overrides})
+            changes.append({key: deltaKey(worldId, commit.position), bytes: encode(next)})
+
+        await storage.batch(changes)
+
+    async def close(): pass
+
+    return {
+        manifests: {save: saveManifest, find: findManifest},
+        deltas: {findChunks, commitChunks},
+        close,
+    }

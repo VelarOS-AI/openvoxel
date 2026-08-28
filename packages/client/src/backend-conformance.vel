@@ -1,0 +1,56 @@
+import {CreateWorldRequest} from "@openvoxel/protocol"
+import {ChunkPosition, locateBlock} from "@openvoxel/world"
+import {WorldBackend} from "./backend.vel"
+import {openClientWorld} from "./session.vel"
+
+/// 适配器作者复用的可执行契约。它不依赖测试框架，因此同一份流程既能在内存
+/// 测试中运行，也能进入真实 Chromium Worker 验收。
+export type WorldBackendConformanceResult:
+    readonly worldId: string
+    readonly chunk: readonly ChunkPosition
+    readonly initialRuntimeId: number
+    readonly editedRuntimeId: number
+    readonly revision: number
+    readonly generation: number
+
+export async def verifyWorldBackend(backend: WorldBackend, command: readonly CreateWorldRequest) -> WorldBackendConformanceResult:
+    const created = await backend.createWorld(command)
+    assert created.id == command.id else "WorldBackend create returned a different world id"
+    assert created.name == command.name else "WorldBackend create returned a different world name"
+    assert created.seed == command.seed else "WorldBackend create returned a different world seed"
+
+    const found = await backend.findWorld(created.id)
+    assert Json.stableStringify(found) == Json.stableStringify(created) else "WorldBackend find did not return the created manifest"
+
+    const session = await openClientWorld(backend, created.id)
+    try:
+        const located = locateBlock(created.spawn, created.chunkEdge)
+        const chunks = await session.loadChunks([located.chunk])
+        assert chunks.size == 1 else "WorldBackend returned the wrong spawn Chunk count"
+
+        const current = session.state.block(created.spawn)
+        assert current != null else "WorldBackend spawn Chunk does not contain the spawn block"
+        const replacement = session.content.states.find(state => state.runtimeId != current)
+        assert replacement != null else "WorldBackend content needs at least two block states"
+
+        const applied = await session.applyBlocks([{
+            position: created.spawn,
+            blockStateRuntimeId: replacement.runtimeId,
+        }])
+        assert applied.sequence == 1 else "WorldBackend first block edit must publish sequence 1"
+        assert session.state.block(created.spawn) == replacement.runtimeId else "WorldBackend did not apply the edited block"
+        assert chunks[0].revision() == 1 else "WorldBackend first Chunk edit must advance revision to 1"
+
+        await session.reconnect()
+        assert session.state.generation() == 2 else "WorldBackend reconnect did not open a second connection generation"
+        assert not session.state.requiresResync() else "WorldBackend reconnect did not complete Chunk resynchronization"
+        assert session.state.block(created.spawn) == replacement.runtimeId else "WorldBackend reconnect lost the edited block"
+        return {
+            worldId: created.id,
+            chunk: located.chunk,
+            initialRuntimeId: current,
+            editedRuntimeId: replacement.runtimeId,
+            revision: chunks[0].revision(),
+            generation: session.state.generation(),
+        }
+    finally: await session.close()

@@ -1,0 +1,44 @@
+import {WorldBackendContract} from "@openvoxel/client"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {ChunkPosition, WorldManifest} from "@openvoxel/world"
+
+export const localWorkerOperations = {
+    initialize: "initialize",
+    contract: "contract",
+    createWorld: "create-world",
+    findWorld: "find-world",
+    bootstrap: "bootstrap",
+    content: "content",
+    terrainChunks: "terrain-chunks",
+    openConnection: "open-connection",
+    pollEvent: "poll-event",
+    syncChunks: "sync-chunks",
+    applyBlocks: "apply-blocks",
+    closeConnection: "close-connection",
+    shutdown: "shutdown",
+}
+
+/// Worker 的唯一请求信封。所有可选载荷都会在 operation 分支内再次收窄；
+/// Worker Runtime Type 先保证跨线程结构只能包含这里声明的数据。
+export type LocalWorkerRequest:
+    readonly operation: string
+    readonly databaseName: string?
+    readonly worldId: string?
+    readonly connectionId: string?
+    readonly requestId: string?
+    readonly command: readonly CreateWorldRequest?
+    readonly positions: readonly List<readonly ChunkPosition>?
+    readonly edits: readonly List<readonly RealtimeBlockEdit>?
+
+export type LocalWorkerResponse:
+    readonly operation: string
+    readonly contract: readonly WorldBackendContract?
+    readonly manifest: readonly WorldManifest?
+    readonly bootstrap: readonly WorldBootstrapResponse?
+    readonly content: readonly WorldContentResponse?
+    readonly terrain: readonly TerrainChunkBatchResponse?
+    readonly ready: readonly WorldReadyEvent?
+    readonly changed: readonly WorldBlocksChangedEvent?
+    readonly chunks: readonly ChunksSyncedEvent?
+    readonly blocks: readonly BlockEditsAppliedEvent?
+    readonly closed: bool?

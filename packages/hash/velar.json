@@ -1,0 +1,5 @@
+{
+  "formatVersion": 2,
+  "entry": "src/index.vel",
+  "outDir": "dist"
+}

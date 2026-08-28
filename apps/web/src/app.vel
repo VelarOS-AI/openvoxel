@@ -1,4 +1,5 @@
-import {ClientChunkState, ClientWorldSession, openClientWorld} from "@openvoxel/client"
+import {ClientChunkState, ClientWorldSession, WorldBackend, WorldBackendConformanceResult, openClientWorld, verifyWorldBackend} from "@openvoxel/client"
+import {localBackend} from "@openvoxel/client-local"
 import {onlineBackend} from "@openvoxel/client-web"
 import {CreateWorldRequest} from "@openvoxel/protocol"
 import {WorldManifest, chunkKey, locateBlock} from "@openvoxel/world"
@@ -6,12 +7,14 @@ import {Head} from "velar/web"
 import {configuration} from "./config.vel"
 import {actionsLook, cardLook, controlLook, diagnosticsLook, errorLook, fieldLook, formLook, heroLook, labelLook, metricLook, mutedLook, pageLook, primaryControlLook, shellLook, titleLook, valueLook} from "./look.vel"
 
-const backend = onlineBackend(configuration.openApiUrl)
+const online = onlineBackend(configuration.openApiUrl)
+const local = localBackend()
 
 export component App:
     state worldId = "browser-world"
     state worldName = "Browser World"
     state seed = "browser-world-seed"
+    state backendMode = "online"
     state status = "Ready to create or open a world"
     state failure = ""
     state world: WorldManifest? = null
@@ -21,6 +24,11 @@ export component App:
     state revision = 0
     state generation = 0
     state contentStates = 0
+    state conformance: readonly WorldBackendConformanceResult? = null
+
+    def backend() -> WorldBackend: return backendMode == "local" ? local : online
+
+    def backendLabel() -> string: return backendMode == "local" ? "LocalBackend" : "OnlineBackend"
 
     def cleanWorldId() -> string:
         const clean = worldId.trim()
@@ -48,7 +56,7 @@ export component App:
         await closeSession()
         let opened: ClientWorldSession? = null
         try:
-            opened = await openClientWorld(backend, manifest.id)
+            opened = await openClientWorld(backend(), manifest.id)
             const located = locateBlock(manifest.spawn, manifest.chunkEdge)
             const chunks = await opened.loadChunks([located.chunk])
             assert chunks.size == 1 else "Backend returned the wrong spawn Chunk count"
@@ -69,7 +77,7 @@ export component App:
                 name: worldName.trim(),
                 seed: seed.trim(),
             }
-            const created = await backend.createWorld(command)
+            const created = await backend().createWorld(command)
             await attach(created)
         catch error:
             failure = error.message
@@ -78,7 +86,7 @@ export component App:
     action openExisting():
         failure = ""
         try:
-            const found = await backend.findWorld(cleanWorldId())
+            const found = await backend().findWorld(cleanWorldId())
             await attach(found)
         catch error:
             failure = error.message
@@ -118,11 +126,46 @@ export component App:
             failure = error.message
             status = "Reconnect failed"
 
-    @cleanup:
-        const active = session
-        if active != null: async active.close()
+    async def selectBackend(mode: string):
+        if backendMode == mode: return
+        await closeSession()
+        backendMode = mode
+        conformance = null
+        failure = ""
+        status = f"{backendLabel()} selected"
 
-    def busy() -> bool: return createAndOpen.pending or openExisting.pending or editSpawn.pending or reconnect.pending
+    action useOnline(): await selectBackend("online")
+
+    action useLocal(): await selectBackend("local")
+
+    action verifyBackend():
+        failure = ""
+        conformance = null
+        try:
+            const base = cleanWorldId()
+            const idSuffix = f"-{backendMode}-conformance"
+            const seedSuffix = f"-{backendMode}-conformance"
+            const report = await verifyWorldBackend(backend(), {
+                id: f"{base.slice(0, 64 - idSuffix.size)}{idSuffix}",
+                name: f"{backendLabel()} Conformance",
+                seed: f"{seed.trim().slice(0, 128 - seedSuffix.size)}{seedSuffix}",
+            })
+            conformance = report
+            status = f"{backendLabel()} passed the shared backend conformance"
+        catch error:
+            failure = error.message
+            status = f"{backendLabel()} conformance failed"
+
+    async def shutdown():
+        const active = session
+        if active != null: await active.close()
+        await online.close()
+        await local.close()
+
+    @cleanup: async shutdown()
+
+    def busy() -> bool:
+        return createAndOpen.pending or openExisting.pending or editSpawn.pending or reconnect.pending or useOnline.pending or useLocal.pending or verifyBackend.pending
 
     def diagnostics() -> WebNode:
         const activeWorld = world
@@ -164,7 +207,7 @@ export component App:
         />
         <main look={pageLook}>
             <header look={heroLook}>
-                <p look={mutedLook}>OnlineBackend · HTTP + WebSocket + MessagePack</p>
+                <p look={mutedLook} data-backend-mode>{backendLabel()} · {backendMode == "local" ? "Worker + IndexedDB" : "HTTP + WebSocket + MessagePack"}</p>
                 <h1 look={titleLook}>OpenVoxel Diagnostics</h1>
                 <p look={mutedLook}>
                     Create a world, synchronize its spawn Chunk, edit one block, and verify reconnect convergence.
@@ -172,6 +215,28 @@ export component App:
             </header>
 
             <form look={cardLook} on:submit.prevent={createAndOpen} aria-busy={busy()} data-world-form>
+                <div look={actionsLook} aria-label="Backend mode">
+                    <button
+                        type="button"
+                        look={backendMode == "online" ? primaryControlLook : controlLook}
+                        on:click={useOnline}
+                        disabled={busy()}
+                        aria-pressed={backendMode == "online"}
+                        data-use-online
+                    >
+                        Online
+                    </button>
+                    <button
+                        type="button"
+                        look={backendMode == "local" ? primaryControlLook : controlLook}
+                        on:click={useLocal}
+                        disabled={busy()}
+                        aria-pressed={backendMode == "local"}
+                        data-use-local
+                    >
+                        Local
+                    </button>
+                </div>
                 <div look={formLook}>
                     <label look={labelLook}>
                         World id
@@ -223,10 +288,37 @@ export component App:
                     >
                         Reconnect
                     </button>
+                    <button
+                        type="button"
+                        look={controlLook}
+                        on:click={verifyBackend}
+                        disabled={busy()}
+                        data-verify-backend
+                    >
+                        Verify backend contract
+                    </button>
                 </div>
                 {failure == "" ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
                 <p look={mutedLook} aria-live="polite" data-status>{status}</p>
             </form>
+
+            {conformance == null ? <></> : <section look={cardLook} aria-label="Backend conformance" data-conformance-pass="true">
+                <strong>{backendLabel()} conformance passed</strong>
+                <div look={diagnosticsLook}>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>World</span>
+                        <strong look={valueLook} data-conformance-world>{conformance.worldId}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Revision</span>
+                        <strong look={valueLook} data-conformance-revision>{str(conformance.revision)}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Generation</span>
+                        <strong look={valueLook} data-conformance-generation>{str(conformance.generation)}</strong>
+                    </div>
+                </div>
+            </section>}
 
             <section look={cardLook} aria-label="World session diagnostics">
                 <strong>Session state</strong>

@@ -40,6 +40,7 @@
     "build": "velar build"
   },
   "dependencies": {
+    "@openvoxel/hash": "0.2.0",
     "@openvoxel/identities": "0.2.0",
     "@velarscript-labs/yaml": "0.1.5"
   },

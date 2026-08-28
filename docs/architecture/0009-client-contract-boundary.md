@@ -32,10 +32,12 @@ WebSocket 路径把连接绑定到一个世界。客户端通过 `chunks.sync` �
 `@openvoxel/client` 是传输无关的客户端应用层。它把固定地形压入 `UInt16Buffer`，
 用稀疏覆盖组合当前 Chunk，校验协议、内容与生成器身份，并统一拥有 requestId、
 连接代际、sequence、revision、多批次同步和重连期间的广播暂存。浏览器在线适配器
-和后续 Worker 本地适配器都实现同一个 `WorldBackend`，不复制冷热合并状态机。
+和 Worker 本地适配器都实现同一个 `WorldBackend`，不复制冷热合并状态机。
 这个端口同时包含创建、按 id 查找、启动事实、内容目录、固定地形和实时连接；
-`packages/client/tests/support` 的共享契约从创建一路验收到修改和重连，所有适配器
-必须复用同一组可观察行为。
+它返回的 `WorldBackendContract` 只描述会话真正依赖的协议代际与 Chunk 编码，不要求
+本地模式声明 HTTP 或 WebSocket capability。`packages/client/src/backend-conformance.vel`
+的共享契约从创建一路验收到修改、重连与增量保持；内存测试和真实 Chromium 中的
+Online/Local 适配器都执行这一份可观察行为。
 
 `@openvoxel/client-web` 实现浏览器 `OnlineBackend`。调用方只交给它 OpenAPI URL；
 它按协议包集中定义的 operationId 发现 HTTP 与 WebSocket 地址，启动时缓存发现结果，
@@ -43,6 +45,11 @@ WebSocket 路径把连接绑定到一个世界。客户端通过 `chunks.sync` �
 `/api/worlds/...` 路径副本，服务端改路径后只要操作身份和数据语义不变就无需改客户端。
 `apps/web` 是这条适配器的最小真实消费者：它提供世界创建和查找入口，并把出生点
 Chunk、runtime id、revision 与连接代际作为诊断事实展示，不引入玩家或渲染语义。
+
+`@openvoxel/client-local` 实现浏览器 `LocalBackend`。主线程通过类型化 Worker 信封
+调用同一组后端操作；专用 Worker 直接组合 `WorldRuntime` 与 IndexedDB `WorldStore`，
+并把领域结果投影成客户端端口已有的数据类型。Worker 和 IndexedDB 不改变
+`protocolVersion`，也不把本地存储能力伪装成线上传输事实。
 
 ## HTTP 返回与错误
 

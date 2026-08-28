@@ -1,5 +1,5 @@
-import {WorldBackend, WorldBackendConnection} from "@openvoxel/client"
-import {ApplyBlockEditsCommand, BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockEdit, RealtimeEventEnvelope, SocketErrorEvent, SyncChunksCommand, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, apiOperationNames} from "@openvoxel/protocol"
+import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "@openvoxel/client"
+import {ApplyBlockEditsCommand, BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockEdit, RealtimeEventEnvelope, SocketErrorEvent, SyncChunksCommand, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, apiOperationNames, httpEncoding, realtimeEncoding} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {Bytes} from "velar/binary"
 import {http} from "velar/http"
@@ -123,7 +123,10 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
 
     async def contract():
         const routes = await api()
-        return await http.get(operationUrl(routes, apiOperationNames.clientContract, "GET")).parse(ClientContractResponse)
+        const response = await http.get(operationUrl(routes, apiOperationNames.clientContract, "GET")).parse(ClientContractResponse)
+        assert response.http.encoding == httpEncoding else "Backend uses an unsupported HTTP encoding"
+        assert response.realtime.encoding == realtimeEncoding else "Backend uses an unsupported realtime encoding"
+        return WorldBackendContract.from(response)
 
     async def createWorld(command: readonly CreateWorldRequest):
         const routes = await api()
@@ -250,4 +253,6 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         const connection: WorldBackendConnection = {ready, syncChunks, applyBlocks, close}
         return connection
 
-    return {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect}
+    async def close(): pass
+
+    return {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect, close}

@@ -4,6 +4,9 @@
   "entry": "src/main.vel",
   "outDir": "dist",
   "publicDir": "public",
+  "workers": {
+    "openvoxel-local": "src/local-worker.vel"
+  },
   "build": {
     "sourceMaps": true
   },

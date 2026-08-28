@@ -1,5 +1,16 @@
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientChunkContract, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
+
+/// 客户端会话真正依赖的传输无关兼容事实。
+///
+/// OnlineBackend 在返回它之前验证 HTTP、WebSocket 与 OpenAPI；LocalBackend
+/// 验证 Worker 与本地存储。会话只关心两端最终提供的协议代际和 Chunk 编码，
+/// 不会要求本地模式谎称自己拥有 HTTP capability。
+export type WorldBackendContract:
+    readonly service: string
+    readonly contractVersion: number
+    readonly protocolVersion: number
+    readonly chunks: readonly ClientChunkContract
 
 /// 一个已经绑定到具体世界的实时连接。
 ///
@@ -18,10 +29,11 @@ export type WorldBackendConnection:
 /// 在浏览器 Worker 内直接组合 WorldRuntime。客户端会话只消费这个端口，因此
 /// 冷热数据合并、重连和 revision 规则不会随运行模式复制两份。
 export type WorldBackend:
-    contract: () -> Promise<readonly ClientContractResponse>
+    contract: () -> Promise<readonly WorldBackendContract>
     createWorld: (command: readonly CreateWorldRequest) -> Promise<readonly WorldManifest>
     findWorld: (worldId: string) -> Promise<readonly WorldManifest>
     bootstrap: (worldId: string) -> Promise<readonly WorldBootstrapResponse>
     content: (worldId: string) -> Promise<readonly WorldContentResponse>
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly TerrainChunkBatchResponse>
     connect: (worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> Promise<WorldBackendConnection>
+    close: () -> Promise<null>

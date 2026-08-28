@@ -1,6 +1,6 @@
 import {parseYaml} from "@velarscript-labs/yaml"
 import {BuiltinBlockIdentities, IdentityResolution, resolveIdentityReferences} from "@openvoxel/identities"
-import {sha256Text} from "velar/hash"
+import {sha256Text} from "@openvoxel/hash"
 import {BlockSourceFile, BlockTypeSource} from "../src/definition/block.vel"
 import {BlockCatalogArtifact, BlockCatalogManifest, BlockStateMapSource, BlockStateMapping} from "../src/definition/catalog.vel"
 import {collectBlockTypes, compileBuiltinBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"

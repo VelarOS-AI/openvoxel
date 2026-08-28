@@ -2,7 +2,7 @@
 
 OpenVoxel 是一个使用 VelarScript 从零构建体素世界的开源教学项目。它先完成没有前端也能独立验收的世界后端，再让浏览器单机模式和 Node 联机模式共享同一套世界模型、生成器和应用运行时。
 
-当前完成的是后端世界生成纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建，不写入 SQLite；数据库只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.22 的声明式 ServeApp、WebSocket 路由和类型化实时会话：HTTP 批量读取固定地形，世界绑定的实时通道同步热增量并原子提交批量方块修改。
+当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.22 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
 
 ## 开始使用
 
@@ -20,7 +20,7 @@ npm start
 npm run dev:web
 ```
 
-访问 `http://127.0.0.1:5173` 后，可以通过同一个真实 `OnlineBackend` 创建或打开世界、同步出生点 Chunk、修改出生点方块并验证重连。`npm run test:browser` 会在隔离 SQLite 文件上启动服务与生产预览，用 Chromium 自动完成整条链路。这个应用是仅连接回环地址的诊断面；当前跨端口本地链路不声明 CSP，未来若作为对外产品部署，应先把页面与 API 收敛到同一 HTTPS origin 并启用 CSP。
+访问 `http://127.0.0.1:5173` 后，可以在 `OnlineBackend` 与 `LocalBackend` 之间切换，创建或打开世界、同步出生点 Chunk、修改出生点方块并验证重连。`npm run test:browser` 会在隔离 SQLite 文件上启动服务与生产预览，用 Chromium 对两种适配器执行同一份契约，并刷新页面验证 IndexedDB 恢复。这个应用是仅连接回环地址的诊断面；当前跨端口本地链路不声明 CSP，未来若作为对外产品部署，应先把页面与 API 收敛到同一 HTTPS origin 并启用 CSP。
 
 服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/application.yml`](apps/server/application.yml) 管理；它的位置由 [`apps/server/velar.json`](apps/server/velar.json) 的 `server.configuration` 明确声明，开发、检查和生产构建使用同一入口。数据库与 Content Pack 的相对路径以服务应用目录解析；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定该运行时数据根。可以用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
@@ -87,12 +87,14 @@ flowchart LR
 - `packages/world`：坐标、Chunk 调色板和世界清单等稳定世界模型；只维护数据结构与不变量，不选择生成算法或编排存储。
 - `packages/world-generation`：生成器注册入口与确定性生存生成算法；地形、洞穴、地下流体、矿物和植被按阶段分离，不负责后续 Tick 模拟。
 - `packages/content`：把一个 Mod 的共享身份、方块贡献和生成器贡献编译成独立 `content-pack.json`，并按精确哈希组合每世界内容集合。
+- `packages/hash`：OpenVoxel 内部的跨端 SHA-256 内容身份实现；Node 构建工具和浏览器运行时共享同一算法，不扩大 Node 专属 `velar/hash` 的目标边界。
 - `packages/client`：传输无关的客户端世界会话；验证服务与世界身份，以紧凑冷数据和稀疏热覆盖组合 Chunk，并统一处理 requestId、sequence、revision、多批次同步与重连竞争。
 - `packages/client-web`：浏览器在线适配器；只接收 OpenAPI 地址，按稳定 operationId 发现 HTTP 与 WebSocket 路由，并用 JSON、MessagePack 和框架实时客户端实现 `WorldBackend`。
+- `packages/client-local`：浏览器本地适配器；专用 Worker 拥有 `WorldRuntime`、活动世界与有界事件队列，IndexedDB 以 JSON 保存清单、以 MessagePack 保存 Chunk 增量，并用单事务发布批量修改。
 - `packages/protocol`：只拥有 HTTP 和 MessagePack WebSocket 的线上数据类型、协议版本与客户端接入事实；实际 HTTP 路由由服务端注解和 OpenAPI 共同描述。
 - `packages/world-runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
 - `apps/server`：system、world、chunk、block、realtime 模块，负责把领域值投影成协议响应；同时拥有当前表结构、世界注册表 JSON、稀疏世界规则的 SQLite 适配器与组合根。
-- `apps/web`：面向当前后端能力的浏览器诊断应用；通过 `OnlineBackend` 验收创建、查找、Chunk 同步、方块修改和重连，不承载玩家、物品或 Tick 产品逻辑。
+- `apps/web`：面向当前世界能力的浏览器诊断应用；对 Online/Local 两种适配器验收创建、查找、Chunk 同步、方块修改、重连和持久化恢复。
 - `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定，以及类型化实时会话的一条有界发送队列、唯一 writer 和确定性清理；世界身份、MessagePack 命令、广播范围与错误码仍归 OpenVoxel。`@velarscript-labs/yaml` 仅用于方块目录生成，`@velarscript-labs/database` 与 `@velarscript-labs/sqlite` 仍是非标准的 VelarScript Libraries。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
 
@@ -112,6 +114,6 @@ npm run benchmark:caves
 
 ## 当前边界
 
-当前阶段不包含体素渲染、玩家身份、登录、移动、物品和合成。后端已经提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；客户端应用层已经能够组合冷热 Chunk 和恢复重连状态，浏览器诊断应用已经用真实 HTTP、WebSocket 和 MessagePack 链路完成验收。下一层是让浏览器 Worker 内的 `LocalBackend` 实现同一份 `WorldBackend` 契约，并用共享契约测试确保单机与联机语义一致。
+世界后端、传输无关客户端会话、OnlineBackend 和 LocalBackend 现已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。下一层应建立客户端资源包和最小体素呈现纵向切片：从已同步的少量 Chunk 生成可更新网格，并只通过内容目录中的逻辑 material、texture、model 与 tint key 解析显示资源，继续保持世界运行时 ID 与渲染资源身份分离。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。

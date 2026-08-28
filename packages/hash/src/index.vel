@@ -1,0 +1,139 @@
+import {UInt8Buffer, uint8Buffer, uint32Buffer} from "velar/binary"
+
+const maximumTextBytes = 16 * 1024 * 1024
+const wordSize = 4294967296
+const hexadecimal = "0123456789abcdef"
+
+const roundConstants = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+def unsigned(value: number) -> number: return value % wordSize
+
+def rotateRight(value: number, count: number) -> number: return ((value >>> count) | (value << (32 - count))) >>> 0
+
+def writeUtf8(text: string, output: UInt8Buffer):
+    let offset = 0
+    for character in text:
+        const codePoint = Text.codePoint(character)
+        assert codePoint != null else "OpenVoxel hashes Unicode text, not lone surrogate halves"
+        if codePoint <= 0x7f:
+            output[offset] = codePoint
+            offset += 1
+        else if codePoint <= 0x7ff:
+            output[offset] = 0xc0 | (codePoint >>> 6)
+            output[offset + 1] = 0x80 | (codePoint & 0x3f)
+            offset += 2
+        else if codePoint <= 0xffff:
+            output[offset] = 0xe0 | (codePoint >>> 12)
+            output[offset + 1] = 0x80 | ((codePoint >>> 6) & 0x3f)
+            output[offset + 2] = 0x80 | (codePoint & 0x3f)
+            offset += 3
+        else:
+            output[offset] = 0xf0 | (codePoint >>> 18)
+            output[offset + 1] = 0x80 | ((codePoint >>> 12) & 0x3f)
+            output[offset + 2] = 0x80 | ((codePoint >>> 6) & 0x3f)
+            output[offset + 3] = 0x80 | (codePoint & 0x3f)
+            offset += 4
+
+def paddedUtf8(text: string) -> UInt8Buffer:
+    const byteSize = Text.utf8Size(text)
+    assert byteSize <= maximumTextBytes else "OpenVoxel hash input exceeds 16 MiB"
+    const paddedSize = ((byteSize + 9 + 63) / 64).floor() * 64
+    const bytes = uint8Buffer(paddedSize)
+    writeUtf8(text, bytes)
+    bytes[byteSize] = 0x80
+    const bitSize = byteSize * 8
+    bytes[paddedSize - 4] = (bitSize >>> 24) & 0xff
+    bytes[paddedSize - 3] = (bitSize >>> 16) & 0xff
+    bytes[paddedSize - 2] = (bitSize >>> 8) & 0xff
+    bytes[paddedSize - 1] = bitSize & 0xff
+    return bytes
+
+def hexadecimalWord(word: number) -> string:
+    let result = ""
+    for index in range(8):
+        const digit = hexadecimal.char((word >>> (28 - index * 4)) & 0x0f)
+        assert digit != null else "SHA-256 hexadecimal digit disappeared"
+        result += digit
+    return result
+
+/// OpenVoxel 的跨端内容身份函数。它只使用 Core 可用的确定性整数与二进制
+/// 原语，因此浏览器世界运行时和 Node 构建工具得到完全相同的 SHA-256。
+export def sha256Text(text: string) -> string:
+    const bytes = paddedUtf8(text)
+    const words = uint32Buffer(64)
+    let h0 = 0x6a09e667
+    let h1 = 0xbb67ae85
+    let h2 = 0x3c6ef372
+    let h3 = 0xa54ff53a
+    let h4 = 0x510e527f
+    let h5 = 0x9b05688c
+    let h6 = 0x1f83d9ab
+    let h7 = 0x5be0cd19
+
+    for chunkOffset in range(0, bytes.size, 64):
+        for index in range(16):
+            const offset = chunkOffset + index * 4
+            words[index] = (
+                (bytes[offset] << 24)
+                | (bytes[offset + 1] << 16)
+                | (bytes[offset + 2] << 8)
+                | bytes[offset + 3]
+            ) >>> 0
+        for index in range(16, 64):
+            const previous = words[index - 15]
+            const earlier = words[index - 2]
+            const sigma0 = (rotateRight(previous, 7) ^ rotateRight(previous, 18) ^ (previous >>> 3)) >>> 0
+            const sigma1 = (rotateRight(earlier, 17) ^ rotateRight(earlier, 19) ^ (earlier >>> 10)) >>> 0
+            words[index] = unsigned(words[index - 16] + sigma0 + words[index - 7] + sigma1)
+
+        let a = h0
+        let b = h1
+        let c = h2
+        let d = h3
+        let e = h4
+        let f = h5
+        let g = h6
+        let h = h7
+        for index in range(64):
+            const sum1 = (rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25)) >>> 0
+            const choice = ((e & f) ^ ((~e) & g)) >>> 0
+            const temporary1 = unsigned(h + sum1 + choice + roundConstants[index] + words[index])
+            const sum0 = (rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22)) >>> 0
+            const majority = ((a & b) ^ (a & c) ^ (b & c)) >>> 0
+            const temporary2 = unsigned(sum0 + majority)
+            h = g
+            g = f
+            f = e
+            e = unsigned(d + temporary1)
+            d = c
+            c = b
+            b = a
+            a = unsigned(temporary1 + temporary2)
+
+        h0 = unsigned(h0 + a)
+        h1 = unsigned(h1 + b)
+        h2 = unsigned(h2 + c)
+        h3 = unsigned(h3 + d)
+        h4 = unsigned(h4 + e)
+        h5 = unsigned(h5 + f)
+        h6 = unsigned(h6 + g)
+        h7 = unsigned(h7 + h)
+
+    return hexadecimalWord(h0) + hexadecimalWord(h1) + hexadecimalWord(h2) + hexadecimalWord(h3) + hexadecimalWord(h4) + hexadecimalWord(h5) + hexadecimalWord(h6) + hexadecimalWord(h7)

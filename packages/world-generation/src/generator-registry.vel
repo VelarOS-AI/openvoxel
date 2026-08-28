@@ -1,7 +1,7 @@
 import {WorldBlockRegistry, baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, ChunkPosition, WorldManifest, validateWorldManifest} from "@openvoxel/world"
-import {sha256Text} from "velar/hash"
+import {sha256Text} from "@openvoxel/hash"
 import {WorldGenerator} from "./contracts.vel"
 import {WorldGeneratorCatalogContribution, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "./definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "./runtime/builtin-catalog.vel"

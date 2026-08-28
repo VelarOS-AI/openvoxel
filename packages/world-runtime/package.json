@@ -29,6 +29,7 @@
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",
     "@openvoxel/content": "0.2.0",
+    "@openvoxel/hash": "0.2.0",
     "@openvoxel/identities": "0.2.0",
     "@openvoxel/world": "0.2.0",
     "@openvoxel/world-generation": "0.2.0"

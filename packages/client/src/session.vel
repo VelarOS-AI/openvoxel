@@ -1,6 +1,6 @@
-import {BlockEditsAppliedEvent, ClientContractResponse, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, clientContractVersion, httpEncoding, protocolServiceName, protocolVersion, realtimeEncoding} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
-import {WorldBackend, WorldBackendConnection} from "./backend.vel"
+import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "./backend.vel"
 import {ClientChunkState} from "./chunk-state.vel"
 import {ClientWorldState, clientWorldState} from "./world-state.vel"
 
@@ -8,7 +8,7 @@ import {ClientWorldState, clientWorldState} from "./world-state.vel"
 /// 调用者不直接操作 requestId、sequence 或增量重同步。
 export type ClientWorldSession:
     readonly worldId: string
-    readonly contract: readonly ClientContractResponse
+    readonly contract: readonly WorldBackendContract
     readonly bootstrap: readonly WorldBootstrapResponse
     readonly content: readonly WorldContentResponse
     readonly state: ClientWorldState
@@ -24,8 +24,6 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
     assert contract.service == protocolServiceName else "Backend is not an OpenVoxel service"
     assert contract.contractVersion == clientContractVersion else "Client contract version does not match the backend"
     assert contract.protocolVersion == protocolVersion else "Client protocol version does not match the backend"
-    assert contract.http.encoding == httpEncoding else "Backend uses an unsupported HTTP encoding"
-    assert contract.realtime.encoding == realtimeEncoding else "Backend uses an unsupported realtime encoding"
     assert contract.chunks.maximumBatchSize.isInteger() and contract.chunks.maximumBatchSize > 0 else "Backend Chunk batch limit must be positive"
     const bootstrap = await backend.bootstrap(worldId)
     assert bootstrap.id == worldId else "World bootstrap returned a different world"

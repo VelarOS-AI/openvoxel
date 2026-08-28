@@ -1,10 +1,10 @@
 import {expect} from "velar/test"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {Chunk, ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {BlockChangeBatch, BlockEdit, ChunkDelta, CreateWorld, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
-import {WorldBackend, WorldBackendConnection} from "../src/backend.vel"
+import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "../src/backend.vel"
+import {verifyWorldBackend} from "../src/backend-conformance.vel"
 import {ClientWorldSession, openClientWorld} from "../src/session.vel"
-import {expectWorldBackendContract} from "./support/backend-contract.vel"
 
 type BackendHarness:
     backend: WorldBackend
@@ -12,15 +12,11 @@ type BackendHarness:
     world: WorldManifest
     injectDuringNextSync: (edit: readonly RealtimeBlockEdit) -> null
 
-def contractResponse() -> ClientContractResponse:
+def contractResponse() -> WorldBackendContract:
     return {
         service: protocolServiceName,
         contractVersion: clientContractVersion,
         protocolVersion,
-        capabilities: clientCapabilities,
-        errorCodes: protocolErrorCodes,
-        http: {encoding: httpEncoding, descriptionFormat: "openapi-3.1"},
-        realtime: {encoding: realtimeEncoding, commands: realtimeCommandNames, events: realtimeEventNames},
         chunks: {
             paletteEntries: chunkPaletteEntryEncoding,
             localIndices: chunkLocalIndexEncoding,
@@ -28,7 +24,6 @@ def contractResponse() -> ClientContractResponse:
             // 故意把测试限制设为 1，强制会话走多批次同步路径。
             maximumBatchSize: 1,
         },
-        limits: {requestBodyBytes: 65536, realtimeMessageBytes: 1048576},
     }
 
 def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResponse:
@@ -83,7 +78,7 @@ async def backendHarness() -> BackendHarness:
 
     runtime.subscribeBlockChanges(publish)
 
-    async def contract() -> ClientContractResponse: return contractResponse()
+    async def contract() -> WorldBackendContract: return contractResponse()
 
     async def createWorld(command: readonly CreateWorldRequest):
         return await runtime.createWorld(CreateWorld.from(command, {
@@ -142,11 +137,13 @@ async def backendHarness() -> BackendHarness:
 
         return {ready, syncChunks, applyBlocks, close}
 
+    async def close(): pass
+
     def injectDuringNextSync(edit: readonly RealtimeBlockEdit):
         assert injectedEdit == null else "Test backend already has a pending injected edit"
         injectedEdit = RealtimeBlockEdit.parse(edit)
 
-    const backend: WorldBackend = {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect}
+    const backend: WorldBackend = {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect, close}
     return {backend, runtime, world, injectDuringNextSync}
 
 def replacementState(session: readonly ClientWorldSession, current: number) -> number:
@@ -157,11 +154,13 @@ def replacementState(session: readonly ClientWorldSession, current: number) -> n
 test "WorldBackend satisfies the shared create, open, edit, and reconnect contract":
     const harness = await backendHarness()
     try:
-        await expectWorldBackendContract(harness.backend, {
+        const result = await verifyWorldBackend(harness.backend, {
             id: "backend-contract",
             name: "Backend Contract",
             seed: "backend-contract-seed",
         })
+        expect(result.revision).toBe(1)
+        expect(result.generation).toBe(2)
     finally: await harness.runtime.close()
 
 test "client sessions share hot changes and preserve broadcasts that cross a complete sync":
