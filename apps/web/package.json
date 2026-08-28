@@ -1,13 +1,10 @@
 {
-  "name": "@openvoxel/client-web",
+  "name": "@openvoxel/web",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "files": [
-    "src"
-  ],
   "velar": {
-    "entry": "src/index.vel",
+    "entry": "src/main.vel",
     "targets": [
       "web"
     ],
@@ -21,16 +18,18 @@
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
-    "build": "velar build"
+    "dev": "velar dev",
+    "build": "velar build",
+    "preview": "velar preview"
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
+    "@openvoxel/client-web": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/world": "0.2.0",
-    "@velarscript-labs/msgpack": "0.1.6"
+    "@velarscript/web": "0.22.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.22.0",
-    "@velarscript/web": "0.22.0"
+    "@velarscript/cli": "0.22.0"
   }
 }

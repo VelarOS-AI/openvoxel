@@ -1,6 +1,6 @@
 import {WorldBackend, WorldBackendConnection} from "@openvoxel/client"
-import {ApplyBlockEditsCommand, BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockEdit, RealtimeEventEnvelope, SocketErrorEvent, SyncChunksCommand, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, apiOperationNames} from "@openvoxel/protocol"
-import {ChunkPosition} from "@openvoxel/world"
+import {ApplyBlockEditsCommand, BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockEdit, RealtimeEventEnvelope, SocketErrorEvent, SyncChunksCommand, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, apiOperationNames} from "@openvoxel/protocol"
+import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {Bytes} from "velar/binary"
 import {http} from "velar/http"
 import {RealtimeClient, RealtimeClientFailureAction, RealtimeCodec, RealtimeFailure, realtimeClient} from "velar/realtime"
@@ -125,6 +125,17 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         const routes = await api()
         return await http.get(operationUrl(routes, apiOperationNames.clientContract, "GET")).parse(ClientContractResponse)
 
+    async def createWorld(command: readonly CreateWorldRequest):
+        const routes = await api()
+        return await http.post(
+            operationUrl(routes, apiOperationNames.createWorld, "POST"),
+            {body: command},
+        ).parse(WorldManifest)
+
+    async def findWorld(worldId: string):
+        const routes = await api()
+        return await http.get(operationUrl(routes, apiOperationNames.findWorld, "GET", worldId)).parse(WorldManifest)
+
     async def bootstrap(worldId: string):
         const routes = await api()
         return await http.get(operationUrl(routes, apiOperationNames.worldBootstrap, "GET", worldId)).parse(WorldBootstrapResponse)
@@ -239,4 +250,4 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         const connection: WorldBackendConnection = {ready, syncChunks, applyBlocks, close}
         return connection
 
-    return {contract, bootstrap, content, terrainChunks, connect}
+    return {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect}

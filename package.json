@@ -27,8 +27,10 @@
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
     "dev": "npm run dev --workspace @openvoxel/server",
+    "dev:web": "npm run dev --workspace @openvoxel/web",
     "start": "npm run start --workspace @openvoxel/server",
     "test": "npm run test --workspaces --if-present",
+    "test:browser": "node tools/run-browser-acceptance.mjs",
     "build": "npm run build --workspaces --if-present",
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/world-generation",
     "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/world-generation",
@@ -48,7 +50,8 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.22.0"
+    "@velarscript/cli": "0.22.0",
+    "playwright": "1.62.1"
   },
   "allowScripts": {
     "esbuild": false,

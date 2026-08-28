@@ -1,4 +1,5 @@
 import {created, input} from "velar/serve"
+import {CreateWorldRequest} from "@openvoxel/protocol"
 import {CreateWorld} from "@openvoxel/world-runtime"
 import {openVoxelApplicationProvider} from "../application.vel"
 import {applicationResult} from "../error-handler.vel"
@@ -6,8 +7,9 @@ import {worldBootstrapResponse} from "../presentation/world.vel"
 
 export server worldRoutes:
     /// 在世界集合中创建一个确定性世界，并通过 Location 指向新资源。
-    @post createWorld(p"/api/worlds", command: CreateWorld, application = input.dependency(openVoxelApplicationProvider)):
-        const manifest = await applicationResult(application.runtime.createWorld(command))
+    @post createWorld(p"/api/worlds", command: CreateWorldRequest, application = input.dependency(openVoxelApplicationProvider)):
+        const runtimeCommand = CreateWorld.from(command, {contentPacks: command.contentPacks?.copy()})
+        const manifest = await applicationResult(application.runtime.createWorld(runtimeCommand))
         application.info("world.created", {worldId: manifest.id, seed: manifest.seed})
         return created(
             manifest,

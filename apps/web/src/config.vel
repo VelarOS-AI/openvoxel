@@ -1,0 +1,6 @@
+import {publicConfig} from "velar/config"
+
+export type WebConfiguration:
+    openApiUrl: string
+
+export const configuration = publicConfig(WebConfiguration)

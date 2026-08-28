@@ -62,6 +62,15 @@ export type ClientContractResponse:
     chunks: ClientChunkContract
     limits: ClientTransportLimits
 
+/// 创建世界的 HTTP 输入。协议层只描述线上可传输字段；默认生成器、内容集合和
+/// 清单装配仍由 WorldRuntime 的创建用例决定。
+export type CreateWorldRequest:
+    readonly id: string
+    readonly name: string
+    readonly seed: string
+    readonly generator: string?
+    readonly contentPacks: readonly List<string>?
+
 export type TerrainChunkBatchRequest:
     readonly positions: readonly List<readonly ChunkPosition>
 

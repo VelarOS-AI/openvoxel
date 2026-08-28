@@ -25,6 +25,7 @@ const allowedOpenVoxelDependencies = new Map([
   ["@openvoxel/client-web", new Set(["@openvoxel/client", "@openvoxel/protocol", "@openvoxel/world"])],
   ["@openvoxel/world-runtime", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
   ["@openvoxel/server", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/identities", "@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-generation", "@openvoxel/world-runtime"])],
+  ["@openvoxel/web", new Set(["@openvoxel/client", "@openvoxel/client-web", "@openvoxel/protocol", "@openvoxel/world"])],
 ]);
 const violations = [];
 

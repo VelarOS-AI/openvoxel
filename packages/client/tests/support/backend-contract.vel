@@ -1,0 +1,41 @@
+import {CreateWorldRequest} from "@openvoxel/protocol"
+import {locateBlock} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {WorldBackend} from "../../src/backend.vel"
+import {openClientWorld} from "../../src/session.vel"
+
+/// 每一种 WorldBackend 都必须通过的可观察行为。未来 LocalBackend 直接复用这
+/// 组断言，避免线上和本地模式各自形成一套创建、加载和重连语义。
+export async def expectWorldBackendContract(backend: WorldBackend, command: readonly CreateWorldRequest):
+    const created = await backend.createWorld(command)
+    expect(created.id).toBe(command.id)
+    expect(created.name).toBe(command.name)
+    expect(created.seed).toBe(command.seed)
+
+    const found = await backend.findWorld(created.id)
+    expect(found).toEqual(created)
+
+    const session = await openClientWorld(backend, created.id)
+    try:
+        const located = locateBlock(created.spawn, created.chunkEdge)
+        const chunks = await session.loadChunks([located.chunk])
+        expect(chunks.size).toBe(1)
+
+        const current = session.state.block(created.spawn)
+        assert current != null else "Expected the spawn Chunk to contain the spawn block"
+        const replacement = session.content.states.find(state => state.runtimeId != current)
+        assert replacement != null else "Expected at least two world block states"
+
+        const applied = await session.applyBlocks([{
+            position: created.spawn,
+            blockStateRuntimeId: replacement.runtimeId,
+        }])
+        expect(applied.sequence).toBe(1)
+        expect(session.state.block(created.spawn)).toBe(replacement.runtimeId)
+        expect(chunks[0].revision()).toBe(1)
+
+        await session.reconnect()
+        expect(session.state.generation()).toBe(2)
+        expect(session.state.requiresResync()).toBe(false)
+        expect(session.state.block(created.spawn)).toBe(replacement.runtimeId)
+    finally: await session.close()

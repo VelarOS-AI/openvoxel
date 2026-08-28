@@ -14,6 +14,14 @@ npm run validate
 npm start
 ```
 
+另开一个终端运行浏览器诊断应用：
+
+```sh
+npm run dev:web
+```
+
+访问 `http://127.0.0.1:5173` 后，可以通过同一个真实 `OnlineBackend` 创建或打开世界、同步出生点 Chunk、修改出生点方块并验证重连。`npm run test:browser` 会在隔离 SQLite 文件上启动服务与生产预览，用 Chromium 自动完成整条链路。这个应用是仅连接回环地址的诊断面；当前跨端口本地链路不声明 CSP，未来若作为对外产品部署，应先把页面与 API 收敛到同一 HTTPS origin 并启用 CSP。
+
 服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/application.yml`](apps/server/application.yml) 管理；它的位置由 [`apps/server/velar.json`](apps/server/velar.json) 的 `server.configuration` 明确声明，开发、检查和生产构建使用同一入口。数据库与 Content Pack 的相对路径以服务应用目录解析；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定该运行时数据根。可以用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
 ```sh
@@ -84,6 +92,7 @@ flowchart LR
 - `packages/protocol`：只拥有 HTTP 和 MessagePack WebSocket 的线上数据类型、协议版本与客户端接入事实；实际 HTTP 路由由服务端注解和 OpenAPI 共同描述。
 - `packages/world-runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
 - `apps/server`：system、world、chunk、block、realtime 模块，负责把领域值投影成协议响应；同时拥有当前表结构、世界注册表 JSON、稀疏世界规则的 SQLite 适配器与组合根。
+- `apps/web`：面向当前后端能力的浏览器诊断应用；通过 `OnlineBackend` 验收创建、查找、Chunk 同步、方块修改和重连，不承载玩家、物品或 Tick 产品逻辑。
 - `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定，以及类型化实时会话的一条有界发送队列、唯一 writer 和确定性清理；世界身份、MessagePack 命令、广播范围与错误码仍归 OpenVoxel。`@velarscript-labs/yaml` 仅用于方块目录生成，`@velarscript-labs/database` 与 `@velarscript-labs/sqlite` 仍是非标准的 VelarScript Libraries。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
 
@@ -103,6 +112,6 @@ npm run benchmark:caves
 
 ## 当前边界
 
-当前阶段不包含渲染、玩家身份、登录、移动、物品和合成。后端已经提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；客户端应用层已经能够组合冷热 Chunk 和恢复重连状态。下一层是由框架生成的稳定路由操作身份与浏览器在线适配器，随后接浏览器 Worker 本地适配器。
+当前阶段不包含体素渲染、玩家身份、登录、移动、物品和合成。后端已经提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；客户端应用层已经能够组合冷热 Chunk 和恢复重连状态，浏览器诊断应用已经用真实 HTTP、WebSocket 和 MessagePack 链路完成验收。下一层是让浏览器 Worker 内的 `LocalBackend` 实现同一份 `WorldBackend` 契约，并用共享契约测试确保单机与联机语义一致。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。

@@ -1,0 +1,236 @@
+import {ClientChunkState, ClientWorldSession, openClientWorld} from "@openvoxel/client"
+import {onlineBackend} from "@openvoxel/client-web"
+import {CreateWorldRequest} from "@openvoxel/protocol"
+import {WorldManifest, chunkKey, locateBlock} from "@openvoxel/world"
+import {Head} from "velar/web"
+import {configuration} from "./config.vel"
+import {actionsLook, cardLook, controlLook, diagnosticsLook, errorLook, fieldLook, formLook, heroLook, labelLook, metricLook, mutedLook, pageLook, primaryControlLook, shellLook, titleLook, valueLook} from "./look.vel"
+
+const backend = onlineBackend(configuration.openApiUrl)
+
+export component App:
+    state worldId = "browser-world"
+    state worldName = "Browser World"
+    state seed = "browser-world-seed"
+    state status = "Ready to create or open a world"
+    state failure = ""
+    state world: WorldManifest? = null
+    state session: ClientWorldSession? = null
+    state chunk: readonly ClientChunkState? = null
+    state runtimeId: number? = null
+    state revision = 0
+    state generation = 0
+    state contentStates = 0
+
+    def cleanWorldId() -> string:
+        const clean = worldId.trim()
+        assert not clean.isBlank() else "World id cannot be blank"
+        return clean
+
+    async def closeSession():
+        const previous = session
+        session = null
+        world = null
+        chunk = null
+        runtimeId = null
+        revision = 0
+        generation = 0
+        contentStates = 0
+        if previous != null: await previous.close()
+
+    def refreshDiagnostics(active: readonly ClientWorldSession, activeChunk: readonly ClientChunkState):
+        runtimeId = active.state.block(active.bootstrap.spawn)
+        revision = activeChunk.revision()
+        generation = active.state.generation()
+        contentStates = active.content.states.size
+
+    async def attach(manifest: readonly WorldManifest):
+        await closeSession()
+        let opened: ClientWorldSession? = null
+        try:
+            opened = await openClientWorld(backend, manifest.id)
+            const located = locateBlock(manifest.spawn, manifest.chunkEdge)
+            const chunks = await opened.loadChunks([located.chunk])
+            assert chunks.size == 1 else "Backend returned the wrong spawn Chunk count"
+            world = WorldManifest.parse(manifest)
+            session = opened
+            chunk = chunks[0]
+            refreshDiagnostics(opened, chunks[0])
+            status = "World connected and spawn Chunk synchronized"
+        catch error:
+            if opened != null: await opened.close()
+            throw error
+
+    action createAndOpen():
+        failure = ""
+        try:
+            const command: CreateWorldRequest = {
+                id: cleanWorldId(),
+                name: worldName.trim(),
+                seed: seed.trim(),
+            }
+            const created = await backend.createWorld(command)
+            await attach(created)
+        catch error:
+            failure = error.message
+            status = "World creation failed"
+
+    action openExisting():
+        failure = ""
+        try:
+            const found = await backend.findWorld(cleanWorldId())
+            await attach(found)
+        catch error:
+            failure = error.message
+            status = "World open failed"
+
+    action editSpawn():
+        failure = ""
+        try:
+            const active = session
+            const activeWorld = world
+            const activeChunk = chunk
+            assert active != null and activeWorld != null and activeChunk != null else "Open a world before editing"
+            const current = active.state.block(activeWorld.spawn)
+            assert current != null else "Spawn block is not loaded"
+            const replacement = active.content.states.find(state => state.runtimeId != current)
+            assert replacement != null else "World content needs at least two block states"
+            await active.applyBlocks([{
+                position: activeWorld.spawn,
+                blockStateRuntimeId: replacement.runtimeId,
+            }])
+            refreshDiagnostics(active, activeChunk)
+            status = "Spawn block edit committed"
+        catch error:
+            failure = error.message
+            status = "Block edit failed"
+
+    action reconnect():
+        failure = ""
+        try:
+            const active = session
+            const activeChunk = chunk
+            assert active != null and activeChunk != null else "Open a world before reconnecting"
+            await active.reconnect()
+            refreshDiagnostics(active, activeChunk)
+            status = "Realtime connection reopened and tracked Chunks resynchronized"
+        catch error:
+            failure = error.message
+            status = "Reconnect failed"
+
+    @cleanup:
+        const active = session
+        if active != null: async active.close()
+
+    def busy() -> bool: return createAndOpen.pending or openExisting.pending or editSpawn.pending or reconnect.pending
+
+    def diagnostics() -> WebNode:
+        const activeWorld = world
+        const activeChunk = chunk
+        if activeWorld == null or activeChunk == null:
+            return <p look={mutedLook} data-world-empty>No world is connected.</p>
+        return <div look={diagnosticsLook} data-world-ready="true">
+            <div look={metricLook}>
+                <span look={mutedLook}>World</span>
+                <strong look={valueLook} data-world-id>{activeWorld.id}</strong>
+            </div>
+            <div look={metricLook}>
+                <span look={mutedLook}>Spawn Chunk</span>
+                <strong look={valueLook} data-chunk-key>{chunkKey(activeChunk.position)}</strong>
+            </div>
+            <div look={metricLook}>
+                <span look={mutedLook}>Block runtime id</span>
+                <strong look={valueLook} data-runtime-id>{str(runtimeId ?? -1)}</strong>
+            </div>
+            <div look={metricLook}>
+                <span look={mutedLook}>Chunk revision</span>
+                <strong look={valueLook} data-revision>{str(revision)}</strong>
+            </div>
+            <div look={metricLook}>
+                <span look={mutedLook}>Connection generation</span>
+                <strong look={valueLook} data-generation>{str(generation)}</strong>
+            </div>
+            <div look={metricLook}>
+                <span look={mutedLook}>Content states</span>
+                <strong look={valueLook} data-content-states>{str(contentStates)}</strong>
+            </div>
+        </div>
+
+    return <div look={shellLook} data-app>
+        <Head
+            title="OpenVoxel Diagnostics"
+            description="Real browser acceptance surface for OpenVoxel world sessions"
+            robots="noindex,nofollow"
+        />
+        <main look={pageLook}>
+            <header look={heroLook}>
+                <p look={mutedLook}>OnlineBackend · HTTP + WebSocket + MessagePack</p>
+                <h1 look={titleLook}>OpenVoxel Diagnostics</h1>
+                <p look={mutedLook}>
+                    Create a world, synchronize its spawn Chunk, edit one block, and verify reconnect convergence.
+                </p>
+            </header>
+
+            <form look={cardLook} on:submit.prevent={createAndOpen} aria-busy={busy()} data-world-form>
+                <div look={formLook}>
+                    <label look={labelLook}>
+                        World id
+                        <input
+                            look={fieldLook}
+                            name="worldId"
+                            bind:value={worldId}
+                            disabled={busy()}
+                            data-world-id-input
+                        />
+                    </label>
+                    <label look={labelLook}>
+                        Name
+                        <input
+                            look={fieldLook}
+                            name="worldName"
+                            bind:value={worldName}
+                            disabled={busy()}
+                            data-world-name-input
+                        />
+                    </label>
+                    <label look={labelLook}>
+                        Seed
+                        <input look={fieldLook} name="seed" bind:value={seed} disabled={busy()} data-seed-input />
+                    </label>
+                </div>
+                <div look={actionsLook}>
+                    <button type="submit" look={primaryControlLook} disabled={busy()} data-create-world>
+                        Create and open
+                    </button>
+                    <button type="button" look={controlLook} on:click={openExisting} disabled={busy()} data-open-world>
+                        Open existing
+                    </button>
+                    <button
+                        type="button"
+                        look={controlLook}
+                        on:click={editSpawn}
+                        disabled={busy() or session == null}
+                        data-edit-spawn
+                    >
+                        Edit spawn block
+                    </button>
+                    <button
+                        type="button"
+                        look={controlLook}
+                        on:click={reconnect}
+                        disabled={busy() or session == null}
+                        data-reconnect
+                    >
+                        Reconnect
+                    </button>
+                </div>
+                {failure == "" ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
+                <p look={mutedLook} aria-live="polite" data-status>{status}</p>
+            </form>
+
+            <section look={cardLook} aria-label="World session diagnostics">
+                <strong>Session state</strong>
+                {diagnostics()}
+            </section>
+        </main>
+    </div>

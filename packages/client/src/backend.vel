@@ -1,5 +1,5 @@
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
-import {ChunkPosition} from "@openvoxel/world"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 
 /// 一个已经绑定到具体世界的实时连接。
 ///
@@ -19,6 +19,8 @@ export type WorldBackendConnection:
 /// 冷热数据合并、重连和 revision 规则不会随运行模式复制两份。
 export type WorldBackend:
     contract: () -> Promise<readonly ClientContractResponse>
+    createWorld: (command: readonly CreateWorldRequest) -> Promise<readonly WorldManifest>
+    findWorld: (worldId: string) -> Promise<readonly WorldManifest>
     bootstrap: (worldId: string) -> Promise<readonly WorldBootstrapResponse>
     content: (worldId: string) -> Promise<readonly WorldContentResponse>
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly TerrainChunkBatchResponse>

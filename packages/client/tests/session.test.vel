@@ -1,9 +1,10 @@
 import {expect} from "velar/test"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "@openvoxel/protocol"
 import {Chunk, ChunkPosition, WorldManifest} from "@openvoxel/world"
-import {BlockChangeBatch, BlockEdit, ChunkDelta, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {BlockChangeBatch, BlockEdit, ChunkDelta, CreateWorld, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 import {WorldBackend, WorldBackendConnection} from "../src/backend.vel"
 import {ClientWorldSession, openClientWorld} from "../src/session.vel"
+import {expectWorldBackendContract} from "./support/backend-contract.vel"
 
 type BackendHarness:
     backend: WorldBackend
@@ -84,6 +85,13 @@ async def backendHarness() -> BackendHarness:
 
     async def contract() -> ClientContractResponse: return contractResponse()
 
+    async def createWorld(command: readonly CreateWorldRequest):
+        return await runtime.createWorld(CreateWorld.from(command, {
+            contentPacks: command.contentPacks?.copy(),
+        }))
+
+    async def findWorld(worldId: string): return await runtime.requireWorld(worldId)
+
     async def bootstrap(worldId: string) -> WorldBootstrapResponse:
         const manifest = await runtime.requireWorld(worldId)
         return bootstrapResponse(manifest, await runtime.worldContent(worldId))
@@ -138,13 +146,23 @@ async def backendHarness() -> BackendHarness:
         assert injectedEdit == null else "Test backend already has a pending injected edit"
         injectedEdit = RealtimeBlockEdit.parse(edit)
 
-    const backend: WorldBackend = {contract, bootstrap, content, terrainChunks, connect}
+    const backend: WorldBackend = {contract, createWorld, findWorld, bootstrap, content, terrainChunks, connect}
     return {backend, runtime, world, injectDuringNextSync}
 
 def replacementState(session: readonly ClientWorldSession, current: number) -> number:
     const replacement = session.content.states.find(state => state.runtimeId != current)
     assert replacement != null else "Expected at least two world block states"
     return replacement.runtimeId
+
+test "WorldBackend satisfies the shared create, open, edit, and reconnect contract":
+    const harness = await backendHarness()
+    try:
+        await expectWorldBackendContract(harness.backend, {
+            id: "backend-contract",
+            name: "Backend Contract",
+            seed: "backend-contract-seed",
+        })
+    finally: await harness.runtime.close()
 
 test "client sessions share hot changes and preserve broadcasts that cross a complete sync":
     const harness = await backendHarness()

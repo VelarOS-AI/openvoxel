@@ -1,0 +1,26 @@
+{
+  "formatVersion": 2,
+  "kind": "application",
+  "entry": "src/main.vel",
+  "outDir": "dist",
+  "publicDir": "public",
+  "build": {
+    "sourceMaps": true
+  },
+  "extensions": ["@velarscript/web"],
+  "web": {
+    "title": "OpenVoxel Diagnostics",
+    "base": "/",
+    "publicConfig": {
+      "openApiUrl": "http://127.0.0.1:3000/api/openapi.json"
+    },
+    "security": {
+      "contentSecurityPolicy": false,
+      "connectSources": [],
+      "imageSources": []
+    },
+    "deployment": {
+      "spaFallback": true
+    }
+  }
+}
