@@ -1,0 +1,25 @@
+import {BlockPosition, ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
+import {UInt32Buffer, uint32Buffer} from "velar/binary"
+
+def paddedIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
+
+/// 快照只依赖调用方提供的方块读取端口；缺失邻居以当前内容目录的空气 runtimeId
+/// 填充。调用方在邻居载入时会让两侧 Chunk 同时失效，因此临时外露的边界面可以收敛。
+export def snapshotChunkNeighborhood(
+    position: readonly ChunkPosition,
+    edge: number,
+    block: (position: readonly BlockPosition) -> number?,
+    missingRuntimeId: number = 0,
+) -> UInt32Buffer:
+    requireChunkPosition(position)
+    requireChunkEdge(edge)
+    const paddedEdge = edge + 2
+    const snapshot = uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
+    for y in range(paddedEdge):
+        const worldY = position.y * edge + y - 1
+        for z in range(paddedEdge):
+            const worldZ = position.z * edge + z - 1
+            for x in range(paddedEdge):
+                const worldX = position.x * edge + x - 1
+                snapshot[paddedIndex(x, y, z, paddedEdge)] = block({x: worldX, y: worldY, z: worldZ}) ?? missingRuntimeId
+    return snapshot

@@ -1,0 +1,48 @@
+import {basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
+import {WorldContentResponse} from "@openvoxel/protocol"
+import {expect} from "velar/test"
+import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
+import {createClientRenderCatalog} from "../src/render-catalog.vel"
+import {ClientBlockModelKind, ClientResourcePackArtifact} from "../src/resource-pack.vel"
+
+def contentResponse() -> WorldContentResponse:
+    return {
+        content: {contentHash: builtinClientResourcePack.targetContentHash, packs: []},
+        schemaVersion: basePackedBlockCatalogSource.schemaVersion,
+        catalogVersion: blockCatalogVersion,
+        stateMapHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        generator: "openvoxel:generator/survival",
+        generatorHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        generatorCatalogHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        minimumWorldY: 0,
+        maximumWorldY: 255,
+        seaLevel: 64,
+        resources: collectBlockRenderResources(blockStateCatalog()),
+        blocks: basePackedBlockCatalogSource.blocks,
+        componentProfiles: basePackedBlockCatalogSource.componentProfiles,
+        states: basePackedBlockCatalogSource.states,
+    }
+
+test "built-in resources resolve every world state without using catalog order as runtime identity":
+    const content = contentResponse()
+    const reversed = WorldContentResponse.from(content, {states: content.states.reversed()})
+    const catalog = createClientRenderCatalog(reversed, builtinClientResourcePack)
+    expect(catalog.states.size).toBe(content.states.size)
+    expect(catalog.requireState(0).model).toBe(null)
+    const cube = catalog.states.find(state => state.model == ClientBlockModelKind.cube)
+    assert cube != null else "Expected a cube state"
+    expect(catalog.requireState(cube.runtimeId).model).toBe(ClientBlockModelKind.cube)
+    expect(cube.textures == null).toBe(false)
+
+test "resource packs fail before rendering when their target content build differs":
+    const incompatible = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        targetContentHash: "1111111111111111111111111111111111111111111111111111111111111111",
+    })
+    expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
+
+test "cutout plant material owns its unlit presentation without changing terrain lighting":
+    const cross = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/cross")
+    const terrain = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/terrain")
+    assert cross != null and terrain != null else "Expected built-in cross and terrain materials"
+    expect(cross.unlit).toBe(true)
+    expect(terrain.unlit).toBe(false)

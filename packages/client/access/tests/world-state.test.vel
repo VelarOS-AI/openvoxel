@@ -1,0 +1,114 @@
+import {expect} from "velar/test"
+import {RealtimeBlockChange, RealtimeBlockOverride, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldReadyEvent, protocolVersion} from "@openvoxel/protocol"
+import {BlockPosition, ChunkPosition, LocalPosition, blockIndex} from "@openvoxel/world"
+import {clientWorldState} from "../src/world-state.vel"
+
+const worldId = "client-state"
+const chunkPosition: ChunkPosition = {x: 0, y: 1, z: 0}
+
+def terrain(position: readonly ChunkPosition = chunkPosition) -> TerrainChunkResponse:
+    const indices = range(64).map(_index => 0)
+    indices[0] = 1
+    return {
+        position,
+        edge: 4,
+        palette: [10, 20],
+        indices,
+    }
+
+def ready(sequence: number = 0) -> WorldReadyEvent: return {event: "world.ready", worldId, protocolVersion, sequence}
+
+def delta(revision: number, overrides: readonly List<readonly RealtimeBlockOverride>) -> RealtimeChunkDelta:
+    return {position: chunkPosition, revision, overrides}
+
+def change(
+    sequence: number,
+    revision: number,
+    position: readonly BlockPosition,
+    local: readonly LocalPosition,
+    runtimeId: number,
+) -> WorldBlocksChangedEvent:
+    const item: RealtimeBlockChange = {
+        position,
+        chunk: chunkPosition,
+        local,
+        previousBlockStateRuntimeId: 10,
+        blockStateRuntimeId: runtimeId,
+        revision,
+    }
+    return {event: "blocks.changed", worldId, sequence, changes: [item]}
+
+test "client world state composes fixed terrain with complete deltas and ordered changes":
+    const state = clientWorldState(worldId, 4)
+    state.beginConnection(ready())
+    const response: TerrainChunkBatchResponse = {worldId, chunks: [terrain()]}
+    const chunk = state.rememberTerrain(response)[0]
+    expect(chunk.blockAtIndex(0)).toBe(20)
+    expect(chunk.blockAtIndex(1)).toBe(10)
+
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-1",
+        worldId,
+        chunks: [delta(1, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}])],
+    })
+    expect(chunk.revision()).toBe(1)
+    expect(chunk.blockAtIndex(blockIndex({x: 1, y: 0, z: 0}, 4))).toBe(30)
+
+    state.applyChanges(change(1, 2, {x: 2, y: 4, z: 0}, {x: 2, y: 0, z: 0}, 40))
+    expect(state.sequence()).toBe(1)
+    expect(chunk.revision()).toBe(2)
+    expect(state.block({x: 2, y: 4, z: 0})).toBe(40)
+    expect(state.requiresResync()).toBe(false)
+
+test "client world state detects gaps and completes a multi-batch reconnect sync":
+    const state = clientWorldState(worldId, 4)
+    state.beginConnection(ready())
+    state.rememberTerrain({worldId, chunks: [terrain({x: 0, y: 1, z: 0}), terrain({x: 1, y: 1, z: 0})]})
+
+    state.applyChanges(change(2, 2, {x: 1, y: 4, z: 0}, {x: 1, y: 0, z: 0}, 30))
+    expect(state.requiresResync()).toBe(true)
+
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-first",
+        worldId,
+        chunks: [delta(2, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}])],
+    })
+    expect(state.requiresResync()).toBe(true)
+
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-second",
+        worldId,
+        chunks: [{position: {x: 1, y: 1, z: 0}, revision: 0, overrides: []}],
+    })
+    expect(state.requiresResync()).toBe(false)
+
+    state.beginConnection(ready(7))
+    expect(state.generation()).toBe(2)
+    expect(state.sequence()).toBe(7)
+    expect(state.requiresResync()).toBe(true)
+
+test "client world state snapshots composed blocks and publishes committed invalidations":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(str(event.kind)))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-snapshot",
+        worldId,
+        chunks: [delta(1, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}])],
+    })
+    state.applyChanges(change(1, 2, {x: 2, y: 4, z: 0}, {x: 2, y: 0, z: 0}, 40))
+    const snapshot = chunk.snapshotBlocks()
+    expect(snapshot[0]).toBe(20)
+    expect(snapshot[blockIndex({x: 1, y: 0, z: 0}, 4)]).toBe(30)
+    expect(snapshot[blockIndex({x: 2, y: 0, z: 0}, 4)]).toBe(40)
+    expect(events.size).toBe(3)
+    expect(events[0]).toBe("terrain_loaded")
+    expect(events[1]).toBe("chunks_synchronized")
+    expect(events[2]).toBe("blocks_changed")
+    subscription.close()

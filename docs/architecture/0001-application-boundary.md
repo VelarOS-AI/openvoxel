@@ -28,4 +28,7 @@ OpenVoxel 的世界模型、网络协议、存储结构、生成算法、当前�
 
 当前实例是后端边界：项目显式激活 `@velarscript/server`，由它组合 `@velarscript/node` 的 ServeApp、WebSocket 与宿主能力，并负责根 `application.*` 的严格有界加载；函数式数据库操作和 SQLite 资源能力仍分别由 `@velarscript-labs/database`、`@velarscript-labs/sqlite` 提供。`@velarscript/server` 还抽象领域无关的实时会话机械部分：串行读取、一条有界发送队列、唯一 writer、背压和确定性清理；它不拥有世界房间、MessagePack 数据类型、命令语义、鉴权、广播规则、具体驱动、模型或查询。OpenVoxel 拥有应用路由、错误信封、配置类型、世界协议、当前表结构、稀疏覆盖事务和服务组合，不把游戏语义写回通用库。
 
-浏览器运行时需要同步计算与 Node 构建工具完全一致的内容哈希，而 `velar/hash` 的契约明确属于 Node。`@openvoxel/hash` 因此在项目内用 Core 整数和二进制原语实现 SHA-256，供当前内容身份链跨端复用。它保持为 private 项目包；出现独立项目复用和稳定 API 证据之前，不进入 VelarScript Libraries，也不扩张标准库的目标边界。
+内容身份需要在构建工具、Node 服务和浏览器运行时得到完全一致的同步摘要。
+VelarScript Core 的 `velar/hash.sha256Text` 直接拥有这项跨目标 SHA-256 契约，
+OpenVoxel 的身份、方块、内容与世界生成职责包统一依赖该标准模块，不再维护应用级
+摘要实现。

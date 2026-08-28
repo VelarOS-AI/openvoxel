@@ -1,0 +1,371 @@
+import {ChunkMesh} from "./contracts.vel"
+import {ClientRenderCatalog} from "./render-catalog.vel"
+import {ClientAnimationResource, ClientMaterialResource} from "./resource-pack.vel"
+
+export type VoxelSurfaceOptions:
+    readonly atlasDataUrl: string
+    readonly edge: number
+    readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly animations: readonly List<readonly ClientAnimationResource>
+    readonly targetX: number
+    readonly targetY: number
+    readonly targetZ: number
+    readonly horizontalChunkRadius: number
+
+export type VoxelSurfaceStats:
+    readonly chunks: number
+    readonly meshes: number
+    readonly quads: number
+    readonly checksum: number
+
+extern js`
+    import {
+      ArcRotateCamera,
+      Color3,
+      Color4,
+      DirectionalLight,
+      Engine,
+      HemisphericLight,
+      Material,
+      Mesh,
+      Scene,
+      StandardMaterial,
+      Texture,
+      Vector3,
+      VertexData,
+    } from "@babylonjs/core";
+
+    const surfaces = new WeakSet();
+
+    function requireCanvas(canvas) {
+      if (!(canvas instanceof globalThis.HTMLCanvasElement)) throw new TypeError("Voxel surface requires a canvas element");
+      return canvas;
+    }
+
+    function requireFinite(value, label) {
+      if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(label + " must be a finite number");
+      return value;
+    }
+
+    function requireInteger(value, minimum, maximum, label) {
+      if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+        throw new RangeError(label + " must be an integer from " + minimum + " through " + maximum);
+      }
+      return value;
+    }
+
+    function chunkKey(x, y, z) {
+      return x + ":" + y + ":" + z;
+    }
+
+    function requireTypedArray(value, Constructor, label) {
+      if (!(value instanceof Constructor) || value.byteOffset !== 0 || value.byteLength !== value.buffer.byteLength) {
+        throw new TypeError(label + " must be a full-storage " + Constructor.name);
+      }
+      return value;
+    }
+
+    function waitForTexture(scene, dataUrl) {
+      return new Promise((resolve, reject) => {
+        let texture = null;
+        // ResourcePack UV 是左下原点；浏览器解码 PNG 使用左上原点，由 Babylon
+        // 在上传阶段翻转一次，不能再把逻辑 UV 当作 PNG 行坐标使用。
+        texture = new Texture(
+          dataUrl,
+          scene,
+          true,
+          true,
+          Texture.NEAREST_SAMPLINGMODE,
+          () => resolve(texture),
+          (message, error) => reject(error instanceof Error ? error : new Error(message || "Voxel texture atlas failed to load")),
+        );
+      });
+    }
+
+    export class BabylonVoxelSurface {
+      constructor(canvas, options, engine, scene, camera, atlas) {
+        this.canvas = canvas;
+        this.options = options;
+        this.engine = engine;
+        this.scene = scene;
+        this.camera = camera;
+        this.atlas = atlas;
+        this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
+        this.materials = new Map();
+        this.chunks = new Map();
+        this.translucentMeshes = new Set();
+        this.lastTranslucentSortPosition = new Vector3(Number.NaN, Number.NaN, Number.NaN);
+        this.translucentSortDirty = false;
+        this.released = false;
+        this.resizeObserver = new ResizeObserver(() => engine.resize());
+        this.resizeObserver.observe(canvas);
+        this.render = () => {
+          this.sortTranslucentFacets();
+          scene.render();
+        };
+        engine.runRenderLoop(this.render);
+        surfaces.add(this);
+      }
+
+      requireLive() {
+        if (!surfaces.has(this) || this.released) throw new Error("Voxel surface is released");
+      }
+
+      sortTranslucentFacets() {
+        const position = this.camera.globalPosition;
+        if (!this.translucentSortDirty && position.equalsWithEpsilon(this.lastTranslucentSortPosition, 0.0001)) return;
+        for (const mesh of this.translucentMeshes) {
+          mesh.facetDepthSortFrom = position;
+          mesh.updateFacetData();
+        }
+        this.lastTranslucentSortPosition.copyFrom(position);
+        this.translucentSortDirty = false;
+      }
+
+      materialFor(batch) {
+        const key = batch.pipelineKey;
+        const existing = this.materials.get(key);
+        if (existing !== undefined) return existing;
+        const definition = this.materialDefinitions.get(batch.materialKey);
+        if (definition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
+        const material = new StandardMaterial("material:" + key, this.scene);
+        const texture = this.atlas.clone();
+        texture.name = "atlas:" + key;
+        texture.hasAlpha = true;
+        texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        material.diffuseTexture = texture;
+        material.diffuseColor = Color3.White();
+        material.specularColor = new Color3(0.08, 0.08, 0.08);
+        material.emissiveColor = new Color3(definition.emissive, definition.emissive, definition.emissive);
+        material.disableLighting = definition.unlit;
+        if (definition.unlit) {
+          material.emissiveTexture = texture;
+          material.emissiveColor = Color3.White();
+        }
+        // OpenVoxel 的网格从外侧观察使用逆时针顶点绕序。Babylon 的右手场景会
+        // 默认把 Mesh 设为顺时针正面，因此这里必须在材质边界显式对齐。
+        material.sideOrientation = Material.CounterClockWiseSideOrientation;
+        material.backFaceCulling = !definition.doubleSided;
+        material.twoSidedLighting = definition.doubleSided;
+        if (batch.layer === "cutout") {
+          material.transparencyMode = Material.MATERIAL_ALPHATEST;
+          material.alphaCutOff = definition.alphaCutoff;
+          material.useAlphaFromDiffuseTexture = true;
+        } else if (batch.layer === "translucent") {
+          material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+          material.alpha = definition.alpha;
+          material.useAlphaFromDiffuseTexture = true;
+        } else {
+          material.transparencyMode = Material.MATERIAL_OPAQUE;
+          material.alpha = 1;
+        }
+        this.materials.set(key, material);
+        return material;
+      }
+
+      disposeChunk(key) {
+        const current = this.chunks.get(key);
+        if (current === undefined) return;
+        for (const mesh of current.meshes) {
+          this.translucentMeshes.delete(mesh);
+          mesh.dispose(false, false);
+        }
+        this.chunks.delete(key);
+      }
+
+      setChunkMesh(chunk) {
+        this.requireLive();
+        const position = chunk?.position;
+        const x = requireInteger(position?.x, -33_554_431, 33_554_431, "Chunk x");
+        const y = requireInteger(position?.y, -33_554_431, 33_554_431, "Chunk y");
+        const z = requireInteger(position?.z, -33_554_431, 33_554_431, "Chunk z");
+        if (!Array.isArray(chunk.batches)) throw new TypeError("Chunk mesh batches must be a list");
+        const key = chunkKey(x, y, z);
+        this.disposeChunk(key);
+        const meshes = [];
+        let quads = 0;
+        try {
+          for (const [index, batch] of chunk.batches.entries()) {
+            const positions = requireTypedArray(batch.positions, Float32Array, "Chunk mesh positions");
+            const normals = requireTypedArray(batch.normals, Float32Array, "Chunk mesh normals");
+            const uvs = requireTypedArray(batch.uvs, Float32Array, "Chunk mesh UVs");
+            const colors = requireTypedArray(batch.colors, Float32Array, "Chunk mesh colors");
+            const indices = requireTypedArray(batch.indices, Uint32Array, "Chunk mesh indices");
+            if (positions.length % 3 !== 0 || normals.length !== positions.length || uvs.length / 2 !== positions.length / 3 || colors.length / 4 !== positions.length / 3) {
+              throw new Error("Chunk mesh vertex buffers have inconsistent lengths");
+            }
+            const mesh = new Mesh("chunk:" + key + ":" + index, this.scene);
+            meshes.push(mesh);
+            const data = new VertexData();
+            data.positions = positions;
+            data.normals = normals;
+            data.uvs = uvs;
+            data.colors = colors;
+            data.indices = indices;
+            // Babylon 只会在 Mesh 之间排序透明对象。水面和侧壁在一个 Chunk
+            // 内仍需按三角形从远到近排序，因此透明索引缓冲必须保持可更新。
+            data.applyToMesh(mesh, batch.layer === "translucent");
+            mesh.material = this.materialFor(batch);
+            mesh.position.set(x * this.options.edge, y * this.options.edge, z * this.options.edge);
+            mesh.useVertexColors = true;
+            mesh.hasVertexAlpha = false;
+            mesh.isPickable = false;
+            mesh.checkCollisions = batch.layer === "opaque";
+            // Babylon 会在不同 renderingGroup 之间默认清空深度。体素的 opaque、
+            // cutout、translucent 必须留在同一组，由组内队列依次绘制并共享深度。
+            mesh.renderingGroupId = 0;
+            mesh.freezeWorldMatrix();
+            if (batch.layer === "translucent") {
+              mesh.mustDepthSortFacets = true;
+              this.translucentMeshes.add(mesh);
+              this.translucentSortDirty = true;
+            }
+            quads += requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh quad count");
+          }
+          this.chunks.set(key, {meshes, quads, checksum: requireInteger(chunk.checksum, 0, 0xffff_ffff, "Chunk mesh checksum")});
+        } catch (error) {
+          for (const mesh of meshes) {
+            this.translucentMeshes.delete(mesh);
+            mesh.dispose(false, false);
+          }
+          throw error;
+        }
+      }
+
+      removeChunk(x, y, z) {
+        this.requireLive();
+        this.disposeChunk(chunkKey(x, y, z));
+      }
+
+      stats() {
+        this.requireLive();
+        let meshes = 0;
+        let quads = 0;
+        let checksum = 0x6d2b79f5;
+        for (const key of [...this.chunks.keys()].sort()) {
+          const chunk = this.chunks.get(key);
+          meshes += chunk.meshes.length;
+          quads += chunk.quads;
+          checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunk.checksum) >>> 0;
+        }
+        return {chunks: this.chunks.size, meshes, quads, checksum};
+      }
+
+      release() {
+        if (!surfaces.has(this) || this.released) return;
+        this.released = true;
+        this.engine.stopRenderLoop(this.render);
+        this.resizeObserver.disconnect();
+        for (const key of [...this.chunks.keys()]) this.disposeChunk(key);
+        this.translucentMeshes.clear();
+        for (const material of this.materials.values()) material.dispose(true, true);
+        this.materials.clear();
+        this.atlas.dispose();
+        this.scene.dispose();
+        this.engine.dispose();
+        surfaces.delete(this);
+      }
+    }
+
+    export async function createBabylonVoxelSurface(canvas, options) {
+      canvas = requireCanvas(canvas);
+      if (typeof options !== "object" || options === null) throw new TypeError("Voxel surface options must be a record");
+      const edge = requireInteger(options.edge, 4, 64, "Voxel Chunk edge");
+      if (typeof options.atlasDataUrl !== "string" || !options.atlasDataUrl.startsWith("data:image/png;base64,")) {
+        throw new TypeError("Voxel surface atlas must be an embedded PNG");
+      }
+      if (!Array.isArray(options.materials) || !Array.isArray(options.animations)) throw new TypeError("Voxel surface resources must be lists");
+      const engine = new Engine(canvas, true, {preserveDrawingBuffer: false, stencil: true}, true);
+      const scene = new Scene(engine);
+      scene.useRightHandedSystem = true;
+      scene.collisionsEnabled = true;
+      scene.clearColor = new Color4(0.035, 0.06, 0.11, 1);
+      scene.skipPointerMovePicking = true;
+      const target = new Vector3(
+        requireFinite(options.targetX, "Camera target x"),
+        requireFinite(options.targetY, "Camera target y"),
+        requireFinite(options.targetZ, "Camera target z"),
+      );
+      const horizontalChunkRadius = requireInteger(options.horizontalChunkRadius, 1, 8, "Horizontal render Chunk radius");
+      const centerChunkX = Math.floor(target.x / edge);
+      const centerChunkZ = Math.floor(target.z / edge);
+      const minimumX = (centerChunkX - horizontalChunkRadius) * edge;
+      const maximumX = (centerChunkX + horizontalChunkRadius + 1) * edge;
+      const minimumZ = (centerChunkZ - horizontalChunkRadius) * edge;
+      const maximumZ = (centerChunkZ + horizontalChunkRadius + 1) * edge;
+      const boundaryDistance = Math.min(target.x - minimumX, maximumX - target.x, target.z - minimumZ, maximumZ - target.z);
+      const upperRadius = boundaryDistance - edge * 0.1;
+      const orbitTarget = target.add(new Vector3(0, edge * 0.2, 0));
+      const camera = new ArcRotateCamera("voxel-camera", -Math.PI / 4, Math.PI / 4.5, Math.min(edge * 1.7, upperRadius), orbitTarget, scene);
+      camera.lowerRadiusLimit = edge * 0.5;
+      camera.upperRadiusLimit = upperRadius;
+      camera.lowerBetaLimit = 0.08;
+      camera.upperBetaLimit = Math.PI / 2.35;
+      camera.checkCollisions = true;
+      camera.collisionRadius = new Vector3(0.35, 0.7, 0.35);
+      camera.wheelPrecision = 45;
+      // 当前最小客户端加载的是一个以出生点为中心的固定盒；禁用平移并把轨道
+      // 半径限制在盒内，避免从未同步 Chunk 的切面向世界内部观察。
+      camera.panningSensibility = 0;
+      camera.attachControl(canvas, true);
+      const sky = new HemisphericLight("voxel-sky", new Vector3(0.25, 1, 0.1), scene);
+      sky.intensity = 0.82;
+      sky.groundColor = new Color3(0.18, 0.22, 0.3);
+      const sun = new DirectionalLight("voxel-sun", new Vector3(-0.55, -1, -0.35), scene);
+      sun.intensity = 0.62;
+      try {
+        const atlas = await waitForTexture(scene, options.atlasDataUrl);
+        atlas.name = "openvoxel-atlas";
+        atlas.hasAlpha = true;
+        atlas.wrapU = Texture.CLAMP_ADDRESSMODE;
+        atlas.wrapV = Texture.CLAMP_ADDRESSMODE;
+        return new BabylonVoxelSurface(canvas, {...options, edge}, engine, scene, camera, atlas);
+      } catch (error) {
+        scene.dispose();
+        engine.dispose();
+        throw error;
+      }
+    }
+`:
+    export class BabylonVoxelSurface:
+        def setChunkMesh(mesh: readonly ChunkMesh) -> null
+        def removeChunk(x: number, y: number, z: number) -> null
+        def stats() -> VoxelSurfaceStats
+        def release() -> null
+
+    export async def createBabylonVoxelSurface(canvas: CanvasElement, options: readonly VoxelSurfaceOptions) -> BabylonVoxelSurface
+
+/// 渲染职责包只暴露 OpenVoxel 自己的窄表面；Babylon 类、Scene、Mesh 和 GPU 资源均
+/// 停留在私有 JS 适配器中。
+export type VoxelRenderSurface:
+    setChunkMesh: (mesh: readonly ChunkMesh) -> null
+    removeChunk: (x: number, y: number, z: number) -> null
+    stats: () -> VoxelSurfaceStats
+    release: () -> null
+
+export async def openVoxelRenderSurface(
+    canvas: CanvasElement,
+    catalog: readonly ClientRenderCatalog,
+    edge: number,
+    targetX: number,
+    targetY: number,
+    targetZ: number,
+    horizontalChunkRadius: number,
+) -> VoxelRenderSurface:
+    const native: BabylonVoxelSurface = await createBabylonVoxelSurface(canvas, {
+        atlasDataUrl: catalog.atlas.dataUrl,
+        edge,
+        materials: catalog.materials,
+        animations: catalog.animations,
+        targetX,
+        targetY,
+        targetZ,
+        horizontalChunkRadius,
+    })
+    return {
+        setChunkMesh: mesh => native.setChunkMesh(mesh),
+        removeChunk: (x, y, z) => native.removeChunk(x, y, z),
+        stats: () => native.stats(),
+        release: () => native.release(),
+    }

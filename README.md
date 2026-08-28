@@ -2,7 +2,7 @@
 
 OpenVoxel 是一个使用 VelarScript 从零构建体素世界的开源教学项目。它先完成没有前端也能独立验收的世界后端，再让浏览器单机模式和 Node 联机模式共享同一套世界模型、生成器和应用运行时。
 
-当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.22 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
+当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.23.4 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
 
 ## 开始使用
 
@@ -81,22 +81,29 @@ flowchart LR
     A --> S["@velarscript-labs/sqlite"]
 ```
 
-仓库分层：
+仓库按职责族群组织；族群目录只负责导航，每个叶目录仍是独立包：
 
-- `packages/blocks`：由 `identities.yml` 集中定义内建身份，分组方块 YAML 直接使用同层级打点路径，并用唯一 JSON 产物发布编译目录；源码按 `definition`、`compiler`、`runtime` 分层，拥有规范状态键、UInt32 运行时 ID、每世界 Mod 注册表、有限状态和声明式组件契约。
-- `packages/world`：坐标、Chunk 调色板和世界清单等稳定世界模型；只维护数据结构与不变量，不选择生成算法或编排存储。
-- `packages/world-generation`：生成器注册入口与确定性生存生成算法；地形、洞穴、地下流体、矿物和植被按阶段分离，不负责后续 Tick 模拟。
-- `packages/content`：把一个 Mod 的共享身份、方块贡献和生成器贡献编译成独立 `content-pack.json`，并按精确哈希组合每世界内容集合。
-- `packages/hash`：OpenVoxel 内部的跨端 SHA-256 内容身份实现；Node 构建工具和浏览器运行时共享同一算法，不扩大 Node 专属 `velar/hash` 的目标边界。
-- `packages/client`：传输无关的客户端世界会话；验证服务与世界身份，以紧凑冷数据和稀疏热覆盖组合 Chunk，并统一处理 requestId、sequence、revision、多批次同步与重连竞争。
-- `packages/client-web`：浏览器在线适配器；只接收 OpenAPI 地址，按稳定 operationId 发现 HTTP 与 WebSocket 路由，并用 JSON、MessagePack 和框架实时客户端实现 `WorldBackend`。
-- `packages/client-local`：浏览器本地适配器；专用 Worker 拥有 `WorldRuntime`、活动世界与有界事件队列，IndexedDB 以 JSON 保存清单、以 MessagePack 保存 Chunk 增量，并用单事务发布批量修改。
+- `packages/content/identities`：拥有跨目录逻辑身份、身份树合并与引用解析；它的 Core 声明表示可被所有目标消费。
+- `packages/content/blocks`：分组方块 YAML 使用权威身份路径，并用唯一 JSON 产物发布编译目录；源码按 `definition`、`compiler`、`runtime` 分层，拥有规范状态键、UInt32 运行时 ID、每世界 Mod 注册表、有限状态和声明式组件契约。
+- `packages/content/packs`：把一个 Mod 的共享身份、方块贡献和生成器贡献编译成独立 `content-pack.json`，并按精确哈希组合每世界内容集合。
+- `packages/world/model`：坐标、Chunk 调色板和世界清单等稳定世界模型；只维护数据结构与不变量，不选择生成算法或编排存储。
+- `packages/world/generation`：生成器注册入口与确定性生存生成算法；地形、洞穴、地下流体、矿物和植被按阶段分离，不负责后续 Tick 模拟。
+- `packages/world/runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
+- `packages/client/access`：拥有客户端世界接入职责；世界会话、OnlineBackend、Worker/IndexedDB LocalBackend 共用一个 `WorldBackend` 端口和冷热 Chunk 合并状态机，包清单明确声明 Web/Desktop 与 `web` 能力。
+- `packages/client/rendering`：拥有客户端呈现职责；资源包身份、运行时渲染目录、Chunk 邻域快照、网格生成和 Babylon 表面在一个包内，包清单明确声明 Web/Desktop 与 `web` 能力。
 - `packages/protocol`：只拥有 HTTP 和 MessagePack WebSocket 的线上数据类型、协议版本与客户端接入事实；实际 HTTP 路由由服务端注解和 OpenAPI 共同描述。
-- `packages/world-runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
 - `apps/server`：system、world、chunk、block、realtime 模块，负责把领域值投影成协议响应；同时拥有当前表结构、世界注册表 JSON、稀疏世界规则的 SQLite 适配器与组合根。
 - `apps/web`：面向当前世界能力的浏览器诊断应用；对 Online/Local 两种适配器验收创建、查找、Chunk 同步、方块修改、重连和持久化恢复。
-- `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定，以及类型化实时会话的一条有界发送队列、唯一 writer 和确定性清理；世界身份、MessagePack 命令、广播范围与错误码仍归 OpenVoxel。`@velarscript-labs/yaml` 仅用于方块目录生成，`@velarscript-labs/database` 与 `@velarscript-labs/sqlite` 仍是非标准的 VelarScript Libraries。
+- `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定，以及类型化实时会话的一条有界发送队列、唯一 writer 和确定性清理；世界身份、MessagePack 命令、广播范围与错误码仍归 OpenVoxel。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
+
+族群与包目录只按职责命名，运行环境写入各自的 `velar.targets` 与
+`velar.requires.capabilities`。OpenVoxel 的可移植职责包统一声明
+`targets: ["core"]`，表示 Core、Node、Web、Desktop 都能消费；客户端与渲染器
+声明实际需要的 Web 宿主。当前使用的 Labs 清单也显式声明环境：YAML、Noise、
+MessagePack、Database、SQL 覆盖全部目标且不要求宿主能力，SQLite 只支持 Node 并
+要求 `node` 能力。`npm run structure:check` 会同时检查内部依赖与直接 Labs 依赖的
+目标、能力和消费方是否兼容。
 
 目录按职责固定：手写运行时代码进入 `src/`，测试进入 `tests/`，测试辅助件进入 `tests/support/`，性能基准进入 `benchmarks/`，人工数据进入 `data/`，生成物进入 `generated/`，生成与检查脚本进入 `tools/`。`src/` 不放测试和生成物，`generated/` 禁止生成 `.vel`；`npm run structure:check` 和完整门禁会持续检查这两条规则。
 
@@ -114,6 +121,6 @@ npm run benchmark:caves
 
 ## 当前边界
 
-世界后端、传输无关客户端会话、OnlineBackend 和 LocalBackend 现已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。下一层应建立客户端资源包和最小体素呈现纵向切片：从已同步的少量 Chunk 生成可更新网格，并只通过内容目录中的逻辑 material、texture、model 与 tint key 解析显示资源，继续保持世界运行时 ID 与渲染资源身份分离。
+世界后端、客户端会话、OnlineBackend 和 LocalBackend 已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。客户端资源包和最小体素呈现也已接入：少量已同步 Chunk 会生成可更新网格，显示资源只通过内容目录中的逻辑 material、texture、model 与 tint key 解析，世界运行时 ID 始终不承担纹理或模型身份。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。

@@ -8,12 +8,7 @@
   ],
   "velar": {
     "entry": "src/index.vel",
-    "targets": [
-      "core",
-      "node",
-      "web",
-      "desktop"
-    ],
+    "targets": ["core"],
     "requires": {
       "capabilities": []
     }

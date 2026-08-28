@@ -24,13 +24,12 @@
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
-    "@openvoxel/client-local": "0.2.0",
-    "@openvoxel/client-web": "0.2.0",
+    "@openvoxel/renderer": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/world": "0.2.0",
-    "@velarscript/web": "0.22.0"
+    "@velarscript/web": "0.23.4"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.22.0"
+    "@velarscript/cli": "0.23.4"
   }
 }

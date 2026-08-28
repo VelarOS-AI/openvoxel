@@ -1,0 +1,159 @@
+import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition} from "@openvoxel/blocks"
+import {WorldContentResponse} from "@openvoxel/protocol"
+import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceAtlas, ClientResourcePackArtifact, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
+
+export type ClientResolvedBlockTextures:
+    readonly top: readonly ClientTextureResource
+    readonly bottom: readonly ClientTextureResource
+    readonly side: readonly ClientTextureResource
+
+/// Worker 消费的完整渲染状态。每项由网络状态目录和客户端资源包联结得到；模型、
+/// 材质和纹理仍保留逻辑身份，runtimeId 只作为查表入口。
+export type ClientRenderState:
+    readonly runtimeId: number
+    readonly modelKey: string?
+    readonly model: ClientBlockModelKind?
+    readonly layer: BlockRenderLayer?
+    readonly materialKey: string?
+    readonly textures: readonly ClientResolvedBlockTextures?
+    readonly tintKey: string?
+    readonly tintRed: number
+    readonly tintGreen: number
+    readonly tintBlue: number
+    readonly animationKey: string?
+    readonly cullFaces: bool
+    readonly occludes: bool
+    readonly emission: number
+    readonly axis: string?
+    readonly level: number?
+    readonly falling: bool?
+    readonly layers: number?
+
+export type ClientRenderCatalog:
+    readonly resourceHash: string
+    readonly targetContentHash: string
+    readonly atlas: readonly ClientResourceAtlas
+    readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly animations: readonly List<readonly ClientAnimationResource>
+    readonly states: readonly List<readonly ClientRenderState>
+    requireState: (runtimeId: number) -> readonly ClientRenderState
+
+def propertyValue(state: readonly PackedBlockStateDefinition, name: string) -> BlockPropertyValue?:
+    const property = state.properties.find(candidate => candidate.name == name)
+    return property?.value
+
+def optionalString(value: BlockPropertyValue?) -> string?: return (value is string) ? value : null
+
+def optionalNumber(value: BlockPropertyValue?) -> number?: return (value is number) ? value : null
+
+def optionalBool(value: BlockPropertyValue?) -> bool?: return (value is bool) ? value : null
+
+def requireCoverage(required: readonly List<string>, available: Set<string>, label: string):
+    for key in required: assert key in available else f"Client resource pack does not provide {label} {key}"
+
+def resolvedTextures(
+    profile: readonly BlockComponentProfile,
+    textures: Map<string, readonly ClientTextureResource>,
+) -> readonly ClientResolvedBlockTextures?:
+    const declared = profile.render.textures
+    if declared == null: return null
+    const topKey = declared.all ?? declared.top
+    const bottomKey = declared.all ?? declared.bottom
+    const sideKey = declared.all ?? declared.side
+    assert topKey != null and bottomKey != null and sideKey != null else "Rendered block does not resolve top, bottom, and side textures"
+    const top = textures.get(topKey)
+    const bottom = textures.get(bottomKey)
+    const side = textures.get(sideKey)
+    assert top != null else f"Client resource pack does not provide texture {topKey}"
+    assert bottom != null else f"Client resource pack does not provide texture {bottomKey}"
+    assert side != null else f"Client resource pack does not provide texture {sideKey}"
+    return {top, bottom, side}
+
+/// 把世界状态目录与一个兼容资源包联结成不可变 RenderCatalog。这里不读取基础
+/// 方块全局表，因此 Mod 世界和重新分配过 runtimeId 的世界仍以服务端快照为准。
+export def createClientRenderCatalog(
+    content: readonly WorldContentResponse,
+    candidate: readonly ClientResourcePackArtifact,
+) -> ClientRenderCatalog:
+    const pack = validateClientResourcePack(candidate)
+    assert pack.targetContentHash == content.content.contentHash else "Client resource pack targets a different world content build"
+
+    const models: Map<string, readonly ClientModelResource> = Map()
+    const materials: Map<string, readonly ClientMaterialResource> = Map()
+    const textures: Map<string, readonly ClientTextureResource> = Map()
+    const tints: Map<string, readonly ClientTintResource> = Map()
+    const animations: Map<string, readonly ClientAnimationResource> = Map()
+    for value in pack.models:
+        assert not models.has(value.key) else f"Client resources repeat model {value.key}"
+        models.set(value.key, value)
+    for value in pack.materials:
+        assert not materials.has(value.key) else f"Client resources repeat material {value.key}"
+        materials.set(value.key, value)
+    for value in pack.textures:
+        assert not textures.has(value.key) else f"Client resources repeat texture {value.key}"
+        textures.set(value.key, value)
+    for value in pack.tints:
+        assert not tints.has(value.key) else f"Client resources repeat tint {value.key}"
+        tints.set(value.key, value)
+    for value in pack.animations:
+        assert not animations.has(value.key) else f"Client resources repeat animation {value.key}"
+        animations.set(value.key, value)
+    requireCoverage(content.resources.models, Set(models.keys()), "model")
+    requireCoverage(content.resources.materials, Set(materials.keys()), "material")
+    requireCoverage(content.resources.textures, Set(textures.keys()), "texture")
+    requireCoverage(content.resources.tints, Set(tints.keys()), "tint")
+    requireCoverage(content.resources.animations, Set(animations.keys()), "animation")
+
+    const profiles: Map<number, readonly BlockComponentProfile> = Map()
+    for profile in content.componentProfiles:
+        assert not profiles.has(profile.profileId) else f"World content repeats component profile {profile.profileId}"
+        profiles.set(profile.profileId, profile)
+
+    const states: List<ClientRenderState> = []
+    const byRuntimeId: Map<number, readonly ClientRenderState> = Map()
+    for state in content.states:
+        assert not byRuntimeId.has(state.runtimeId) else f"World content repeats runtimeId {state.runtimeId}"
+        const profile = profiles.get(state.componentProfileId)
+        assert profile != null else f"World state {state.stateKey} references an unknown component profile"
+        const modelKey = profile.render.model
+        const modelResource = modelKey == null ? null : models.get(modelKey)
+        if modelKey != null: assert modelResource != null else f"Client resource pack does not provide model {modelKey}"
+        const materialKey = profile.render.material
+        if materialKey != null:
+            assert materials.has(materialKey) else f"Client resource pack does not provide material {materialKey}"
+        const tintKey = profile.render.tint
+        const tint = tintKey == null ? null : tints.get(tintKey)
+        if tintKey != null: assert tint != null else f"Client resource pack does not provide tint {tintKey}"
+        const animationKey = profile.render.animation
+        if animationKey != null:
+            assert animations.has(animationKey) else f"Client resource pack does not provide animation {animationKey}"
+
+        const resolved: ClientRenderState = {
+            runtimeId: state.runtimeId,
+            modelKey,
+            model: modelResource?.kind,
+            layer: profile.render.layer,
+            materialKey,
+            textures: resolvedTextures(profile, textures),
+            tintKey,
+            tintRed: tint?.red ?? 1,
+            tintGreen: tint?.green ?? 1,
+            tintBlue: tint?.blue ?? 1,
+            animationKey,
+            cullFaces: profile.render.cullFaces,
+            occludes: profile.physics.occlusion.kind == BlockShapeKind.fullCube,
+            emission: profile.light.emission,
+            axis: optionalString(propertyValue(state, "axis")),
+            level: optionalNumber(propertyValue(state, "level")),
+            falling: optionalBool(propertyValue(state, "falling")),
+            layers: optionalNumber(propertyValue(state, "layers")),
+        }
+        states.append(resolved)
+        byRuntimeId.set(state.runtimeId, resolved)
+
+    def requireState(runtimeId: number) -> readonly ClientRenderState:
+        const state = byRuntimeId.get(runtimeId)
+        assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
+        return state
+
+    return ClientRenderCatalog.from(pack, {states, requireState})

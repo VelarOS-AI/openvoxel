@@ -1,11 +1,11 @@
 import {ClientChunkState, ClientWorldSession, WorldBackend, WorldBackendConformanceResult, openClientWorld, verifyWorldBackend} from "@openvoxel/client"
-import {localBackend} from "@openvoxel/client-local"
-import {onlineBackend} from "@openvoxel/client-web"
+import {localBackend, onlineBackend} from "@openvoxel/client"
 import {CreateWorldRequest} from "@openvoxel/protocol"
 import {WorldManifest, chunkKey, locateBlock} from "@openvoxel/world"
 import {Head} from "velar/web"
 import {configuration} from "./config.vel"
-import {actionsLook, cardLook, controlLook, diagnosticsLook, errorLook, fieldLook, formLook, heroLook, labelLook, metricLook, mutedLook, pageLook, primaryControlLook, shellLook, titleLook, valueLook} from "./look.vel"
+import {actionsLook, canvasLook, cardLook, controlLook, diagnosticsLook, errorLook, fieldLook, formLook, heroLook, labelLook, metricLook, mutedLook, pageLook, primaryControlLook, renderHeaderLook, shellLook, titleLook, valueLook, viewportLook} from "./look.vel"
+import {WorldRenderer, WorldRendererStats, initialRenderChunkPositions, openWorldRenderer} from "./world-renderer.vel"
 
 const online = onlineBackend(configuration.openApiUrl)
 const local = localBackend()
@@ -24,7 +24,14 @@ export component App:
     state revision = 0
     state generation = 0
     state contentStates = 0
+    state renderChunks = 0
+    state renderMeshes = 0
+    state renderQuads = 0
+    state renderChecksum = 0
+    state renderPending = 0
     state conformance: readonly WorldBackendConformanceResult? = null
+    let renderCanvas: CanvasElement? = null
+    let renderer: WorldRenderer? = null
 
     def backend() -> WorldBackend: return backendMode == "local" ? local : online
 
@@ -36,7 +43,9 @@ export component App:
         return clean
 
     async def closeSession():
+        const previousRenderer = renderer
         const previous = session
+        renderer = null
         session = null
         world = null
         chunk = null
@@ -44,6 +53,12 @@ export component App:
         revision = 0
         generation = 0
         contentStates = 0
+        renderChunks = 0
+        renderMeshes = 0
+        renderQuads = 0
+        renderChecksum = 0
+        renderPending = 0
+        if previousRenderer != null: await previousRenderer.close()
         if previous != null: await previous.close()
 
     def refreshDiagnostics(active: readonly ClientWorldSession, activeChunk: readonly ClientChunkState):
@@ -52,20 +67,39 @@ export component App:
         generation = active.state.generation()
         contentStates = active.content.states.size
 
+    def receiveRenderStats(stats: readonly WorldRendererStats):
+        renderChunks = stats.chunks
+        renderMeshes = stats.meshes
+        renderQuads = stats.quads
+        renderChecksum = stats.checksum
+        renderPending = stats.pending
+
+    def receiveRenderFailure(message: string):
+        failure = message
+        status = "World rendering failed"
+
     async def attach(manifest: readonly WorldManifest):
         await closeSession()
         let opened: ClientWorldSession? = null
+        let openedRenderer: WorldRenderer? = null
         try:
             opened = await openClientWorld(backend(), manifest.id)
             const located = locateBlock(manifest.spawn, manifest.chunkEdge)
-            const chunks = await opened.loadChunks([located.chunk])
-            assert chunks.size == 1 else "Backend returned the wrong spawn Chunk count"
+            const positions = initialRenderChunkPositions(manifest, opened.content.minimumWorldY, opened.content.maximumWorldY)
+            const chunks = await opened.loadChunks(positions)
+            const spawnChunk = chunks.find(candidate => chunkKey(candidate.position) == chunkKey(located.chunk))
+            assert spawnChunk != null else "Backend did not return the spawn Chunk"
+            const canvas = renderCanvas
+            assert canvas != null else "World renderer canvas is not mounted"
+            openedRenderer = await openWorldRenderer(canvas, opened, manifest, receiveRenderStats, receiveRenderFailure)
             world = WorldManifest.parse(manifest)
             session = opened
-            chunk = chunks[0]
-            refreshDiagnostics(opened, chunks[0])
-            status = "World connected and spawn Chunk synchronized"
+            chunk = spawnChunk
+            renderer = openedRenderer
+            refreshDiagnostics(opened, spawnChunk)
+            status = f"World connected and {chunks.size} Chunks scheduled for rendering"
         catch error:
+            if openedRenderer != null: await openedRenderer.close()
             if opened != null: await opened.close()
             throw error
 
@@ -157,8 +191,7 @@ export component App:
             status = f"{backendLabel()} conformance failed"
 
     async def shutdown():
-        const active = session
-        if active != null: await active.close()
+        await closeSession()
         await online.close()
         await local.close()
 
@@ -319,6 +352,40 @@ export component App:
                     </div>
                 </div>
             </section>}
+
+            <section look={cardLook} aria-label="Voxel world view" data-render-ready={renderChunks > 0 ? "true" : "false"}>
+                <div look={renderHeaderLook}>
+                    <strong>World view</strong>
+                    <span look={mutedLook}>
+                        {renderPending > 0 ? f"Meshing {renderPending} Chunks" : "Drag to orbit · wheel to zoom"}
+                    </span>
+                </div>
+                <div look={viewportLook}>
+                    <canvas ref={renderCanvas} look={canvasLook} data-voxel-canvas></canvas>
+                </div>
+                <div look={diagnosticsLook}>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Rendered Chunks</span>
+                        <strong look={valueLook} data-render-chunks>{str(renderChunks)}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>GPU Meshes</span>
+                        <strong look={valueLook} data-render-meshes>{str(renderMeshes)}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Visible quads</span>
+                        <strong look={valueLook} data-render-quads>{str(renderQuads)}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Mesh checksum</span>
+                        <strong look={valueLook} data-render-checksum>{str(renderChecksum)}</strong>
+                    </div>
+                    <div look={metricLook}>
+                        <span look={mutedLook}>Pending</span>
+                        <strong look={valueLook} data-render-pending>{str(renderPending)}</strong>
+                    </div>
+                </div>
+            </section>
 
             <section look={cardLook} aria-label="World session diagnostics">
                 <strong>Session state</strong>

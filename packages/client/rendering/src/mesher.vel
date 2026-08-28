@@ -1,0 +1,352 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
+import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
+import {Float32Builder, UInt32Builder, UInt32Buffer, float32Builder, uint32Builder} from "velar/binary"
+import {ChunkMesh, ChunkMeshBatch} from "./contracts.vel"
+import {ClientRenderState} from "./render-catalog.vel"
+import {ClientBlockModelKind, ClientTextureResource} from "./resource-pack.vel"
+
+const maximumChunkMeshBytes = 8 * 1024 * 1024
+
+enum MeshFace:
+    east
+    west
+    top
+    bottom
+    south
+    north
+
+type MutableMeshBatch:
+    pipelineKey: string
+    layer: BlockRenderLayer
+    materialKey: string
+    animationKey: string?
+    positions: Float32Builder
+    normals: Float32Builder
+    uvs: Float32Builder
+    colors: Float32Builder
+    indices: UInt32Builder
+    vertexCount: number
+    quadCount: number
+
+def paddedIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
+
+def stateIndex(states: readonly List<readonly ClientRenderState>) -> Map<number, readonly ClientRenderState>:
+    const result: Map<number, readonly ClientRenderState> = Map()
+    for state in states:
+        assert not result.has(state.runtimeId) else f"Meshing catalog repeats runtimeId {state.runtimeId}"
+        result.set(state.runtimeId, state)
+    return result
+
+def textureForFace(state: readonly ClientRenderState, face: MeshFace) -> readonly ClientTextureResource:
+    const textures = state.textures
+    assert textures != null else f"Rendered state {state.runtimeId} has no textures"
+    if state.model == ClientBlockModelKind.column:
+        if state.axis == "x":
+            if face == MeshFace.east: return textures.top
+            if face == MeshFace.west: return textures.bottom
+            return textures.side
+        if state.axis == "z":
+            if face == MeshFace.south: return textures.top
+            if face == MeshFace.north: return textures.bottom
+            return textures.side
+    if face == MeshFace.top: return textures.top
+    if face == MeshFace.bottom: return textures.bottom
+    return textures.side
+
+def faceShade(face: MeshFace, emission: number) -> number:
+    let shade = 0.72
+    match face:
+        case MeshFace.top: shade = 1
+        case MeshFace.bottom: shade = 0.52
+        case MeshFace.east: shade = 0.82
+        case MeshFace.west: shade = 0.74
+        case MeshFace.south: shade = 0.9
+        case MeshFace.north: shade = 0.66
+    const glow = emission / 15
+    return Math.max(shade, glow)
+
+def batchFor(
+    batches: Map<string, MutableMeshBatch>,
+    state: readonly ClientRenderState,
+    maximumFaces: number,
+) -> MutableMeshBatch:
+    const materialKey = state.materialKey
+    const layer = state.layer
+    assert materialKey != null and layer != null else f"Rendered state {state.runtimeId} has no material pipeline"
+    const pipelineKey = f"{layer}|{materialKey}|{state.animationKey ?? "-"}"
+    const existing = batches.get(pipelineKey)
+    if existing != null: return existing
+    const created: MutableMeshBatch = {
+        pipelineKey,
+        layer,
+        materialKey,
+        animationKey: state.animationKey,
+        positions: float32Builder(maximumFaces * 12),
+        normals: float32Builder(maximumFaces * 12),
+        uvs: float32Builder(maximumFaces * 8),
+        colors: float32Builder(maximumFaces * 16),
+        indices: uint32Builder(maximumFaces * 6),
+        vertexCount: 0,
+        quadCount: 0,
+    }
+    batches.set(pipelineKey, created)
+    return created
+
+def pushVertex(
+    batch: MutableMeshBatch,
+    state: readonly ClientRenderState,
+    shade: number,
+    x: number,
+    y: number,
+    z: number,
+    nx: number,
+    ny: number,
+    nz: number,
+    u: number,
+    v: number,
+):
+    batch.positions.push(x)
+    batch.positions.push(y)
+    batch.positions.push(z)
+    batch.normals.push(nx)
+    batch.normals.push(ny)
+    batch.normals.push(nz)
+    batch.uvs.push(u)
+    batch.uvs.push(v)
+    batch.colors.push(state.tintRed * shade)
+    batch.colors.push(state.tintGreen * shade)
+    batch.colors.push(state.tintBlue * shade)
+    batch.colors.push(1)
+
+def emitQuad(
+    batch: MutableMeshBatch,
+    state: readonly ClientRenderState,
+    face: MeshFace,
+    texture: readonly ClientTextureResource,
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    nx: number,
+    ny: number,
+    nz: number,
+):
+    const first = batch.vertexCount
+    const shade = faceShade(face, state.emission)
+    pushVertex(batch, state, shade, ax, ay, az, nx, ny, nz, texture.u0, texture.v0)
+    pushVertex(batch, state, shade, bx, by, bz, nx, ny, nz, texture.u1, texture.v0)
+    pushVertex(batch, state, shade, cx, cy, cz, nx, ny, nz, texture.u1, texture.v1)
+    pushVertex(batch, state, shade, dx, dy, dz, nx, ny, nz, texture.u0, texture.v1)
+    batch.indices.push(first)
+    batch.indices.push(first + 1)
+    batch.indices.push(first + 2)
+    batch.indices.push(first)
+    batch.indices.push(first + 2)
+    batch.indices.push(first + 3)
+    batch.vertexCount += 4
+    batch.quadCount += 1
+
+def sameTranslucentVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    return current.layer == BlockRenderLayer.translucent and neighbor.layer == BlockRenderLayer.translucent and current.model == neighbor.model and current.materialKey == neighbor.materialKey
+
+def faceVisible(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    if not current.cullFaces: return true
+    if neighbor.model == null: return true
+    if neighbor.occludes: return false
+    return not sameTranslucentVolume(current, neighbor)
+
+def emitBox(
+    batches: Map<string, MutableMeshBatch>,
+    states: Map<number, readonly ClientRenderState>,
+    blocks: readonly UInt32Buffer,
+    paddedEdge: number,
+    maximumFaces: number,
+    state: readonly ClientRenderState,
+    x: number,
+    y: number,
+    z: number,
+    minimumX: number,
+    minimumY: number,
+    minimumZ: number,
+    maximumX: number,
+    maximumY: number,
+    maximumZ: number,
+):
+    const batch = batchFor(batches, state, maximumFaces)
+
+    def neighbor(dx: number, dy: number, dz: number) -> readonly ClientRenderState:
+        const runtimeId = blocks[paddedIndex(x + 1 + dx, y + 1 + dy, z + 1 + dz, paddedEdge)]
+        const value = states.get(runtimeId)
+        assert value != null else f"Chunk references unknown runtimeId {runtimeId}"
+        return value
+
+    const x0 = x + minimumX
+    const x1 = x + maximumX
+    const y0 = y + minimumY
+    const y1 = y + maximumY
+    const z0 = z + minimumZ
+    const z1 = z + maximumZ
+    if faceVisible(state, neighbor(1, 0, 0)):
+        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east), x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0)
+    if faceVisible(state, neighbor(-1, 0, 0)):
+        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west), x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0)
+    if faceVisible(state, neighbor(0, 1, 0)):
+        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top), x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0)
+    if faceVisible(state, neighbor(0, -1, 0)):
+        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom), x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0)
+    if faceVisible(state, neighbor(0, 0, 1)):
+        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south), x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1)
+    if faceVisible(state, neighbor(0, 0, -1)):
+        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1)
+
+def emitCross(
+    batches: Map<string, MutableMeshBatch>,
+    state: readonly ClientRenderState,
+    maximumFaces: number,
+    x: number,
+    y: number,
+    z: number,
+):
+    const batch = batchFor(batches, state, maximumFaces)
+    const texture = textureForFace(state, MeshFace.south)
+    emitQuad(batch, state, MeshFace.south, texture, x, y, z, x + 1, y, z + 1, x + 1, y + 1, z + 1, x, y + 1, z, 0.707, 0, -0.707)
+    emitQuad(batch, state, MeshFace.south, texture, x + 1, y, z, x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, -0.707, 0, -0.707)
+
+def fluidHeight(state: readonly ClientRenderState) -> number:
+    if state.falling == true: return 1
+    const level = state.level ?? 0
+    return Math.max(1 / 16, 1 - level / 16)
+
+def emitFluid(
+    batches: Map<string, MutableMeshBatch>,
+    states: Map<number, readonly ClientRenderState>,
+    blocks: readonly UInt32Buffer,
+    paddedEdge: number,
+    maximumFaces: number,
+    state: readonly ClientRenderState,
+    x: number,
+    y: number,
+    z: number,
+):
+    const batch = batchFor(batches, state, maximumFaces)
+    const height = fluidHeight(state)
+
+    def neighbor(dx: number, dy: number, dz: number) -> readonly ClientRenderState:
+        const runtimeId = blocks[paddedIndex(x + 1 + dx, y + 1 + dy, z + 1 + dz, paddedEdge)]
+        const value = states.get(runtimeId)
+        assert value != null else f"Chunk references unknown runtimeId {runtimeId}"
+        return value
+
+    const above = neighbor(0, 1, 0)
+    if not above.occludes and not sameTranslucentVolume(state, above):
+        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top), x, y + height, z, x, y + height, z + 1, x + 1, y + height, z + 1, x + 1, y + height, z, 0, 1, 0)
+    const below = neighbor(0, -1, 0)
+    if not below.occludes and not sameTranslucentVolume(state, below):
+        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom), x, y, z + 1, x, y, z, x + 1, y, z, x + 1, y, z + 1, 0, -1, 0)
+
+    const east = neighbor(1, 0, 0)
+    if not east.occludes and (not sameTranslucentVolume(state, east) or fluidHeight(east) < height):
+        const floor = sameTranslucentVolume(state, east) ? fluidHeight(east) : 0
+        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east), x + 1, y + floor, z + 1, x + 1, y + floor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0)
+    const west = neighbor(-1, 0, 0)
+    if not west.occludes and (not sameTranslucentVolume(state, west) or fluidHeight(west) < height):
+        const floor = sameTranslucentVolume(state, west) ? fluidHeight(west) : 0
+        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west), x, y + floor, z, x, y + floor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0)
+    const south = neighbor(0, 0, 1)
+    if not south.occludes and (not sameTranslucentVolume(state, south) or fluidHeight(south) < height):
+        const floor = sameTranslucentVolume(state, south) ? fluidHeight(south) : 0
+        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south), x, y + floor, z + 1, x + 1, y + floor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1)
+    const north = neighbor(0, 0, -1)
+    if not north.occludes and (not sameTranslucentVolume(state, north) or fluidHeight(north) < height):
+        const floor = sameTranslucentVolume(state, north) ? fluidHeight(north) : 0
+        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north), x + 1, y + floor, z, x, y + floor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1)
+
+def checksum(batches: readonly List<readonly ChunkMeshBatch>) -> number:
+    let value = 0x6d2b79f5
+    for batch in batches:
+        for position in batch.positions.values():
+            value = ((value << 5) ^ (value >>> 2) ^ (position * 1024).floor()) & 0xffffffff
+        for index in batch.indices.values(): value = ((value << 5) ^ (value >>> 2) ^ index) & 0xffffffff
+    return value >>> 0
+
+/// 首版使用逐面网格：边界、透明层和模型语义先正确，再用同一输出契约替换为
+/// greedy meshing。任何 Chunk 的输出都受 8 MiB 硬上限保护。
+export def meshChunk(
+    position: readonly ChunkPosition,
+    edge: number,
+    paddedBlocks: readonly UInt32Buffer,
+    states: readonly List<readonly ClientRenderState>,
+    ticket: number,
+) -> ChunkMesh:
+    requireChunkPosition(position)
+    requireChunkEdge(edge)
+    assert ticket.isInteger() and ticket >= 0 else "Chunk mesh ticket must be a non-negative integer"
+    const paddedEdge = edge + 2
+    assert paddedBlocks.size == paddedEdge * paddedEdge * paddedEdge else "Chunk meshing input has the wrong padded volume"
+    const byRuntimeId = stateIndex(states)
+    const maximumFaces = edge * edge * edge * 6
+    const batches: Map<string, MutableMeshBatch> = Map()
+    let visibleBlocks = 0
+
+    for y in range(edge):
+        for z in range(edge):
+            for x in range(edge):
+                const runtimeId = paddedBlocks[paddedIndex(x + 1, y + 1, z + 1, paddedEdge)]
+                const state = byRuntimeId.get(runtimeId)
+                assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
+                const model = state.model
+                if model == null: continue
+                visibleBlocks += 1
+                match model:
+                    case ClientBlockModelKind.cube:
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, 1, 1)
+                    case ClientBlockModelKind.column:
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, 1, 1)
+                    case ClientBlockModelKind.cross: emitCross(batches, state, maximumFaces, x, y, z)
+                    case ClientBlockModelKind.cactus:
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 1 / 16, 0, 1 / 16, 15 / 16, 1, 15 / 16)
+                    case ClientBlockModelKind.snowLayer:
+                        const height = (state.layers ?? 1) / 8
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, height, 1)
+                    case ClientBlockModelKind.fluid:
+                        emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z)
+
+    const finished: List<ChunkMeshBatch> = []
+    let quadCount = 0
+    let byteSize = 0
+    for key in batches.keys().sorted():
+        const batch = batches.get(key)!
+        if batch.quadCount == 0: continue
+        const output: ChunkMeshBatch = {
+            pipelineKey: batch.pipelineKey,
+            layer: batch.layer,
+            materialKey: batch.materialKey,
+            animationKey: batch.animationKey,
+            positions: batch.positions.finish(),
+            normals: batch.normals.finish(),
+            uvs: batch.uvs.finish(),
+            colors: batch.colors.finish(),
+            indices: batch.indices.finish(),
+            quadCount: batch.quadCount,
+        }
+        quadCount += output.quadCount
+        byteSize += (output.positions.size + output.normals.size + output.uvs.size + output.colors.size + output.indices.size) * 4
+        assert byteSize <= maximumChunkMeshBytes else "Chunk mesh exceeds the 8 MiB output bound"
+        finished.append(output)
+    return {
+        position,
+        ticket,
+        batches: finished,
+        visibleBlocks,
+        quadCount,
+        byteSize,
+        checksum: checksum(finished),
+    }

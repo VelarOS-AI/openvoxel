@@ -1,0 +1,55 @@
+{
+  "name": "@openvoxel/renderer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "data",
+    "generated",
+    "src"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./resource-pack-data": "./generated/client-resource-pack.json"
+  },
+  "velar": {
+    "entry": "src/index.vel",
+    "targets": [
+      "web",
+      "desktop"
+    ],
+    "requires": {
+      "capabilities": [
+        "web"
+      ]
+    },
+    "resources": {
+      "./resource-pack-data": {
+        "path": "generated/client-resource-pack.json",
+        "type": "json"
+      }
+    }
+  },
+  "scripts": {
+    "generate": "node tools/generate.mjs",
+    "generate:check": "node tools/check-generated.mjs",
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "test": "velar test && node --test tests/resource-pack.test.mjs",
+    "build": "velar build"
+  },
+  "dependencies": {
+    "@babylonjs/core": "9.23.0",
+    "@openvoxel/blocks": "0.2.0",
+    "@openvoxel/protocol": "0.2.0",
+    "@openvoxel/world": "0.2.0"
+  },
+  "devDependencies": {
+    "@openvoxel/world-generation": "0.2.0",
+    "@velarscript/cli": "0.23.4",
+    "@velarscript/web": "0.23.4",
+    "sharp": "0.35.4",
+    "yaml": "2.9.0"
+  }
+}

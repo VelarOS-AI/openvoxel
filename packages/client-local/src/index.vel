@@ -1,3 +1,0 @@
-export {indexedDbWorldStore} from "./indexeddb-world-store.vel"
-export {localBackend} from "./local-backend.vel"
-export {serveLocalBackendWorker} from "./local-worker.vel"

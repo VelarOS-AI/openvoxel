@@ -6,7 +6,7 @@ OpenVoxel 换了一个问题：不是“我怎样修改邻居”，而是“哪�
 
 阅读顺序：
 
-1. `packages/blocks/data/identities.yml`、`data/catalog.yml` 与 `data/blocks/` 定义全部内建身份、方块类型和有限状态；生成工具把它们编译为 `generated/block-catalog.json`，`@openvoxel/blocks` 再构造生成、模拟和渲染共享的受检查注册表。
+1. `packages/content/identities/data/identities.yml` 定义全部内建身份；`packages/content/blocks/data/catalog.yml` 与 `data/blocks/` 定义方块类型和有限状态。生成工具把它们编译为 `generated/block-catalog.json`，`@openvoxel/blocks` 再构造生成、模拟和渲染共享的受检查注册表。
 2. `generation/terrain.vel` 把种子变成气候、高度与密度，观察二维宏观地貌和三维局部扰动如何叠加。
 3. `ColumnPlanner` 展示同一水平 Chunk 的 `ColumnCache` 如何跨垂直层复用，再由岩体、地表和植物三个阶段共同读取。
 4. `generation/features.vel` 从洞穴锚点开始阅读，注意每个随机流都由功能和世界坐标命名。

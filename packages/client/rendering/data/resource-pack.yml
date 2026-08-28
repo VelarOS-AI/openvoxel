@@ -1,0 +1,79 @@
+formatVersion: 1
+owner: openvoxel
+atlas:
+  tileSize: 16
+  padding: 1
+  columns: 8
+
+models:
+  - {key: openvoxel:model/block/cube, kind: cube}
+  - {key: openvoxel:model/block/column, kind: column}
+  - {key: openvoxel:model/block/cross, kind: cross}
+  - {key: openvoxel:model/block/cactus, kind: cactus}
+  - {key: openvoxel:model/block/snow_layer, kind: snow_layer}
+  - {key: openvoxel:model/block/fluid, kind: fluid}
+
+materials:
+  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0}
+  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0.08}
+  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, emissive: 0}
+  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0, unlit: true}
+  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0}
+  - {key: openvoxel:material/water, alpha: 0.7, alphaCutoff: 0, doubleSided: true, emissive: 0.04}
+  - {key: openvoxel:material/magma, alpha: 0.88, alphaCutoff: 0, doubleSided: true, emissive: 0.72}
+  - {key: openvoxel:material/ice, alpha: 0.74, alphaCutoff: 0, doubleSided: false, emissive: 0.06}
+
+tints:
+  - {key: openvoxel:tint/biome_foliage, red: 0.64, green: 0.86, blue: 0.52}
+  - {key: openvoxel:tint/biome_grass, red: 0.68, green: 0.9, blue: 0.48}
+  - {key: openvoxel:tint/biome_grass_top, red: 0.72, green: 0.94, blue: 0.52}
+  - {key: openvoxel:tint/biome_water, red: 0.56, green: 0.78, blue: 1}
+
+animations:
+  - {key: openvoxel:animation/water, frameDurationMs: 240, frames: [openvoxel:texture/block/water]}
+  - {key: openvoxel:animation/magma, frameDurationMs: 320, frames: [openvoxel:texture/block/magma]}
+
+textures:
+  - {key: openvoxel:texture/block/basalt, sheet: textures/surface-materials-v2.png, column: 0, row: 2, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/birch_leaves, file: textures/birch_leaves.png}
+  - {key: openvoxel:texture/block/birch_log_side, file: textures/birch_log_side.png}
+  - {key: openvoxel:texture/block/birch_log_top, file: textures/birch_log_top.png}
+  - {key: openvoxel:texture/block/cactus, sheet: textures/surface-materials-v2.png, column: 3, row: 3, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/clay, sheet: textures/surface-materials-v2.png, column: 2, row: 2, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/coal_ore, file: textures/coal_ore.png}
+  - {key: openvoxel:texture/block/copper_ore, file: textures/copper_ore.png}
+  - {key: openvoxel:texture/block/diamond_ore, file: textures/diamond_ore.png}
+  - {key: openvoxel:texture/block/dirt, sheet: textures/surface-materials-v2.png, column: 2, row: 0, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/dry_bush, sheet: textures/cutout-plants-v2.png, column: 1, row: 0, columns: 4, rows: 2}
+  - {key: openvoxel:texture/block/germanium_ore, file: textures/germanium_ore.png}
+  - {key: openvoxel:texture/block/granite, sheet: textures/surface-materials-v2.png, column: 2, row: 1, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/grass_side, sheet: textures/surface-materials-v2.png, column: 1, row: 0, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/grass_top, sheet: textures/surface-materials-v2.png, column: 0, row: 0, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/gravel, sheet: textures/surface-materials-v2.png, column: 1, row: 2, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/ice, sheet: textures/surface-materials-v2.png, column: 0, row: 3, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/iron_ore, file: textures/iron_ore.png}
+  - {key: openvoxel:texture/block/limestone, sheet: textures/surface-materials-v2.png, column: 3, row: 1, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/magma, sheet: textures/surface-materials-v2.png, column: 2, row: 3, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/mimosa_leaves, file: textures/mimosa_leaves.png}
+  - {key: openvoxel:texture/block/mimosa_log_side, file: textures/mimosa_log_side.png}
+  - {key: openvoxel:texture/block/mimosa_log_top, file: textures/mimosa_log_top.png}
+  - {key: openvoxel:texture/block/oak_leaves, file: textures/oak_leaves.png}
+  - {key: openvoxel:texture/block/oak_log_side, file: textures/oak_log_side.png}
+  - {key: openvoxel:texture/block/oak_log_top, file: textures/oak_log_top.png}
+  - {key: openvoxel:texture/block/poplar_leaves, file: textures/poplar_leaves.png}
+  - {key: openvoxel:texture/block/poplar_log_side, file: textures/poplar_log_side.png}
+  - {key: openvoxel:texture/block/poplar_log_top, file: textures/poplar_log_top.png}
+  - {key: openvoxel:texture/block/purple_flower, sheet: textures/cutout-plants-v2.png, column: 3, row: 0, columns: 4, rows: 2}
+  - {key: openvoxel:texture/block/red_flower, sheet: textures/cutout-plants-v2.png, column: 2, row: 0, columns: 4, rows: 2}
+  - {key: openvoxel:texture/block/saltpeter_ore, file: textures/saltpeter_ore.png}
+  - {key: openvoxel:texture/block/sand, sheet: textures/surface-materials-v2.png, column: 3, row: 0, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/sandstone, sheet: textures/surface-materials-v2.png, column: 0, row: 1, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/snow, sheet: textures/surface-materials-v2.png, column: 3, row: 2, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/spruce_leaves, file: textures/spruce_leaves.png}
+  - {key: openvoxel:texture/block/spruce_log_side, file: textures/spruce_log_side.png}
+  - {key: openvoxel:texture/block/spruce_log_top, file: textures/spruce_log_top.png}
+  - {key: openvoxel:texture/block/stone, sheet: textures/surface-materials-v2.png, column: 1, row: 1, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/sulphur_ore, file: textures/sulphur_ore.png}
+  - {key: openvoxel:texture/block/tall_grass, sheet: textures/cutout-plants-v2.png, column: 0, row: 0, columns: 4, rows: 2}
+  - {key: openvoxel:texture/block/water, sheet: textures/surface-materials-v2.png, column: 1, row: 3, columns: 4, rows: 4}
+  - {key: openvoxel:texture/block/white_flower, sheet: textures/cutout-plants-v2.png, column: 0, row: 1, columns: 4, rows: 2}

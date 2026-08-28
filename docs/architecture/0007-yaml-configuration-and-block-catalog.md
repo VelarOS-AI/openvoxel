@@ -6,9 +6,9 @@
 
 人工数据与运行时数据分层存放：
 
-- `packages/identities/data/identities.yml` 集中定义方块、标签、生成器、群系和资源身份。
-- `packages/blocks/data/catalog.yml` 与 `data/blocks/*.yml` 只维护方块目录和方块定义。
-- `packages/world-generation/data/catalog.yml`、`data/generators/*.yml` 与 `data/palettes/*.yml` 只维护地形算法参数、阶段规则和生成器方块绑定。
+- `packages/content/identities/data/identities.yml` 集中定义方块、标签、生成器、群系和资源身份。
+- `packages/content/blocks/data/catalog.yml` 与 `data/blocks/*.yml` 只维护方块目录和方块定义。
+- `packages/world/generation/data/catalog.yml`、`data/generators/*.yml` 与 `data/palettes/*.yml` 只维护地形算法参数、阶段规则和生成器方块绑定。
 - 三个包分别把运行时 JSON 写入自己的 `generated/`，人工 YAML 与生成产物不在同一目录；`generated/` 由 Git 排除且不包含 `.vel` 源码。
 - Mod 由 `@openvoxel/content` 从一份 `identities.yml`、可选方块目录和可选世界生成目录编译为独立构建目录中的唯一 `content-pack.json`。
 
@@ -26,7 +26,7 @@ YAML 中的方块类型包含：
 
 内建方块文件只引用 `identities` 树中的真实打点路径：`key` 使用 `blocks.air`、`blocks.oakLog`，标签使用 `tags.terrain`、`tags.ore`、`tags.naturalRock`，渲染模型使用 `models.block.fluid`。每一段路径都直接对应 `identities.yml` 中的同名层级；解析规则就是身份树本身。行为中的 `supportingTag` 也直接引用 `tags.*`。规范状态键由路径指向的类型 key 与按属性名排序的完整属性集合构成。运行时 ID 不进入人工定义。渲染描述不包含引擎对象、UV 坐标、函数或资源文件系统路径。
 
-世界生成目录以相同打点路径引用生成器、群系、地形类型和方块，但它的噪声参数、曲线、洞穴、矿物、植被与调色板都保存在 `packages/world-generation/data`。方块目录不读取地形配置，地形目录也不修改方块定义；二者只通过稳定身份和编译后的方块注册表相接。
+世界生成目录以相同打点路径引用生成器、群系、地形类型和方块，但它的噪声参数、曲线、洞穴、矿物、植被与调色板都保存在 `packages/world/generation/data`。方块目录不读取地形配置，地形目录也不修改方块定义；二者只通过稳定身份和编译后的方块注册表相接。
 
 ## 生成身份
 

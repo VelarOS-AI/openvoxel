@@ -1,0 +1,80 @@
+import {parseYaml} from "@velarscript-labs/yaml"
+import {BuiltinBlockIdentities, IdentityResolution, resolveIdentityReferences} from "@openvoxel/identities"
+import {sha256Text} from "velar/hash"
+import {BlockSourceFile, BlockTypeSource} from "../src/definition/block.vel"
+import {BlockCatalogArtifact, BlockCatalogManifest, BlockStateMapSource, BlockStateMapping} from "../src/definition/catalog.vel"
+import {collectBlockTypes, compileBuiltinBlockCatalog, enumerateBlockStates} from "../src/compiler/catalog-compiler.vel"
+import {packBlockCatalog} from "../src/compiler/catalog-packing.vel"
+
+type StateIdMapping:
+    runtimeId: number
+    stateKey: string
+
+type ResolvedCatalogVersion:
+    catalogVersion: string
+
+export type GeneratedCatalogArtifacts:
+    catalogText: string
+
+def createStateMap(blocks: List<BlockTypeSource>, identities: BuiltinBlockIdentities) -> BlockStateMapSource:
+    // runtimeId 标识的是一个完整方块状态，而不是只标识方块类型。这里先展开
+    // 每个方块的全部属性组合，同时检查不同定义没有生成相同的 stateKey。
+    const activeKeys: Set<string> = Set()
+    for block in blocks:
+        for state in enumerateBlockStates(block):
+            assert not (state.stateKey in activeKeys) else f"Duplicate active block state {state.stateKey}"
+            activeKeys.add(state.stateKey)
+
+    const mappings: List<BlockStateMapping> = []
+    const airKey = identities.blocks.air
+    assert airKey in activeKeys else f"Block catalog requires {airKey}"
+
+    // 空气固定占用 0，其他内建状态按 stateKey 排序后依次分配。这样输入文件的
+    // 书写顺序变化不会让 runtimeId 漂移；真正影响编号的是状态集合本身的变化。
+    mappings.append({runtimeId: 0, stateKey: airKey})
+    activeKeys.remove(airKey)
+    let nextRuntimeId = 1
+    for stateKey in activeKeys.values().sorted():
+        assert nextRuntimeId < 0x1000000 else "Built-in block states exhausted their runtime id range"
+        mappings.append({runtimeId: nextRuntimeId, stateKey})
+        nextRuntimeId += 1
+    return {formatVersion: 2, nextRuntimeId, reservedRuntimeIds: [], states: mappings}
+
+export def generateCatalogArtifacts(manifestText: string, identityTree: readonly Record<unknown>, sourceTexts: List<string>) -> GeneratedCatalogArtifacts:
+    // 身份树由独立 identities 包提供。方块编译器只消费其中属于方块定义的
+    // 路径，不拥有世界生成器或其他内容域的身份配置。
+    const manifestSource = BlockCatalogManifest.parse(parseYaml(manifestText))
+    const identities = BuiltinBlockIdentities.parse(identityTree)
+
+    // 这两个身份由运行时代码直接使用，不会出现在方块 YAML 的引用遍历中，
+    // 因此在这里显式登记。其余身份必须从配置中的打点路径被实际读取。
+    const usedIdentityPaths: Set<string> = Set(["namespaces.base"])
+    const manifestResolution = IdentityResolution.parse(resolveIdentityReferences({catalogVersion: manifestSource.catalogVersion}, identityTree))
+    for path in manifestResolution.usedPaths: usedIdentityPaths.add(path)
+    const resolvedCatalogVersion = ResolvedCatalogVersion.parse(manifestResolution.value)
+    const manifest = BlockCatalogManifest.from(manifestSource, {catalogVersion: resolvedCatalogVersion.catalogVersion})
+    assert manifest.sources.size == sourceTexts.size else "Block catalog source count does not match its manifest"
+    const sourceFiles: List<BlockSourceFile> = []
+    for sourceText in sourceTexts:
+        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
+        for path in resolution.usedPaths: usedIdentityPaths.add(path)
+        sourceFiles.append(BlockSourceFile.parse(resolution.value))
+    const blocks = collectBlockTypes(sourceFiles)
+    const stateMap = createStateMap(blocks, identities)
+    const catalog = compileBuiltinBlockCatalog(manifest, identities, blocks, stateMap)
+    const packedCatalog = packBlockCatalog(catalog)
+
+    // 哈希只基于稳定序列化后的运行时事实，不包含源文件路径或 YAML 排版。
+    // contentHash 识别完整目录，stateMapHash 单独识别 runtimeId 到状态的映射。
+    const contentHash = sha256Text(Json.stableStringify(catalog))
+    const stateMappings: List<StateIdMapping> = catalog.states.map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
+    const stateMapHash = sha256Text(Json.stableStringify(stateMappings.sorted(by=mapping => mapping.runtimeId)))
+    const artifact: BlockCatalogArtifact = {
+        artifactVersion: 5,
+        contentHash,
+        stateMapHash,
+        catalog: packedCatalog,
+    }
+    return {
+        catalogText: f"{Json.stableStringify(artifact, 2)}\n",
+    }

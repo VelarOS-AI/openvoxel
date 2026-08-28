@@ -1,0 +1,220 @@
+import {Cancellation} from "velar/task"
+import {serveWorker} from "velar/worker"
+import {WorldBackendContract} from "./backend.vel"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
+import {Chunk, WorldManifest} from "@openvoxel/world"
+import {BlockChangeBatch, CreateWorld, WorldContentSnapshot, WorldRuntime, WorldRuntimeLease, WorldRuntimeSubscription, maximumChunkBatchSize, worldRuntime} from "@openvoxel/world-runtime"
+import {indexedDbWorldStore} from "./indexeddb-world-store.vel"
+import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
+
+type WorkerConnection:
+    readonly worldId: string
+    readonly lease: readonly WorldRuntimeLease
+    events: List<WorldBlocksChangedEvent>
+    overflowed: bool
+
+const connections: Map<string, WorkerConnection> = Map()
+let activeRuntime: WorldRuntime? = null
+let activeSubscription: WorldRuntimeSubscription? = null
+
+def contractResponse() -> WorldBackendContract:
+    return {
+        service: protocolServiceName,
+        contractVersion: clientContractVersion,
+        protocolVersion,
+        chunks: {
+            paletteEntries: chunkPaletteEntryEncoding,
+            localIndices: chunkLocalIndexEncoding,
+            indexOrder: chunkBlockIndexOrder,
+            maximumBatchSize: maximumChunkBatchSize,
+        },
+    }
+
+def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+    return WorldBootstrapResponse.from(manifest, {
+        clientContractVersion,
+        protocolVersion,
+        contentStateMapHash: content.stateMapHash,
+        minimumWorldY: content.definition.world.minimumY,
+        maximumWorldY: content.definition.world.maximumY,
+        seaLevel: content.definition.world.seaLevel,
+        maximumChunkBatchSize,
+    })
+
+def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResponse:
+    return WorldContentResponse.from(snapshot, {
+        schemaVersion: snapshot.catalog.schemaVersion,
+        catalogVersion: snapshot.catalog.catalogVersion,
+        minimumWorldY: snapshot.definition.world.minimumY,
+        maximumWorldY: snapshot.definition.world.maximumY,
+        seaLevel: snapshot.definition.world.seaLevel,
+        blocks: snapshot.catalog.blocks,
+        componentProfiles: snapshot.catalog.componentProfiles,
+        states: snapshot.catalog.states,
+    })
+
+def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
+    return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
+
+def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
+    const output: List<RealtimeBlockChange> = []
+    for change in batch.changes:
+        if change.changed: output.append(RealtimeBlockChange.from(change))
+    return output
+
+def runtime() -> WorldRuntime:
+    const current = activeRuntime
+    assert current != null else "LocalBackend Worker is not initialized"
+    return current
+
+def required(value: string?, label: string) -> string:
+    assert value != null and not value.isBlank() else f"LocalBackend Worker requires {label}"
+    return value
+
+def connection(request: readonly LocalWorkerRequest) -> WorkerConnection:
+    const connectionId = required(request.connectionId, "connectionId")
+    const current = connections.get(connectionId)
+    assert current != null else f"LocalBackend connection {connectionId} is not open"
+    assert not current.overflowed else "LocalBackend event queue overflowed; reconnect the world session"
+    return current
+
+def publish(batch: readonly BlockChangeBatch):
+    const event: WorldBlocksChangedEvent = {
+        event: "blocks.changed",
+        worldId: batch.worldId,
+        sequence: batch.sequence,
+        changes: blockChanges(batch),
+    }
+    for current in connections.values():
+        if current.worldId == batch.worldId:
+            if current.events.size >= 256:
+                current.overflowed = true
+                current.events.clear()
+            else: current.events.append(event)
+
+async def closeConnection(connectionId: string):
+    const current = connections.get(connectionId)
+    if current == null: return
+    connections.remove(connectionId)
+    current.events.clear()
+    await current.lease.close()
+
+async def shutdown():
+    for connectionId in connections.keys(): await closeConnection(connectionId)
+    const subscription = activeSubscription
+    activeSubscription = null
+    if subscription != null: subscription.close()
+    const current = activeRuntime
+    activeRuntime = null
+    if current != null: await current.close()
+
+async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> LocalWorkerResponse:
+    await cancellation.checkpoint()
+
+    if request.operation == localWorkerOperations.initialize:
+        assert activeRuntime == null else "LocalBackend Worker is already initialized"
+        const databaseName = required(request.databaseName, "databaseName")
+        activeRuntime = worldRuntime(indexedDbWorldStore(databaseName), options={
+            activeWorldCapacity: 8,
+            activeChunkCapacity: 256,
+            activeOverrideCapacity: 32768,
+        })
+        activeSubscription = runtime().subscribeBlockChanges(publish)
+        return {operation: request.operation}
+
+    if request.operation == localWorkerOperations.contract:
+        runtime()
+        return {operation: request.operation, contract: contractResponse()}
+
+    if request.operation == localWorkerOperations.createWorld:
+        const command = request.command
+        assert command != null else "LocalBackend create-world requires command"
+        const manifest = await runtime().createWorld(CreateWorld.from(command, {
+            contentPacks: command.contentPacks?.copy(),
+        }))
+        return {operation: request.operation, manifest}
+
+    if request.operation == localWorkerOperations.findWorld:
+        const manifest = await runtime().requireWorld(required(request.worldId, "worldId"))
+        return {operation: request.operation, manifest}
+
+    if request.operation == localWorkerOperations.bootstrap:
+        const worldId = required(request.worldId, "worldId")
+        const manifest = await runtime().requireWorld(worldId)
+        const content = await runtime().worldContent(worldId)
+        return {operation: request.operation, bootstrap: bootstrapResponse(manifest, content)}
+
+    if request.operation == localWorkerOperations.content:
+        const content = await runtime().worldContent(required(request.worldId, "worldId"))
+        return {operation: request.operation, content: contentResponse(content)}
+
+    if request.operation == localWorkerOperations.terrainChunks:
+        const worldId = required(request.worldId, "worldId")
+        const positions = request.positions
+        assert positions != null else "LocalBackend terrain-chunks requires positions"
+        const generated = await runtime().terrainChunks(worldId, positions)
+        const chunks: List<TerrainChunkResponse> = []
+        for chunk in generated: chunks.append(terrainResponse(chunk))
+        return {operation: request.operation, terrain: {worldId, chunks}}
+
+    if request.operation == localWorkerOperations.openConnection:
+        const worldId = required(request.worldId, "worldId")
+        const connectionId = required(request.connectionId, "connectionId")
+        assert not connections.has(connectionId) else f"LocalBackend connection {connectionId} is already open"
+        const lease = await runtime().retainWorld(worldId)
+        const events: List<WorldBlocksChangedEvent> = []
+        connections.set(connectionId, {worldId, lease, events, overflowed: false})
+        const ready: WorldReadyEvent = {
+            event: "world.ready",
+            worldId,
+            protocolVersion,
+            sequence: lease.sequence(),
+        }
+        return {operation: request.operation, ready}
+
+    if request.operation == localWorkerOperations.pollEvent:
+        const current = connection(request)
+        if current.events.size == 0: return {operation: request.operation}
+        const event = current.events.pop(0)
+        return {operation: request.operation, changed: event}
+
+    if request.operation == localWorkerOperations.syncChunks:
+        const current = connection(request)
+        const positions = request.positions
+        assert positions != null else "LocalBackend sync-chunks requires positions"
+        const deltas = await runtime().chunkDeltas(current.worldId, positions)
+        const chunks: List<RealtimeChunkDelta> = []
+        for delta in deltas: chunks.append(RealtimeChunkDelta.from(delta))
+        const response: ChunksSyncedEvent = {
+            event: "chunks.synced",
+            requestId: required(request.requestId, "requestId"),
+            worldId: current.worldId,
+            chunks,
+        }
+        return {operation: request.operation, chunks: response}
+
+    if request.operation == localWorkerOperations.applyBlocks:
+        const current = connection(request)
+        const edits = request.edits
+        assert edits != null else "LocalBackend apply-blocks requires edits"
+        const batch = await runtime().editBlocks(current.worldId, edits)
+        const response: BlockEditsAppliedEvent = {
+            event: "blocks.applied",
+            requestId: required(request.requestId, "requestId"),
+            worldId: current.worldId,
+            sequence: batch.sequence,
+            changes: blockChanges(batch),
+        }
+        return {operation: request.operation, blocks: response}
+
+    if request.operation == localWorkerOperations.closeConnection:
+        await closeConnection(required(request.connectionId, "connectionId"))
+        return {operation: request.operation, closed: true}
+
+    if request.operation == localWorkerOperations.shutdown:
+        await shutdown()
+        return {operation: request.operation, closed: true}
+
+    throw Error(f"Unsupported LocalBackend Worker operation {request.operation}")
+
+export def serveLocalBackendWorker(): serveWorker(LocalWorkerRequest, LocalWorkerResponse, handle, 128)

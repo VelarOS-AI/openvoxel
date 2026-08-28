@@ -1,0 +1,30 @@
+{
+  "name": "@openvoxel/world",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "velar": {
+    "entry": "src/index.vel",
+    "targets": ["core"],
+    "requires": {
+      "capabilities": []
+    }
+  },
+  "scripts": {
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "test": "velar test",
+    "build": "velar build"
+  },
+  "dependencies": {
+    "@openvoxel/blocks": "0.2.0"
+  },
+  "devDependencies": {
+    "@openvoxel/identities": "0.2.0",
+    "fast-check": "4.9.0"
+  }
+}

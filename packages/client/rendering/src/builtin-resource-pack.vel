@@ -1,0 +1,5 @@
+import json resourcePackData from "@openvoxel/renderer/resource-pack-data"
+import {ClientResourcePackArtifact, validateClientResourcePack} from "./resource-pack.vel"
+
+/// OpenVoxel 自带资源包只在这个装配点读取 generated JSON。
+export const builtinClientResourcePack = validateClientResourcePack(ClientResourcePackArtifact.parse(resourcePackData))

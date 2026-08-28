@@ -1,0 +1,45 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
+import {ChunkPosition} from "@openvoxel/world"
+import {Float32Buffer, UInt32Buffer} from "velar/binary"
+import {ClientRenderState} from "./render-catalog.vel"
+
+export type ChunkMeshBatch:
+    readonly pipelineKey: string
+    readonly layer: BlockRenderLayer
+    readonly materialKey: string
+    readonly animationKey: string?
+    readonly positions: Float32Buffer
+    readonly normals: Float32Buffer
+    readonly uvs: Float32Buffer
+    readonly colors: Float32Buffer
+    readonly indices: UInt32Buffer
+    readonly quadCount: number
+
+export type ChunkMesh:
+    readonly position: readonly ChunkPosition
+    readonly ticket: number
+    readonly batches: readonly List<readonly ChunkMeshBatch>
+    readonly visibleBlocks: number
+    readonly quadCount: number
+    readonly byteSize: number
+    readonly checksum: number
+
+export const meshingWorkerOperations = {
+    initialize: "initialize",
+    mesh: "mesh",
+}
+
+/// 一个 Chunk 的 Worker 输入使用 edge+2 的立方体：中心是当前 Chunk，六个边界
+/// 切片来自已跟踪邻居，棱和角可以为空。这样每次请求只有一块可转移 UInt32Buffer。
+export type MeshingWorkerRequest:
+    readonly operation: string
+    readonly states: readonly List<readonly ClientRenderState>?
+    readonly position: readonly ChunkPosition?
+    readonly edge: number?
+    readonly paddedBlocks: UInt32Buffer?
+    readonly ticket: number?
+
+export type MeshingWorkerResponse:
+    readonly operation: string
+    readonly ready: bool?
+    readonly mesh: readonly ChunkMesh?

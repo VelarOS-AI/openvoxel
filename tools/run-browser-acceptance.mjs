@@ -80,6 +80,56 @@ async function text(page, selector) {
   return value.trim();
 }
 
+async function renderedWorld(page, expectedChecksum = null) {
+  await page.waitForFunction(({expectedChecksum}) => {
+    const number = (selector) => Number.parseInt(document.querySelector(selector)?.textContent ?? "", 10);
+    const chunks = number("[data-render-chunks]");
+    const meshes = number("[data-render-meshes]");
+    const quads = number("[data-render-quads]");
+    const checksum = number("[data-render-checksum]");
+    const pending = number("[data-render-pending]");
+    return chunks === 27
+      && meshes > 0
+      && quads > 0
+      && checksum > 0
+      && pending === 0
+      && (expectedChecksum === null || checksum === expectedChecksum);
+  }, {expectedChecksum}, {timeout: 60_000});
+  const snapshot = {
+    chunks: Number.parseInt(await text(page, "[data-render-chunks]"), 10),
+    meshes: Number.parseInt(await text(page, "[data-render-meshes]"), 10),
+    quads: Number.parseInt(await text(page, "[data-render-quads]"), 10),
+    checksum: Number.parseInt(await text(page, "[data-render-checksum]"), 10),
+    pending: Number.parseInt(await text(page, "[data-render-pending]"), 10),
+  };
+  assert.deepEqual({chunks: snapshot.chunks, pending: snapshot.pending}, {chunks: 27, pending: 0});
+  assert.ok(snapshot.meshes > 0, "Rendered world must upload at least one GPU mesh");
+  assert.ok(snapshot.quads > 0, "Rendered world must contain visible quads");
+  return snapshot;
+}
+
+async function orbitCamera(page) {
+  const canvas = page.locator("[data-voxel-canvas]");
+  const bounds = await canvas.boundingBox();
+  assert.notEqual(bounds, null, "Voxel canvas must have layout bounds");
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  await page.mouse.move(centerX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(centerX + Math.min(180, bounds.width / 4), Math.max(bounds.y + 20, centerY - Math.min(220, bounds.height / 3)), {steps: 24});
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+}
+
+async function renderedWorldChanged(page, previousChecksum) {
+  await page.waitForFunction((previousChecksum) => {
+    const checksum = Number.parseInt(document.querySelector("[data-render-checksum]")?.textContent ?? "", 10);
+    const pending = Number.parseInt(document.querySelector("[data-render-pending]")?.textContent ?? "", 10);
+    return checksum > 0 && checksum !== previousChecksum && pending === 0;
+  }, previousChecksum, {timeout: 60_000});
+  return renderedWorld(page);
+}
+
 async function selectBackend(page, mode) {
   await page.locator(`[data-use-${mode}]`).click();
   await page.locator(`[data-use-${mode}][aria-pressed="true"]`).waitFor();
@@ -107,7 +157,7 @@ async function runConformance(page, mode, baseWorldId) {
 async function createEditReconnect(page, worldId, mode) {
   await page.locator("[data-world-id-input]").fill(worldId);
   await page.locator("[data-world-name-input]").fill(`${mode} Browser Acceptance`);
-  await page.locator("[data-seed-input]").fill(`${mode}-browser-acceptance-seed`);
+  await page.locator("[data-seed-input]").fill("browser-acceptance-seed");
   await page.locator("[data-create-world]").click();
   await page.locator('[data-world-ready="true"]').waitFor();
 
@@ -116,17 +166,21 @@ async function createEditReconnect(page, worldId, mode) {
   assert.equal(await text(page, "[data-generation]"), "1");
   const initialRuntimeId = await text(page, "[data-runtime-id]");
   assert.notEqual(initialRuntimeId, "-1");
+  const initialRender = await renderedWorld(page);
+  await orbitCamera(page);
 
   await page.locator("[data-edit-spawn]").click();
   await page.locator("[data-revision]").filter({ hasText: "1" }).waitFor();
   const editedRuntimeId = await text(page, "[data-runtime-id]");
   assert.notEqual(editedRuntimeId, initialRuntimeId);
+  const editedRender = await renderedWorldChanged(page, initialRender.checksum);
 
   await page.locator("[data-reconnect]").click();
   await page.locator("[data-generation]").filter({ hasText: "2" }).waitFor();
   assert.equal(await text(page, "[data-revision]"), "1");
   assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
-  return editedRuntimeId;
+  const reconnectedRender = await renderedWorld(page, editedRender.checksum);
+  return {editedRuntimeId, initialRender, editedRender, reconnectedRender};
 }
 
 async function openPersisted(page, worldId, editedRuntimeId) {
@@ -136,6 +190,7 @@ async function openPersisted(page, worldId, editedRuntimeId) {
   assert.equal(await text(page, "[data-world-id]"), worldId);
   assert.equal(await text(page, "[data-revision]"), "1");
   assert.equal(await text(page, "[data-runtime-id]"), editedRuntimeId);
+  return renderedWorld(page);
 }
 
 let browser = null;
@@ -169,18 +224,23 @@ try {
   await page.goto("http://127.0.0.1:4173/", { waitUntil: "networkidle" });
 
   await runConformance(page, "online", `online-contract-${runId}`);
-  const onlineEditedRuntimeId = await createEditReconnect(page, onlineWorldId, "Online");
+  const online = await createEditReconnect(page, onlineWorldId, "Online");
 
   await page.reload({ waitUntil: "networkidle" });
-  await openPersisted(page, onlineWorldId, onlineEditedRuntimeId);
+  const persistedOnlineRender = await openPersisted(page, onlineWorldId, online.editedRuntimeId);
+  assert.equal(persistedOnlineRender.checksum, online.editedRender.checksum);
 
   await selectBackend(page, "local");
   await runConformance(page, "local", `local-contract-${runId}`);
-  const localEditedRuntimeId = await createEditReconnect(page, localWorldId, "Local");
+  const local = await createEditReconnect(page, localWorldId, "Local");
 
   await page.reload({ waitUntil: "networkidle" });
   await selectBackend(page, "local");
-  await openPersisted(page, localWorldId, localEditedRuntimeId);
+  const persistedLocalRender = await openPersisted(page, localWorldId, local.editedRuntimeId);
+  assert.equal(persistedLocalRender.checksum, local.editedRender.checksum);
+  assert.equal(local.initialRender.checksum, online.initialRender.checksum);
+  assert.equal(local.editedRender.checksum, online.editedRender.checksum);
+  assert.equal(local.reconnectedRender.checksum, online.reconnectedRender.checksum);
   assert.deepEqual(browserFailures, []);
 
   console.log(`Browser acceptance passed for OnlineBackend ${onlineWorldId} and LocalBackend ${localWorldId}`);

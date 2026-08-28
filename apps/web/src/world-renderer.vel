@@ -1,0 +1,166 @@
+import {ClientWorldChange, ClientWorldChangeKind, ClientWorldSession} from "@openvoxel/client"
+import {MeshingWorkerRequest, MeshingWorkerResponse, builtinClientResourcePack, createClientRenderCatalog, meshingWorkerOperations, openVoxelRenderSurface, snapshotChunkNeighborhood} from "@openvoxel/renderer"
+import {ChunkPosition, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
+import {Cancellation, Task, task} from "velar/task"
+import {worker} from "velar/worker"
+
+export type WorldRendererStats:
+    readonly chunks: number
+    readonly meshes: number
+    readonly quads: number
+    readonly checksum: number
+    readonly pending: number
+
+export type WorldRenderer:
+    close: () -> Promise<null>
+
+export const horizontalRenderChunkRadius = 1
+
+export def initialRenderChunkPositions(
+    manifest: readonly WorldManifest,
+    minimumWorldY: number,
+    maximumWorldY: number,
+) -> List<readonly ChunkPosition>:
+    const center = locateBlock(manifest.spawn, manifest.chunkEdge).chunk
+    const minimumChunkY = chunkCoordinate(minimumWorldY, manifest.chunkEdge)
+    const maximumChunkY = chunkCoordinate(maximumWorldY, manifest.chunkEdge)
+    const positions: List<readonly ChunkPosition> = []
+    for dy in range(-1, 2):
+        const y = center.y + dy
+        if y < minimumChunkY or y > maximumChunkY: continue
+        for dz in range(-horizontalRenderChunkRadius, horizontalRenderChunkRadius + 1):
+            for dx in range(-horizontalRenderChunkRadius, horizontalRenderChunkRadius + 1):
+                positions.append({x: center.x + dx, y, z: center.z + dz})
+    return positions
+
+export async def openWorldRenderer(
+    canvas: CanvasElement,
+    session: readonly ClientWorldSession,
+    manifest: readonly WorldManifest,
+    changed: (stats: readonly WorldRendererStats) -> null,
+    failed: (message: string) -> null,
+) -> WorldRenderer:
+    const catalog = createClientRenderCatalog(session.content, builtinClientResourcePack)
+    const surface = await openVoxelRenderSurface(
+        canvas,
+        catalog,
+        manifest.chunkEdge,
+        manifest.spawn.x,
+        manifest.spawn.y,
+        manifest.spawn.z,
+        horizontalRenderChunkRadius,
+    )
+    const first = worker("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, 16)
+    const second = worker("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, 16)
+    let subscription = session.subscribeChanges(_event => null)
+    const tickets: Map<string, number> = Map()
+    const meshTasks: Map<string, Task<null>> = Map()
+    let nextWorker = 0
+    let pending = 0
+    let closed = false
+
+    def publishStats():
+        const stats = surface.stats()
+        changed(WorldRendererStats.from(stats, {pending}))
+
+    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation):
+        pending += 1
+        publishStats()
+        try:
+            await cancellation.checkpoint()
+            const center = session.state.chunk(position)
+            assert center != null else "Cannot mesh an untracked client Chunk"
+            const paddedBlocks = snapshotChunkNeighborhood(position, center.edge, block => session.state.block(block))
+            const selected = (nextWorker % 2) == 0 ? first : second
+            nextWorker += 1
+            const response = await selected.call({
+                operation: meshingWorkerOperations.mesh,
+                position,
+                edge: manifest.chunkEdge,
+                paddedBlocks,
+                ticket,
+            }, cancellation, 15s)
+            const mesh = response.mesh
+            if closed or tickets.get(chunkKey(position)) != ticket: return
+            assert mesh != null else "Meshing Worker returned no Chunk mesh"
+            surface.setChunkMesh(mesh)
+        catch error:
+            if not closed and tickets.get(chunkKey(position)) == ticket: failed(error.message)
+        finally:
+            pending -= 1
+            const key = chunkKey(position)
+            if tickets.get(key) == ticket: meshTasks.remove(key)
+            if not closed: publishStats()
+
+    async def cancelObsolete(owner: Task<null>): await owner.cancel("Chunk mesh superseded")
+
+    def schedule(position: readonly ChunkPosition):
+        if closed or session.state.chunk(position) == null: return
+        const key = chunkKey(position)
+        const previous = meshTasks.get(key)
+        const ticket = (tickets.get(key) ?? 0) + 1
+        tickets.set(key, ticket)
+        async def runBuild(cancellation: Cancellation): await build(position, ticket, cancellation)
+        const owner: Task<null> = task(runBuild)
+        meshTasks.set(key, owner)
+        if previous != null: async cancelObsolete(previous)
+
+    def addTracked(targets: Map<string, readonly ChunkPosition>, position: readonly ChunkPosition):
+        if session.state.chunk(position) != null: targets.set(chunkKey(position), position)
+
+    def addNeighbors(targets: Map<string, readonly ChunkPosition>, position: readonly ChunkPosition):
+        addTracked(targets, {x: position.x + 1, y: position.y, z: position.z})
+        addTracked(targets, {x: position.x - 1, y: position.y, z: position.z})
+        addTracked(targets, {x: position.x, y: position.y + 1, z: position.z})
+        addTracked(targets, {x: position.x, y: position.y - 1, z: position.z})
+        addTracked(targets, {x: position.x, y: position.y, z: position.z + 1})
+        addTracked(targets, {x: position.x, y: position.y, z: position.z - 1})
+
+    def invalidate(event: readonly ClientWorldChange):
+        const targets: Map<string, readonly ChunkPosition> = Map()
+        if event.kind == ClientWorldChangeKind.blocksChanged and event.changes.size > 0:
+            for change in event.changes:
+                addTracked(targets, change.chunk)
+                const local = change.local
+                if local.x == 0: addTracked(targets, {x: change.chunk.x - 1, y: change.chunk.y, z: change.chunk.z})
+                if local.x == manifest.chunkEdge - 1:
+                    addTracked(targets, {x: change.chunk.x + 1, y: change.chunk.y, z: change.chunk.z})
+                if local.y == 0: addTracked(targets, {x: change.chunk.x, y: change.chunk.y - 1, z: change.chunk.z})
+                if local.y == manifest.chunkEdge - 1:
+                    addTracked(targets, {x: change.chunk.x, y: change.chunk.y + 1, z: change.chunk.z})
+                if local.z == 0: addTracked(targets, {x: change.chunk.x, y: change.chunk.y, z: change.chunk.z - 1})
+                if local.z == manifest.chunkEdge - 1:
+                    addTracked(targets, {x: change.chunk.x, y: change.chunk.y, z: change.chunk.z + 1})
+        else:
+            for position in event.positions:
+                addTracked(targets, position)
+                addNeighbors(targets, position)
+        for position in targets.values(): schedule(position)
+
+    try:
+        await Promise.all([
+            first.call({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s),
+            second.call({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s),
+        ])
+        subscription.close()
+        subscription = session.subscribeChanges(invalidate)
+        for position in session.state.trackedPositions(): schedule(position)
+    catch error:
+        subscription.close()
+        await first.close()
+        await second.close()
+        surface.release()
+        throw error
+
+    async def close():
+        if closed: return
+        closed = true
+        subscription.close()
+        const activeTasks = meshTasks.values()
+        for owner in activeTasks: await owner.cancel("World renderer closed")
+        meshTasks.clear()
+        await first.close()
+        await second.close()
+        surface.release()
+
+    return {close}

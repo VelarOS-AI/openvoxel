@@ -1,7 +1,0 @@
-{
-  "formatVersion": 2,
-  "kind": "library",
-  "entry": "src/index.vel",
-  "outDir": "dist",
-  "extensions": ["@velarscript/web"]
-}

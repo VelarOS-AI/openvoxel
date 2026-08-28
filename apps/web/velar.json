@@ -5,7 +5,8 @@
   "outDir": "dist",
   "publicDir": "public",
   "workers": {
-    "openvoxel-local": "src/local-worker.vel"
+    "openvoxel-local": "src/local-worker.vel",
+    "openvoxel-meshing": "src/meshing-worker.vel"
   },
   "build": {
     "sourceMaps": true

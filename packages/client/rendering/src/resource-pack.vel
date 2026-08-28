@@ -1,0 +1,119 @@
+/// 客户端资源包把世界内容中的逻辑资源身份解析成有界的呈现配方。
+/// 这个格式没有 runtimeId 字段；数字状态只通过 WorldContentResponse 的状态目录
+/// 到达 RenderCatalog，资源包本身不会成为第二份方块目录。
+
+export enum ClientBlockModelKind:
+    cube
+    column
+    cross
+    cactus
+    snowLayer = "snow_layer"
+    fluid
+
+export type ClientResourceAtlas:
+    readonly width: number
+    readonly height: number
+    readonly dataUrl: string
+
+export type ClientModelResource:
+    readonly key: string
+    readonly kind: ClientBlockModelKind
+
+export type ClientMaterialResource:
+    readonly key: string
+    readonly alpha: number
+    readonly alphaCutoff: number
+    readonly doubleSided: bool
+    readonly emissive: number
+    readonly unlit: bool
+
+/// UV 使用 Babylon/WebGL 通用的左下原点坐标；生成器已完成 PNG 顶部原点转换。
+export type ClientTextureResource:
+    readonly key: string
+    readonly u0: number
+    readonly v0: number
+    readonly u1: number
+    readonly v1: number
+
+export type ClientTintResource:
+    readonly key: string
+    readonly red: number
+    readonly green: number
+    readonly blue: number
+
+export type ClientAnimationResource:
+    readonly key: string
+    readonly frameDurationMs: number
+    readonly frames: readonly List<string>
+
+export type ClientResourcePackArtifact:
+    readonly artifactVersion: number
+    readonly formatVersion: number
+    readonly owner: string
+    readonly targetContentHash: string
+    readonly resourceHash: string
+    readonly atlas: readonly ClientResourceAtlas
+    readonly models: readonly List<readonly ClientModelResource>
+    readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly textures: readonly List<readonly ClientTextureResource>
+    readonly tints: readonly List<readonly ClientTintResource>
+    readonly animations: readonly List<readonly ClientAnimationResource>
+
+def requireHash(value: string, label: string):
+    assert Text.matches(value, r"^[0-9a-f]{64}$") else f"{label} must be a lowercase SHA-256 value"
+
+def requireOwnedKey(key: string, owner: string, label: string):
+    assert key.startsWith(f"{owner}:") else f"{label} {key} does not belong to resource pack {owner}"
+
+def requireUnit(value: number, label: string):
+    assert value.isFinite() and value >= 0 and value <= 1 else f"{label} must be from 0 through 1"
+
+def requireUniqueKey(key: string, keys: Set<string>, owner: string, label: string):
+    requireOwnedKey(key, owner, label)
+    assert key not in keys else f"Client resource pack repeats {label} {key}"
+    keys.add(key)
+
+/// 包内 JSON 已由生成阶段计算 resourceHash；运行时再次验证结构、范围、命名空间
+/// 和交叉引用，避免损坏的静态资源走到图形引擎边界。
+export def validateClientResourcePack(artifact: readonly ClientResourcePackArtifact) -> readonly ClientResourcePackArtifact:
+    assert artifact.artifactVersion == 1 else "Unsupported client resource pack artifact version"
+    assert artifact.formatVersion == 1 else "Unsupported client resource pack format version"
+    assert Text.matches(artifact.owner, r"^[a-z][a-z0-9_.-]*$") else "Client resource pack owner is invalid"
+    requireHash(artifact.targetContentHash, "Client resource target content hash")
+    requireHash(artifact.resourceHash, "Client resource hash")
+    assert artifact.atlas.width.isInteger() and artifact.atlas.width > 0 and artifact.atlas.width <= 8192 else "Client resource atlas width is invalid"
+    assert artifact.atlas.height.isInteger() and artifact.atlas.height > 0 and artifact.atlas.height <= 8192 else "Client resource atlas height is invalid"
+    assert artifact.atlas.dataUrl.startsWith("data:image/png;base64,") else "Client resource atlas must be an embedded PNG"
+
+    const modelKeys: Set<string> = Set()
+    const materialKeys: Set<string> = Set()
+    const textureKeys: Set<string> = Set()
+    const tintKeys: Set<string> = Set()
+    const animationKeys: Set<string> = Set()
+    for value in artifact.models: requireUniqueKey(value.key, modelKeys, artifact.owner, "model")
+    for value in artifact.materials: requireUniqueKey(value.key, materialKeys, artifact.owner, "material")
+    for value in artifact.textures: requireUniqueKey(value.key, textureKeys, artifact.owner, "texture")
+    for value in artifact.tints: requireUniqueKey(value.key, tintKeys, artifact.owner, "tint")
+    for value in artifact.animations: requireUniqueKey(value.key, animationKeys, artifact.owner, "animation")
+
+    for material in artifact.materials:
+        requireUnit(material.alpha, f"Material {material.key} alpha")
+        requireUnit(material.alphaCutoff, f"Material {material.key} alpha cutoff")
+        requireUnit(material.emissive, f"Material {material.key} emissive level")
+    for texture in artifact.textures:
+        requireUnit(texture.u0, f"Texture {texture.key} u0")
+        requireUnit(texture.v0, f"Texture {texture.key} v0")
+        requireUnit(texture.u1, f"Texture {texture.key} u1")
+        requireUnit(texture.v1, f"Texture {texture.key} v1")
+        assert texture.u0 < texture.u1 and texture.v0 < texture.v1 else f"Texture {texture.key} has an empty atlas region"
+    for tint in artifact.tints:
+        requireUnit(tint.red, f"Tint {tint.key} red")
+        requireUnit(tint.green, f"Tint {tint.key} green")
+        requireUnit(tint.blue, f"Tint {tint.key} blue")
+
+    for animation in artifact.animations:
+        assert animation.frameDurationMs.isInteger() and animation.frameDurationMs >= 16 and animation.frameDurationMs <= 60_000 else f"Animation {animation.key} frame duration is invalid"
+        assert animation.frames.size > 0 else f"Animation {animation.key} has no frames"
+        for frame in animation.frames:
+            assert frame in textureKeys else f"Animation {animation.key} references unknown texture {frame}"
+    return artifact

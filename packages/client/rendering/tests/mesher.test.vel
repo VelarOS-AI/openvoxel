@@ -1,0 +1,88 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
+import {expect} from "velar/test"
+import {UInt32Buffer, uint32Buffer} from "velar/binary"
+import {meshChunk} from "../src/mesher.vel"
+import {ClientRenderState} from "../src/render-catalog.vel"
+import {ClientBlockModelKind, ClientTextureResource} from "../src/resource-pack.vel"
+
+const edge = 4
+const paddedEdge = edge + 2
+const region: ClientTextureResource = {key: "test:texture", u0: 0, v0: 0, u1: 1, v1: 1}
+
+def state(runtimeId: number, model: ClientBlockModelKind?, occludes: bool, layer: BlockRenderLayer? = null) -> ClientRenderState:
+    return {
+        runtimeId,
+        modelKey: model == null ? null : f"test:model/{model}",
+        model,
+        layer,
+        materialKey: model == null ? null : "test:material",
+        textures: model == null ? null : {top: region, bottom: region, side: region},
+        tintKey: null,
+        tintRed: 1,
+        tintGreen: 1,
+        tintBlue: 1,
+        animationKey: null,
+        cullFaces: model == ClientBlockModelKind.cube,
+        occludes,
+        emission: 0,
+        axis: null,
+        level: model == ClientBlockModelKind.fluid ? 0 : null,
+        falling: model == ClientBlockModelKind.fluid ? false : null,
+        layers: model == ClientBlockModelKind.snowLayer ? 1 : null,
+    }
+
+def index(x: number, y: number, z: number) -> number: return x + paddedEdge * (z + paddedEdge * y)
+
+def blocks() -> UInt32Buffer: return uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
+
+const air = state(0, null, false)
+const stone = state(7, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque)
+const plant = state(9, ClientBlockModelKind.cross, false, BlockRenderLayer.cutout)
+const water = state(11, ClientBlockModelKind.fluid, false, BlockRenderLayer.translucent)
+
+test "visible-face meshing emits six quads for one cube and ten for two adjacent cubes":
+    const one = blocks()
+    one[index(2, 2, 2)] = stone.runtimeId
+    const oneMesh = meshChunk({x: 0, y: 0, z: 0}, edge, one, [air, stone], 1)
+    expect(oneMesh.visibleBlocks).toBe(1)
+    expect(oneMesh.quadCount).toBe(6)
+
+    const two = one.copy()
+    two[index(3, 2, 2)] = stone.runtimeId
+    const twoMesh = meshChunk({x: 0, y: 0, z: 0}, edge, two, [air, stone], 2)
+    expect(twoMesh.visibleBlocks).toBe(2)
+    expect(twoMesh.quadCount).toBe(10)
+    expect(twoMesh.checksum == oneMesh.checksum).toBe(false)
+
+test "mesh triangles use outward counter-clockwise winding":
+    const volume = blocks()
+    volume[index(2, 2, 2)] = stone.runtimeId
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, stone], 5)
+    for batch in mesh.batches:
+        for offset in range(0, batch.positions.size, 12):
+            const ax = batch.positions[offset + 3] - batch.positions[offset]
+            const ay = batch.positions[offset + 4] - batch.positions[offset + 1]
+            const az = batch.positions[offset + 5] - batch.positions[offset + 2]
+            const bx = batch.positions[offset + 6] - batch.positions[offset]
+            const by = batch.positions[offset + 7] - batch.positions[offset + 1]
+            const bz = batch.positions[offset + 8] - batch.positions[offset + 2]
+            const crossX = ay * bz - az * by
+            const crossY = az * bx - ax * bz
+            const crossZ = ax * by - ay * bx
+            const dot = crossX * batch.normals[offset] + crossY * batch.normals[offset + 1] + crossZ * batch.normals[offset + 2]
+            expect(dot > 0).toBe(true)
+
+test "neighbor halo culls a Chunk seam while cross and fluid models keep their own geometry":
+    const seam = blocks()
+    seam[index(edge, 2, 2)] = stone.runtimeId
+    seam[index(edge + 1, 2, 2)] = stone.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, seam, [air, stone], 3).quadCount).toBe(5)
+
+    const models = blocks()
+    models[index(2, 2, 2)] = plant.runtimeId
+    models[index(3, 2, 2)] = water.runtimeId
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, models, [air, plant, water], 4)
+    expect(mesh.visibleBlocks).toBe(2)
+    expect(mesh.batches.size).toBe(2)
+    expect(mesh.quadCount).toBe(8)
+    expect(mesh.byteSize > 0).toBe(true)

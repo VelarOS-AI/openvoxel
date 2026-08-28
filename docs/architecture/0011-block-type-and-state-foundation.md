@@ -27,7 +27,7 @@ OpenVoxel 采用内容、体素、模拟、网格和渲染边界分离的方块�
 
 ## 源码分层
 
-`packages/blocks/src` 按执行阶段组织：
+`packages/content/blocks/src` 按执行阶段组织：
 
 - `definition/` 定义人工方块、身份树、编译目录和世界快照的数据契约。
 - `compiler/` 拥有规范状态键、跨字段验证、状态穷举和目录编译。
