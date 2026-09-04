@@ -1,5 +1,6 @@
 import {BlockEditsAppliedEvent, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
 import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "./backend.vel"
 import {ClientChunkState} from "./chunk-state.vel"
 import {ClientWorldChangeListener, ClientWorldChangeSubscription, ClientWorldState, clientWorldState} from "./world-state.vel"
@@ -12,7 +13,7 @@ export type ClientWorldSession:
     readonly bootstrap: readonly WorldBootstrapResponse
     readonly content: readonly WorldContentResponse
     readonly state: ClientWorldState
-    loadChunks: (positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ClientChunkState>>
+    loadChunks: (positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ClientChunkState>>
     unloadChunks: (positions: readonly List<readonly ChunkPosition>) -> null
     applyBlocks: (edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
     subscribeChanges: (listener: ClientWorldChangeListener) -> ClientWorldChangeSubscription
@@ -72,7 +73,10 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
         state.beginConnection(opened.ready)
         activeConnection = opened
 
-    async def synchronize(positions: readonly List<readonly ChunkPosition>):
+    async def checkpoint(cancellation: Cancellation?):
+        if cancellation != null: await cancellation.checkpoint()
+
+    async def synchronize(positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null):
         if positions.size == 0: return
         synchronizationDepth += 1
         try:
@@ -82,14 +86,24 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
                 let end = start + limit
                 if end > positions.size: end = positions.size
                 const batch = positions.slice(start, end)
-                const event = await connection().syncChunks(requestId("sync"), batch)
+                await checkpoint(cancellation)
+                const syncRequestId = requestId("sync")
+                const event = (
+                    cancellation == null
+                        ? await connection().syncChunks(syncRequestId, batch)
+                        : await connection().syncChunks(syncRequestId, batch, cancellation)
+                )
+                await checkpoint(cancellation)
                 state.replaceDeltas(event)
                 start = end
         finally:
             synchronizationDepth -= 1
             replayDeferredChanges()
 
-    async def loadChunks(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ClientChunkState>:
+    async def loadChunks(
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> readonly List<readonly ClientChunkState>:
         assert positions.size > 0 else "Client Chunk load cannot be empty"
         const seen: Set<string> = Set()
         const output: List<readonly ClientChunkState> = []
@@ -103,9 +117,25 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
                 const key = chunkKey(position)
                 assert key not in seen else "Client Chunk load repeats one position"
                 seen.add(key)
-            const terrain = await backend.terrainChunks(worldId, batch)
-            for chunk in state.rememberTerrain(terrain): output.append(chunk)
-            await synchronize(batch)
+            const introduced = batch.filter(position => state.chunk(position) == null)
+            let terrainRemembered = false
+            try:
+                await checkpoint(cancellation)
+                const terrain = (
+                    cancellation == null
+                        ? await backend.terrainChunks(worldId, batch)
+                        : await backend.terrainChunks(worldId, batch, cancellation)
+                )
+                await checkpoint(cancellation)
+                const loaded = state.rememberTerrain(terrain)
+                terrainRemembered = true
+                await synchronize(batch, cancellation)
+                for chunk in loaded: output.append(chunk)
+            catch error:
+                // 取消或同步失败时不能把只有冷地形、尚未合入热增量的 Chunk 留在
+                // 会话里，否则下一次流送会误判它已经完整加载。
+                if terrainRemembered and introduced.size > 0: state.forgetChunks(introduced)
+                throw error
             start = end
         return output
 

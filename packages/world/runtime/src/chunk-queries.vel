@@ -5,6 +5,7 @@ import {ChunkDelta} from "./contracts.vel"
 import {maximumChunkBatchSize} from "./runtime-limits.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
+import {Cancellation} from "velar/task"
 
 /// 区块查询服务集中实现所有只读世界查询。
 /// 调用方不需要知道一个 Chunk 是现场生成的，也不需要知道玩家修改按稀疏增量保存。
@@ -12,9 +13,9 @@ export type WorldChunkQueries:
     chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
     chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
     /// 只返回由世界种子和生成器决定的固定地形，不叠加玩家覆盖。
-    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
     /// 返回与固定地形分离的当前热状态；缺少覆盖的坐标也会返回 revision 0。
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ChunkDelta>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
 
 /// 把一个持久化增量覆盖到刚生成的基础 Chunk 上。
@@ -28,6 +29,9 @@ def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: readonly ChunkDe
     chunk.revision = delta.revision
 
 export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
+    async def checkpoint(cancellation: Cancellation?):
+        if cancellation != null: await cancellation.checkpoint()
+
     def validateBatch(positions: readonly List<readonly ChunkPosition>):
         if positions.size == 0: throw WorldRequestError("A chunk batch cannot be empty")
         if positions.size > maximumChunkBatchSize:
@@ -43,19 +47,35 @@ export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
                 throw WorldRequestError(f"A chunk batch contains duplicate position {position.x},{position.y},{position.z}")
             seen.add(key)
 
-    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:
+    async def terrainChunks(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> List<Chunk>:
+        await checkpoint(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)
         try:
             const output: List<Chunk> = []
-            for position in positions: output.append(lease.world.generator.generate(position))
+            for position in positions:
+                await checkpoint(cancellation)
+                output.append(lease.world.generator.generate(position))
+            await checkpoint(cancellation)
             return output
         finally: await lease.close()
 
-    async def chunkDeltas(worldId: string, positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ChunkDelta>:
+    async def chunkDeltas(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> readonly List<readonly ChunkDelta>:
+        await checkpoint(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)
-        try: return await lease.world.state.deltas(positions)
+        try:
+            const deltas = await lease.world.state.deltas(positions)
+            await checkpoint(cancellation)
+            return deltas
         finally: await lease.close()
 
     async def chunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<Chunk>:

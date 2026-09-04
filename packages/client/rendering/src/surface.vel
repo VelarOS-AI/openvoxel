@@ -15,7 +15,7 @@ export type VoxelSurfaceOptions:
     readonly targetY: number
     readonly targetZ: number
     readonly horizontalChunkRadius: number
-    readonly viewChanged: (chunkX: number, chunkZ: number) -> null
+    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number) -> null
 
 export type VoxelSurfaceStats:
     readonly chunks: number
@@ -122,6 +122,7 @@ extern js`
         this.released = false;
         this.keys = new Set();
         this.lastViewCenterX = Math.floor(camera.target.x / options.edge);
+        this.lastViewCenterY = Math.floor(camera.target.y / options.edge);
         this.lastViewCenterZ = Math.floor(camera.target.z / options.edge);
         this.keyDown = (event) => {
           if (["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight"].includes(event.code)) {
@@ -177,11 +178,13 @@ extern js`
           this.camera.target.z += (forwardZ * forward + rightZ * sideways) * step;
         }
         const centerX = Math.floor(this.camera.target.x / this.options.edge);
+        const centerY = Math.floor(this.camera.target.y / this.options.edge);
         const centerZ = Math.floor(this.camera.target.z / this.options.edge);
-        if (centerX !== this.lastViewCenterX || centerZ !== this.lastViewCenterZ) {
+        if (centerX !== this.lastViewCenterX || centerY !== this.lastViewCenterY || centerZ !== this.lastViewCenterZ) {
           this.lastViewCenterX = centerX;
+          this.lastViewCenterY = centerY;
           this.lastViewCenterZ = centerZ;
-          this.options.viewChanged(centerX, centerZ);
+          this.options.viewChanged(centerX, centerY, centerZ);
         }
       }
 
@@ -360,7 +363,9 @@ extern js`
               this.translucentMeshes.add(mesh);
               this.translucentSortDirty = true;
             } else {
-              this.environment.shadowGenerator.addShadowCaster(mesh, false);
+              const definition = this.materialDefinitions.get(batch.materialKey);
+              if (definition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
+              if (definition.castsShadows) this.environment.shadowGenerator.addShadowCaster(mesh, false);
             }
             quads += requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh quad count");
           }
@@ -459,15 +464,19 @@ extern js`
       const sky = new HemisphericLight("voxel-sky", new Vector3(0.25, 1, 0.1), scene);
       sky.intensity = 0.78;
       sky.groundColor = new Color3(0.42, 0.48, 0.42);
-      const sun = new DirectionalLight("voxel-sun", new Vector3(-0.55, -1, -0.35), scene);
+      const sun = new DirectionalLight("voxel-sun", new Vector3(-0.38, -1, -0.28), scene);
       sun.position = target.add(new Vector3(edge * 4, edge * 8, edge * 3));
       sun.intensity = 0.62;
       const shadowGenerator = new ShadowGenerator(2048, sun);
       shadowGenerator.bias = 0.0008;
       shadowGenerator.normalBias = 0.035;
-      shadowGenerator.setDarkness(0.3);
+      shadowGenerator.setDarkness(0.55);
       shadowGenerator.usePercentageCloserFiltering = true;
       shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+      // cutout 植物和树叶共享图集；阴影阶段也必须读取 diffuse alpha，不能把
+      // 整张交叉四边形当成不透明遮挡体投到地面。
+      shadowGenerator.transparencyShadow = true;
+      shadowGenerator.enableSoftTransparentShadow = true;
       const renderDistance = edge * (horizontalChunkRadius + 1.5);
       scene.fogMode = Scene.FOGMODE_LINEAR;
       scene.fogColor = new Color3(0.19, 0.4, 0.66);
@@ -551,7 +560,7 @@ export async def openVoxelRenderSurface(
     targetY: number,
     targetZ: number,
     horizontalChunkRadius: number,
-    viewChanged: (chunkX: number, chunkZ: number) -> null,
+    viewChanged: (chunkX: number, chunkY: number, chunkZ: number) -> null,
 ) -> VoxelRenderSurface:
     const native: BabylonVoxelSurface = await createBabylonVoxelSurface(canvas, {
         albedoAtlasDataUrl: catalog.atlas.albedoDataUrl,

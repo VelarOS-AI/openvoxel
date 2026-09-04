@@ -29,6 +29,7 @@ export type ClientMaterialResource:
     readonly alpha: number
     readonly alphaCutoff: number
     readonly doubleSided: bool
+    readonly castsShadows: bool
     readonly emissive: number
     readonly roughness: number
     readonly specular: number

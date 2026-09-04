@@ -2,7 +2,7 @@ import {ClientWorldChange, ClientWorldChangeKind, ClientWorldSession} from "@ope
 import {MeshingWorkerRequest, MeshingWorkerResponse, VoxelRenderSurface, builtinClientResourcePack, createClientRenderCatalog, meshingWorkerOperations, openVoxelRenderSurface, snapshotChunkNeighborhood} from "@openvoxel/renderer"
 import {ChunkPosition, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
 import {Cancellation, Task, task} from "velar/task"
-import {worker} from "velar/worker"
+import {workerPool} from "velar/worker"
 
 export type WorldRendererStats:
     readonly chunks: number
@@ -68,8 +68,7 @@ export async def openWorldRenderer(
     const minimumChunkY = chunkCoordinate(session.content.minimumWorldY, manifest.chunkEdge)
     const maximumChunkY = chunkCoordinate(session.content.maximumWorldY, manifest.chunkEdge)
     let surface: VoxelRenderSurface? = null
-    const first = worker("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, 16)
-    const second = worker("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, 16)
+    const meshing = workerPool("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, 2, 32)
     let subscription = session.subscribeChanges(_event => null)
     const tickets: Map<string, number> = Map()
     const meshTasks: Map<string, Task<null>> = Map()
@@ -78,7 +77,6 @@ export async def openWorldRenderer(
     const queuedMeshTickets: Map<string, number> = Map()
     let streaming: Task<null>? = null
     let streamVersion = 0
-    let nextWorker = 0
     let activeMeshBuilds = 0
     let loading = 0
     let closed = false
@@ -101,9 +99,7 @@ export async def openWorldRenderer(
             const center = session.state.chunk(position)
             assert center != null else "Cannot mesh an untracked client Chunk"
             const paddedBlocks = snapshotChunkNeighborhood(position, center.edge, block => session.state.block(block))
-            const selected = (nextWorker % 2) == 0 ? first : second
-            nextWorker += 1
-            const response = await selected.call({
+            const response = await meshing.call({
                 operation: meshingWorkerOperations.mesh,
                 position,
                 edge: manifest.chunkEdge,
@@ -208,8 +204,8 @@ export async def openWorldRenderer(
         for position in targets.values(): schedule(position)
         publishStats()
 
-    async def streamWindow(centerX: number, centerZ: number, version: number, cancellation: Cancellation):
-        const desired = streamedChunkPositions(centerX, spawnChunk.y, centerZ, minimumChunkY, maximumChunkY)
+    async def streamWindow(centerX: number, centerY: number, centerZ: number, version: number, cancellation: Cancellation):
+        const desired = streamedChunkPositions(centerX, centerY, centerZ, minimumChunkY, maximumChunkY)
         const desiredKeys: Set<string> = Set()
         const missing: List<readonly ChunkPosition> = []
         for position in desired:
@@ -225,7 +221,7 @@ export async def openWorldRenderer(
                 if closed or streamVersion != version: return
                 let end = start + streamBatchSize
                 if end > missing.size: end = missing.size
-                await session.loadChunks(missing.slice(start, end))
+                await session.loadChunks(missing.slice(start, end), cancellation)
                 start = end
                 if streamVersion == version:
                     loading = missing.size - start
@@ -244,6 +240,7 @@ export async def openWorldRenderer(
     async def replaceStream(
         previous: Task<null>?,
         centerX: number,
+        centerY: number,
         centerZ: number,
         version: number,
         cancellation: Cancellation,
@@ -251,22 +248,22 @@ export async def openWorldRenderer(
         try:
             if previous != null: await previous.cancel("Camera entered another Chunk")
             await cancellation.checkpoint()
-            await streamWindow(centerX, centerZ, version, cancellation)
+            await streamWindow(centerX, centerY, centerZ, version, cancellation)
         catch error:
             if not closed and streamVersion == version: failed(error.message)
         finally:
             if streamVersion == version: streaming = null
 
-    def requestWindow(centerX: number, centerZ: number):
+    def requestWindow(centerX: number, centerY: number, centerZ: number):
         if closed: return
         streamVersion += 1
         const version = streamVersion
         const previous = streaming
         async def run(cancellation: Cancellation):
-            await replaceStream(previous, centerX, centerZ, version, cancellation)
+            await replaceStream(previous, centerX, centerY, centerZ, version, cancellation)
         streaming = task(run)
 
-    def viewChanged(centerX: number, centerZ: number): requestWindow(centerX, centerZ)
+    def viewChanged(centerX: number, centerY: number, centerZ: number): requestWindow(centerX, centerY, centerZ)
 
     try:
         surface = await openVoxelRenderSurface(
@@ -279,19 +276,15 @@ export async def openWorldRenderer(
             horizontalRenderChunkRadius,
             viewChanged,
         )
-        await Promise.all([
-            first.call({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s),
-            second.call({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s),
-        ])
+        await meshing.broadcast({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s)
         subscription.close()
         subscription = session.subscribeChanges(invalidate)
         for position in session.state.trackedPositions(): schedule(position)
         publishStats()
-        requestWindow(spawnChunk.x, spawnChunk.z)
+        requestWindow(spawnChunk.x, spawnChunk.y, spawnChunk.z)
     catch error:
         subscription.close()
-        await first.close()
-        await second.close()
+        await meshing.close()
         if surface != null: activeSurface().release()
         throw error
 
@@ -308,8 +301,7 @@ export async def openWorldRenderer(
         activeMeshKeys.clear()
         queuedMeshPositions.clear()
         queuedMeshTickets.clear()
-        await first.close()
-        await second.close()
+        await meshing.close()
         if surface != null: activeSurface().release()
         surface = null
 

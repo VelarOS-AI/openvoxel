@@ -58,7 +58,7 @@ test "resource packs fail before rendering when their target content build diffe
     })
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
-test "cutout plants participate in world lighting without inheriting terrain highlights":
+test "cutout plants keep lighting but do not cast atlas-quad shadows":
     const cross = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/cross")
     const terrain = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/terrain")
     assert cross != null and terrain != null else "Expected built-in cross and terrain materials"
@@ -66,3 +66,5 @@ test "cutout plants participate in world lighting without inheriting terrain hig
     expect(terrain.unlit).toBe(false)
     expect(cross.specular < terrain.specular).toBe(true)
     expect(cross.roughness < terrain.roughness).toBe(true)
+    expect(cross.castsShadows).toBe(false)
+    expect(terrain.castsShadows).toBe(true)

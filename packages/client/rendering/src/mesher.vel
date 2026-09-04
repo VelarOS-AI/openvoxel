@@ -208,9 +208,11 @@ def sameCullVolume(current: readonly ClientRenderState, neighbor: readonly Clien
     return current.cullFaces and neighbor.cullFaces and fullFaceModel(current) and fullFaceModel(neighbor) and current.layer == neighbor.layer and current.materialKey == neighbor.materialKey
 
 def faceVisible(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
-    if not current.cullFaces: return true
     if neighbor.model == null: return true
+    // `cullFaces` 只控制同组完整体积是否共享内部边界。无论当前模型是否加入
+    // 这个组，只要相邻方块是完整遮挡体，贴着边界的盒状面都不可能被看见。
     if neighbor.occludes: return false
+    if not current.cullFaces: return true
     if sameCullVolume(current, neighbor): return false
     return not sameTranslucentVolume(current, neighbor)
 

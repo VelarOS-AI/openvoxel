@@ -152,9 +152,11 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const worldId = required(request.worldId, "worldId")
         const positions = request.positions
         assert positions != null else "LocalBackend terrain-chunks requires positions"
-        const generated = await runtime().terrainChunks(worldId, positions)
+        const generated = await runtime().terrainChunks(worldId, positions, cancellation)
         const chunks: List<TerrainChunkResponse> = []
-        for chunk in generated: chunks.append(terrainResponse(chunk))
+        for chunk in generated:
+            await cancellation.checkpoint()
+            chunks.append(terrainResponse(chunk))
         return {operation: request.operation, terrain: {worldId, chunks}}
 
     if request.operation == localWorkerOperations.openConnection:
@@ -182,9 +184,11 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const current = connection(request)
         const positions = request.positions
         assert positions != null else "LocalBackend sync-chunks requires positions"
-        const deltas = await runtime().chunkDeltas(current.worldId, positions)
+        const deltas = await runtime().chunkDeltas(current.worldId, positions, cancellation)
         const chunks: List<RealtimeChunkDelta> = []
-        for delta in deltas: chunks.append(RealtimeChunkDelta.from(delta))
+        for delta in deltas:
+            await cancellation.checkpoint()
+            chunks.append(RealtimeChunkDelta.from(delta))
         const response: ChunksSyncedEvent = {
             event: "chunks.synced",
             requestId: required(request.requestId, "requestId"),

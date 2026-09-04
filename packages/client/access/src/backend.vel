@@ -1,5 +1,6 @@
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientChunkContract, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
 
 /// 客户端会话真正依赖的传输无关兼容事实。
 ///
@@ -19,7 +20,7 @@ export type WorldBackendContract:
 /// 连接的 sequence 游标，再处理后续广播。
 export type WorldBackendConnection:
     readonly ready: readonly WorldReadyEvent
-    syncChunks: (requestId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly ChunksSyncedEvent>
+    syncChunks: (requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly ChunksSyncedEvent>
     applyBlocks: (requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
     close: () -> Promise<null>
 
@@ -34,6 +35,6 @@ export type WorldBackend:
     findWorld: (worldId: string) -> Promise<readonly WorldManifest>
     bootstrap: (worldId: string) -> Promise<readonly WorldBootstrapResponse>
     content: (worldId: string) -> Promise<readonly WorldContentResponse>
-    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly TerrainChunkBatchResponse>
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly TerrainChunkBatchResponse>
     connect: (worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> Promise<WorldBackendConnection>
     close: () -> Promise<null>

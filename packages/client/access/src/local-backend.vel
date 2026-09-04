@@ -3,6 +3,7 @@ import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "./back
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
+import {Cancellation} from "velar/task"
 
 def request(operation: string) -> LocalWorkerRequest: return {operation}
 
@@ -41,9 +42,10 @@ export def localBackend(
             throw error
         return ready
 
-    async def call(message: LocalWorkerRequest) -> LocalWorkerResponse:
+    async def call(message: LocalWorkerRequest, cancellation: Cancellation? = null) -> LocalWorkerResponse:
+        if cancellation != null: await cancellation.checkpoint()
         const current = await activeTransport()
-        const response = await current.call(message)
+        const response = await current.call(message, cancellation)
         assert response.operation == message.operation else "LocalBackend Worker returned the wrong operation"
         return response
 
@@ -72,8 +74,12 @@ export def localBackend(
         assert response.content != null else "LocalBackend Worker omitted world content"
         return response.content
 
-    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> readonly TerrainChunkBatchResponse:
-        const response = await call({operation: localWorkerOperations.terrainChunks, worldId, positions})
+    async def terrainChunks(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> readonly TerrainChunkBatchResponse:
+        const response = await call({operation: localWorkerOperations.terrainChunks, worldId, positions}, cancellation)
         assert response.terrain != null else "LocalBackend Worker omitted terrain Chunks"
         return response.terrain
 
@@ -105,14 +111,18 @@ export def localBackend(
 
         detach pump()
 
-        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>) -> readonly ChunksSyncedEvent:
+        async def syncChunks(
+            requestId: string,
+            positions: readonly List<readonly ChunkPosition>,
+            cancellation: Cancellation? = null,
+        ) -> readonly ChunksSyncedEvent:
             requireHealthy()
             const response = await call({
                 operation: localWorkerOperations.syncChunks,
                 connectionId,
                 requestId,
                 positions,
-            })
+            }, cancellation)
             assert response.chunks != null else "LocalBackend Worker omitted chunks.synced"
             return response.chunks
 

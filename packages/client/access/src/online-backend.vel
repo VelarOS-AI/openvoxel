@@ -4,7 +4,7 @@ import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {Bytes} from "velar/binary"
 import {http} from "velar/http"
 import {RealtimeClient, RealtimeClientFailureAction, RealtimeCodec, RealtimeFailure, realtimeClient} from "velar/realtime"
-import {Channel, channel} from "velar/task"
+import {Cancellation, Channel, channel} from "velar/task"
 import {encode as encodeUrl, join as joinUrl, parse as parseUrl} from "velar/url"
 import {WebSocketClose} from "velar/websocket"
 import {decode, encode} from "@velarscript-labs/msgpack"
@@ -109,6 +109,9 @@ def responseError(result: readonly PendingResult) -> Error?:
     if result.transportError != null: return Error(result.transportError)
     return null
 
+async def checkpoint(cancellation: Cancellation?):
+    if cancellation != null: await cancellation.checkpoint()
+
 /// 浏览器线上适配器。调用方只提供 OpenAPI 地址；HTTP、WebSocket 路径均由服务
 /// 端的同一份真实路由描述发现，修改 URL 时无需同步客户端源码。
 export def onlineBackend(openApiUrl: string) -> WorldBackend:
@@ -147,12 +150,20 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         const routes = await api()
         return await http.get(operationUrl(routes, apiOperationNames.worldContent, "GET", worldId)).parse(WorldContentResponse)
 
-    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>):
+    async def terrainChunks(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ):
+        await checkpoint(cancellation)
         const routes = await api()
-        return await http.post(
+        await checkpoint(cancellation)
+        const response = await http.post(
             operationUrl(routes, apiOperationNames.terrainChunks, "POST", worldId),
             {body: {positions}},
         ).parse(TerrainChunkBatchResponse)
+        await checkpoint(cancellation)
+        return response
 
     async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null):
         const routes = await api()
@@ -217,13 +228,14 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         const ready = opened.ready!
         assert ready.worldId == worldId else "Realtime connection opened a different world"
 
-        async def request(requestId: string, message: RealtimeOutgoing):
+        async def request(requestId: string, message: RealtimeOutgoing, cancellation: Cancellation? = null):
+            await checkpoint(cancellation)
             assert not pending.has(requestId) else f"Realtime requestId {requestId} is already active"
             const responses = channel(PendingResult, capacity=1)
             pending.set(requestId, responses)
             try:
                 await realtime.send(message)
-                const result = await responses.next()
+                const result = await responses.next(cancellation)
                 assert result != null else "Realtime response channel closed before a response"
                 const failure = responseError(result)
                 if failure != null: throw failure
@@ -232,9 +244,13 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
                 pending.remove(requestId)
                 responses.close()
 
-        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>):
+        async def syncChunks(
+            requestId: string,
+            positions: readonly List<readonly ChunkPosition>,
+            cancellation: Cancellation? = null,
+        ):
             const command: SyncChunksCommand = {operation: "chunks.sync", requestId, positions}
-            const result = await request(requestId, command)
+            const result = await request(requestId, command, cancellation)
             assert result.chunks != null else "Realtime returned the wrong response to chunks.sync"
             assert result.chunks.worldId == worldId else "Realtime chunks.sync returned a different world"
             return result.chunks

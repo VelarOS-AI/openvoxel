@@ -47,6 +47,8 @@ const plant = state(9, ClientBlockModelKind.cross, false, BlockRenderLayer.cutou
 const water = state(11, ClientBlockModelKind.fluid, false, BlockRenderLayer.translucent)
 const oakLeaves = state(12, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
 const birchLeaves = state(13, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
+const cactus = state(14, ClientBlockModelKind.cactus, false, BlockRenderLayer.cutout)
+const snowLayer = state(15, ClientBlockModelKind.snowLayer, false, BlockRenderLayer.cutout)
 
 test "visible-face meshing emits six quads for one cube and ten for two adjacent cubes":
     const one = blocks()
@@ -105,6 +107,17 @@ test "adjacent leaf cubes share internal faces across state and Chunk boundaries
     seam[index(edge, 2, 2)] = oakLeaves.runtimeId
     seam[index(edge + 1, 2, 2)] = birchLeaves.runtimeId
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, seam, [air, oakLeaves, birchLeaves], 9).quadCount).toBe(5)
+
+test "solid neighbors hide boundary faces of inset and partial box models":
+    const cactusSeam = blocks()
+    cactusSeam[index(edge, 2, 2)] = cactus.runtimeId
+    cactusSeam[index(edge + 1, 2, 2)] = stone.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, cactusSeam, [air, stone, cactus], 10).quadCount).toBe(5)
+
+    const snowFloor = blocks()
+    snowFloor[index(2, 1, 2)] = snowLayer.runtimeId
+    snowFloor[index(2, 0, 2)] = stone.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, snowFloor, [air, stone, snowLayer], 11).quadCount).toBe(5)
 
 test "weighted texture variants are deterministic and distributed by world position":
     const mixedTexture: ClientTextureResource = {

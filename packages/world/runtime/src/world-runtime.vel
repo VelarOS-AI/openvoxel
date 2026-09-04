@@ -8,6 +8,7 @@ import {CreateWorld} from "./world-creation.vel"
 import {WorldAlreadyExistsError} from "./world-errors.vel"
 import {worldSessionCache} from "./world-sessions.vel"
 import {WorldContentSnapshot} from "./world-content.vel"
+import {Cancellation} from "velar/task"
 
 /// WorldRuntime 是世界应用层的唯一公开门面。
 ///
@@ -21,8 +22,8 @@ export type WorldRuntime:
     worldContent: (worldId: string) -> Promise<readonly WorldContentSnapshot>
     chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
     chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
-    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
+    terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ChunkDelta>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
     editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
     /// 为长连接保留世界上下文；关闭租约后世界才重新具备自动淘汰资格。

@@ -9,4 +9,6 @@ These source images are build inputs for the OpenVoxel client resource pack. The
 
 The generator selects declared atlas cells, combines optional OpenVoxel detail layers, and derives aligned normal and specular maps. It does not copy source-project runtime code or block-number mappings.
 
+The checked-out OpenWorld reference exposes numeric PBR/material parameters but no separate per-block normal or specular image set. OpenVoxel therefore treats the source atlas as albedo input, keeps the reviewed material coefficients in its own resource manifest, and deterministically derives aligned normal/specular atlases after all declared texture layers have been blended.
+
 Asset ownership and redistribution permission must be confirmed separately before a public release; the build does not infer a license from the source repository.

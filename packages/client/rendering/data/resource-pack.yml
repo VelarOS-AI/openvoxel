@@ -22,14 +22,14 @@ models:
   - {key: openvoxel:model/block/fluid, kind: fluid}
 
 materials:
-  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0, roughness: 0.9, specular: 0.12}
-  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0.04, roughness: 0.38, specular: 0.82}
-  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, emissive: 0.02, roughness: 0.82, specular: 0.06}
-  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0.1, roughness: 0.88, specular: 0.04}
-  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0, roughness: 0.74, specular: 0.08}
-  - {key: openvoxel:material/water, alpha: 0.68, alphaCutoff: 0, doubleSided: true, emissive: 0.02, roughness: 0.16, specular: 0.96}
-  - {key: openvoxel:material/magma, alpha: 0.92, alphaCutoff: 0, doubleSided: true, emissive: 0.78, roughness: 0.5, specular: 0.28}
-  - {key: openvoxel:material/ice, alpha: 0.72, alphaCutoff: 0, doubleSided: false, emissive: 0.03, roughness: 0.2, specular: 0.78}
+  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, emissive: 0, roughness: 0.9, specular: 0.12}
+  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, emissive: 0.04, roughness: 0.38, specular: 0.82}
+  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, castsShadows: true, emissive: 0.02, roughness: 0.82, specular: 0.06}
+  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, emissive: 0.1, roughness: 0.88, specular: 0.04}
+  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: true, emissive: 0, roughness: 0.74, specular: 0.08}
+  - {key: openvoxel:material/water, alpha: 0.68, alphaCutoff: 0, doubleSided: true, castsShadows: false, emissive: 0.02, roughness: 0.16, specular: 0.96}
+  - {key: openvoxel:material/magma, alpha: 0.92, alphaCutoff: 0, doubleSided: true, castsShadows: false, emissive: 0.78, roughness: 0.5, specular: 0.28}
+  - {key: openvoxel:material/ice, alpha: 0.72, alphaCutoff: 0, doubleSided: false, castsShadows: false, emissive: 0.03, roughness: 0.2, specular: 0.78}
 
 tints:
   - {key: openvoxel:tint/biome_foliage, red: 0.48, green: 0.9, blue: 0.34}

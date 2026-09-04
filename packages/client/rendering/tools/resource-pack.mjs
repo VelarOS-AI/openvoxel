@@ -391,6 +391,7 @@ export async function buildResourcePack() {
     alpha: requireNumber(entry.alpha, 0, 1, `material ${entry.key} alpha`),
     alphaCutoff: requireNumber(entry.alphaCutoff, 0, 1, `material ${entry.key} alphaCutoff`),
     doubleSided: entry.doubleSided === true,
+    castsShadows: entry.castsShadows === true,
     emissive: requireNumber(entry.emissive, 0, 1, `material ${entry.key} emissive`),
     roughness: requireNumber(entry.roughness, 0, 1, `material ${entry.key} roughness`),
     specular: requireNumber(entry.specular, 0, 1, `material ${entry.key} specular`),

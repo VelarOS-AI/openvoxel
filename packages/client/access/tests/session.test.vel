@@ -1,4 +1,5 @@
 import {expect} from "velar/test"
+import {Cancellation, task} from "velar/task"
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {Chunk, ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {BlockChangeBatch, BlockEdit, ChunkDelta, CreateWorld, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
@@ -94,7 +95,15 @@ async def backendHarness() -> BackendHarness:
     async def content(worldId: string) -> WorldContentResponse:
         return contentResponse(await runtime.worldContent(worldId))
 
-    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> TerrainChunkBatchResponse:
+    async def terrainChunks(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> TerrainChunkBatchResponse:
+        if cancellation != null:
+            // 为取消回归保留一个确定的异步窗口；普通契约测试不传 token。
+            await Promise.sleep(20ms)
+            await cancellation.checkpoint()
         const chunks = await runtime.terrainChunks(worldId, positions)
         const output: List<TerrainChunkResponse> = []
         for chunk in chunks: output.append(terrainResponse(chunk))
@@ -108,7 +117,12 @@ async def backendHarness() -> BackendHarness:
         let connectionClosed = false
         const ready: WorldReadyEvent = {event: "world.ready", worldId, protocolVersion, sequence: currentSequence}
 
-        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>) -> ChunksSyncedEvent:
+        async def syncChunks(
+            requestId: string,
+            positions: readonly List<readonly ChunkPosition>,
+            cancellation: Cancellation? = null,
+        ) -> ChunksSyncedEvent:
+            if cancellation != null: await cancellation.checkpoint()
             const deltas = await runtime.chunkDeltas(worldId, positions)
             // 模拟最危险的交错：服务端先取得旧增量，另一玩家随后提交修改并广播，
             // 当前同步响应最后才到达。会话必须先落旧快照，再重放暂存的广播。
@@ -198,4 +212,19 @@ test "client sessions share hot changes and preserve broadcasts that cross a com
     finally:
         await first.close()
         await second.close()
+        await harness.runtime.close()
+
+test "cancelled Chunk loads leave no cold-only state behind":
+    const harness = await backendHarness()
+    const session = await openClientWorld(harness.backend, harness.world.id)
+    try:
+        async def load(cancellation: Cancellation): await session.loadChunks([{x: 0, y: 1, z: 0}], cancellation)
+
+        const owner = task(load)
+        await Promise.sleep(0ms)
+        await owner.cancel("Camera left the Chunk")
+        await expect(owner.result()).toReject()
+        expect(session.state.trackedPositions().size).toBe(0)
+    finally:
+        await session.close()
         await harness.runtime.close()
