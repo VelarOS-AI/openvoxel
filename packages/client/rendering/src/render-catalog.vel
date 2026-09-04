@@ -1,6 +1,6 @@
 import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
-import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceAtlas, ClientResourcePackArtifact, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
+import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceAtlas, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
 export type ClientResolvedBlockTextures:
     readonly top: readonly ClientTextureResource
@@ -33,7 +33,9 @@ export type ClientRenderCatalog:
     readonly resourceHash: string
     readonly targetContentHash: string
     readonly atlas: readonly ClientResourceAtlas
+    readonly environment: readonly ClientResourceEnvironment
     readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly textures: readonly List<readonly ClientTextureResource>
     readonly animations: readonly List<readonly ClientAnimationResource>
     readonly states: readonly List<readonly ClientRenderState>
     requireState: (runtimeId: number) -> readonly ClientRenderState
@@ -125,8 +127,15 @@ export def createClientRenderCatalog(
         const tint = tintKey == null ? null : tints.get(tintKey)
         if tintKey != null: assert tint != null else f"Client resource pack does not provide tint {tintKey}"
         const animationKey = profile.render.animation
+        const animation = animationKey == null ? null : animations.get(animationKey)
         if animationKey != null:
-            assert animations.has(animationKey) else f"Client resource pack does not provide animation {animationKey}"
+            assert animation != null else f"Client resource pack does not provide animation {animationKey}"
+
+        const stateTextures = resolvedTextures(profile, textures)
+        if animation != null:
+            assert stateTextures != null else f"Animated state {state.stateKey} has no textures"
+            const firstFrame = animation.frames[0]
+            assert stateTextures.top.key == firstFrame and stateTextures.bottom.key == firstFrame and stateTextures.side.key == firstFrame else f"Animated state {state.stateKey} must use its first animation frame on every face"
 
         const resolved: ClientRenderState = {
             runtimeId: state.runtimeId,
@@ -134,7 +143,7 @@ export def createClientRenderCatalog(
             model: modelResource?.kind,
             layer: profile.render.layer,
             materialKey,
-            textures: resolvedTextures(profile, textures),
+            textures: stateTextures,
             tintKey,
             tintRed: tint?.red ?? 1,
             tintGreen: tint?.green ?? 1,

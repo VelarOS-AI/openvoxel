@@ -7,7 +7,7 @@ test "server YAML configuration owns network and database settings":
     const configuration = await loadOpenVoxelConfiguration()
     expect(configuration.server.host).toBe("127.0.0.1")
     expect(configuration.server.port).toBe(3000)
-    expect(configuration.server.cors.allowedOrigins).toContain("http://127.0.0.1:5173")
+    expect(configuration.server.cors.allowedOrigins).toContain("http://127.0.0.1:7173")
     expect(configuration.database.path).toBe("openvoxel.sqlite")
     expect(configuration.database.maxRows).toBe(262144)
     expect(configuration.content.packArtifacts.size).toBe(0)

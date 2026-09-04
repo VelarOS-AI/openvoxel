@@ -208,12 +208,12 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
         expect((await problem(missing)).code).toBe("route.not_found")
 
         const preflight = await api.request("OPTIONS", f"/api/worlds/{world.id}/content", {headers: Map([
-            ["origin", "http://127.0.0.1:5173"],
+            ["origin", "http://127.0.0.1:7173"],
             ["access-control-request-method", "GET"],
             ["access-control-request-headers", "if-none-match"],
         ])})
         expect(preflight.status).toBe(204)
-        expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5173")
+        expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:7173")
 
         const deniedPreflight = await api.request("OPTIONS", f"/api/worlds/{world.id}/content", {headers: Map([
             ["origin", "https://untrusted.example"],

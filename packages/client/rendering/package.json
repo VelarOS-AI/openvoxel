@@ -47,8 +47,8 @@
   },
   "devDependencies": {
     "@openvoxel/world-generation": "0.2.0",
-    "@velarscript/cli": "0.24.0",
-    "@velarscript/web": "0.24.0",
+    "@velarscript/cli": "0.26.1",
+    "@velarscript/web": "0.26.1",
     "sharp": "0.35.4",
     "yaml": "2.9.0"
   }

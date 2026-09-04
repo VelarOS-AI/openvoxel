@@ -130,7 +130,7 @@ export async def handleRealtimeConnection(application: OpenVoxelApplication, wor
             if value is Error:
                 const publicError = publicApplicationError(value)
                 await sendError(peer, null, publicError.code, publicError.message)
-            async peer.close(1008, "World is unavailable")
+            detach peer.close(1008, "World is unavailable")
             return null
 
         const retainedWorld = worldLease

@@ -1,7 +1,9 @@
 import {basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
+import {uint32Buffer} from "velar/binary"
 import {expect} from "velar/test"
 import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
+import {meshChunk} from "../src/mesher.vel"
 import {createClientRenderCatalog} from "../src/render-catalog.vel"
 import {ClientBlockModelKind, ClientResourcePackArtifact} from "../src/resource-pack.vel"
 
@@ -34,15 +36,33 @@ test "built-in resources resolve every world state without using catalog order a
     expect(catalog.requireState(cube.runtimeId).model).toBe(ClientBlockModelKind.cube)
     expect(cube.textures == null).toBe(false)
 
+test "every rendered backend state produces visible geometry":
+    const catalog = createClientRenderCatalog(contentResponse(), builtinClientResourcePack)
+    const edge = 4
+    const paddedEdge = edge + 2
+    let renderedStates = 0
+    for state in catalog.states:
+        if state.model == null: continue
+        const volume = uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
+        volume[2 + paddedEdge * (2 + paddedEdge * 2)] = state.runtimeId
+        const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, catalog.states, state.runtimeId)
+        expect(mesh.visibleBlocks).toBe(1)
+        expect(mesh.quadCount > 0).toBe(true)
+        expect(mesh.batches.size > 0).toBe(true)
+        renderedStates += 1
+    expect(renderedStates > 0).toBe(true)
+
 test "resource packs fail before rendering when their target content build differs":
     const incompatible = ClientResourcePackArtifact.from(builtinClientResourcePack, {
         targetContentHash: "1111111111111111111111111111111111111111111111111111111111111111",
     })
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
-test "cutout plant material owns its unlit presentation without changing terrain lighting":
+test "cutout plants participate in world lighting without inheriting terrain highlights":
     const cross = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/cross")
     const terrain = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/terrain")
     assert cross != null and terrain != null else "Expected built-in cross and terrain materials"
-    expect(cross.unlit).toBe(true)
+    expect(cross.unlit).toBe(false)
     expect(terrain.unlit).toBe(false)
+    expect(cross.specular < terrain.specular).toBe(true)
+    expect(cross.roughness < terrain.roughness).toBe(true)

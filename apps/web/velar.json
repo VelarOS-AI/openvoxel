@@ -13,7 +13,7 @@
   },
   "extensions": ["@velarscript/web"],
   "web": {
-    "title": "OpenVoxel Diagnostics",
+    "title": "OpenVoxel",
     "base": "/",
     "publicConfig": {
       "openApiUrl": "http://127.0.0.1:3000/api/openapi.json"

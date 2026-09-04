@@ -15,21 +15,30 @@
     }
   },
   "scripts": {
+    "generate": "node tools/generate-assets.mjs",
+    "generate:check": "node tools/check-assets.mjs",
+    "precheck": "npm run generate",
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
-    "dev": "velar dev",
+    "predev": "npm run generate",
+    "dev": "velar dev --port 7173",
+    "prebuild": "npm run generate",
     "build": "velar build",
-    "preview": "velar preview"
+    "preview": "velar preview --port 7174"
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
-    "@openvoxel/renderer": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
+    "@openvoxel/renderer": "0.2.0",
     "@openvoxel/world": "0.2.0",
-    "@velarscript/web": "0.24.0"
+    "@velarscript/web": "0.26.1"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.24.0"
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/rajdhani": "5.3.0",
+    "@fortawesome/fontawesome-free": "7.3.1",
+    "@velarscript/cli": "0.26.1",
+    "yaml": "2.9.0"
   }
 }

@@ -13,6 +13,7 @@ export type ClientWorldSession:
     readonly content: readonly WorldContentResponse
     readonly state: ClientWorldState
     loadChunks: (positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ClientChunkState>>
+    unloadChunks: (positions: readonly List<readonly ChunkPosition>) -> null
     applyBlocks: (edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
     subscribeChanges: (listener: ClientWorldChangeListener) -> ClientWorldChangeSubscription
     reconnect: () -> Promise<null>
@@ -108,6 +109,8 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
             start = end
         return output
 
+    def unloadChunks(positions: readonly List<readonly ChunkPosition>): state.forgetChunks(positions)
+
     async def applyBlocks(edits: readonly List<readonly RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
         assert edits.size > 0 else "Client block edit batch cannot be empty"
         const event = await connection().applyBlocks(requestId("edit"), edits)
@@ -135,4 +138,4 @@ export async def openClientWorld(backend: WorldBackend, worldId: string) -> Clie
         return state.subscribeChanges(listener)
 
     await connect()
-    return {worldId, contract, bootstrap, content, state, loadChunks, applyBlocks, subscribeChanges, reconnect, close}
+    return {worldId, contract, bootstrap, content, state, loadChunks, unloadChunks, applyBlocks, subscribeChanges, reconnect, close}

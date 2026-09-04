@@ -31,7 +31,7 @@ Run these before considering any change done:
 - Conditions accept only `bool`; test presence with `value != null`.
 - One statement per line; no `++`; named arguments are `name=value`.
 - `match` dispatches finite states; `case _:` is the fallback.
-- `await task()` or detached `async task()` — a dropped Promise is a
+- `await task()` or `detach task()` — a dropped Promise is a
   compile error.
 - `range` needs `import {range} from "velar/collections"`.
 - Multi-line text is a layout string: a quote followed by a newline opens

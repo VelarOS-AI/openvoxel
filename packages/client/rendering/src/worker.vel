@@ -1,17 +1,17 @@
 import {Cancellation} from "velar/task"
 import {serveWorker} from "velar/worker"
 import {MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations} from "./contracts.vel"
-import {meshChunk} from "./mesher.vel"
+import {indexRenderStates, meshChunkWithIndex} from "./mesher.vel"
 import {ClientRenderState} from "./render-catalog.vel"
 
-let activeStates: List<readonly ClientRenderState>? = null
+let activeStates: Map<number, readonly ClientRenderState>? = null
 
 async def handleMeshingWorker(request: readonly MeshingWorkerRequest, cancellation: Cancellation) -> MeshingWorkerResponse:
     await cancellation.checkpoint()
     if request.operation == meshingWorkerOperations.initialize:
         const states = request.states
         assert states != null and states.size > 0 else "Meshing Worker initialization requires render states"
-        activeStates = states.copy()
+        activeStates = indexRenderStates(states)
         return {operation: request.operation, ready: true}
     if request.operation == meshingWorkerOperations.mesh:
         const states = activeStates
@@ -21,7 +21,7 @@ async def handleMeshingWorker(request: readonly MeshingWorkerRequest, cancellati
         const ticket = request.ticket
         assert states != null else "Meshing Worker is not initialized"
         assert position != null and edge != null and paddedBlocks != null and ticket != null else "Meshing Worker request is incomplete"
-        const mesh = meshChunk(position, edge, paddedBlocks, states, ticket)
+        const mesh = meshChunkWithIndex(position, edge, paddedBlocks, states, ticket)
         await cancellation.checkpoint()
         return {operation: request.operation, mesh}
     throw Error(f"Unsupported Meshing Worker operation {request.operation}")

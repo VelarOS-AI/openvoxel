@@ -1,0 +1,40 @@
+import {storage} from "velar/storage"
+
+export type SavedWorld:
+    readonly id: string
+    readonly name: string
+    readonly seed: string
+    readonly mode: string
+    readonly preset: string
+    readonly lastPlayed: string
+
+export type SavedWorlds = List<readonly SavedWorld>
+
+export const savedWorldsKey = "openvoxel.worlds.v1"
+
+export def loadSavedWorlds() -> SavedWorlds: return storage.get(savedWorldsKey, SavedWorlds, [])
+
+export def rememberWorld(world: readonly SavedWorld):
+    const worlds = loadSavedWorlds().filter(candidate => candidate.id != world.id)
+    worlds.append(world)
+    storage.set(savedWorldsKey, worlds)
+
+export def touchWorld(world: readonly SavedWorld):
+    rememberWorld(SavedWorld.from(world, {lastPlayed: "Played just now"}))
+
+export def worldIdFromName(name: string) -> string:
+    const slug = Text.slug(name).slice(0, 44)
+    const prefix = slug.isBlank() ? "world" : slug
+    return f"{prefix}-{Math.randomInt(1_000_000)}"
+
+export def worldCover(preset: string) -> string:
+    if preset == "coast": return "/worlds/coast.webp"
+    if preset == "highlands": return "/worlds/highlands.webp"
+    if preset == "quiet-shore": return "/worlds/quiet-shore.webp"
+    return "/worlds/meadow.webp"
+
+export def presetName(preset: string) -> string:
+    if preset == "coast": return "Coast"
+    if preset == "highlands": return "Highlands"
+    if preset == "quiet-shore": return "Quiet Shore"
+    return "Meadow"

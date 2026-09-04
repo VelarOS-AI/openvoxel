@@ -1,3 +1,12 @@
-import {App} from "./app.vel"
+import {Router, route} from "velar/web"
+import {App, CreateWorldPage, OpenWorldPage} from "./app.vel"
+import {WorldPage} from "./world-page.vel"
 
-@main: mount(<App />, "#app")
+const routes = [
+    route("/", App),
+    route("/worlds/new", CreateWorldPage),
+    route("/worlds/open", OpenWorldPage),
+    route("/world/:id", WorldPage),
+]
+
+@main: mount(<Router routes={routes} fallback={App} />, "#app")

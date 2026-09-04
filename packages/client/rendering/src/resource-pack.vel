@@ -13,7 +13,12 @@ export enum ClientBlockModelKind:
 export type ClientResourceAtlas:
     readonly width: number
     readonly height: number
-    readonly dataUrl: string
+    readonly albedoDataUrl: string
+    readonly normalDataUrl: string
+    readonly specularDataUrl: string
+
+export type ClientResourceEnvironment:
+    readonly cloudsDataUrl: string
 
 export type ClientModelResource:
     readonly key: string
@@ -25,15 +30,22 @@ export type ClientMaterialResource:
     readonly alphaCutoff: number
     readonly doubleSided: bool
     readonly emissive: number
+    readonly roughness: number
+    readonly specular: number
     readonly unlit: bool
 
 /// UV 使用 Babylon/WebGL 通用的左下原点坐标；生成器已完成 PNG 顶部原点转换。
-export type ClientTextureResource:
-    readonly key: string
+/// weight 只参与确定性的表面变体选择，不改变纹理的逻辑资源身份。
+export type ClientTextureVariant:
     readonly u0: number
     readonly v0: number
     readonly u1: number
     readonly v1: number
+    readonly weight: number
+
+export type ClientTextureResource:
+    readonly key: string
+    readonly variants: readonly List<readonly ClientTextureVariant>
 
 export type ClientTintResource:
     readonly key: string
@@ -53,6 +65,7 @@ export type ClientResourcePackArtifact:
     readonly targetContentHash: string
     readonly resourceHash: string
     readonly atlas: readonly ClientResourceAtlas
+    readonly environment: readonly ClientResourceEnvironment
     readonly models: readonly List<readonly ClientModelResource>
     readonly materials: readonly List<readonly ClientMaterialResource>
     readonly textures: readonly List<readonly ClientTextureResource>
@@ -76,23 +89,29 @@ def requireUniqueKey(key: string, keys: Set<string>, owner: string, label: strin
 /// 包内 JSON 已由生成阶段计算 resourceHash；运行时再次验证结构、范围、命名空间
 /// 和交叉引用，避免损坏的静态资源走到图形引擎边界。
 export def validateClientResourcePack(artifact: readonly ClientResourcePackArtifact) -> readonly ClientResourcePackArtifact:
-    assert artifact.artifactVersion == 1 else "Unsupported client resource pack artifact version"
-    assert artifact.formatVersion == 1 else "Unsupported client resource pack format version"
+    assert artifact.artifactVersion == 3 else "Unsupported client resource pack artifact version"
+    assert artifact.formatVersion == 3 else "Unsupported client resource pack format version"
     assert Text.matches(artifact.owner, r"^[a-z][a-z0-9_.-]*$") else "Client resource pack owner is invalid"
     requireHash(artifact.targetContentHash, "Client resource target content hash")
     requireHash(artifact.resourceHash, "Client resource hash")
     assert artifact.atlas.width.isInteger() and artifact.atlas.width > 0 and artifact.atlas.width <= 8192 else "Client resource atlas width is invalid"
     assert artifact.atlas.height.isInteger() and artifact.atlas.height > 0 and artifact.atlas.height <= 8192 else "Client resource atlas height is invalid"
-    assert artifact.atlas.dataUrl.startsWith("data:image/png;base64,") else "Client resource atlas must be an embedded PNG"
+    assert artifact.atlas.albedoDataUrl.startsWith("data:image/png;base64,") else "Client resource albedo atlas must be an embedded PNG"
+    assert artifact.atlas.normalDataUrl.startsWith("data:image/png;base64,") else "Client resource normal atlas must be an embedded PNG"
+    assert artifact.atlas.specularDataUrl.startsWith("data:image/png;base64,") else "Client resource specular atlas must be an embedded PNG"
+    assert artifact.environment.cloudsDataUrl.startsWith("data:image/webp;base64,") else "Client resource clouds must be an embedded WebP image"
 
     const modelKeys: Set<string> = Set()
     const materialKeys: Set<string> = Set()
     const textureKeys: Set<string> = Set()
+    const texturesByKey: Map<string, readonly ClientTextureResource> = Map()
     const tintKeys: Set<string> = Set()
     const animationKeys: Set<string> = Set()
     for value in artifact.models: requireUniqueKey(value.key, modelKeys, artifact.owner, "model")
     for value in artifact.materials: requireUniqueKey(value.key, materialKeys, artifact.owner, "material")
-    for value in artifact.textures: requireUniqueKey(value.key, textureKeys, artifact.owner, "texture")
+    for value in artifact.textures:
+        requireUniqueKey(value.key, textureKeys, artifact.owner, "texture")
+        texturesByKey.set(value.key, value)
     for value in artifact.tints: requireUniqueKey(value.key, tintKeys, artifact.owner, "tint")
     for value in artifact.animations: requireUniqueKey(value.key, animationKeys, artifact.owner, "animation")
 
@@ -100,12 +119,20 @@ export def validateClientResourcePack(artifact: readonly ClientResourcePackArtif
         requireUnit(material.alpha, f"Material {material.key} alpha")
         requireUnit(material.alphaCutoff, f"Material {material.key} alpha cutoff")
         requireUnit(material.emissive, f"Material {material.key} emissive level")
+        requireUnit(material.roughness, f"Material {material.key} roughness")
+        requireUnit(material.specular, f"Material {material.key} specular level")
     for texture in artifact.textures:
-        requireUnit(texture.u0, f"Texture {texture.key} u0")
-        requireUnit(texture.v0, f"Texture {texture.key} v0")
-        requireUnit(texture.u1, f"Texture {texture.key} u1")
-        requireUnit(texture.v1, f"Texture {texture.key} v1")
-        assert texture.u0 < texture.u1 and texture.v0 < texture.v1 else f"Texture {texture.key} has an empty atlas region"
+        assert texture.variants.size > 0 else f"Texture {texture.key} has no surface variants"
+        let totalWeight = 0
+        for variant in texture.variants:
+            requireUnit(variant.u0, f"Texture {texture.key} variant u0")
+            requireUnit(variant.v0, f"Texture {texture.key} variant v0")
+            requireUnit(variant.u1, f"Texture {texture.key} variant u1")
+            requireUnit(variant.v1, f"Texture {texture.key} variant v1")
+            assert variant.u0 < variant.u1 and variant.v0 < variant.v1 else f"Texture {texture.key} has an empty atlas region"
+            assert variant.weight.isInteger() and variant.weight >= 1 and variant.weight <= 1024 else f"Texture {texture.key} variant weight is invalid"
+            totalWeight += variant.weight
+        assert totalWeight <= 65_535 else f"Texture {texture.key} variant weights exceed the supported total"
     for tint in artifact.tints:
         requireUnit(tint.red, f"Tint {tint.key} red")
         requireUnit(tint.green, f"Tint {tint.key} green")
@@ -114,6 +141,18 @@ export def validateClientResourcePack(artifact: readonly ClientResourcePackArtif
     for animation in artifact.animations:
         assert animation.frameDurationMs.isInteger() and animation.frameDurationMs >= 16 and animation.frameDurationMs <= 60_000 else f"Animation {animation.key} frame duration is invalid"
         assert animation.frames.size > 0 else f"Animation {animation.key} has no frames"
+        let frameWidth: number? = null
+        let frameHeight: number? = null
         for frame in animation.frames:
             assert frame in textureKeys else f"Animation {animation.key} references unknown texture {frame}"
+            const texture = texturesByKey.get(frame)!
+            assert texture.variants.size == 1 else f"Animation {animation.key} frame {frame} must have exactly one atlas region"
+            const region = texture.variants[0]
+            const width = region.u1 - region.u0
+            const height = region.v1 - region.v0
+            if frameWidth == null:
+                frameWidth = width
+                frameHeight = height
+            else:
+                assert width == frameWidth and height == frameHeight else f"Animation {animation.key} frames must use equal atlas regions"
     return artifact

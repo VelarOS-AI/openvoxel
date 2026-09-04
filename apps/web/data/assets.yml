@@ -1,0 +1,35 @@
+formatVersion: 1
+
+fonts:
+  - {family: Inter, weight: 400, source: "@fontsource/inter/files/inter-latin-400-normal.woff2", output: inter-latin-400-normal.woff2}
+  - {family: Inter, weight: 500, source: "@fontsource/inter/files/inter-latin-500-normal.woff2", output: inter-latin-500-normal.woff2}
+  - {family: Inter, weight: 600, source: "@fontsource/inter/files/inter-latin-600-normal.woff2", output: inter-latin-600-normal.woff2}
+  - {family: Rajdhani, weight: 600, source: "@fontsource/rajdhani/files/rajdhani-latin-600-normal.woff2", output: rajdhani-latin-600-normal.woff2}
+  - {family: Rajdhani, weight: 700, source: "@fontsource/rajdhani/files/rajdhani-latin-700-normal.woff2", output: rajdhani-latin-700-normal.woff2}
+
+icons:
+  - {key: arrow-right, style: solid}
+  - {key: chevron-down, style: solid}
+  - {key: chevron-left, style: solid}
+  - {key: chevron-right, style: solid}
+  - {key: chevron-up, style: solid}
+  - {key: circle-question, style: regular}
+  - {key: clock, style: regular}
+  - {key: cube, style: solid}
+  - {key: earth-americas, style: solid}
+  - {key: folder-open, style: regular}
+  - {key: gear, style: solid}
+  - {key: leaf, style: solid}
+  - {key: mountain-sun, style: solid}
+  - {key: play, style: solid}
+  - {key: plus, style: solid}
+  - {key: shield-halved, style: solid}
+  - {key: sliders, style: solid}
+  - {key: square-plus, style: regular}
+  - {key: wand-magic-sparkles, style: solid}
+  - {key: water, style: solid}
+
+licenses:
+  - {source: "@fontsource/inter/LICENSE", output: inter-ofl.txt}
+  - {source: "@fontsource/rajdhani/LICENSE", output: rajdhani-ofl.txt}
+  - {source: "@fortawesome/fontawesome-free/LICENSE.txt", output: font-awesome-free.txt}

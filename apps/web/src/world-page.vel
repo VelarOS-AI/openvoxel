@@ -1,0 +1,87 @@
+import {ClientWorldSession, localBackend, openClientWorld} from "@openvoxel/client"
+import {WorldManifest} from "@openvoxel/world"
+import {Head, RouteContext, navigate} from "velar/web"
+import {Icon, IconName} from "./icon.vel"
+import {gameCanvasLook, loadingLook, navButtonLook, subtitleLook, worldChromeLook, worldStageLook} from "./look.vel"
+import {WorldRenderer, WorldRendererStats, initialRenderChunkPositions, openWorldRenderer} from "./world-renderer.vel"
+
+export component WorldPage(route: RouteContext):
+    const backend = localBackend()
+    state world: WorldManifest? = null
+    state loading = true
+    state failure = ""
+    state renderStatus = "Preparing world"
+    let canvas: CanvasElement? = null
+    let session: ClientWorldSession? = null
+    let renderer: WorldRenderer? = null
+
+    def receiveStats(stats: readonly WorldRendererStats):
+        renderStatus = stats.pending > 0 ? f"Building {stats.pending} nearby Chunks" : "World ready"
+
+    def receiveFailure(message: string):
+        failure = message
+        renderStatus = "Rendering stopped"
+
+    async def closeWorld():
+        const activeRenderer = renderer
+        const activeSession = session
+        renderer = null
+        session = null
+        if activeRenderer != null: await activeRenderer.close()
+        if activeSession != null: await activeSession.close()
+        await backend.close()
+
+    async def enter():
+        let opened: ClientWorldSession? = null
+        let openedRenderer: WorldRenderer? = null
+        try:
+            const id = route.params.get("id") ?? ""
+            assert not id.isBlank() else "World identifier is missing"
+            const manifest = await backend.findWorld(id)
+            opened = await openClientWorld(backend, manifest.id)
+            const positions = initialRenderChunkPositions(manifest, opened.content.minimumWorldY, opened.content.maximumWorldY)
+            await opened.loadChunks(positions)
+            const mountedCanvas = canvas
+            assert mountedCanvas != null else "World canvas is not mounted"
+            openedRenderer = await openWorldRenderer(mountedCanvas, opened, manifest, receiveStats, receiveFailure)
+            world = WorldManifest.parse(manifest)
+            session = opened
+            renderer = openedRenderer
+            loading = false
+        catch error:
+            if openedRenderer != null: await openedRenderer.close()
+            if opened != null: await opened.close()
+            failure = error.message
+            loading = false
+
+    def leave(): navigate("/")
+
+    @mounted: await enter()
+
+    @cleanup: detach closeWorld()
+
+    return <main look={worldStageLook} data-app data-screen="world" data-world-ready={not loading and failure.isBlank() ? "true" : "false"}>
+        <Head
+            title={world == null ? "OpenVoxel" : f"{world.name} · OpenVoxel"}
+            description="OpenVoxel world"
+            themeColor="#06101f"
+            language="en"
+        />
+        <canvas ref={canvas} look={gameCanvasLook} data-voxel-canvas></canvas>
+        <div look={worldChromeLook}>
+            <button type="button" look={navButtonLook} on:click={leave} aria-label="Back to worlds" data-leave-world>
+                <Icon name={IconName.chevronLeft} />
+            </button>
+            <div>
+                <strong>{world?.name ?? "Opening world"}</strong>
+                <p look={subtitleLook} aria-live="polite" data-render-status>{renderStatus}</p>
+            </div>
+        </div>
+        {loading ? <div look={loadingLook} aria-busy="true" data-world-loading>Opening world…</div> : <></>}
+        {failure.isBlank() ? <></> : <div look={loadingLook} role="alert" data-error>
+            <div>
+                <p>{failure}</p>
+                <button type="button" look={navButtonLook} on:click={leave}>Back to worlds</button>
+            </div>
+        </div>}
+    </main>

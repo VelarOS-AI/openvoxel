@@ -4,6 +4,7 @@ import {ClientChunkState, clientChunkState} from "./chunk-state.vel"
 
 export enum ClientWorldChangeKind:
     terrainLoaded = "terrain_loaded"
+    terrainUnloaded = "terrain_unloaded"
     chunksSynchronized = "chunks_synchronized"
     blocksChanged = "blocks_changed"
 
@@ -30,6 +31,7 @@ export type ClientWorldChangeListener = (event: readonly ClientWorldChange) -> n
 export type ClientWorldState:
     beginConnection: (event: readonly WorldReadyEvent) -> null
     rememberTerrain: (response: readonly TerrainChunkBatchResponse) -> readonly List<readonly ClientChunkState>
+    forgetChunks: (positions: readonly List<readonly ChunkPosition>) -> null
     replaceDeltas: (event: readonly ChunksSyncedEvent) -> null
     applyChanges: (event: readonly WorldBlocksChangedEvent) -> null
     applyAcknowledgement: (event: readonly BlockEditsAppliedEvent) -> null
@@ -106,6 +108,20 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
         publish(ClientWorldChangeKind.terrainLoaded, response.chunks.map(chunk => chunk.position))
         return output
 
+    def forgetChunks(positions: readonly List<readonly ChunkPosition>):
+        const forgotten: List<readonly ChunkPosition> = []
+        const seen: Set<string> = Set()
+        for position in positions:
+            const key = chunkKey(position)
+            assert key not in seen else "Client Chunk eviction repeats one position"
+            seen.add(key)
+            if chunks.has(key):
+                chunks.remove(key)
+                pendingResyncChunks.remove(key)
+                forgotten.append(position)
+        if resyncRequired and pendingResyncChunks.size == 0: resyncRequired = false
+        publish(ClientWorldChangeKind.terrainUnloaded, forgotten)
+
     def replaceDeltas(event: readonly ChunksSyncedEvent):
         assert event.event == "chunks.synced" else "Client expected a chunks.synced event"
         assert event.worldId == worldId else "Client Chunk deltas belong to a different world"
@@ -165,6 +181,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
     return {
         beginConnection,
         rememberTerrain,
+        forgetChunks,
         replaceDeltas,
         applyChanges,
         applyAcknowledgement,

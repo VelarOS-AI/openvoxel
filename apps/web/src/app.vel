@@ -1,395 +1,414 @@
-import {ClientChunkState, ClientWorldSession, WorldBackend, WorldBackendConformanceResult, openClientWorld, verifyWorldBackend} from "@openvoxel/client"
-import {localBackend, onlineBackend} from "@openvoxel/client"
+import {localBackend} from "@openvoxel/client"
 import {CreateWorldRequest} from "@openvoxel/protocol"
-import {WorldManifest, chunkKey, locateBlock} from "@openvoxel/world"
-import {Head} from "velar/web"
-import {configuration} from "./config.vel"
-import {actionsLook, canvasLook, cardLook, controlLook, diagnosticsLook, errorLook, fieldLook, formLook, heroLook, labelLook, metricLook, mutedLook, pageLook, primaryControlLook, renderHeaderLook, shellLook, titleLook, valueLook, viewportLook} from "./look.vel"
-import {WorldRenderer, WorldRendererStats, initialRenderChunkPositions, openWorldRenderer} from "./world-renderer.vel"
+import {Head, Link, navigate} from "velar/web"
+import {Icon, IconName} from "./icon.vel"
+import {actionGroupLook, actionRowLook, activeDotLook, advancedButtonLook, advancedFieldsLook, appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, brandIconLook, brandLook, brandNameLook, carouselArrowLook, createIntroLook, createLayoutLook, displayTitleLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, errorLook, fieldLook, formActionsLook, formPanelLook, homeContentLook, labelLook, metadataItemLook, metadataLook, navButtonLook, navLabelLook, navLook, nextArrowLook, openPanelLook, panelTitleLook, presetGridLook, presetImageLook, presetLabelLook, presetLook, previousArrowLook, primaryButtonLook, secondaryButtonLook, segmentLook, segmentButtonLook, selectedPresetLook, selectedSegmentButtonLook, settingsPanelLook, settingsRowLook, settingsValueLook, subtitleLook, topBarLook, worldInfoLook} from "./look.vel"
+import {SavedWorld, loadSavedWorlds, presetName, rememberWorld, touchWorld, worldCover, worldIdFromName} from "./world-library.vel"
 
-const online = onlineBackend(configuration.openApiUrl)
-const local = localBackend()
+extern js`
+    let lastWheelAt = 0
+
+    export function wheelDirection(event) {
+        const now = performance.now()
+        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+        if (!Number.isFinite(delta) || Math.abs(delta) < 4 || now - lastWheelAt < 320) return 0
+        lastWheelAt = now
+        return delta > 0 ? 1 : -1
+    }
+`:
+    export def wheelDirection(event: Event) -> number
+
+component Brand(back: bool = false):
+    def home(): navigate("/")
+
+    return <div look={brandLook}>
+        {back ? <button type="button" look={navButtonLook} on:click={home} aria-label="Back to worlds" data-back-home>
+            <Icon name={IconName.chevronLeft} />
+        </button> : <></>}
+        <Link to="/" look={brandLook}>
+            <Icon name={IconName.cube} look={brandIconLook} />
+            <span look={brandNameLook}>OpenVoxel</span>
+        </Link>
+    </div>
+
+component Navigation(showCreate: bool = true):
+    def create(): navigate("/worlds/new")
+
+    return <nav look={navLook} aria-label="Application">
+        {showCreate ? <button type="button" look={navButtonLook} on:click={create} data-new-world>
+            <Icon name={IconName.squarePlus} />
+            <span look={navLabelLook}>New world</span>
+        </button> : <></>}
+        <button type="button" look={navButtonLook} title="Settings">
+            <Icon name={IconName.gear} />
+            <span look={navLabelLook}>Settings</span>
+        </button>
+        <button type="button" look={navButtonLook} title="Help">
+            <Icon name={IconName.circleQuestion} />
+            <span look={navLabelLook}>Help</span>
+        </button>
+    </nav>
 
 export component App:
-    state worldId = "browser-world"
-    state worldName = "Browser World"
-    state seed = "browser-world-seed"
-    state backendMode = "online"
-    state status = "Ready to create or open a world"
-    state failure = ""
-    state world: WorldManifest? = null
-    state session: ClientWorldSession? = null
-    state chunk: readonly ClientChunkState? = null
-    state runtimeId: number? = null
-    state revision = 0
-    state generation = 0
-    state contentStates = 0
-    state renderChunks = 0
-    state renderMeshes = 0
-    state renderQuads = 0
-    state renderChecksum = 0
-    state renderPending = 0
-    state conformance: readonly WorldBackendConformanceResult? = null
-    let renderCanvas: CanvasElement? = null
-    let renderer: WorldRenderer? = null
+    state worlds = loadSavedWorlds()
+    state selectedIndex = worlds.size > 0 ? worlds.size - 1 : 0
+    state settingsOpen = false
 
-    def backend() -> WorldBackend: return backendMode == "local" ? local : online
+    computed activeWorld = worlds.get(selectedIndex)
 
-    def backendLabel() -> string: return backendMode == "local" ? "LocalBackend" : "OnlineBackend"
+    def selectWorld(index: number):
+        if index < 0 or index >= worlds.size: return
+        selectedIndex = index
+        settingsOpen = false
 
-    def cleanWorldId() -> string:
-        const clean = worldId.trim()
-        assert not clean.isBlank() else "World id cannot be blank"
-        return clean
+    def moveSelection(direction: number):
+        if worlds.size <= 1: return
+        selectedIndex = (selectedIndex + direction + worlds.size) % worlds.size
+        settingsOpen = false
 
-    async def closeSession():
-        const previousRenderer = renderer
-        const previous = session
-        renderer = null
-        session = null
-        world = null
-        chunk = null
-        runtimeId = null
-        revision = 0
-        generation = 0
-        contentStates = 0
-        renderChunks = 0
-        renderMeshes = 0
-        renderQuads = 0
-        renderChecksum = 0
-        renderPending = 0
-        if previousRenderer != null: await previousRenderer.close()
-        if previous != null: await previous.close()
+    def previousWorld(): moveSelection(-1)
 
-    def refreshDiagnostics(active: readonly ClientWorldSession, activeChunk: readonly ClientChunkState):
-        runtimeId = active.state.block(active.bootstrap.spawn)
-        revision = activeChunk.revision()
-        generation = active.state.generation()
-        contentStates = active.content.states.size
+    def nextWorld(): moveSelection(1)
 
-    def receiveRenderStats(stats: readonly WorldRendererStats):
-        renderChunks = stats.chunks
-        renderMeshes = stats.meshes
-        renderQuads = stats.quads
-        renderChecksum = stats.checksum
-        renderPending = stats.pending
+    def switchByWheel(event: Event):
+        const direction = wheelDirection(event)
+        if direction != 0: moveSelection(direction)
 
-    def receiveRenderFailure(message: string):
-        failure = message
-        status = "World rendering failed"
+    def toggleWorldSettings(): settingsOpen = not settingsOpen
 
-    async def attach(manifest: readonly WorldManifest):
-        await closeSession()
-        let opened: ClientWorldSession? = null
-        let openedRenderer: WorldRenderer? = null
-        try:
-            opened = await openClientWorld(backend(), manifest.id)
-            const located = locateBlock(manifest.spawn, manifest.chunkEdge)
-            const positions = initialRenderChunkPositions(manifest, opened.content.minimumWorldY, opened.content.maximumWorldY)
-            const chunks = await opened.loadChunks(positions)
-            const spawnChunk = chunks.find(candidate => chunkKey(candidate.position) == chunkKey(located.chunk))
-            assert spawnChunk != null else "Backend did not return the spawn Chunk"
-            const canvas = renderCanvas
-            assert canvas != null else "World renderer canvas is not mounted"
-            openedRenderer = await openWorldRenderer(canvas, opened, manifest, receiveRenderStats, receiveRenderFailure)
-            world = WorldManifest.parse(manifest)
-            session = opened
-            chunk = spawnChunk
-            renderer = openedRenderer
-            refreshDiagnostics(opened, spawnChunk)
-            status = f"World connected and {chunks.size} Chunks scheduled for rendering"
-        catch error:
-            if openedRenderer != null: await openedRenderer.close()
-            if opened != null: await opened.close()
-            throw error
+    def play():
+        const selected = activeWorld
+        if selected == null: return
+        touchWorld(selected)
+        navigate(f"/world/{selected.id}")
 
-    action createAndOpen():
-        failure = ""
-        try:
-            const command: CreateWorldRequest = {
-                id: cleanWorldId(),
-                name: worldName.trim(),
-                seed: seed.trim(),
-            }
-            const created = await backend().createWorld(command)
-            await attach(created)
-        catch error:
-            failure = error.message
-            status = "World creation failed"
+    def createFirstWorld(): navigate("/worlds/new")
 
-    action openExisting():
-        failure = ""
-        try:
-            const found = await backend().findWorld(cleanWorldId())
-            await attach(found)
-        catch error:
-            failure = error.message
-            status = "World open failed"
+    def openExistingWorld(): navigate("/worlds/open")
 
-    action editSpawn():
-        failure = ""
-        try:
-            const active = session
-            const activeWorld = world
-            const activeChunk = chunk
-            assert active != null and activeWorld != null and activeChunk != null else "Open a world before editing"
-            const current = active.state.block(activeWorld.spawn)
-            assert current != null else "Spawn block is not loaded"
-            const replacement = active.content.states.find(state => state.runtimeId != current)
-            assert replacement != null else "World content needs at least two block states"
-            await active.applyBlocks([{
-                position: activeWorld.spawn,
-                blockStateRuntimeId: replacement.runtimeId,
-            }])
-            refreshDiagnostics(active, activeChunk)
-            status = "Spawn block edit committed"
-        catch error:
-            failure = error.message
-            status = "Block edit failed"
+    def carouselDots() -> List<WebNode>:
+        const nodes: List<WebNode> = []
+        for world, index in worlds:
+            nodes.append(<button
+                type="button"
+                look={index == selectedIndex ? activeDotLook : dotLook}
+                on:pointerenter={() => selectWorld(index)}
+                on:click={() => selectWorld(index)}
+                aria-label={f"Show {world.name}"}
+                aria-current={index == selectedIndex ? "true" : "false"}
+                data-carousel-dot={world.id}
+            ></button>)
+        return nodes
 
-    action reconnect():
-        failure = ""
-        try:
-            const active = session
-            const activeChunk = chunk
-            assert active != null and activeChunk != null else "Open a world before reconnecting"
-            await active.reconnect()
-            refreshDiagnostics(active, activeChunk)
-            status = "Realtime connection reopened and tracked Chunks resynchronized"
-        catch error:
-            failure = error.message
-            status = "Reconnect failed"
+    def worldHome() -> WebNode:
+        const selected = activeWorld
+        assert selected != null else "A selected world is required"
+        return <>
+            <button type="button" look={previousArrowLook} on:click={previousWorld} disabled={worlds.size <= 1} aria-label="Previous world" data-carousel-previous>
+                <Icon name={IconName.chevronLeft} />
+            </button>
+            <button type="button" look={nextArrowLook} on:click={nextWorld} disabled={worlds.size <= 1} aria-label="Next world" data-carousel-next>
+                <Icon name={IconName.chevronRight} />
+            </button>
+            <section look={homeContentLook} aria-label="Selected world" data-world-carousel>
+                <div look={worldInfoLook}>
+                    <h1 look={displayTitleLook} data-selected-world-name>{selected.name}</h1>
+                    <div look={metadataLook}>
+                        <span look={metadataItemLook}>
+                            <Icon name={IconName.earthAmericas} />
+                            {selected.mode}
+                        </span>
+                        <span look={metadataItemLook}>
+                            <Icon name={IconName.clock} />
+                            {selected.lastPlayed}
+                        </span>
+                    </div>
+                </div>
+                <div look={actionRowLook}>
+                    <div look={actionGroupLook}>
+                        <button type="button" look={primaryButtonLook} on:click={play} data-play-world>
+                            <Icon name={IconName.play} />
+                            Play
+                        </button>
+                        <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings} aria-expanded={settingsOpen} data-world-settings>
+                            <Icon name={IconName.gear} />
+                            World settings
+                        </button>
+                    </div>
+                    <div look={dotsLook} aria-label="Choose world" data-carousel-dots>
+                        {carouselDots()}
+                    </div>
+                </div>
+            </section>
+            {settingsOpen ? <aside look={settingsPanelLook} aria-label="World settings" data-world-settings-panel>
+                <div look={settingsRowLook}>
+                    <strong>{selected.name}</strong>
+                    <span look={settingsValueLook}>{selected.id}</span>
+                </div>
+                <div look={settingsRowLook}>
+                    <span>Seed</span>
+                    <span look={settingsValueLook}>{selected.seed}</span>
+                </div>
+                <div look={settingsRowLook}>
+                    <span>World preset</span>
+                    <span look={settingsValueLook}>{presetName(selected.preset)}</span>
+                </div>
+                <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings}>Close</button>
+            </aside> : <></>}
+        </>
 
-    async def selectBackend(mode: string):
-        if backendMode == mode: return
-        await closeSession()
-        backendMode = mode
-        conformance = null
-        failure = ""
-        status = f"{backendLabel()} selected"
-
-    action useOnline(): await selectBackend("online")
-
-    action useLocal(): await selectBackend("local")
-
-    action verifyBackend():
-        failure = ""
-        conformance = null
-        try:
-            const base = cleanWorldId()
-            const idSuffix = f"-{backendMode}-conformance"
-            const seedSuffix = f"-{backendMode}-conformance"
-            const report = await verifyWorldBackend(backend(), {
-                id: f"{base.slice(0, 64 - idSuffix.size)}{idSuffix}",
-                name: f"{backendLabel()} Conformance",
-                seed: f"{seed.trim().slice(0, 128 - seedSuffix.size)}{seedSuffix}",
-            })
-            conformance = report
-            status = f"{backendLabel()} passed the shared backend conformance"
-        catch error:
-            failure = error.message
-            status = f"{backendLabel()} conformance failed"
-
-    async def shutdown():
-        await closeSession()
-        await online.close()
-        await local.close()
-
-    @cleanup: async shutdown()
-
-    def busy() -> bool:
-        return createAndOpen.pending or openExisting.pending or editSpawn.pending or reconnect.pending or useOnline.pending or useLocal.pending or verifyBackend.pending
-
-    def diagnostics() -> WebNode:
-        const activeWorld = world
-        const activeChunk = chunk
-        if activeWorld == null or activeChunk == null:
-            return <p look={mutedLook} data-world-empty>No world is connected.</p>
-        return <div look={diagnosticsLook} data-world-ready="true">
-            <div look={metricLook}>
-                <span look={mutedLook}>World</span>
-                <strong look={valueLook} data-world-id>{activeWorld.id}</strong>
+    def emptyHome() -> WebNode:
+        return <section look={emptyContentLook} data-empty-worlds>
+            <div look={worldInfoLook}>
+                <h1 look={displayTitleLook}>Create your first world</h1>
+                <p look={subtitleLook}>Shape a place that is entirely yours.</p>
             </div>
-            <div look={metricLook}>
-                <span look={mutedLook}>Spawn Chunk</span>
-                <strong look={valueLook} data-chunk-key>{chunkKey(activeChunk.position)}</strong>
+            <div look={emptyActionsLook}>
+                <button type="button" look={primaryButtonLook} on:click={createFirstWorld} data-create-first-world>
+                    <Icon name={IconName.plus} />
+                    Create world
+                </button>
+                <button type="button" look={secondaryButtonLook} on:click={openExistingWorld} data-open-existing-world>
+                    <Icon name={IconName.folderOpen} />
+                    Open existing world
+                </button>
             </div>
-            <div look={metricLook}>
-                <span look={mutedLook}>Block runtime id</span>
-                <strong look={valueLook} data-runtime-id>{str(runtimeId ?? -1)}</strong>
-            </div>
-            <div look={metricLook}>
-                <span look={mutedLook}>Chunk revision</span>
-                <strong look={valueLook} data-revision>{str(revision)}</strong>
-            </div>
-            <div look={metricLook}>
-                <span look={mutedLook}>Connection generation</span>
-                <strong look={valueLook} data-generation>{str(generation)}</strong>
-            </div>
-            <div look={metricLook}>
-                <span look={mutedLook}>Content states</span>
-                <strong look={valueLook} data-content-states>{str(contentStates)}</strong>
-            </div>
-        </div>
+        </section>
 
-    return <div look={shellLook} data-app>
+    return <div look={appShellLook} on:wheel.prevent={switchByWheel} data-app data-screen="world-home">
         <Head
-            title="OpenVoxel Diagnostics"
-            description="Real browser acceptance surface for OpenVoxel world sessions"
-            robots="noindex,nofollow"
+            title="OpenVoxel"
+            description="Create, manage, and enter your OpenVoxel worlds"
+            themeColor="#06101f"
+            language="en"
         />
-        <main look={pageLook}>
-            <header look={heroLook}>
-                <p look={mutedLook} data-backend-mode>{backendLabel()} · {backendMode == "local" ? "Worker + IndexedDB" : "HTTP + WebSocket + MessagePack"}</p>
-                <h1 look={titleLook}>OpenVoxel Diagnostics</h1>
-                <p look={mutedLook}>
-                    Create a world, synchronize its spawn Chunk, edit one block, and verify reconnect convergence.
-                </p>
-            </header>
+        <img
+            look={backgroundImageLook}
+            src={activeWorld == null ? "/worlds/meadow.webp" : worldCover(activeWorld.preset)}
+            alt=""
+            aria-hidden={true}
+            data-world-background
+        />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand />
+            <Navigation showCreate={activeWorld != null} />
+        </header>
+        {activeWorld == null ? emptyHome() : worldHome()}
+    </div>
 
-            <form look={cardLook} on:submit.prevent={createAndOpen} aria-busy={busy()} data-world-form>
-                <div look={actionsLook} aria-label="Backend mode">
-                    <button
-                        type="button"
-                        look={backendMode == "online" ? primaryControlLook : controlLook}
-                        on:click={useOnline}
-                        disabled={busy()}
-                        aria-pressed={backendMode == "online"}
-                        data-use-online
-                    >
-                        Online
+export component CreateWorldPage:
+    const backend = localBackend()
+    state name = "New World"
+    state seed = ""
+    state mode = "Survival"
+    state preset = "meadow"
+    state advancedOpen = false
+    state worldId = ""
+    state failure = ""
+
+    def selectPreset(value: string): preset = value
+
+    def selectSurvival(): mode = "Survival"
+
+    def selectCreative(): mode = "Creative"
+
+    def toggleAdvanced(): advancedOpen = not advancedOpen
+
+    def cancel(): navigate("/")
+
+    action createWorld():
+        failure = ""
+        try:
+            const cleanName = name.trim()
+            assert not cleanName.isBlank() else "World name cannot be blank"
+            const requestedId = worldId.trim()
+            const id = requestedId.isBlank() ? worldIdFromName(cleanName) : requestedId
+            const cleanSeed = seed.trim().isBlank() ? id : seed.trim()
+            const command: CreateWorldRequest = {id, name: cleanName, seed: cleanSeed}
+            const created = await backend.createWorld(command)
+            rememberWorld(SavedWorld.from(created, {
+                mode,
+                preset,
+                lastPlayed: "Created just now",
+            }))
+            navigate(f"/world/{created.id}")
+        catch error: failure = error.message
+
+    @cleanup: detach backend.close()
+
+    def presetButton(value: string, icon: IconName) -> WebNode:
+        return <button
+            type="button"
+            look={preset == value ? selectedPresetLook : presetLook}
+            on:click={() => selectPreset(value)}
+            aria-pressed={preset == value}
+            data-preset={value}
+        >
+            <img look={presetImageLook} src={worldCover(value)} alt="" aria-hidden={true} />
+            <span look={presetLabelLook}>
+                <Icon name={icon} />
+                {presetName(value)}
+            </span>
+        </button>
+
+    return <div look={appShellLook} data-app data-screen="create-world">
+        <Head
+            title="Create a world · OpenVoxel"
+            description="Create a new OpenVoxel world"
+            themeColor="#06101f"
+            language="en"
+        />
+        <img look={backgroundImageLook} src={worldCover(preset)} alt="" aria-hidden={true} data-preset-background />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand back={true} />
+        </header>
+        <main look={createLayoutLook}>
+            <section look={createIntroLook}>
+                <div look={worldInfoLook}>
+                    <h1 look={displayTitleLook}>Create a new world</h1>
+                    <p look={subtitleLook}>Shape your adventure. Choose a landscape and start building your world.</p>
+                </div>
+                <div look={presetGridLook} aria-label="World preset">
+                    {presetButton("meadow", IconName.leaf)}
+                    {presetButton("coast", IconName.water)}
+                    {presetButton("highlands", IconName.mountainSun)}
+                </div>
+            </section>
+            <form look={formPanelLook} on:submit.prevent={createWorld} aria-busy={createWorld.pending} data-create-world-form>
+                <label look={labelLook}>
+                    World name
+                    <input
+                        look={fieldLook}
+                        name="name"
+                        bind:value={name}
+                        maxlength="80"
+                        disabled={createWorld.pending}
+                        data-world-name-input
+                    />
+                </label>
+                <div look={segmentLook} aria-label="Game mode">
+                    <button type="button" look={mode == "Survival" ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={mode == "Survival"} data-mode="survival">
+                        <Icon name={IconName.shieldHalved} />
+                        Survival
                     </button>
-                    <button
-                        type="button"
-                        look={backendMode == "local" ? primaryControlLook : controlLook}
-                        on:click={useLocal}
-                        disabled={busy()}
-                        aria-pressed={backendMode == "local"}
-                        data-use-local
-                    >
-                        Local
+                    <button type="button" look={mode == "Creative" ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={mode == "Creative"} data-mode="creative">
+                        <Icon name={IconName.wandMagicSparkles} />
+                        Creative
                     </button>
                 </div>
-                <div look={formLook}>
+                <label look={labelLook}>
+                    Seed (optional)
+                    <input
+                        look={fieldLook}
+                        name="seed"
+                        bind:value={seed}
+                        maxlength="128"
+                        placeholder="Leave blank for a random seed"
+                        disabled={createWorld.pending}
+                        data-seed-input
+                    />
+                </label>
+                <button type="button" look={advancedButtonLook} on:click={toggleAdvanced} aria-expanded={advancedOpen} data-advanced-settings>
+                    <span><Icon name={IconName.sliders} /> Advanced settings</span>
+                    <Icon name={advancedOpen ? IconName.chevronUp : IconName.chevronDown} />
+                </button>
+                {advancedOpen ? <div look={advancedFieldsLook} data-advanced-fields>
                     <label look={labelLook}>
-                        World id
+                        World identifier
                         <input
                             look={fieldLook}
                             name="worldId"
                             bind:value={worldId}
-                            disabled={busy()}
+                            maxlength="64"
+                            placeholder="Generated from name"
+                            disabled={createWorld.pending}
                             data-world-id-input
                         />
                     </label>
                     <label look={labelLook}>
-                        Name
-                        <input
-                            look={fieldLook}
-                            name="worldName"
-                            bind:value={worldName}
-                            disabled={busy()}
-                            data-world-name-input
-                        />
+                        Generator
+                        <input look={fieldLook} value="OpenVoxel Overworld" disabled={true} />
                     </label>
-                    <label look={labelLook}>
-                        Seed
-                        <input look={fieldLook} name="seed" bind:value={seed} disabled={busy()} data-seed-input />
-                    </label>
-                </div>
-                <div look={actionsLook}>
-                    <button type="submit" look={primaryControlLook} disabled={busy()} data-create-world>
-                        Create and open
+                </div> : <></>}
+                {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
+                <div look={formActionsLook}>
+                    <button type="submit" look={primaryButtonLook} disabled={createWorld.pending} data-create-world>
+                        {createWorld.pending ? "Creating…" : "Create world"}
+                        <Icon name={IconName.arrowRight} />
                     </button>
-                    <button type="button" look={controlLook} on:click={openExisting} disabled={busy()} data-open-world>
-                        Open existing
-                    </button>
-                    <button
-                        type="button"
-                        look={controlLook}
-                        on:click={editSpawn}
-                        disabled={busy() or session == null}
-                        data-edit-spawn
-                    >
-                        Edit spawn block
-                    </button>
-                    <button
-                        type="button"
-                        look={controlLook}
-                        on:click={reconnect}
-                        disabled={busy() or session == null}
-                        data-reconnect
-                    >
-                        Reconnect
-                    </button>
-                    <button
-                        type="button"
-                        look={controlLook}
-                        on:click={verifyBackend}
-                        disabled={busy()}
-                        data-verify-backend
-                    >
-                        Verify backend contract
+                    <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={createWorld.pending}>
+                        Cancel
                     </button>
                 </div>
-                {failure == "" ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
-                <p look={mutedLook} aria-live="polite" data-status>{status}</p>
             </form>
-
-            {conformance == null ? <></> : <section look={cardLook} aria-label="Backend conformance" data-conformance-pass="true">
-                <strong>{backendLabel()} conformance passed</strong>
-                <div look={diagnosticsLook}>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>World</span>
-                        <strong look={valueLook} data-conformance-world>{conformance.worldId}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Revision</span>
-                        <strong look={valueLook} data-conformance-revision>{str(conformance.revision)}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Generation</span>
-                        <strong look={valueLook} data-conformance-generation>{str(conformance.generation)}</strong>
-                    </div>
-                </div>
-            </section>}
-
-            <section look={cardLook} aria-label="Voxel world view" data-render-ready={renderChunks > 0 ? "true" : "false"}>
-                <div look={renderHeaderLook}>
-                    <strong>World view</strong>
-                    <span look={mutedLook}>
-                        {renderPending > 0 ? f"Meshing {renderPending} Chunks" : "Drag to orbit · wheel to zoom"}
-                    </span>
-                </div>
-                <div look={viewportLook}>
-                    <canvas ref={renderCanvas} look={canvasLook} data-voxel-canvas></canvas>
-                </div>
-                <div look={diagnosticsLook}>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Rendered Chunks</span>
-                        <strong look={valueLook} data-render-chunks>{str(renderChunks)}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>GPU Meshes</span>
-                        <strong look={valueLook} data-render-meshes>{str(renderMeshes)}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Visible quads</span>
-                        <strong look={valueLook} data-render-quads>{str(renderQuads)}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Mesh checksum</span>
-                        <strong look={valueLook} data-render-checksum>{str(renderChecksum)}</strong>
-                    </div>
-                    <div look={metricLook}>
-                        <span look={mutedLook}>Pending</span>
-                        <strong look={valueLook} data-render-pending>{str(renderPending)}</strong>
-                    </div>
-                </div>
-            </section>
-
-            <section look={cardLook} aria-label="World session diagnostics">
-                <strong>Session state</strong>
-                {diagnostics()}
-            </section>
         </main>
+    </div>
+
+export component OpenWorldPage:
+    const backend = localBackend()
+    state worldId = ""
+    state failure = ""
+
+    def cancel(): navigate("/")
+
+    action openWorld():
+        failure = ""
+        try:
+            const id = worldId.trim()
+            assert not id.isBlank() else "World identifier cannot be blank"
+            const found = await backend.findWorld(id)
+            const saved = SavedWorld.from(found, {
+                mode: "Existing world",
+                preset: "meadow",
+                lastPlayed: "Opened just now",
+            })
+            rememberWorld(saved)
+            navigate(f"/world/{found.id}")
+        catch error: failure = error.message
+
+    @cleanup: detach backend.close()
+
+    return <div look={appShellLook} data-app data-screen="open-world">
+        <Head
+            title="Open a world · OpenVoxel"
+            description="Open an existing OpenVoxel world"
+            themeColor="#06101f"
+            language="en"
+        />
+        <img look={backgroundImageLook} src="/worlds/meadow.webp" alt="" aria-hidden={true} />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand back={true} />
+        </header>
+        <form look={openPanelLook} on:submit.prevent={openWorld} aria-busy={openWorld.pending} data-open-world-form>
+            <h1 look={panelTitleLook}>Open existing world</h1>
+            <p look={subtitleLook}>Enter the identifier of a world stored on this device.</p>
+            <label look={labelLook}>
+                World identifier
+                <input
+                    look={fieldLook}
+                    name="worldId"
+                    bind:value={worldId}
+                    maxlength="64"
+                    disabled={openWorld.pending}
+                    autofocus={true}
+                    data-open-world-id
+                />
+            </label>
+            {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
+            <div look={formActionsLook}>
+                <button type="submit" look={primaryButtonLook} disabled={openWorld.pending} data-open-world>
+                    {openWorld.pending ? "Opening…" : "Open world"}
+                    <Icon name={IconName.arrowRight} />
+                </button>
+                <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={openWorld.pending}>
+                    Cancel
+                </button>
+            </div>
+        </form>
     </div>

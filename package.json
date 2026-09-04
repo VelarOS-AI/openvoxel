@@ -25,7 +25,7 @@
     "dev:web": "npm run dev --workspace @openvoxel/web",
     "start": "npm run start --workspace @openvoxel/server",
     "test": "npm run test --workspaces --if-present",
-    "test:browser": "node tools/run-browser-acceptance.mjs",
+    "test:web-ui": "npm run generate --workspace @openvoxel/web && node apps/web/tests/ui-acceptance.mjs",
     "build": "npm run build --workspaces --if-present",
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/world-generation",
     "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/world-generation",
@@ -33,7 +33,7 @@
     "benchmark:runtime": "npm run benchmark --workspace @openvoxel/world-runtime",
     "benchmark:sqlite": "npm run benchmark:sqlite --workspace @openvoxel/server",
     "benchmark:presentation": "npm run benchmark:presentation --workspace @openvoxel/server",
-    "validate": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check && npm run check && npm test && npm run build"
+    "validate": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check && npm run check && npm test && npm run build && npm run test:web-ui"
   },
   "dependencies": {
     "@openvoxel/content": "0.2.0",
@@ -45,7 +45,7 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.24.0",
+    "@velarscript/cli": "0.26.1",
     "playwright": "1.62.1"
   },
   "allowScripts": {

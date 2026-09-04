@@ -112,3 +112,18 @@ test "client world state snapshots composed blocks and publishes committed inval
     expect(events[1]).toBe("chunks_synchronized")
     expect(events[2]).toBe("blocks_changed")
     subscription.close()
+
+test "client world state evicts streamed terrain and publishes one bounded invalidation":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(f"{event.kind}:{event.positions.size}"))
+    state.beginConnection(ready())
+    const first: ChunkPosition = {x: 0, y: 1, z: 0}
+    const second: ChunkPosition = {x: 1, y: 1, z: 0}
+    state.rememberTerrain({worldId, chunks: [terrain(first), terrain(second)]})
+    state.forgetChunks([first, {x: 9, y: 1, z: 9}])
+    expect(state.chunk(first)).toBe(null)
+    expect(state.chunk(second) == null).toBe(false)
+    expect(state.trackedPositions().size).toBe(1)
+    expect(events[1]).toBe("terrain_unloaded:1")
+    subscription.close()

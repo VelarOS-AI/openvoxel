@@ -1,16 +1,21 @@
 import {ChunkMesh} from "./contracts.vel"
 import {ClientRenderCatalog} from "./render-catalog.vel"
-import {ClientAnimationResource, ClientMaterialResource} from "./resource-pack.vel"
+import {ClientAnimationResource, ClientMaterialResource, ClientTextureResource} from "./resource-pack.vel"
 
 export type VoxelSurfaceOptions:
-    readonly atlasDataUrl: string
+    readonly albedoAtlasDataUrl: string
+    readonly normalAtlasDataUrl: string
+    readonly specularAtlasDataUrl: string
+    readonly cloudsDataUrl: string
     readonly edge: number
     readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly textures: readonly List<readonly ClientTextureResource>
     readonly animations: readonly List<readonly ClientAnimationResource>
     readonly targetX: number
     readonly targetY: number
     readonly targetZ: number
     readonly horizontalChunkRadius: number
+    readonly viewChanged: (chunkX: number, chunkZ: number) -> null
 
 export type VoxelSurfaceStats:
     readonly chunks: number
@@ -28,7 +33,9 @@ extern js`
       HemisphericLight,
       Material,
       Mesh,
+      MeshBuilder,
       Scene,
+      ShadowGenerator,
       StandardMaterial,
       Texture,
       Vector3,
@@ -58,6 +65,13 @@ extern js`
       return x + ":" + y + ":" + z;
     }
 
+    function chunkContribution(x, y, z, checksum) {
+      let value = checksum >>> 0;
+      value = Math.imul(value ^ (x | 0), 0x45d9f3b) >>> 0;
+      value = Math.imul(value ^ (y | 0), 0x119de1f3) >>> 0;
+      return Math.imul(value ^ (z | 0), 0x27d4eb2d) >>> 0;
+    }
+
     function requireTypedArray(value, Constructor, label) {
       if (!(value instanceof Constructor) || value.byteOffset !== 0 || value.byteLength !== value.buffer.byteLength) {
         throw new TypeError(label + " must be a full-storage " + Constructor.name);
@@ -65,7 +79,7 @@ extern js`
       return value;
     }
 
-    function waitForTexture(scene, dataUrl) {
+    function waitForTexture(scene, dataUrl, samplingMode = Texture.NEAREST_SAMPLINGMODE) {
       return new Promise((resolve, reject) => {
         let texture = null;
         // ResourcePack UV 是左下原点；浏览器解码 PNG 使用左上原点，由 Babylon
@@ -75,7 +89,7 @@ extern js`
           scene,
           true,
           true,
-          Texture.NEAREST_SAMPLINGMODE,
+          samplingMode,
           () => resolve(texture),
           (message, error) => reject(error instanceof Error ? error : new Error(message || "Voxel texture atlas failed to load")),
         );
@@ -83,24 +97,56 @@ extern js`
     }
 
     export class BabylonVoxelSurface {
-      constructor(canvas, options, engine, scene, camera, atlas) {
+      constructor(canvas, options, engine, scene, camera, atlases, environment) {
         this.canvas = canvas;
         this.options = options;
         this.engine = engine;
         this.scene = scene;
         this.camera = camera;
-        this.atlas = atlas;
+        this.atlases = atlases;
+        this.environment = environment;
         this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
+        this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
+        this.animationDefinitions = new Map(options.animations.map((definition) => [definition.key, definition]));
         this.materials = new Map();
+        this.animatedMaterials = [];
         this.chunks = new Map();
+        this.meshCount = 0;
+        this.quadCount = 0;
+        this.chunkChecksum = 0;
         this.translucentMeshes = new Set();
         this.lastTranslucentSortPosition = new Vector3(Number.NaN, Number.NaN, Number.NaN);
+        this.translucentSortElapsedMs = Number.POSITIVE_INFINITY;
         this.translucentSortDirty = false;
+        this.animationClockMs = 0;
         this.released = false;
+        this.keys = new Set();
+        this.lastViewCenterX = Math.floor(camera.target.x / options.edge);
+        this.lastViewCenterZ = Math.floor(camera.target.z / options.edge);
+        this.keyDown = (event) => {
+          if (["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight"].includes(event.code)) {
+            event.preventDefault();
+            this.keys.add(event.code);
+          }
+        };
+        this.keyUp = (event) => this.keys.delete(event.code);
+        this.clearKeys = () => this.keys.clear();
+        this.focusCanvas = () => canvas.focus({preventScroll: true});
+        canvas.addEventListener("keydown", this.keyDown);
+        canvas.addEventListener("keyup", this.keyUp);
+        canvas.addEventListener("blur", this.clearKeys);
+        canvas.addEventListener("pointerdown", this.focusCanvas);
         this.resizeObserver = new ResizeObserver(() => engine.resize());
         this.resizeObserver.observe(canvas);
         this.render = () => {
+          const deltaMs = Math.min(engine.getDeltaTime(), 100);
+          this.updateNavigation();
+          this.translucentSortElapsedMs += deltaMs;
           this.sortTranslucentFacets();
+          this.updateAnimations(deltaMs);
+          environment.cloudTexture.uOffset = (environment.cloudTexture.uOffset + deltaMs * 0.0000025) % 1;
+          environment.cloudLayer.position.x = camera.target.x;
+          environment.cloudLayer.position.z = camera.target.z;
           scene.render();
         };
         engine.runRenderLoop(this.render);
@@ -111,15 +157,67 @@ extern js`
         if (!surfaces.has(this) || this.released) throw new Error("Voxel surface is released");
       }
 
+      updateNavigation() {
+        const deltaSeconds = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
+        let forward = 0;
+        let sideways = 0;
+        if (this.keys.has("KeyW")) forward += 1;
+        if (this.keys.has("KeyS")) forward -= 1;
+        if (this.keys.has("KeyD")) sideways += 1;
+        if (this.keys.has("KeyA")) sideways -= 1;
+        if (forward !== 0 || sideways !== 0) {
+          const length = Math.hypot(forward, sideways);
+          const speed = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") ? 32 : 12;
+          const step = speed * deltaSeconds / length;
+          const forwardX = Math.cos(this.camera.alpha);
+          const forwardZ = Math.sin(this.camera.alpha);
+          const rightX = -forwardZ;
+          const rightZ = forwardX;
+          this.camera.target.x += (forwardX * forward + rightX * sideways) * step;
+          this.camera.target.z += (forwardZ * forward + rightZ * sideways) * step;
+        }
+        const centerX = Math.floor(this.camera.target.x / this.options.edge);
+        const centerZ = Math.floor(this.camera.target.z / this.options.edge);
+        if (centerX !== this.lastViewCenterX || centerZ !== this.lastViewCenterZ) {
+          this.lastViewCenterX = centerX;
+          this.lastViewCenterZ = centerZ;
+          this.options.viewChanged(centerX, centerZ);
+        }
+      }
+
       sortTranslucentFacets() {
         const position = this.camera.globalPosition;
-        if (!this.translucentSortDirty && position.equalsWithEpsilon(this.lastTranslucentSortPosition, 0.0001)) return;
+        const dx = position.x - this.lastTranslucentSortPosition.x;
+        const dy = position.y - this.lastTranslucentSortPosition.y;
+        const dz = position.z - this.lastTranslucentSortPosition.z;
+        const cameraMoved = !Number.isFinite(dx + dy + dz) || dx * dx + dy * dy + dz * dz >= 0.0625;
+        if (!this.translucentSortDirty && !cameraMoved) return;
+        if (this.translucentSortElapsedMs < 80) return;
         for (const mesh of this.translucentMeshes) {
-          mesh.facetDepthSortFrom = position;
+          // Facet sorting works in mesh-local space. Chunk meshes carry their world
+          // origin as a transform, so a shared world-space camera point sorts every
+          // Chunk except the origin incorrectly.
+          mesh.facetDepthSortFrom = position.subtract(mesh.position);
           mesh.updateFacetData();
         }
         this.lastTranslucentSortPosition.copyFrom(position);
+        this.translucentSortElapsedMs = 0;
         this.translucentSortDirty = false;
+      }
+
+      updateAnimations(deltaMs) {
+        if (this.animatedMaterials.length === 0) return;
+        this.animationClockMs += deltaMs;
+        for (const animation of this.animatedMaterials) {
+          const frameIndex = Math.floor(this.animationClockMs / animation.frameDurationMs) % animation.frames.length;
+          if (frameIndex === animation.frameIndex) continue;
+          animation.frameIndex = frameIndex;
+          const frame = animation.frames[frameIndex];
+          for (const texture of animation.textures) {
+            texture.uOffset = frame.uOffset;
+            texture.vOffset = frame.vOffset;
+          }
+        }
       }
 
       materialFor(batch) {
@@ -129,18 +227,32 @@ extern js`
         const definition = this.materialDefinitions.get(batch.materialKey);
         if (definition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
         const material = new StandardMaterial("material:" + key, this.scene);
-        const texture = this.atlas.clone();
-        texture.name = "atlas:" + key;
-        texture.hasAlpha = true;
-        texture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        texture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        material.diffuseTexture = texture;
+        const albedoTexture = this.atlases.albedo.clone();
+        albedoTexture.name = "albedo-atlas:" + key;
+        albedoTexture.hasAlpha = true;
+        albedoTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        albedoTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        const normalTexture = this.atlases.normal.clone();
+        normalTexture.name = "normal-atlas:" + key;
+        normalTexture.gammaSpace = false;
+        normalTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        normalTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        const specularTexture = this.atlases.specular.clone();
+        specularTexture.name = "specular-atlas:" + key;
+        specularTexture.gammaSpace = false;
+        specularTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        specularTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        material.diffuseTexture = albedoTexture;
+        material.bumpTexture = normalTexture;
+        material.specularTexture = specularTexture;
         material.diffuseColor = Color3.White();
-        material.specularColor = new Color3(0.08, 0.08, 0.08);
+        material.ambientColor = new Color3(0.38, 0.4, 0.38);
+        material.specularColor = new Color3(definition.specular, definition.specular, definition.specular);
+        material.specularPower = 4 + (1 - definition.roughness) * 124;
         material.emissiveColor = new Color3(definition.emissive, definition.emissive, definition.emissive);
         material.disableLighting = definition.unlit;
         if (definition.unlit) {
-          material.emissiveTexture = texture;
+          material.emissiveTexture = albedoTexture;
           material.emissiveColor = Color3.White();
         }
         // OpenVoxel 的网格从外侧观察使用逆时针顶点绕序。Babylon 的右手场景会
@@ -148,6 +260,7 @@ extern js`
         material.sideOrientation = Material.CounterClockWiseSideOrientation;
         material.backFaceCulling = !definition.doubleSided;
         material.twoSidedLighting = definition.doubleSided;
+        material.separateCullingPass = definition.doubleSided;
         if (batch.layer === "cutout") {
           material.transparencyMode = Material.MATERIAL_ALPHATEST;
           material.alphaCutOff = definition.alphaCutoff;
@@ -160,6 +273,27 @@ extern js`
           material.transparencyMode = Material.MATERIAL_OPAQUE;
           material.alpha = 1;
         }
+        if (batch.animationKey != null) {
+          const animation = this.animationDefinitions.get(batch.animationKey);
+          if (animation === undefined) throw new Error("Unknown voxel animation " + batch.animationKey);
+          const firstTexture = this.textureDefinitions.get(animation.frames[0]);
+          if (firstTexture === undefined) throw new Error("Unknown voxel animation frame " + animation.frames[0]);
+          const base = firstTexture.variants[0];
+          const frames = animation.frames.map((key) => {
+            const texture = this.textureDefinitions.get(key);
+            if (texture === undefined || texture.variants.length !== 1) throw new Error("Animated voxel texture must have exactly one variant: " + key);
+            const frame = texture.variants[0];
+            return {uOffset: frame.u0 - base.u0, vOffset: frame.v0 - base.v0};
+          });
+          if (frames.length > 1) {
+            this.animatedMaterials.push({
+              frameDurationMs: animation.frameDurationMs,
+              frames,
+              frameIndex: -1,
+              textures: [albedoTexture, normalTexture, specularTexture],
+            });
+          }
+        }
         this.materials.set(key, material);
         return material;
       }
@@ -169,8 +303,12 @@ extern js`
         if (current === undefined) return;
         for (const mesh of current.meshes) {
           this.translucentMeshes.delete(mesh);
+          this.environment.shadowGenerator.removeShadowCaster(mesh);
           mesh.dispose(false, false);
         }
+        this.meshCount -= current.meshes.length;
+        this.quadCount -= current.quads;
+        this.chunkChecksum = (this.chunkChecksum ^ current.contribution) >>> 0;
         this.chunks.delete(key);
       }
 
@@ -212,6 +350,7 @@ extern js`
             mesh.hasVertexAlpha = false;
             mesh.isPickable = false;
             mesh.checkCollisions = batch.layer === "opaque";
+            mesh.receiveShadows = batch.layer !== "translucent";
             // Babylon 会在不同 renderingGroup 之间默认清空深度。体素的 opaque、
             // cutout、translucent 必须留在同一组，由组内队列依次绘制并共享深度。
             mesh.renderingGroupId = 0;
@@ -220,10 +359,17 @@ extern js`
               mesh.mustDepthSortFacets = true;
               this.translucentMeshes.add(mesh);
               this.translucentSortDirty = true;
+            } else {
+              this.environment.shadowGenerator.addShadowCaster(mesh, false);
             }
             quads += requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh quad count");
           }
-          this.chunks.set(key, {meshes, quads, checksum: requireInteger(chunk.checksum, 0, 0xffff_ffff, "Chunk mesh checksum")});
+          const checksum = requireInteger(chunk.checksum, 0, 0xffff_ffff, "Chunk mesh checksum");
+          const contribution = chunkContribution(x, y, z, checksum);
+          this.meshCount += meshes.length;
+          this.quadCount += quads;
+          this.chunkChecksum = (this.chunkChecksum ^ contribution) >>> 0;
+          this.chunks.set(key, {meshes, quads, checksum, contribution});
         } catch (error) {
           for (const mesh of meshes) {
             this.translucentMeshes.delete(mesh);
@@ -240,16 +386,7 @@ extern js`
 
       stats() {
         this.requireLive();
-        let meshes = 0;
-        let quads = 0;
-        let checksum = 0x6d2b79f5;
-        for (const key of [...this.chunks.keys()].sort()) {
-          const chunk = this.chunks.get(key);
-          meshes += chunk.meshes.length;
-          quads += chunk.quads;
-          checksum = ((checksum << 5) ^ (checksum >>> 2) ^ chunk.checksum) >>> 0;
-        }
-        return {chunks: this.chunks.size, meshes, quads, checksum};
+        return {chunks: this.chunks.size, meshes: this.meshCount, quads: this.quadCount, checksum: this.chunkChecksum};
       }
 
       release() {
@@ -257,11 +394,18 @@ extern js`
         this.released = true;
         this.engine.stopRenderLoop(this.render);
         this.resizeObserver.disconnect();
+        this.canvas.removeEventListener("keydown", this.keyDown);
+        this.canvas.removeEventListener("keyup", this.keyUp);
+        this.canvas.removeEventListener("blur", this.clearKeys);
+        this.canvas.removeEventListener("pointerdown", this.focusCanvas);
         for (const key of [...this.chunks.keys()]) this.disposeChunk(key);
         this.translucentMeshes.clear();
+        this.animatedMaterials.length = 0;
         for (const material of this.materials.values()) material.dispose(true, true);
         this.materials.clear();
-        this.atlas.dispose();
+        this.atlases.albedo.dispose();
+        this.atlases.normal.dispose();
+        this.atlases.specular.dispose();
         this.scene.dispose();
         this.engine.dispose();
         surfaces.delete(this);
@@ -272,55 +416,110 @@ extern js`
       canvas = requireCanvas(canvas);
       if (typeof options !== "object" || options === null) throw new TypeError("Voxel surface options must be a record");
       const edge = requireInteger(options.edge, 4, 64, "Voxel Chunk edge");
-      if (typeof options.atlasDataUrl !== "string" || !options.atlasDataUrl.startsWith("data:image/png;base64,")) {
-        throw new TypeError("Voxel surface atlas must be an embedded PNG");
+      for (const [label, value] of [
+        ["albedo", options.albedoAtlasDataUrl],
+        ["normal", options.normalAtlasDataUrl],
+        ["specular", options.specularAtlasDataUrl],
+      ]) {
+        if (typeof value !== "string" || !value.startsWith("data:image/png;base64,")) {
+          throw new TypeError("Voxel surface " + label + " atlas must be an embedded PNG");
+        }
       }
-      if (!Array.isArray(options.materials) || !Array.isArray(options.animations)) throw new TypeError("Voxel surface resources must be lists");
-      const engine = new Engine(canvas, true, {preserveDrawingBuffer: false, stencil: true}, true);
+      if (typeof options.cloudsDataUrl !== "string" || !options.cloudsDataUrl.startsWith("data:image/webp;base64,")) throw new TypeError("Voxel surface clouds must be an embedded WebP image");
+      if (!Array.isArray(options.materials) || !Array.isArray(options.textures) || !Array.isArray(options.animations)) throw new TypeError("Voxel surface resources must be lists");
+      if (typeof options.viewChanged !== "function") throw new TypeError("Voxel surface viewChanged must be a function");
+      if (canvas.tabIndex < 0) canvas.tabIndex = 0;
+      const engine = new Engine(canvas, true, {preserveDrawingBuffer: false, stencil: true, antialias: true}, true);
       const scene = new Scene(engine);
       scene.useRightHandedSystem = true;
       scene.collisionsEnabled = true;
-      scene.clearColor = new Color4(0.035, 0.06, 0.11, 1);
+      scene.clearColor = new Color4(0.19, 0.4, 0.66, 1);
+      scene.ambientColor = new Color3(0.22, 0.25, 0.28);
       scene.skipPointerMovePicking = true;
+      scene.imageProcessingConfiguration.toneMappingEnabled = true;
+      scene.imageProcessingConfiguration.exposure = 0.84;
+      scene.imageProcessingConfiguration.contrast = 1.06;
       const target = new Vector3(
         requireFinite(options.targetX, "Camera target x"),
         requireFinite(options.targetY, "Camera target y"),
         requireFinite(options.targetZ, "Camera target z"),
       );
       const horizontalChunkRadius = requireInteger(options.horizontalChunkRadius, 1, 8, "Horizontal render Chunk radius");
-      const centerChunkX = Math.floor(target.x / edge);
-      const centerChunkZ = Math.floor(target.z / edge);
-      const minimumX = (centerChunkX - horizontalChunkRadius) * edge;
-      const maximumX = (centerChunkX + horizontalChunkRadius + 1) * edge;
-      const minimumZ = (centerChunkZ - horizontalChunkRadius) * edge;
-      const maximumZ = (centerChunkZ + horizontalChunkRadius + 1) * edge;
-      const boundaryDistance = Math.min(target.x - minimumX, maximumX - target.x, target.z - minimumZ, maximumZ - target.z);
-      const upperRadius = boundaryDistance - edge * 0.1;
       const orbitTarget = target.add(new Vector3(0, edge * 0.2, 0));
-      const camera = new ArcRotateCamera("voxel-camera", -Math.PI / 4, Math.PI / 4.5, Math.min(edge * 1.7, upperRadius), orbitTarget, scene);
+      const camera = new ArcRotateCamera("voxel-camera", -Math.PI / 4, Math.PI / 4.5, edge * 2.25, orbitTarget, scene);
       camera.lowerRadiusLimit = edge * 0.5;
-      camera.upperRadiusLimit = upperRadius;
+      camera.upperRadiusLimit = edge * Math.max(2.5, horizontalChunkRadius - 0.5);
       camera.lowerBetaLimit = 0.08;
       camera.upperBetaLimit = Math.PI / 2.35;
       camera.checkCollisions = true;
       camera.collisionRadius = new Vector3(0.35, 0.7, 0.35);
       camera.wheelPrecision = 45;
-      // 当前最小客户端加载的是一个以出生点为中心的固定盒；禁用平移并把轨道
-      // 半径限制在盒内，避免从未同步 Chunk 的切面向世界内部观察。
-      camera.panningSensibility = 0;
+      camera.panningSensibility = 720;
       camera.attachControl(canvas, true);
       const sky = new HemisphericLight("voxel-sky", new Vector3(0.25, 1, 0.1), scene);
-      sky.intensity = 0.82;
-      sky.groundColor = new Color3(0.18, 0.22, 0.3);
+      sky.intensity = 0.78;
+      sky.groundColor = new Color3(0.42, 0.48, 0.42);
       const sun = new DirectionalLight("voxel-sun", new Vector3(-0.55, -1, -0.35), scene);
+      sun.position = target.add(new Vector3(edge * 4, edge * 8, edge * 3));
       sun.intensity = 0.62;
+      const shadowGenerator = new ShadowGenerator(2048, sun);
+      shadowGenerator.bias = 0.0008;
+      shadowGenerator.normalBias = 0.035;
+      shadowGenerator.setDarkness(0.3);
+      shadowGenerator.usePercentageCloserFiltering = true;
+      shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+      const renderDistance = edge * (horizontalChunkRadius + 1.5);
+      scene.fogMode = Scene.FOGMODE_LINEAR;
+      scene.fogColor = new Color3(0.19, 0.4, 0.66);
+      scene.fogStart = renderDistance * 0.78;
+      scene.fogEnd = renderDistance * 1.2;
       try {
-        const atlas = await waitForTexture(scene, options.atlasDataUrl);
-        atlas.name = "openvoxel-atlas";
-        atlas.hasAlpha = true;
-        atlas.wrapU = Texture.CLAMP_ADDRESSMODE;
-        atlas.wrapV = Texture.CLAMP_ADDRESSMODE;
-        return new BabylonVoxelSurface(canvas, {...options, edge}, engine, scene, camera, atlas);
+        const [albedo, normal, specular, cloudTexture] = await Promise.all([
+          waitForTexture(scene, options.albedoAtlasDataUrl),
+          waitForTexture(scene, options.normalAtlasDataUrl),
+          waitForTexture(scene, options.specularAtlasDataUrl),
+          waitForTexture(scene, options.cloudsDataUrl, Texture.BILINEAR_SAMPLINGMODE),
+        ]);
+        albedo.name = "openvoxel-albedo-atlas";
+        albedo.hasAlpha = true;
+        normal.name = "openvoxel-normal-atlas";
+        normal.gammaSpace = false;
+        specular.name = "openvoxel-specular-atlas";
+        specular.gammaSpace = false;
+        for (const texture of [albedo, normal, specular]) {
+          texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+          texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        }
+        cloudTexture.name = "openvoxel-clouds";
+        cloudTexture.hasAlpha = true;
+        cloudTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+        cloudTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+        cloudTexture.uScale = 4;
+        cloudTexture.vScale = 4;
+        const cloudMaterial = new StandardMaterial("openvoxel-cloud-material", scene);
+        cloudMaterial.diffuseTexture = cloudTexture;
+        cloudMaterial.opacityTexture = cloudTexture;
+        cloudMaterial.emissiveColor = new Color3(0.92, 0.96, 1);
+        cloudMaterial.disableLighting = true;
+        cloudMaterial.backFaceCulling = false;
+        cloudMaterial.useAlphaFromDiffuseTexture = true;
+        const cloudLayer = MeshBuilder.CreateGround("openvoxel-cloud-layer", {
+          width: renderDistance * 3,
+          height: renderDistance * 3,
+        }, scene);
+        cloudLayer.position.set(target.x, target.y + edge * 9, target.z);
+        cloudLayer.material = cloudMaterial;
+        cloudLayer.isPickable = false;
+        cloudLayer.infiniteDistance = true;
+        return new BabylonVoxelSurface(
+          canvas,
+          {...options, edge},
+          engine,
+          scene,
+          camera,
+          {albedo, normal, specular},
+          {cloudLayer, cloudTexture, shadowGenerator},
+        );
       } catch (error) {
         scene.dispose();
         engine.dispose();
@@ -352,16 +551,22 @@ export async def openVoxelRenderSurface(
     targetY: number,
     targetZ: number,
     horizontalChunkRadius: number,
+    viewChanged: (chunkX: number, chunkZ: number) -> null,
 ) -> VoxelRenderSurface:
     const native: BabylonVoxelSurface = await createBabylonVoxelSurface(canvas, {
-        atlasDataUrl: catalog.atlas.dataUrl,
+        albedoAtlasDataUrl: catalog.atlas.albedoDataUrl,
+        normalAtlasDataUrl: catalog.atlas.normalDataUrl,
+        specularAtlasDataUrl: catalog.atlas.specularDataUrl,
+        cloudsDataUrl: catalog.environment.cloudsDataUrl,
         edge,
         materials: catalog.materials,
+        textures: catalog.textures,
         animations: catalog.animations,
         targetX,
         targetY,
         targetZ,
         horizontalChunkRadius,
+        viewChanged,
     })
     return {
         setChunkMesh: mesh => native.setChunkMesh(mesh),

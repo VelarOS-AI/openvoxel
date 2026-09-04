@@ -1,149 +1,609 @@
-import {Color, Look, alpha, border, color, minmax, repeat, rgb, spacing, tracks} from "velar/look"
+import css unsafe "./styles/fonts.css" before look
 
-const ink: Color = rgb(226, 232, 240)
-const paper: Color = rgb(8, 15, 28)
-const panel: Color = rgb(15, 26, 45)
-const accent: Color = rgb(72, 209, 152)
-const danger: Color = rgb(251, 113, 133)
+import {Color, Look, alpha, border, linearGradient, minmax, repeat, rgb, shadow, spacing, tracks, transition} from "velar/look"
 
-export const shellLook: Look = look:
-    minHeight = 100vh
-    padding = spacing(32px, 18px, 64px, 18px)
-    color = ink
-    background = paper
+const white: Color = rgb(247, 250, 255)
+const ink: Color = rgb(6, 15, 29)
+const panel: Color = rgb(12, 24, 42)
+const blue: Color = rgb(48, 105, 236)
+const brightBlue: Color = rgb(62, 129, 255)
+const muted: Color = rgb(185, 198, 218)
+const danger: Color = rgb(255, 128, 146)
+
+export const appShellLook: Look = look:
+    position = "fixed"
+    inset = 0px
+    minWidth = 320px
+    minHeight = 560px
+    overflow = "hidden"
+    color = white
+    backgroundColor = ink
     fontFamily = "Inter, ui-sans-serif, system-ui, sans-serif"
+    colorScheme = "dark"
 
-export const pageLook: Look = look:
-    display = "grid"
-    gap = 20px
+export const backgroundImageLook: Look = look:
+    position = "absolute"
+    inset = 0px
     width = 100%
-    maxWidth = 980px
-    marginInline = "auto"
+    height = 100%
+    objectFit = "cover"
+    objectPosition = "center"
+    scale = 1.01
+    transition = transition("opacity", 240ms, "ease-out")
 
-export const heroLook: Look = look:
-    display = "grid"
-    gap = 6px
+export const backgroundShadeLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 1
+    pointerEvents = "none"
+    backgroundColor = alpha(ink, 0.14)
+    backgroundImage = linearGradient(90deg, alpha(ink, 0.78), alpha(ink, 0.02))
 
-export const titleLook: Look = look:
-    margin = 0
-    fontSize = 2rem
+export const backgroundBottomShadeLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 2
+    pointerEvents = "none"
+    backgroundImage = linearGradient(180deg, alpha(ink, 0.02), alpha(ink, 0.7))
 
-export const mutedLook: Look = look:
-    margin = 0
-    color = alpha(ink, 0.68)
-
-export const cardLook: Look = look:
-    display = "grid"
-    gap = 16px
-    padding = 20px
-    background = panel
-    border = border(1px, alpha(ink, 0.14))
-    borderRadius = 14px
-
-export const formLook: Look = look:
-    display = "grid"
-    gridTemplateColumns = repeat(3, minmax(0px, 1fr))
-    gap = 12px
-
-    if viewport.width <= 720px:
-        gridTemplateColumns = tracks(1fr)
-
-export const labelLook: Look = look:
-    display = "grid"
-    gap = 6px
-    color = alpha(ink, 0.74)
-    fontSize = 0.82rem
-
-export const fieldLook: Look = look:
-    minWidth = 0
-    padding = spacing(10px, 12px)
-    color = ink
-    background = alpha(paper, 0.48)
-    border = border(1px, alpha(ink, 0.2))
-    borderRadius = 9px
-
-    if @focus:
-        borderColor = accent
-
-export const actionsLook: Look = look:
-    display = "flex"
-    flexWrap = "wrap"
-    gap = 10px
-
-export const controlLook: Look = look:
-    padding = spacing(9px, 13px)
-    color = ink
-    background = "transparent"
-    border = border(1px, alpha(ink, 0.25))
-    borderRadius = 9px
-    cursor = "pointer"
-
-    if @hover:
-        borderColor = accent
-    if @disabled:
-        opacity = 0.45
-        cursor = "not-allowed"
-
-export const primaryControlLook: Look = look:
-    ...controlLook
-    color = paper
-    background = accent
-    borderColor = accent
-    fontWeight = 700
-
-export const diagnosticsLook: Look = look:
-    display = "grid"
-    gridTemplateColumns = repeat(3, minmax(0px, 1fr))
-    gap = 10px
-
-    if viewport.width <= 640px:
-        gridTemplateColumns = tracks(1fr)
-
-export const metricLook: Look = look:
-    display = "grid"
-    gap = 4px
-    padding = 14px
-    background = alpha(paper, 0.38)
-    borderRadius = 10px
-
-export const valueLook: Look = look:
-    fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace"
-    fontSize = 0.92rem
-    overflowWrap = "anywhere"
-
-export const errorLook: Look = look:
-    margin = 0
-    padding = 12px
-    color = danger
-    background = alpha(danger, 0.1)
-    border = border(1px, alpha(danger, 0.5))
-    borderRadius = 9px
-
-export const renderHeaderLook: Look = look:
+export const topBarLook: Look = look:
+    position = "relative"
+    zIndex = 7
     display = "flex"
     alignItems = "center"
     justifyContent = "space-between"
-    gap = 12px
-    flexWrap = "wrap"
+    gap = 24px
+    padding = spacing(30px, 42px)
 
-export const viewportLook: Look = look:
-    position = "relative"
+    if viewport.width <= 720px:
+        padding = spacing(22px, 20px)
+
+export const brandLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    gap = 13px
+    color = white
+    textDecoration = "none"
+
+export const brandIconLook: Look = look:
+    width = 40px
+    textAlign = "center"
+    fontSize = 2rem
+    filter = "drop-shadow(0 3px 10px rgba(0, 0, 0, 0.3))"
+
+export const brandNameLook: Look = look:
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 1.48rem
+    fontWeight = 700
+    letterSpacing = 0.02em
+
+export const navLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 10px
+
+export const navButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    gap = 10px
+    minHeight = 42px
+    padding = spacing(9px, 13px)
+    color = white
+    backgroundColor = "transparent"
+    border = border(1px, alpha(white, 0))
+    borderRadius = 12px
+    fontFamily = "Inter, sans-serif"
+    fontSize = 0.95rem
+    fontWeight = 500
+    textDecoration = "none"
+    cursor = "pointer"
+    transition = transition("background-color", 160ms, "ease-out")
+
+    if @hover:
+        backgroundColor = alpha(white, 0.1)
+        borderColor = alpha(white, 0.12)
+    if @focus:
+        outline = border(2px, alpha(brightBlue, 0.86))
+        outlineOffset = 2px
+
+    if viewport.width <= 640px:
+        padding = spacing(9px, 10px)
+
+export const navLabelLook: Look = look:
+    display = "inline"
+
+    if viewport.width <= 560px:
+        display = "none"
+
+export const carouselArrowLook: Look = look:
+    position = "absolute"
+    top = 50%
+    zIndex = 6
+    display = "grid"
+    placeItems = "center"
+    width = 62px
+    height = 82px
+    color = white
+    backgroundColor = alpha(panel, 0.38)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 18px
+    boxShadow = shadow(0px, 14px, 34px, alpha(ink, 0.3))
+    backdropFilter = "blur(18px)"
+    fontSize = 1.65rem
+    cursor = "pointer"
+    translate = 0px - 50%
+    transition = transition("background-color", 160ms, "ease-out")
+
+    if @hover:
+        backgroundColor = alpha(panel, 0.68)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 3px
+    if @disabled:
+        opacity = 0.34
+        cursor = "default"
+
+    if viewport.width <= 640px:
+        width = 48px
+        height = 64px
+        borderRadius = 14px
+
+export const previousArrowLook: Look = look:
+    ...carouselArrowLook
+    left = 36px
+
+    if viewport.width <= 640px:
+        left = 16px
+
+export const nextArrowLook: Look = look:
+    ...carouselArrowLook
+    right = 36px
+
+    if viewport.width <= 640px:
+        right = 16px
+
+export const homeContentLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 5.4vw
+    right = 5.4vw
+    bottom = 5.6vh
+    display = "grid"
+    gap = 18px
+    maxWidth = 920px
+
+    if viewport.width <= 720px:
+        left = 24px
+        right = 24px
+        bottom = 28px
+        gap = 14px
+
+export const worldInfoLook: Look = look:
+    display = "grid"
+    gap = 10px
+
+export const displayTitleLook: Look = look:
+    margin = 0
+    maxWidth = 760px
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 4.4rem
+    fontWeight = 700
+    lineHeight = 0.95
+    letterSpacing = 0.01em
+    textShadow = shadow(0px, 6px, 24px, alpha(ink, 0.64))
+
+    if viewport.width <= 720px:
+        fontSize = 3.2rem
+
+export const subtitleLook: Look = look:
+    margin = 0
+    maxWidth = 560px
+    color = alpha(white, 0.72)
+    fontSize = 1rem
+    lineHeight = 1.6
+    textShadow = shadow(0px, 3px, 14px, alpha(ink, 0.6))
+
+export const metadataLook: Look = look:
+    display = "flex"
+    flexWrap = "wrap"
+    gap = 18px
+    color = muted
+
+export const metadataItemLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    gap = 8px
+    fontSize = 0.92rem
+
+export const actionRowLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "space-between"
+    gap = 28px
     width = 100%
-    minHeight = 420px
+    paddingTop = 18px
+    borderTop = border(1px, alpha(white, 0.18))
+
+export const actionGroupLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 14px
+
+export const emptyActionsLook: Look = look:
+    ...actionGroupLook
+
+    if viewport.width <= 520px:
+        alignItems = "stretch"
+        flexDirection = "column"
+        maxWidth = 230px
+
+export const primaryButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 11px
+    minWidth = 190px
+    minHeight = 52px
+    padding = spacing(12px, 24px)
+    color = white
+    backgroundImage = linearGradient(135deg, brightBlue, blue)
+    border = border(1px, alpha(white, 0.28))
+    borderRadius = 13px
+    boxShadow = shadow(0px, 12px, 30px, alpha(blue, 0.34))
+    fontFamily = "Inter, sans-serif"
+    fontSize = 1rem
+    fontWeight = 600
+    textDecoration = "none"
+    cursor = "pointer"
+    transition = transition("filter", 160ms, "ease-out")
+
+    if @hover:
+        filter = "brightness(1.09)"
+    if @focus:
+        outline = border(2px, white)
+        outlineOffset = 3px
+    if @disabled:
+        opacity = 0.58
+        cursor = "wait"
+
+export const secondaryButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 10px
+    minHeight = 46px
+    padding = spacing(10px, 14px)
+    color = alpha(white, 0.88)
+    backgroundColor = "transparent"
+    border = border(1px, alpha(white, 0))
+    borderRadius = 11px
+    fontFamily = "Inter, sans-serif"
+    fontSize = 0.95rem
+    fontWeight = 500
+    textDecoration = "none"
+    cursor = "pointer"
+
+    if @hover:
+        color = white
+        backgroundColor = alpha(white, 0.09)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 2px
+
+export const dotsLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "flex-end"
+    gap = 12px
+    minWidth = 120px
+
+export const dotLook: Look = look:
+    width = 11px
+    height = 11px
+    padding = 0px
+    backgroundColor = alpha(white, 0.46)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 999px
+    cursor = "pointer"
+    transition = transition("background-color", 120ms, "ease-out")
+
+    if @hover:
+        backgroundColor = alpha(white, 0.82)
+    if @focus:
+        outline = border(2px, white)
+        outlineOffset = 3px
+
+export const activeDotLook: Look = look:
+    ...dotLook
+    backgroundColor = brightBlue
+    borderColor = alpha(white, 0.56)
+    boxShadow = shadow(0px, 0px, 16px, alpha(brightBlue, 0.68))
+
+export const emptyContentLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 5.4vw
+    bottom = 10vh
+    display = "grid"
+    gap = 18px
+    maxWidth = 650px
+
+    if viewport.width <= 720px:
+        left = 24px
+        right = 24px
+        bottom = 42px
+
+export const createLayoutLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 5
+    display = "grid"
+    gridTemplateColumns = tracks(minmax(0px, 1.35fr), minmax(360px, 0.65fr))
+    alignItems = "center"
+    gap = 52px
+    height = 100%
+    boxSizing = "border-box"
+    overflowY = "auto"
+    padding = spacing(110px, 5.4vw, 48px, 5.4vw)
+
+    if viewport.width <= 980px:
+        gridTemplateColumns = tracks(1fr)
+        alignContent = "start"
+        gap = 24px
+        padding = spacing(96px, 24px, 26px, 24px)
+
+export const createIntroLook: Look = look:
+    display = "grid"
+    gap = 24px
+    alignSelf = "center"
+
+export const presetGridLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(3, minmax(0px, 1fr))
+    gap = 14px
+    maxWidth = 760px
+
+    if viewport.width <= 640px:
+        gap = 8px
+
+export const presetLook: Look = look:
+    display = "grid"
+    gridTemplateRows = tracks(130px, "auto")
+    minWidth = 0
     overflow = "hidden"
-    background = paper
-    border = border(1px, alpha(ink, 0.16))
+    color = white
+    backgroundColor = alpha(panel, 0.58)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 15px
+    boxShadow = shadow(0px, 12px, 28px, alpha(ink, 0.24))
+    backdropFilter = "blur(16px)"
+    textAlign = "start"
+    cursor = "pointer"
+
+    if @hover:
+        borderColor = alpha(white, 0.46)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 3px
+
+    if viewport.width <= 640px:
+        gridTemplateRows = tracks(82px, "auto")
+
+export const selectedPresetLook: Look = look:
+    ...presetLook
+    borderColor = brightBlue
+    boxShadow = shadow(0px, 0px, 26px, alpha(brightBlue, 0.34))
+
+export const presetImageLook: Look = look:
+    width = 100%
+    height = 100%
+    objectFit = "cover"
+
+export const presetLabelLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 9px
+    padding = spacing(13px, 15px)
+    fontSize = 0.94rem
+    fontWeight = 600
+
+    if viewport.width <= 640px:
+        gap = 6px
+        padding = spacing(11px, 9px)
+        fontSize = 0.78rem
+
+export const formPanelLook: Look = look:
+    display = "grid"
+    gap = 20px
+    padding = 30px
+    backgroundColor = alpha(panel, 0.74)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 24px
+    boxShadow = shadow(0px, 30px, 70px, alpha(ink, 0.44))
+    backdropFilter = "blur(26px)"
+
+    if viewport.width <= 980px:
+        padding = 22px
+        borderRadius = 18px
+
+export const labelLook: Look = look:
+    display = "grid"
+    gap = 8px
+    color = alpha(white, 0.82)
+    fontSize = 0.84rem
+    fontWeight = 500
+
+export const fieldLook: Look = look:
+    width = 100%
+    minWidth = 0
+    boxSizing = "border-box"
+    padding = spacing(12px, 14px)
+    color = white
+    backgroundColor = alpha(ink, 0.52)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 11px
+    fontFamily = "Inter, sans-serif"
+    fontSize = 0.98rem
+
+    if @focus:
+        borderColor = brightBlue
+        outline = border(2px, alpha(brightBlue, 0.28))
+        outlineOffset = 1px
+
+export const segmentLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(2, minmax(0px, 1fr))
+    gap = 4px
+    padding = 4px
+    backgroundColor = alpha(ink, 0.42)
+    border = border(1px, alpha(white, 0.14))
     borderRadius = 12px
 
-export const canvasLook: Look = look:
+export const segmentButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 9px
+    minHeight = 42px
+    color = alpha(white, 0.7)
+    backgroundColor = "transparent"
+    border = border(1px, alpha(white, 0))
+    borderRadius = 9px
+    fontFamily = "Inter, sans-serif"
+    fontWeight = 500
+    cursor = "pointer"
+
+    if @hover:
+        color = white
+
+export const selectedSegmentButtonLook: Look = look:
+    ...segmentButtonLook
+    color = white
+    backgroundColor = alpha(blue, 0.82)
+    borderColor = alpha(white, 0.22)
+    boxShadow = shadow(0px, 7px, 20px, alpha(blue, 0.26))
+
+export const advancedButtonLook: Look = look:
+    ...secondaryButtonLook
+    justifyContent = "space-between"
+    width = 100%
+    paddingInline = 2px
+    borderTop = border(1px, alpha(white, 0.14))
+    borderRadius = 0px
+
+export const advancedFieldsLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(2, minmax(0px, 1fr))
+    gap = 12px
+
+export const formActionsLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 14px
+    paddingTop = 4px
+
+export const errorLook: Look = look:
+    margin = 0
+    padding = spacing(11px, 13px)
+    color = danger
+    backgroundColor = alpha(danger, 0.12)
+    border = border(1px, alpha(danger, 0.4))
+    borderRadius = 10px
+    fontSize = 0.88rem
+
+export const settingsPanelLook: Look = look:
+    position = "absolute"
+    zIndex = 8
+    right = 5.4vw
+    bottom = 12vh
+    display = "grid"
+    gap = 14px
+    minWidth = 320px
+    padding = 22px
+    backgroundColor = alpha(panel, 0.86)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 18px
+    boxShadow = shadow(0px, 24px, 64px, alpha(ink, 0.52))
+    backdropFilter = "blur(24px)"
+
+export const settingsRowLook: Look = look:
+    display = "grid"
+    gap = 4px
+    paddingBottom = 10px
+    borderBottom = border(1px, alpha(white, 0.12))
+
+export const settingsValueLook: Look = look:
+    color = alpha(white, 0.68)
+    fontSize = 0.86rem
+    overflowWrap = "anywhere"
+
+export const worldStageLook: Look = look:
+    position = "fixed"
+    inset = 0px
+    overflow = "hidden"
+    color = white
+    backgroundColor = ink
+    fontFamily = "Inter, sans-serif"
+
+export const gameCanvasLook: Look = look:
     display = "block"
     width = 100%
-    height = 560px
+    height = 100%
     cursor = "grab"
     touchAction = "none"
 
     if @active:
         cursor = "grabbing"
 
-    if viewport.width <= 720px:
-        height = 440px
+export const worldChromeLook: Look = look:
+    position = "absolute"
+    zIndex = 4
+    top = 26px
+    left = 28px
+    display = "flex"
+    alignItems = "center"
+    gap = 12px
+
+export const loadingLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 3
+    display = "grid"
+    placeItems = "center"
+    color = alpha(white, 0.84)
+    backgroundColor = alpha(ink, 0.7)
+    fontSize = 1rem
+
+export const openPanelLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 50%
+    top = 50%
+    width = 420px
+    maxWidth = 88vw
+    translate = -50% - 50%
+    display = "grid"
+    gap = 18px
+    padding = 30px
+    backgroundColor = alpha(panel, 0.82)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 22px
+    boxShadow = shadow(0px, 30px, 80px, alpha(ink, 0.5))
+    backdropFilter = "blur(26px)"
+
+export const panelTitleLook: Look = look:
+    margin = 0
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 2.2rem
+    fontWeight = 700
+    lineHeight = 1
+
+export const screenReaderLook: Look = look:
+    position = "absolute"
+    width = 1px
+    height = 1px
+    padding = 0px
+    margin = -1px
+    overflow = "hidden"
+    clipPath = "inset(50%)"
+    whiteSpace = "nowrap"

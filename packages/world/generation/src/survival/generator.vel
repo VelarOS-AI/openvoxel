@@ -47,15 +47,15 @@ type SpawnCandidate:
     z: number
     score: number
 
-/// 第一遍只用地形骨架高度筛掉明显不合格的位置，并保留有限数量的高分候选。
-/// 第二遍再通过共享列计划读取最终高度、坡度、群系和资源事实。这样半径 512
-/// 的搜索不会为了大量低分点构建数千份完整 18×18 列计划。
+/// 第一遍只用地形骨架高度筛掉明显不合格的位置，并按粗略分数排序。
+/// 第二遍优先检查前 64 个候选；如果它们都被最终坡度或群系淘汰，则继续沿
+/// 已排序列表寻找第一个安全位置。这样常见种子维持低成本，极端种子也不会
+/// 因为候选截断而错误报告整片搜索半径没有安全出生点。
 def coarseSpawnCandidates(fields: GenerationFields) -> List<SpawnCandidate>:
     const profile = fields.profile
     const candidates: List<SpawnCandidate> = []
     const radius = profile.spawn.searchRadius
     const step = profile.spawn.sampleStep
-    const capacity = 64
     for x in range(-radius, radius + 1, step):
         for z in range(-radius, radius + 1, step):
             const distanceSquared = x * x + z * z
@@ -67,10 +67,6 @@ def coarseSpawnCandidates(fields: GenerationFields) -> List<SpawnCandidate>:
             const coarseSlope = Math.max(dx, dz) / (2 * step)
             const score = 220 - 120 * coarseSlope - 0.08 * Math.sqrt(distanceSquared) - 0.35 * (surfaceY - 86).abs()
             candidates.append({x, z, score})
-            if candidates.size > capacity:
-                const ordered = candidates.sorted(by=candidate => -candidate.score)
-                candidates.clear()
-                candidates.extend(ordered.slice(0, capacity))
     return candidates.sorted(by=candidate => -candidate.score)
 
 /// 构造生存生成器时同时绑定配置、种子和当前世界方块注册表。所有方块 key 只在
@@ -131,7 +127,9 @@ export def survivalWorldGenerator(
     def findSpawn() -> Coordinate3:
         let best: TerrainSample? = null
         let bestScore = -Math.infinity
-        for coarse in coarseSpawnCandidates(fields):
+        const preferredCandidateCount = 64
+        for coarse, index in coarseSpawnCandidates(fields):
+            if index >= preferredCandidateCount and best != null: break
             const candidate = sample(Coordinate2.from(coarse))
             if candidate.surfaceY < profile.spawn.minimumY or candidate.surfaceY > profile.spawn.maximumY: continue
             if candidate.slope > profile.spawn.maximumSlope: continue

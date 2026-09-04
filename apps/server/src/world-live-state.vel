@@ -88,7 +88,7 @@ export def worldLiveState(maximumSubscriptions: number, warning: (message: strin
                             worldId,
                             message: (value is Error) ? value.message : "Non-Error value was thrown",
                         })
-                async closeBackpressuredPeer()
+                detach closeBackpressuredPeer()
             warning("realtime.subscriber.backpressure", {worldId})
 
     async def close():

@@ -3,7 +3,7 @@ import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/
 import {Float32Builder, UInt32Builder, UInt32Buffer, float32Builder, uint32Builder} from "velar/binary"
 import {ChunkMesh, ChunkMeshBatch} from "./contracts.vel"
 import {ClientRenderState} from "./render-catalog.vel"
-import {ClientBlockModelKind, ClientTextureResource} from "./resource-pack.vel"
+import {ClientBlockModelKind, ClientTextureResource, ClientTextureVariant} from "./resource-pack.vel"
 
 const maximumChunkMeshBytes = 8 * 1024 * 1024
 
@@ -30,14 +30,14 @@ type MutableMeshBatch:
 
 def paddedIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
 
-def stateIndex(states: readonly List<readonly ClientRenderState>) -> Map<number, readonly ClientRenderState>:
+export def indexRenderStates(states: readonly List<readonly ClientRenderState>) -> Map<number, readonly ClientRenderState>:
     const result: Map<number, readonly ClientRenderState> = Map()
     for state in states:
         assert not result.has(state.runtimeId) else f"Meshing catalog repeats runtimeId {state.runtimeId}"
         result.set(state.runtimeId, state)
     return result
 
-def textureForFace(state: readonly ClientRenderState, face: MeshFace) -> readonly ClientTextureResource:
+def textureResourceForFace(state: readonly ClientRenderState, face: MeshFace) -> readonly ClientTextureResource:
     const textures = state.textures
     assert textures != null else f"Rendered state {state.runtimeId} has no textures"
     if state.model == ClientBlockModelKind.column:
@@ -53,15 +53,56 @@ def textureForFace(state: readonly ClientRenderState, face: MeshFace) -> readonl
     if face == MeshFace.bottom: return textures.bottom
     return textures.side
 
+def faceSalt(face: MeshFace) -> number:
+    match face:
+        case MeshFace.east: return 0x45d9
+        case MeshFace.west: return 0x119d
+        case MeshFace.top: return 0x27d4
+        case MeshFace.bottom: return 0x1656
+        case MeshFace.south: return 0x9e37
+        case MeshFace.north: return 0x7f4a
+
+def mixTextureHash(value: number, component: number, salt: number) -> number:
+    const modulus = 2_147_483_647
+    const normalized = ((component % modulus) + modulus) % modulus
+    return (value * 4093 + normalized * salt + 9973) % modulus
+
+/// 选择只取决于持久世界坐标、方块状态和面；同一位置在重新加载或由另一个
+/// Worker 构网时会得到同一个结果，区块边界也不会成为纹理分布边界。
+def textureForFace(
+    state: readonly ClientRenderState,
+    face: MeshFace,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+) -> readonly ClientTextureVariant:
+    const texture = textureResourceForFace(state, face)
+    const variants = texture.variants
+    assert variants.size > 0 else f"Texture {texture.key} has no surface variants"
+    if variants.size == 1: return variants[0]
+    let totalWeight = 0
+    for variant in variants: totalWeight += variant.weight
+    let value = state.runtimeId % 2_147_483_647
+    value = mixTextureHash(value, worldX, 97)
+    value = mixTextureHash(value, worldY, 193)
+    value = mixTextureHash(value, worldZ, 389)
+    value = mixTextureHash(value, faceSalt(face), 769)
+    let offset = value % totalWeight
+    for variant in variants:
+        if offset < variant.weight: return variant
+        offset -= variant.weight
+    return variants[variants.size - 1]
+
 def faceShade(face: MeshFace, emission: number) -> number:
-    let shade = 0.72
+    // 真实场景光负责主要明暗，这里只保留轻微方向差，避免每层方块底面形成黑线。
+    let shade = 0.96
     match face:
         case MeshFace.top: shade = 1
-        case MeshFace.bottom: shade = 0.52
-        case MeshFace.east: shade = 0.82
-        case MeshFace.west: shade = 0.74
-        case MeshFace.south: shade = 0.9
-        case MeshFace.north: shade = 0.66
+        case MeshFace.bottom: shade = 0.9
+        case MeshFace.east: shade = 0.98
+        case MeshFace.west: shade = 0.95
+        case MeshFace.south: shade = 1
+        case MeshFace.north: shade = 0.94
     const glow = emission / 15
     return Math.max(shade, glow)
 
@@ -122,7 +163,7 @@ def emitQuad(
     batch: MutableMeshBatch,
     state: readonly ClientRenderState,
     face: MeshFace,
-    texture: readonly ClientTextureResource,
+    texture: readonly ClientTextureVariant,
     ax: number,
     ay: number,
     az: number,
@@ -157,10 +198,20 @@ def emitQuad(
 def sameTranslucentVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
     return current.layer == BlockRenderLayer.translucent and neighbor.layer == BlockRenderLayer.translucent and current.model == neighbor.model and current.materialKey == neighbor.materialKey
 
+def fullFaceModel(state: readonly ClientRenderState) -> bool:
+    return state.model == ClientBlockModelKind.cube or state.model == ClientBlockModelKind.column
+
+/// Cutout 方块不会遮挡它旁边的不透明表面，但同一剔除组里的完整立方体仍共享
+/// 一张内部边界。树叶种类可以使用不同纹理，只要材质职责相同就不会重复生成
+/// 两组永远不可见的内部面。
+def sameCullVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    return current.cullFaces and neighbor.cullFaces and fullFaceModel(current) and fullFaceModel(neighbor) and current.layer == neighbor.layer and current.materialKey == neighbor.materialKey
+
 def faceVisible(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
     if not current.cullFaces: return true
     if neighbor.model == null: return true
     if neighbor.occludes: return false
+    if sameCullVolume(current, neighbor): return false
     return not sameTranslucentVolume(current, neighbor)
 
 def emitBox(
@@ -173,6 +224,9 @@ def emitBox(
     x: number,
     y: number,
     z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
     minimumX: number,
     minimumY: number,
     minimumZ: number,
@@ -195,17 +249,17 @@ def emitBox(
     const z0 = z + minimumZ
     const z1 = z + maximumZ
     if faceVisible(state, neighbor(1, 0, 0)):
-        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east), x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0)
+        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east, worldX, worldY, worldZ), x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0)
     if faceVisible(state, neighbor(-1, 0, 0)):
-        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west), x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0)
+        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west, worldX, worldY, worldZ), x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0)
     if faceVisible(state, neighbor(0, 1, 0)):
-        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top), x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0)
+        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top, worldX, worldY, worldZ), x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0)
     if faceVisible(state, neighbor(0, -1, 0)):
-        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom), x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0)
+        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom, worldX, worldY, worldZ), x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0)
     if faceVisible(state, neighbor(0, 0, 1)):
-        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south), x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1)
+        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south, worldX, worldY, worldZ), x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1)
     if faceVisible(state, neighbor(0, 0, -1)):
-        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1)
+        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north, worldX, worldY, worldZ), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1)
 
 def emitCross(
     batches: Map<string, MutableMeshBatch>,
@@ -214,9 +268,12 @@ def emitCross(
     x: number,
     y: number,
     z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
 ):
     const batch = batchFor(batches, state, maximumFaces)
-    const texture = textureForFace(state, MeshFace.south)
+    const texture = textureForFace(state, MeshFace.south, worldX, worldY, worldZ)
     emitQuad(batch, state, MeshFace.south, texture, x, y, z, x + 1, y, z + 1, x + 1, y + 1, z + 1, x, y + 1, z, 0.707, 0, -0.707)
     emitQuad(batch, state, MeshFace.south, texture, x + 1, y, z, x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, -0.707, 0, -0.707)
 
@@ -235,6 +292,9 @@ def emitFluid(
     x: number,
     y: number,
     z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
 ):
     const batch = batchFor(batches, state, maximumFaces)
     const height = fluidHeight(state)
@@ -247,43 +307,43 @@ def emitFluid(
 
     const above = neighbor(0, 1, 0)
     if not above.occludes and not sameTranslucentVolume(state, above):
-        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top), x, y + height, z, x, y + height, z + 1, x + 1, y + height, z + 1, x + 1, y + height, z, 0, 1, 0)
+        emitQuad(batch, state, MeshFace.top, textureForFace(state, MeshFace.top, worldX, worldY, worldZ), x, y + height, z, x, y + height, z + 1, x + 1, y + height, z + 1, x + 1, y + height, z, 0, 1, 0)
     const below = neighbor(0, -1, 0)
     if not below.occludes and not sameTranslucentVolume(state, below):
-        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom), x, y, z + 1, x, y, z, x + 1, y, z, x + 1, y, z + 1, 0, -1, 0)
+        emitQuad(batch, state, MeshFace.bottom, textureForFace(state, MeshFace.bottom, worldX, worldY, worldZ), x, y, z + 1, x, y, z, x + 1, y, z, x + 1, y, z + 1, 0, -1, 0)
 
     const east = neighbor(1, 0, 0)
     if not east.occludes and (not sameTranslucentVolume(state, east) or fluidHeight(east) < height):
         const floor = sameTranslucentVolume(state, east) ? fluidHeight(east) : 0
-        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east), x + 1, y + floor, z + 1, x + 1, y + floor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0)
+        emitQuad(batch, state, MeshFace.east, textureForFace(state, MeshFace.east, worldX, worldY, worldZ), x + 1, y + floor, z + 1, x + 1, y + floor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0)
     const west = neighbor(-1, 0, 0)
     if not west.occludes and (not sameTranslucentVolume(state, west) or fluidHeight(west) < height):
         const floor = sameTranslucentVolume(state, west) ? fluidHeight(west) : 0
-        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west), x, y + floor, z, x, y + floor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0)
+        emitQuad(batch, state, MeshFace.west, textureForFace(state, MeshFace.west, worldX, worldY, worldZ), x, y + floor, z, x, y + floor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0)
     const south = neighbor(0, 0, 1)
     if not south.occludes and (not sameTranslucentVolume(state, south) or fluidHeight(south) < height):
         const floor = sameTranslucentVolume(state, south) ? fluidHeight(south) : 0
-        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south), x, y + floor, z + 1, x + 1, y + floor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1)
+        emitQuad(batch, state, MeshFace.south, textureForFace(state, MeshFace.south, worldX, worldY, worldZ), x, y + floor, z + 1, x + 1, y + floor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1)
     const north = neighbor(0, 0, -1)
     if not north.occludes and (not sameTranslucentVolume(state, north) or fluidHeight(north) < height):
         const floor = sameTranslucentVolume(state, north) ? fluidHeight(north) : 0
-        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north), x + 1, y + floor, z, x, y + floor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1)
+        emitQuad(batch, state, MeshFace.north, textureForFace(state, MeshFace.north, worldX, worldY, worldZ), x + 1, y + floor, z, x, y + floor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1)
 
 def checksum(batches: readonly List<readonly ChunkMeshBatch>) -> number:
     let value = 0x6d2b79f5
     for batch in batches:
-        for position in batch.positions.values():
-            value = ((value << 5) ^ (value >>> 2) ^ (position * 1024).floor()) & 0xffffffff
-        for index in batch.indices.values(): value = ((value << 5) ^ (value >>> 2) ^ index) & 0xffffffff
+        for position in batch.positions: value = ((value << 5) ^ (value >>> 2) ^ (position * 1024).floor()) & 0xffffffff
+        for uv in batch.uvs: value = ((value << 5) ^ (value >>> 2) ^ (uv * 1_048_576).floor()) & 0xffffffff
+        for index in batch.indices: value = ((value << 5) ^ (value >>> 2) ^ index) & 0xffffffff
     return value >>> 0
 
-/// 首版使用逐面网格：边界、透明层和模型语义先正确，再用同一输出契约替换为
-/// greedy meshing。任何 Chunk 的输出都受 8 MiB 硬上限保护。
-export def meshChunk(
+/// Worker 在初始化时构造一次 runtimeId 索引，后续 Chunk 直接复用，避免为每个
+/// 网格重复扫描完整内容目录。任何 Chunk 的输出都受 8 MiB 硬上限保护。
+export def meshChunkWithIndex(
     position: readonly ChunkPosition,
     edge: number,
     paddedBlocks: readonly UInt32Buffer,
-    states: readonly List<readonly ClientRenderState>,
+    byRuntimeId: Map<number, readonly ClientRenderState>,
     ticket: number,
 ) -> ChunkMesh:
     requireChunkPosition(position)
@@ -291,9 +351,11 @@ export def meshChunk(
     assert ticket.isInteger() and ticket >= 0 else "Chunk mesh ticket must be a non-negative integer"
     const paddedEdge = edge + 2
     assert paddedBlocks.size == paddedEdge * paddedEdge * paddedEdge else "Chunk meshing input has the wrong padded volume"
-    const byRuntimeId = stateIndex(states)
     const maximumFaces = edge * edge * edge * 6
     const batches: Map<string, MutableMeshBatch> = Map()
+    const worldOriginX = position.x * edge
+    const worldOriginY = position.y * edge
+    const worldOriginZ = position.z * edge
     let visibleBlocks = 0
 
     for y in range(edge):
@@ -305,19 +367,23 @@ export def meshChunk(
                 const model = state.model
                 if model == null: continue
                 visibleBlocks += 1
+                const worldX = worldOriginX + x
+                const worldY = worldOriginY + y
+                const worldZ = worldOriginZ + z
                 match model:
                     case ClientBlockModelKind.cube:
-                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, 1, 1)
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 0, 0, 0, 1, 1, 1)
                     case ClientBlockModelKind.column:
-                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, 1, 1)
-                    case ClientBlockModelKind.cross: emitCross(batches, state, maximumFaces, x, y, z)
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 0, 0, 0, 1, 1, 1)
+                    case ClientBlockModelKind.cross:
+                        emitCross(batches, state, maximumFaces, x, y, z, worldX, worldY, worldZ)
                     case ClientBlockModelKind.cactus:
-                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 1 / 16, 0, 1 / 16, 15 / 16, 1, 15 / 16)
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 1 / 16, 0, 1 / 16, 15 / 16, 1, 15 / 16)
                     case ClientBlockModelKind.snowLayer:
                         const height = (state.layers ?? 1) / 8
-                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, 0, 0, 0, 1, height, 1)
+                        emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 0, 0, 0, 1, height, 1)
                     case ClientBlockModelKind.fluid:
-                        emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z)
+                        emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
 
     const finished: List<ChunkMeshBatch> = []
     let quadCount = 0
@@ -350,3 +416,12 @@ export def meshChunk(
         byteSize,
         checksum: checksum(finished),
     }
+
+/// 直接调用入口为测试和同步工具保留；Worker 热路径使用 meshChunkWithIndex。
+export def meshChunk(
+    position: readonly ChunkPosition,
+    edge: number,
+    paddedBlocks: readonly UInt32Buffer,
+    states: readonly List<readonly ClientRenderState>,
+    ticket: number,
+) -> ChunkMesh: return meshChunkWithIndex(position, edge, paddedBlocks, indexRenderStates(states), ticket)

@@ -103,7 +103,7 @@ export def localBackend(
             catch error:
                 if not connectionClosed: connectionFailure = error
 
-        async pump()
+        detach pump()
 
         async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>) -> readonly ChunksSyncedEvent:
             requireHealthy()

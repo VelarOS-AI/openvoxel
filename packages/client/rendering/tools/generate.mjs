@@ -19,4 +19,6 @@ await mkdir(dirname(paths.artifact), {recursive: true});
 await Promise.all([
   writeChanged(paths.artifact, output.artifactText),
   writeChanged(paths.atlas, output.atlasBytes),
+  writeChanged(paths.normalAtlas, output.normalAtlasBytes),
+  writeChanged(paths.specularAtlas, output.specularAtlasBytes),
 ]);

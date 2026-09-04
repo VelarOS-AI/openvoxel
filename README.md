@@ -2,7 +2,7 @@
 
 OpenVoxel 是一个使用 VelarScript 从零构建体素世界的开源教学项目。它先完成没有前端也能独立验收的世界后端，再让浏览器单机模式和 Node 联机模式共享同一套世界模型、生成器和应用运行时。
 
-当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.23.4 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
+当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.26.1 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
 
 ## 开始使用
 
@@ -14,13 +14,13 @@ npm run validate
 npm start
 ```
 
-另开一个终端运行浏览器诊断应用：
+另开一个终端运行 Web 客户端：
 
 ```sh
 npm run dev:web
 ```
 
-访问 `http://127.0.0.1:5173` 后，可以在 `OnlineBackend` 与 `LocalBackend` 之间切换，创建或打开世界、同步出生点 Chunk、修改出生点方块并验证重连。`npm run test:browser` 会在隔离 SQLite 文件上启动服务与生产预览，用 Chromium 对两种适配器执行同一份契约，并刷新页面验证 IndexedDB 恢复。这个应用是仅连接回环地址的诊断面；当前跨端口本地链路不声明 CSP，未来若作为对外产品部署，应先把页面与 API 收敛到同一 HTTPS origin 并启用 CSP。
+访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
 
 服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/application.yml`](apps/server/application.yml) 管理；它的位置由 [`apps/server/velar.json`](apps/server/velar.json) 的 `server.configuration` 明确声明，开发、检查和生产构建使用同一入口。数据库与 Content Pack 的相对路径以服务应用目录解析；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定该运行时数据根。可以用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
@@ -121,6 +121,6 @@ npm run benchmark:caves
 
 ## 当前边界
 
-世界后端、客户端会话、OnlineBackend 和 LocalBackend 已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。客户端资源包和最小体素呈现也已接入：少量已同步 Chunk 会生成可更新网格，显示资源只通过内容目录中的逻辑 material、texture、model 与 tint key 解析，世界运行时 ID 始终不承担纹理或模型身份。
+世界后端、客户端会话、OnlineBackend 和 LocalBackend 已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。客户端资源包和最小体素呈现也已接入：少量已同步 Chunk 会生成可更新网格，显示资源只通过内容目录中的逻辑 material、texture、model 与 tint key 解析；一个逻辑 texture 可以在资源包构建期组合多层贴图并生成带权重的稳定表面变体，世界运行时 ID 始终不承担纹理或模型身份。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。

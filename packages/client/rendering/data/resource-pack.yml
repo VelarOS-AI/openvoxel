@@ -1,9 +1,17 @@
-formatVersion: 1
+formatVersion: 3
 owner: openvoxel
+
+sources:
+  - {key: survivalcraft-blocks, file: sources/survivalcraft-blocks.webp, role: block-albedo-atlas}
+  - {key: openworld-clouds, file: sources/openworld-clouds.webp, role: environment-cloud-layer}
+
 atlas:
-  tileSize: 16
-  padding: 1
+  tileSize: 32
+  padding: 2
   columns: 8
+
+environment:
+  clouds: sources/openworld-clouds.webp
 
 models:
   - {key: openvoxel:model/block/cube, kind: cube}
@@ -14,66 +22,68 @@ models:
   - {key: openvoxel:model/block/fluid, kind: fluid}
 
 materials:
-  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0}
-  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0.08}
-  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, emissive: 0}
-  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0, unlit: true}
-  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0}
-  - {key: openvoxel:material/water, alpha: 0.7, alphaCutoff: 0, doubleSided: true, emissive: 0.04}
-  - {key: openvoxel:material/magma, alpha: 0.88, alphaCutoff: 0, doubleSided: true, emissive: 0.72}
-  - {key: openvoxel:material/ice, alpha: 0.74, alphaCutoff: 0, doubleSided: false, emissive: 0.06}
+  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0, roughness: 0.9, specular: 0.12}
+  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, emissive: 0.04, roughness: 0.38, specular: 0.82}
+  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, emissive: 0.02, roughness: 0.82, specular: 0.06}
+  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0.1, roughness: 0.88, specular: 0.04}
+  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, emissive: 0, roughness: 0.74, specular: 0.08}
+  - {key: openvoxel:material/water, alpha: 0.68, alphaCutoff: 0, doubleSided: true, emissive: 0.02, roughness: 0.16, specular: 0.96}
+  - {key: openvoxel:material/magma, alpha: 0.92, alphaCutoff: 0, doubleSided: true, emissive: 0.78, roughness: 0.5, specular: 0.28}
+  - {key: openvoxel:material/ice, alpha: 0.72, alphaCutoff: 0, doubleSided: false, emissive: 0.03, roughness: 0.2, specular: 0.78}
 
 tints:
-  - {key: openvoxel:tint/biome_foliage, red: 0.64, green: 0.86, blue: 0.52}
-  - {key: openvoxel:tint/biome_grass, red: 0.68, green: 0.9, blue: 0.48}
-  - {key: openvoxel:tint/biome_grass_top, red: 0.72, green: 0.94, blue: 0.52}
-  - {key: openvoxel:tint/biome_water, red: 0.56, green: 0.78, blue: 1}
+  - {key: openvoxel:tint/biome_foliage, red: 0.48, green: 0.9, blue: 0.34}
+  - {key: openvoxel:tint/biome_grass, red: 0.5, green: 0.92, blue: 0.34}
+  - {key: openvoxel:tint/biome_grass_top, red: 0.54, green: 0.96, blue: 0.38}
+  - {key: openvoxel:tint/biome_water, red: 0.62, green: 0.82, blue: 1}
 
 animations:
-  - {key: openvoxel:animation/water, frameDurationMs: 240, frames: [openvoxel:texture/block/water]}
-  - {key: openvoxel:animation/magma, frameDurationMs: 320, frames: [openvoxel:texture/block/magma]}
+  - {key: openvoxel:animation/water, frameDurationMs: 240, frames: [openvoxel:texture/block/water, openvoxel:texture/block/water_flow]}
+  - {key: openvoxel:animation/magma, frameDurationMs: 320, frames: [openvoxel:texture/block/magma, openvoxel:texture/block/magma_flow]}
 
 textures:
-  - {key: openvoxel:texture/block/basalt, sheet: textures/surface-materials-v2.png, column: 0, row: 2, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/birch_leaves, file: textures/birch_leaves.png}
-  - {key: openvoxel:texture/block/birch_log_side, file: textures/birch_log_side.png}
-  - {key: openvoxel:texture/block/birch_log_top, file: textures/birch_log_top.png}
-  - {key: openvoxel:texture/block/cactus, sheet: textures/surface-materials-v2.png, column: 3, row: 3, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/clay, sheet: textures/surface-materials-v2.png, column: 2, row: 2, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/coal_ore, file: textures/coal_ore.png}
-  - {key: openvoxel:texture/block/copper_ore, file: textures/copper_ore.png}
-  - {key: openvoxel:texture/block/diamond_ore, file: textures/diamond_ore.png}
-  - {key: openvoxel:texture/block/dirt, sheet: textures/surface-materials-v2.png, column: 2, row: 0, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/dry_bush, sheet: textures/cutout-plants-v2.png, column: 1, row: 0, columns: 4, rows: 2}
-  - {key: openvoxel:texture/block/germanium_ore, file: textures/germanium_ore.png}
-  - {key: openvoxel:texture/block/granite, sheet: textures/surface-materials-v2.png, column: 2, row: 1, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/grass_side, sheet: textures/surface-materials-v2.png, column: 1, row: 0, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/grass_top, sheet: textures/surface-materials-v2.png, column: 0, row: 0, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/gravel, sheet: textures/surface-materials-v2.png, column: 1, row: 2, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/ice, sheet: textures/surface-materials-v2.png, column: 0, row: 3, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/iron_ore, file: textures/iron_ore.png}
-  - {key: openvoxel:texture/block/limestone, sheet: textures/surface-materials-v2.png, column: 3, row: 1, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/magma, sheet: textures/surface-materials-v2.png, column: 2, row: 3, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/mimosa_leaves, file: textures/mimosa_leaves.png}
-  - {key: openvoxel:texture/block/mimosa_log_side, file: textures/mimosa_log_side.png}
-  - {key: openvoxel:texture/block/mimosa_log_top, file: textures/mimosa_log_top.png}
-  - {key: openvoxel:texture/block/oak_leaves, file: textures/oak_leaves.png}
-  - {key: openvoxel:texture/block/oak_log_side, file: textures/oak_log_side.png}
-  - {key: openvoxel:texture/block/oak_log_top, file: textures/oak_log_top.png}
-  - {key: openvoxel:texture/block/poplar_leaves, file: textures/poplar_leaves.png}
-  - {key: openvoxel:texture/block/poplar_log_side, file: textures/poplar_log_side.png}
-  - {key: openvoxel:texture/block/poplar_log_top, file: textures/poplar_log_top.png}
-  - {key: openvoxel:texture/block/purple_flower, sheet: textures/cutout-plants-v2.png, column: 3, row: 0, columns: 4, rows: 2}
-  - {key: openvoxel:texture/block/red_flower, sheet: textures/cutout-plants-v2.png, column: 2, row: 0, columns: 4, rows: 2}
-  - {key: openvoxel:texture/block/saltpeter_ore, file: textures/saltpeter_ore.png}
-  - {key: openvoxel:texture/block/sand, sheet: textures/surface-materials-v2.png, column: 3, row: 0, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/sandstone, sheet: textures/surface-materials-v2.png, column: 0, row: 1, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/snow, sheet: textures/surface-materials-v2.png, column: 3, row: 2, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/spruce_leaves, file: textures/spruce_leaves.png}
-  - {key: openvoxel:texture/block/spruce_log_side, file: textures/spruce_log_side.png}
-  - {key: openvoxel:texture/block/spruce_log_top, file: textures/spruce_log_top.png}
-  - {key: openvoxel:texture/block/stone, sheet: textures/surface-materials-v2.png, column: 1, row: 1, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/sulphur_ore, file: textures/sulphur_ore.png}
-  - {key: openvoxel:texture/block/tall_grass, sheet: textures/cutout-plants-v2.png, column: 0, row: 0, columns: 4, rows: 2}
-  - {key: openvoxel:texture/block/water, sheet: textures/surface-materials-v2.png, column: 1, row: 3, columns: 4, rows: 4}
-  - {key: openvoxel:texture/block/white_flower, sheet: textures/cutout-plants-v2.png, column: 0, row: 1, columns: 4, rows: 2}
+  - {key: openvoxel:texture/block/basalt, weight: 5, sheet: sources/survivalcraft-blocks.webp, column: 6, row: 0, columns: 16, rows: 16, normalStrength: 1.4, variants: [{weight: 1, layers: [{file: textures/basalt.png, opacity: 0.12}]}, {weight: 1, layers: [{file: textures/basalt.png, opacity: 0.24}]}]}
+  - {key: openvoxel:texture/block/birch_leaves, file: textures/birch_leaves.png, normalStrength: 0.45}
+  - {key: openvoxel:texture/block/birch_log_side, sheet: sources/survivalcraft-blocks.webp, column: 5, row: 7, columns: 16, rows: 16, normalStrength: 1}
+  - {key: openvoxel:texture/block/birch_log_top, file: textures/birch_log_top.png, normalStrength: 1}
+  - {key: openvoxel:texture/block/cactus, sheet: sources/survivalcraft-blocks.webp, column: 5, row: 6, columns: 16, rows: 16, normalStrength: 0.7}
+  - {key: openvoxel:texture/block/clay, sheet: sources/survivalcraft-blocks.webp, column: 8, row: 0, columns: 16, rows: 16, normalStrength: 0.8}
+  - {key: openvoxel:texture/block/coal_ore, sheet: sources/survivalcraft-blocks.webp, column: 2, row: 2, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/copper_ore, sheet: sources/survivalcraft-blocks.webp, column: 0, row: 2, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/diamond_ore, sheet: sources/survivalcraft-blocks.webp, column: 0, row: 3, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/dirt, weight: 5, sheet: sources/survivalcraft-blocks.webp, column: 2, row: 0, columns: 16, rows: 16, normalStrength: 1.1, variants: [{weight: 1, layers: [{file: textures/dirt.png, opacity: 0.12}]}, {weight: 1, layers: [{file: textures/dirt.png, opacity: 0.24}]}]}
+  - {key: openvoxel:texture/block/dry_bush, sheet: sources/survivalcraft-blocks.webp, column: 7, row: 3, columns: 16, rows: 16, normalStrength: 0.25}
+  - {key: openvoxel:texture/block/germanium_ore, sheet: sources/survivalcraft-blocks.webp, column: 1, row: 3, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/granite, sheet: sources/survivalcraft-blocks.webp, column: 1, row: 0, columns: 16, rows: 16, normalStrength: 1.25}
+  - {key: openvoxel:texture/block/grass_side, weight: 7, sheet: sources/survivalcraft-blocks.webp, column: 3, row: 0, columns: 16, rows: 16, normalStrength: 0.85, variants: [{weight: 1, layers: [{file: textures/grass_side.png, opacity: 0.1}]}, {weight: 1, layers: [{file: textures/grass_side.png, opacity: 0.2}]}]}
+  - {key: openvoxel:texture/block/grass_top, weight: 7, sheet: sources/survivalcraft-blocks.webp, column: 0, row: 0, columns: 16, rows: 16, normalStrength: 0.75, variants: [{weight: 1, layers: [{file: textures/grass_top.png, opacity: 0.1}]}, {weight: 1, layers: [{file: textures/grass_top.png, opacity: 0.2}]}]}
+  - {key: openvoxel:texture/block/gravel, sheet: sources/survivalcraft-blocks.webp, column: 3, row: 1, columns: 16, rows: 16, normalStrength: 1.35}
+  - {key: openvoxel:texture/block/ice, sheet: sources/survivalcraft-blocks.webp, column: 1, row: 4, columns: 16, rows: 16, normalStrength: 0.35}
+  - {key: openvoxel:texture/block/iron_ore, sheet: sources/survivalcraft-blocks.webp, column: 1, row: 2, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/limestone, sheet: sources/survivalcraft-blocks.webp, column: 5, row: 0, columns: 16, rows: 16, normalStrength: 1.15}
+  - {key: openvoxel:texture/block/magma, sheet: sources/survivalcraft-blocks.webp, column: 12, row: 7, columns: 16, rows: 16, normalStrength: 0.5}
+  - {key: openvoxel:texture/block/magma_flow, file: textures/magma.png, normalStrength: 0.5}
+  - {key: openvoxel:texture/block/mimosa_leaves, file: textures/mimosa_leaves.png, normalStrength: 0.45}
+  - {key: openvoxel:texture/block/mimosa_log_side, file: textures/mimosa_log_side.png, normalStrength: 1.1}
+  - {key: openvoxel:texture/block/mimosa_log_top, file: textures/mimosa_log_top.png, normalStrength: 1}
+  - {key: openvoxel:texture/block/oak_leaves, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 3, columns: 16, rows: 16, normalStrength: 0.45}
+  - {key: openvoxel:texture/block/oak_log_side, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 1, columns: 16, rows: 16, normalStrength: 1.1}
+  - {key: openvoxel:texture/block/oak_log_top, sheet: sources/survivalcraft-blocks.webp, column: 5, row: 1, columns: 16, rows: 16, normalStrength: 1}
+  - {key: openvoxel:texture/block/poplar_leaves, file: textures/poplar_leaves.png, normalStrength: 0.45}
+  - {key: openvoxel:texture/block/poplar_log_side, sheet: sources/survivalcraft-blocks.webp, column: 13, row: 6, columns: 16, rows: 16, normalStrength: 1.1}
+  - {key: openvoxel:texture/block/poplar_log_top, file: textures/poplar_log_top.png, normalStrength: 1}
+  - {key: openvoxel:texture/block/purple_flower, sheet: sources/survivalcraft-blocks.webp, column: 13, row: 0, columns: 16, rows: 16, normalStrength: 0.2}
+  - {key: openvoxel:texture/block/red_flower, sheet: sources/survivalcraft-blocks.webp, column: 12, row: 0, columns: 16, rows: 16, normalStrength: 0.2}
+  - {key: openvoxel:texture/block/saltpeter_ore, sheet: sources/survivalcraft-blocks.webp, column: 3, row: 2, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/sand, weight: 5, sheet: sources/survivalcraft-blocks.webp, column: 2, row: 1, columns: 16, rows: 16, normalStrength: 0.65, variants: [{weight: 1, layers: [{file: textures/sand.png, opacity: 0.12}]}, {weight: 1, layers: [{file: textures/sand.png, opacity: 0.24}]}]}
+  - {key: openvoxel:texture/block/sandstone, sheet: sources/survivalcraft-blocks.webp, column: 0, row: 11, columns: 16, rows: 16, normalStrength: 1}
+  - {key: openvoxel:texture/block/snow, weight: 5, file: textures/snow.png, normalStrength: 0.25, variants: [{weight: 1, layers: [{sheet: textures/surface-materials-v2.png, column: 3, row: 2, columns: 4, rows: 4, opacity: 0.12}]}, {weight: 1, layers: [{sheet: textures/surface-materials-v2.png, column: 3, row: 2, columns: 4, rows: 4, opacity: 0.24}]}]}
+  - {key: openvoxel:texture/block/spruce_leaves, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 8, columns: 16, rows: 16, normalStrength: 0.45}
+  - {key: openvoxel:texture/block/spruce_log_side, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 7, columns: 16, rows: 16, normalStrength: 1.1}
+  - {key: openvoxel:texture/block/spruce_log_top, file: textures/spruce_log_top.png, normalStrength: 1}
+  - {key: openvoxel:texture/block/stone, weight: 5, sheet: textures/surface-materials-v2.png, column: 1, row: 1, columns: 4, rows: 4, normalStrength: 1.4, variants: [{weight: 1, layers: [{file: textures/stone.png, opacity: 0.12}]}, {weight: 1, layers: [{file: textures/stone.png, opacity: 0.24}]}]}
+  - {key: openvoxel:texture/block/sulphur_ore, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 2, columns: 16, rows: 16, normalStrength: 1.5}
+  - {key: openvoxel:texture/block/tall_grass, sheet: sources/survivalcraft-blocks.webp, column: 4, row: 5, columns: 16, rows: 16, normalStrength: 0.2}
+  - {key: openvoxel:texture/block/water, sheet: sources/survivalcraft-blocks.webp, column: 12, row: 10, columns: 16, rows: 16, normalStrength: 0.3}
+  - {key: openvoxel:texture/block/water_flow, file: textures/water.png, normalStrength: 0.3}
+  - {key: openvoxel:texture/block/white_flower, sheet: sources/survivalcraft-blocks.webp, column: 14, row: 0, columns: 16, rows: 16, normalStrength: 0.2}

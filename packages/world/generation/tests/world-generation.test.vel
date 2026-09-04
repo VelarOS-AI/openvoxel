@@ -1,7 +1,7 @@
 import {expect} from "velar/test"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistry, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {Chunk, ChunkPosition, WorldManifest, chunkBlockAtIndex, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {Chunk, ChunkPosition, Coordinate2, WorldManifest, chunkBlockAtIndex, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
 import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette, survivalChunkPalette} from "../src/survival/block-palette.vel"
 import {columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "../src/survival/terrain.vel"
@@ -93,6 +93,18 @@ test "terrain samples expose final density climate landform and biome facts":
     expect(sample.riverStrength >= 0 and sample.riverStrength <= 1).toBe(true)
     expect(sample.terrainType).toBe(builtinIdentities.terrainTypes.ocean)
     expect(sample.biome).toBe(builtinIdentities.biomes.ocean)
+
+test "generated world ids always find a safe land spawn inside the configured radius":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    for index in range(128):
+        const seed = f"new-world-{index}"
+        const generator = worldGenerator(WorldManifest.from(manifest(f"spawn-{index}"), {seed}))
+        const spawn = generator.findSpawn()
+        const sample = generator.sample(Coordinate2.from(spawn))
+        expect(Math.hypot(spawn.x, spawn.z) <= profile.spawn.searchRadius).toBe(true)
+        expect(sample.surfaceY >= profile.spawn.minimumY and sample.surfaceY <= profile.spawn.maximumY).toBe(true)
+        expect(sample.slope <= profile.spawn.maximumSlope).toBe(true)
+        expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast).toBe(false)
 
 test "bounded generation corpus contains caves aquifers magma minerals and land":
     const generator = worldGenerator(manifest("feature-corpus"))

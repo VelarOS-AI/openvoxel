@@ -7,16 +7,22 @@ import {ClientBlockModelKind, ClientTextureResource} from "../src/resource-pack.
 
 const edge = 4
 const paddedEdge = edge + 2
-const region: ClientTextureResource = {key: "test:texture", u0: 0, v0: 0, u1: 1, v1: 1}
+const region: ClientTextureResource = {key: "test:texture", variants: [{u0: 0, v0: 0, u1: 1, v1: 1, weight: 1}]}
 
-def state(runtimeId: number, model: ClientBlockModelKind?, occludes: bool, layer: BlockRenderLayer? = null) -> ClientRenderState:
+def state(
+    runtimeId: number,
+    model: ClientBlockModelKind?,
+    occludes: bool,
+    layer: BlockRenderLayer? = null,
+    texture: readonly ClientTextureResource = region,
+) -> ClientRenderState:
     return {
         runtimeId,
         modelKey: model == null ? null : f"test:model/{model}",
         model,
         layer,
         materialKey: model == null ? null : "test:material",
-        textures: model == null ? null : {top: region, bottom: region, side: region},
+        textures: model == null ? null : {top: texture, bottom: texture, side: texture},
         tintKey: null,
         tintRed: 1,
         tintGreen: 1,
@@ -39,6 +45,8 @@ const air = state(0, null, false)
 const stone = state(7, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque)
 const plant = state(9, ClientBlockModelKind.cross, false, BlockRenderLayer.cutout)
 const water = state(11, ClientBlockModelKind.fluid, false, BlockRenderLayer.translucent)
+const oakLeaves = state(12, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
+const birchLeaves = state(13, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
 
 test "visible-face meshing emits six quads for one cube and ten for two adjacent cubes":
     const one = blocks()
@@ -86,3 +94,38 @@ test "neighbor halo culls a Chunk seam while cross and fluid models keep their o
     expect(mesh.batches.size).toBe(2)
     expect(mesh.quadCount).toBe(8)
     expect(mesh.byteSize > 0).toBe(true)
+
+test "adjacent leaf cubes share internal faces across state and Chunk boundaries":
+    const cluster = blocks()
+    cluster[index(2, 2, 2)] = oakLeaves.runtimeId
+    cluster[index(3, 2, 2)] = birchLeaves.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, cluster, [air, oakLeaves, birchLeaves], 8).quadCount).toBe(10)
+
+    const seam = blocks()
+    seam[index(edge, 2, 2)] = oakLeaves.runtimeId
+    seam[index(edge + 1, 2, 2)] = birchLeaves.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, seam, [air, oakLeaves, birchLeaves], 9).quadCount).toBe(5)
+
+test "weighted texture variants are deterministic and distributed by world position":
+    const mixedTexture: ClientTextureResource = {
+        key: "test:texture/mixed",
+        variants: [
+            {u0: 0, v0: 0, u1: 0.49, v1: 1, weight: 1},
+            {u0: 0.5, v0: 0, u1: 1, v1: 1, weight: 1},
+        ],
+    }
+    const mixedStone = state(7, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque, mixedTexture)
+    const volume = blocks()
+    for z in range(edge):
+        for x in range(edge): volume[index(x + 1, 2, z + 1)] = mixedStone.runtimeId
+    const first = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, mixedStone], 6)
+    const second = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, mixedStone], 7)
+    expect(first.checksum).toBe(second.checksum)
+    let sawPrimary = false
+    let sawAlternative = false
+    for offset in range(0, first.batches[0].uvs.size, 8):
+        const u = first.batches[0].uvs[offset]
+        if u == 0: sawPrimary = true
+        if u == 0.5: sawAlternative = true
+    expect(sawPrimary).toBe(true)
+    expect(sawAlternative).toBe(true)

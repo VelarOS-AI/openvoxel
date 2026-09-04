@@ -1,0 +1,44 @@
+import {Look} from "velar/look"
+
+export enum IconName:
+    arrowRight = "arrow-right"
+    chevronDown = "chevron-down"
+    chevronLeft = "chevron-left"
+    chevronRight = "chevron-right"
+    chevronUp = "chevron-up"
+    circleQuestion = "circle-question"
+    clock
+    cube
+    earthAmericas = "earth-americas"
+    folderOpen = "folder-open"
+    gear
+    leaf
+    mountainSun = "mountain-sun"
+    play
+    plus
+    shieldHalved = "shield-halved"
+    sliders
+    squarePlus = "square-plus"
+    wandMagicSparkles = "wand-magic-sparkles"
+    water
+
+const iconLook: Look = look:
+    display = "inline-block"
+    width = 1.25em
+    height = 1em
+    flexShrink = 0
+    verticalAlign = -0.125em
+    overflow = "visible"
+
+/// 图标身份由应用声明，实际 SVG 路径只由 Web 资源生成器从锁定的 npm 包提取。
+export component Icon(name: IconName):
+    return <svg
+        look={iconLook}
+        width="1.25em"
+        height="1em"
+        fill="currentColor"
+        aria-hidden={true}
+        focusable="false"
+    >
+        <use href={f"/generated/icons.svg#{name}"}></use>
+    </svg>
