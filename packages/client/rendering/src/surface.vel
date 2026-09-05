@@ -1,11 +1,9 @@
 import {ChunkMesh} from "./contracts.vel"
 import {ClientRenderCatalog} from "./render-catalog.vel"
-import {ClientAnimationResource, ClientMaterialResource, ClientTextureResource} from "./resource-pack.vel"
+import {ClientAnimationResource, ClientMaterialResource, ClientTextureBank, ClientTextureResource} from "./resource-pack.vel"
 
 export type VoxelSurfaceOptions:
-    readonly albedoAtlasDataUrl: string
-    readonly normalAtlasDataUrl: string
-    readonly specularAtlasDataUrl: string
+    readonly textureBanks: readonly List<readonly ClientTextureBank>
     readonly cloudsDataUrl: string
     readonly edge: number
     readonly materials: readonly List<readonly ClientMaterialResource>
@@ -21,7 +19,6 @@ export type VoxelSurfaceStats:
     readonly chunks: number
     readonly meshes: number
     readonly quads: number
-    readonly checksum: number
 
 extern js`
     import {
@@ -34,6 +31,7 @@ extern js`
       Material,
       Mesh,
       MeshBuilder,
+      PBRMaterial,
       Scene,
       ShadowGenerator,
       StandardMaterial,
@@ -65,13 +63,6 @@ extern js`
       return x + ":" + y + ":" + z;
     }
 
-    function chunkContribution(x, y, z, checksum) {
-      let value = checksum >>> 0;
-      value = Math.imul(value ^ (x | 0), 0x45d9f3b) >>> 0;
-      value = Math.imul(value ^ (y | 0), 0x119de1f3) >>> 0;
-      return Math.imul(value ^ (z | 0), 0x27d4eb2d) >>> 0;
-    }
-
     function requireTypedArray(value, Constructor, label) {
       if (!(value instanceof Constructor) || value.byteOffset !== 0 || value.byteLength !== value.buffer.byteLength) {
         throw new TypeError(label + " must be a full-storage " + Constructor.name);
@@ -79,7 +70,7 @@ extern js`
       return value;
     }
 
-    function waitForTexture(scene, dataUrl, samplingMode = Texture.NEAREST_SAMPLINGMODE) {
+    function waitForTexture(scene, dataUrl, mipmaps, samplingMode = Texture.NEAREST_SAMPLINGMODE) {
       return new Promise((resolve, reject) => {
         let texture = null;
         // ResourcePack UV 是左下原点；浏览器解码 PNG 使用左上原点，由 Babylon
@@ -87,7 +78,7 @@ extern js`
         texture = new Texture(
           dataUrl,
           scene,
-          true,
+          !mipmaps,
           true,
           samplingMode,
           () => resolve(texture),
@@ -96,14 +87,64 @@ extern js`
       });
     }
 
+    function requireTextureBankDefinitions(value) {
+      if (!Array.isArray(value) || value.length === 0) throw new TypeError("Voxel surface texture banks must be a non-empty list");
+      const keys = new Set();
+      for (const definition of value) {
+        if (typeof definition !== "object" || definition === null) throw new TypeError("Voxel surface texture bank must be a record");
+        if (typeof definition.key !== "string" || definition.key.length === 0) throw new TypeError("Voxel surface texture bank key must be a non-empty string");
+        if (keys.has(definition.key)) throw new Error("Voxel surface repeats texture bank " + definition.key);
+        keys.add(definition.key);
+        if (!["opaque", "cutout", "translucent", "fluid"].includes(definition.role)) throw new TypeError("Voxel surface texture bank has an invalid role: " + definition.key);
+        if (definition.storage !== "atlas") throw new TypeError("Voxel surface texture bank uses unsupported storage: " + definition.key);
+        requireInteger(definition.width, 1, 8192, "Texture bank width");
+        requireInteger(definition.height, 1, 8192, "Texture bank height");
+        if (typeof definition.mipmaps !== "boolean") throw new TypeError("Voxel surface texture bank mipmaps must be boolean: " + definition.key);
+        for (const [label, dataUrl] of [
+          ["albedo", definition.albedoDataUrl],
+          ["normal", definition.normalDataUrl],
+          ["material", definition.materialDataUrl],
+          ["emissive", definition.emissiveDataUrl],
+        ]) {
+          if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) {
+            throw new TypeError("Voxel surface texture bank " + definition.key + " " + label + " map must be an embedded PNG");
+          }
+        }
+      }
+      return value;
+    }
+
+    async function loadTextureBank(scene, definition) {
+      const samplingMode = definition.mipmaps ? Texture.NEAREST_NEAREST_MIPNEAREST : Texture.NEAREST_SAMPLINGMODE;
+      const [albedo, normal, material, emissive] = await Promise.all([
+        waitForTexture(scene, definition.albedoDataUrl, definition.mipmaps, samplingMode),
+        waitForTexture(scene, definition.normalDataUrl, definition.mipmaps, samplingMode),
+        waitForTexture(scene, definition.materialDataUrl, definition.mipmaps, samplingMode),
+        waitForTexture(scene, definition.emissiveDataUrl, definition.mipmaps, samplingMode),
+      ]);
+      for (const [label, texture] of [["albedo", albedo], ["normal", normal], ["material", material], ["emissive", emissive]]) {
+        const size = texture.getSize();
+        if (size.width !== definition.width || size.height !== definition.height) {
+          throw new Error("Texture bank " + definition.key + " " + label + " map dimensions do not match its contract");
+        }
+        texture.name = "texture-bank:" + definition.key + ":" + label;
+        texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+      }
+      albedo.hasAlpha = true;
+      normal.gammaSpace = false;
+      material.gammaSpace = false;
+      return {key: definition.key, role: definition.role, storage: definition.storage, albedo, normal, material, emissive};
+    }
+
     export class BabylonVoxelSurface {
-      constructor(canvas, options, engine, scene, camera, atlases, environment) {
+      constructor(canvas, options, engine, scene, camera, textureBanks, environment) {
         this.canvas = canvas;
         this.options = options;
         this.engine = engine;
         this.scene = scene;
         this.camera = camera;
-        this.atlases = atlases;
+        this.textureBanks = textureBanks;
         this.environment = environment;
         this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
         this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
@@ -113,7 +154,6 @@ extern js`
         this.chunks = new Map();
         this.meshCount = 0;
         this.quadCount = 0;
-        this.chunkChecksum = 0;
         this.translucentMeshes = new Set();
         this.lastTranslucentSortPosition = new Vector3(Number.NaN, Number.NaN, Number.NaN);
         this.translucentSortElapsedMs = Number.POSITIVE_INFINITY;
@@ -141,7 +181,7 @@ extern js`
         this.resizeObserver.observe(canvas);
         this.render = () => {
           const deltaMs = Math.min(engine.getDeltaTime(), 100);
-          this.updateNavigation();
+          this.updateNavigation(deltaMs);
           this.translucentSortElapsedMs += deltaMs;
           this.sortTranslucentFacets();
           this.updateAnimations(deltaMs);
@@ -158,8 +198,8 @@ extern js`
         if (!surfaces.has(this) || this.released) throw new Error("Voxel surface is released");
       }
 
-      updateNavigation() {
-        const deltaSeconds = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
+      updateNavigation(deltaMs) {
+        const deltaSeconds = Math.min(deltaMs / 1000, 0.05);
         let forward = 0;
         let sideways = 0;
         if (this.keys.has("KeyW")) forward += 1;
@@ -225,39 +265,55 @@ extern js`
 
       materialFor(batch) {
         const key = batch.pipelineKey;
+        const expectedKey = batch.layer + "|" + batch.bankKey + "|" + batch.materialKey + "|" + (batch.animationKey ?? "-");
+        if (key !== expectedKey) throw new Error("Voxel material pipeline key does not match its batch contract");
         const existing = this.materials.get(key);
         if (existing !== undefined) return existing;
         const definition = this.materialDefinitions.get(batch.materialKey);
         if (definition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
-        const material = new StandardMaterial("material:" + key, this.scene);
-        const albedoTexture = this.atlases.albedo.clone();
-        albedoTexture.name = "albedo-atlas:" + key;
+        const textureBank = this.textureBanks.get(batch.bankKey);
+        if (textureBank === undefined) throw new Error("Unknown voxel texture bank " + batch.bankKey);
+        if (textureBank.role !== batch.layer && !(batch.layer === "translucent" && textureBank.role === "fluid")) {
+          throw new Error("Voxel texture bank " + batch.bankKey + " cannot serve render layer " + batch.layer);
+        }
+        const material = new PBRMaterial("material:" + key, this.scene);
+        const albedoTexture = textureBank.albedo.clone();
+        albedoTexture.name = "albedo-bank:" + batch.bankKey + ":" + key;
         albedoTexture.hasAlpha = true;
         albedoTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
         albedoTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        const normalTexture = this.atlases.normal.clone();
-        normalTexture.name = "normal-atlas:" + key;
+        const normalTexture = textureBank.normal.clone();
+        normalTexture.name = "normal-bank:" + batch.bankKey + ":" + key;
         normalTexture.gammaSpace = false;
         normalTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
         normalTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        const specularTexture = this.atlases.specular.clone();
-        specularTexture.name = "specular-atlas:" + key;
-        specularTexture.gammaSpace = false;
-        specularTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        specularTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        material.diffuseTexture = albedoTexture;
+        const materialTexture = textureBank.material.clone();
+        materialTexture.name = "material-bank:" + batch.bankKey + ":" + key;
+        materialTexture.gammaSpace = false;
+        materialTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        materialTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        const emissiveTexture = textureBank.emissive.clone();
+        emissiveTexture.name = "emissive-bank:" + batch.bankKey + ":" + key;
+        emissiveTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
+        emissiveTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
+        material.albedoTexture = albedoTexture;
         material.bumpTexture = normalTexture;
-        material.specularTexture = specularTexture;
-        material.diffuseColor = Color3.White();
+        material.metallicTexture = materialTexture;
+        material.emissiveTexture = emissiveTexture;
+        material.albedoColor = Color3.White();
         material.ambientColor = new Color3(0.38, 0.4, 0.38);
-        material.specularColor = new Color3(definition.specular, definition.specular, definition.specular);
-        material.specularPower = 4 + (1 - definition.roughness) * 124;
-        material.emissiveColor = new Color3(definition.emissive, definition.emissive, definition.emissive);
-        material.disableLighting = definition.unlit;
-        if (definition.unlit) {
-          material.emissiveTexture = albedoTexture;
-          material.emissiveColor = Color3.White();
-        }
+        material.emissiveColor = Color3.White();
+        material.metallic = 1;
+        material.roughness = 1;
+        material.useRoughnessFromMetallicTextureAlpha = false;
+        material.useRoughnessFromMetallicTextureGreen = true;
+        material.useMetallnessFromMetallicTextureBlue = true;
+        material.useAmbientOcclusionFromMetallicTextureRed = true;
+        material.environmentIntensity = definition.environmentIntensity;
+        material.clearCoat.isEnabled = definition.clearCoat > 0;
+        material.clearCoat.intensity = definition.clearCoat;
+        material.clearCoat.roughness = definition.clearCoatRoughness;
+        material.unlit = definition.unlit;
         // OpenVoxel 的网格从外侧观察使用逆时针顶点绕序。Babylon 的右手场景会
         // 默认把 Mesh 设为顺时针正面，因此这里必须在材质边界显式对齐。
         material.sideOrientation = Material.CounterClockWiseSideOrientation;
@@ -267,11 +323,11 @@ extern js`
         if (batch.layer === "cutout") {
           material.transparencyMode = Material.MATERIAL_ALPHATEST;
           material.alphaCutOff = definition.alphaCutoff;
-          material.useAlphaFromDiffuseTexture = true;
+          material.useAlphaFromAlbedoTexture = true;
         } else if (batch.layer === "translucent") {
           material.transparencyMode = Material.MATERIAL_ALPHABLEND;
           material.alpha = definition.alpha;
-          material.useAlphaFromDiffuseTexture = true;
+          material.useAlphaFromAlbedoTexture = true;
         } else {
           material.transparencyMode = Material.MATERIAL_OPAQUE;
           material.alpha = 1;
@@ -280,11 +336,13 @@ extern js`
           const animation = this.animationDefinitions.get(batch.animationKey);
           if (animation === undefined) throw new Error("Unknown voxel animation " + batch.animationKey);
           const firstTexture = this.textureDefinitions.get(animation.frames[0]);
-          if (firstTexture === undefined) throw new Error("Unknown voxel animation frame " + animation.frames[0]);
+          if (firstTexture === undefined || firstTexture.variants.length !== 1) throw new Error("Animated voxel texture must have exactly one variant: " + animation.frames[0]);
+          if (firstTexture.bankKey !== batch.bankKey) throw new Error("Voxel animation " + batch.animationKey + " crosses texture banks");
           const base = firstTexture.variants[0];
           const frames = animation.frames.map((key) => {
             const texture = this.textureDefinitions.get(key);
             if (texture === undefined || texture.variants.length !== 1) throw new Error("Animated voxel texture must have exactly one variant: " + key);
+            if (texture.bankKey !== batch.bankKey) throw new Error("Voxel animation " + batch.animationKey + " crosses texture banks");
             const frame = texture.variants[0];
             return {uOffset: frame.u0 - base.u0, vOffset: frame.v0 - base.v0};
           });
@@ -293,7 +351,7 @@ extern js`
               frameDurationMs: animation.frameDurationMs,
               frames,
               frameIndex: -1,
-              textures: [albedoTexture, normalTexture, specularTexture],
+              textures: [albedoTexture, normalTexture, materialTexture, emissiveTexture],
             });
           }
         }
@@ -311,7 +369,6 @@ extern js`
         }
         this.meshCount -= current.meshes.length;
         this.quadCount -= current.quads;
-        this.chunkChecksum = (this.chunkChecksum ^ current.contribution) >>> 0;
         this.chunks.delete(key);
       }
 
@@ -369,15 +426,13 @@ extern js`
             }
             quads += requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh quad count");
           }
-          const checksum = requireInteger(chunk.checksum, 0, 0xffff_ffff, "Chunk mesh checksum");
-          const contribution = chunkContribution(x, y, z, checksum);
           this.meshCount += meshes.length;
           this.quadCount += quads;
-          this.chunkChecksum = (this.chunkChecksum ^ contribution) >>> 0;
-          this.chunks.set(key, {meshes, quads, checksum, contribution});
+          this.chunks.set(key, {meshes, quads});
         } catch (error) {
           for (const mesh of meshes) {
             this.translucentMeshes.delete(mesh);
+            this.environment.shadowGenerator.removeShadowCaster(mesh);
             mesh.dispose(false, false);
           }
           throw error;
@@ -391,7 +446,7 @@ extern js`
 
       stats() {
         this.requireLive();
-        return {chunks: this.chunks.size, meshes: this.meshCount, quads: this.quadCount, checksum: this.chunkChecksum};
+        return {chunks: this.chunks.size, meshes: this.meshCount, quads: this.quadCount};
       }
 
       release() {
@@ -408,9 +463,13 @@ extern js`
         this.animatedMaterials.length = 0;
         for (const material of this.materials.values()) material.dispose(true, true);
         this.materials.clear();
-        this.atlases.albedo.dispose();
-        this.atlases.normal.dispose();
-        this.atlases.specular.dispose();
+        for (const textureBank of this.textureBanks.values()) {
+          textureBank.albedo.dispose();
+          textureBank.normal.dispose();
+          textureBank.material.dispose();
+          textureBank.emissive.dispose();
+        }
+        this.textureBanks.clear();
         this.scene.dispose();
         this.engine.dispose();
         surfaces.delete(this);
@@ -421,15 +480,7 @@ extern js`
       canvas = requireCanvas(canvas);
       if (typeof options !== "object" || options === null) throw new TypeError("Voxel surface options must be a record");
       const edge = requireInteger(options.edge, 4, 64, "Voxel Chunk edge");
-      for (const [label, value] of [
-        ["albedo", options.albedoAtlasDataUrl],
-        ["normal", options.normalAtlasDataUrl],
-        ["specular", options.specularAtlasDataUrl],
-      ]) {
-        if (typeof value !== "string" || !value.startsWith("data:image/png;base64,")) {
-          throw new TypeError("Voxel surface " + label + " atlas must be an embedded PNG");
-        }
-      }
+      const textureBankDefinitions = requireTextureBankDefinitions(options.textureBanks);
       if (typeof options.cloudsDataUrl !== "string" || !options.cloudsDataUrl.startsWith("data:image/webp;base64,")) throw new TypeError("Voxel surface clouds must be an embedded WebP image");
       if (!Array.isArray(options.materials) || !Array.isArray(options.textures) || !Array.isArray(options.animations)) throw new TypeError("Voxel surface resources must be lists");
       if (typeof options.viewChanged !== "function") throw new TypeError("Voxel surface viewChanged must be a function");
@@ -483,22 +534,11 @@ extern js`
       scene.fogStart = renderDistance * 0.78;
       scene.fogEnd = renderDistance * 1.2;
       try {
-        const [albedo, normal, specular, cloudTexture] = await Promise.all([
-          waitForTexture(scene, options.albedoAtlasDataUrl),
-          waitForTexture(scene, options.normalAtlasDataUrl),
-          waitForTexture(scene, options.specularAtlasDataUrl),
-          waitForTexture(scene, options.cloudsDataUrl, Texture.BILINEAR_SAMPLINGMODE),
+        const [loadedTextureBanks, cloudTexture] = await Promise.all([
+          Promise.all(textureBankDefinitions.map((definition) => loadTextureBank(scene, definition))),
+          waitForTexture(scene, options.cloudsDataUrl, false, Texture.BILINEAR_SAMPLINGMODE),
         ]);
-        albedo.name = "openvoxel-albedo-atlas";
-        albedo.hasAlpha = true;
-        normal.name = "openvoxel-normal-atlas";
-        normal.gammaSpace = false;
-        specular.name = "openvoxel-specular-atlas";
-        specular.gammaSpace = false;
-        for (const texture of [albedo, normal, specular]) {
-          texture.wrapU = Texture.CLAMP_ADDRESSMODE;
-          texture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        }
+        const textureBanks = new Map(loadedTextureBanks.map((bank) => [bank.key, bank]));
         cloudTexture.name = "openvoxel-clouds";
         cloudTexture.hasAlpha = true;
         cloudTexture.wrapU = Texture.WRAP_ADDRESSMODE;
@@ -526,7 +566,7 @@ extern js`
           engine,
           scene,
           camera,
-          {albedo, normal, specular},
+          textureBanks,
           {cloudLayer, cloudTexture, shadowGenerator},
         );
       } catch (error) {
@@ -563,9 +603,7 @@ export async def openVoxelRenderSurface(
     viewChanged: (chunkX: number, chunkY: number, chunkZ: number) -> null,
 ) -> VoxelRenderSurface:
     const native: BabylonVoxelSurface = await createBabylonVoxelSurface(canvas, {
-        albedoAtlasDataUrl: catalog.atlas.albedoDataUrl,
-        normalAtlasDataUrl: catalog.atlas.normalDataUrl,
-        specularAtlasDataUrl: catalog.atlas.specularDataUrl,
+        textureBanks: catalog.textureBanks,
         cloudsDataUrl: catalog.environment.cloudsDataUrl,
         edge,
         materials: catalog.materials,

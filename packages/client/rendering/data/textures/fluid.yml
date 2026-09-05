@@ -1,0 +1,6 @@
+category: fluid
+textures:
+  - {key: openvoxel:texture/block/magma, surface: magma, file: textures/fluid/magma.png}
+  - {key: openvoxel:texture/block/magma_flow, surface: magma, file: textures/fluid/magma_flow.png}
+  - {key: openvoxel:texture/block/water, surface: water, file: textures/fluid/water.png}
+  - {key: openvoxel:texture/block/water_flow, surface: water, file: textures/fluid/water_flow.png}

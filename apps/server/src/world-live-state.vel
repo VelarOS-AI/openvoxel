@@ -91,21 +91,20 @@ export def worldLiveState(maximumSubscriptions: number, warning: (message: strin
                 detach closeBackpressuredPeer()
             warning("realtime.subscriber.backpressure", {worldId})
 
+    async def closePeer(subscription: readonly StoredSubscription):
+        try: await subscription.peer.close(1001, "Server shutting down")
+        catch value:
+            // 单个传输已经损坏时仍要等待并关闭其余连接，不能让 Promise.all
+            // 因第一条拒绝而让应用提前进入 WorldRuntime 关闭阶段。
+            warning("realtime.subscriber.close_failed", {
+                worldId: subscription.worldId,
+                message: (value is Error) ? value.message : "Non-Error value was thrown",
+            })
+
     async def close():
         if closed: return
         closed = true
-        const closings: List<Promise<null>> = []
-        for subscription in subscriptions.values():
-            async def closePeer():
-                try: await subscription.peer.close(1001, "Server shutting down")
-                catch value:
-                    // 单个传输已经损坏时仍要等待并关闭其余连接，不能让 Promise.all
-                    // 因第一条拒绝而让应用提前进入 WorldRuntime 关闭阶段。
-                    warning("realtime.subscriber.close_failed", {
-                        worldId: subscription.worldId,
-                        message: (value is Error) ? value.message : "Non-Error value was thrown",
-                    })
-            closings.append(closePeer())
+        const closings = subscriptions.values().map(subscription => closePeer(subscription))
         subscriptions.clear()
         subscriptionsByWorld.clear()
         sequences.clear()

@@ -1,0 +1,74 @@
+import {BlockTypeSource} from "../definition/block.vel"
+import {BlockCatalogSource, BlockDefinition, BlockStateDefinition, BlockStateMapSource} from "../definition/catalog.vel"
+import {requireUInt32, validateBlockType} from "./block-validation.vel"
+import {canonicalStateKey} from "./state-key.vel"
+import {BlockStatePrototype, enumerateBlockStates} from "./state-expansion.vel"
+
+/// 用调用方提供的稳定状态映射装配最终目录。该层只负责索引、ID 绑定和默认状态投影。
+export def assembleBlockCatalog(schemaVersion: number, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+    assert schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert not catalogVersion.isBlank() else "Block catalog version cannot be blank"
+    assert stateMap.formatVersion == 2 else "Unsupported block state map format version"
+
+    const sourceByKey: Map<string, BlockTypeSource> = Map()
+    const prototypeByKey: Map<string, BlockStatePrototype> = Map()
+    for block in sourceBlocks:
+        validateBlockType(block)
+        assert sourceByKey.get(block.key) == null else f"Duplicate block key {block.key}"
+        sourceByKey.set(block.key, block)
+        for prototype in enumerateBlockStates(block):
+            assert prototypeByKey.get(prototype.stateKey) == null else f"Duplicate block state {prototype.stateKey}"
+            prototypeByKey.set(prototype.stateKey, prototype)
+    assert sourceByKey.size > 0 else "Block catalog cannot be empty"
+    assert prototypeByKey.size <= 0x100000000 else "Block catalog exceeds UInt32 state capacity"
+
+    const reservedRuntimeIds: Set<number> = Set()
+    for runtimeId in stateMap.reservedRuntimeIds:
+        requireUInt32(runtimeId, "Reserved block state runtime id")
+        assert not (runtimeId in reservedRuntimeIds) else f"Duplicate reserved block state runtime id {runtimeId}"
+        reservedRuntimeIds.add(runtimeId)
+    const byId: Map<number, BlockStateDefinition> = Map()
+    const mappedKeys: Set<string> = Set()
+    for mapping in stateMap.states:
+        requireUInt32(mapping.runtimeId, "Block state runtime id")
+        assert not (mapping.runtimeId in reservedRuntimeIds) else f"Active block state runtime id {mapping.runtimeId} is reserved"
+        assert byId.get(mapping.runtimeId) == null else f"Duplicate block state runtime id {mapping.runtimeId}"
+        assert not (mapping.stateKey in mappedKeys) else f"Duplicate block state key {mapping.stateKey}"
+        const prototype = prototypeByKey.get(mapping.stateKey)
+        assert prototype != null else f"State map references unknown state {mapping.stateKey}"
+        mappedKeys.add(mapping.stateKey)
+        byId.set(mapping.runtimeId, {
+            runtimeId: mapping.runtimeId,
+            stateKey: prototype.stateKey,
+            blockKey: prototype.blockKey,
+            properties: prototype.properties,
+            physics: prototype.physics,
+            light: prototype.light,
+            render: prototype.render,
+            interaction: prototype.interaction,
+            behaviors: prototype.behaviors,
+        })
+    assert mappedKeys.size == prototypeByKey.size else "Block state map is missing active states"
+
+    const states = byId.values().sorted(by=state => state.runtimeId)
+    const blocks: List<BlockDefinition> = []
+    for source in sourceBlocks.sorted(by=block => block.key):
+        const defaultStateKey = canonicalStateKey(source.key, source.defaultState)
+        const defaultState = states.find(state => state.stateKey == defaultStateKey)
+        assert defaultState != null else f"Block {source.key} default state is missing from the state map"
+        const defaultPrototype = prototypeByKey.get(defaultStateKey)
+        assert defaultPrototype != null else f"Block {source.key} default state prototype is missing"
+        blocks.append({
+            defaultStateRuntimeId: defaultState.runtimeId,
+            key: source.key,
+            translationKey: source.translationKey,
+            tags: source.tags.sorted(),
+            properties: source.properties.sorted(by=property => property.name),
+            defaultState: source.defaultState.sorted(by=property => property.name),
+            physics: defaultPrototype.physics,
+            light: defaultPrototype.light,
+            render: defaultPrototype.render,
+            interaction: defaultPrototype.interaction,
+            behaviors: defaultPrototype.behaviors,
+        })
+    return {schemaVersion, catalogVersion, reservedRuntimeIds: stateMap.reservedRuntimeIds.sorted(), blocks, states}

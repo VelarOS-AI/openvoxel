@@ -10,12 +10,27 @@ export enum ClientBlockModelKind:
     snowLayer = "snow_layer"
     fluid
 
-export type ClientResourceAtlas:
+export enum ClientTextureBankRole:
+    opaque
+    cutout
+    translucent
+    fluid
+
+export enum ClientTextureBankStorage:
+    atlas
+
+export type ClientTextureBank:
+    readonly key: string
+    readonly role: ClientTextureBankRole
+    readonly storage: ClientTextureBankStorage
     readonly width: number
     readonly height: number
+    readonly mipmaps: bool
+    /// 四张图集共享像素布局：材质图按 R=AO、G=roughness、B=metallic 编码。
     readonly albedoDataUrl: string
     readonly normalDataUrl: string
-    readonly specularDataUrl: string
+    readonly materialDataUrl: string
+    readonly emissiveDataUrl: string
 
 export type ClientResourceEnvironment:
     readonly cloudsDataUrl: string
@@ -30,9 +45,9 @@ export type ClientMaterialResource:
     readonly alphaCutoff: number
     readonly doubleSided: bool
     readonly castsShadows: bool
-    readonly emissive: number
-    readonly roughness: number
-    readonly specular: number
+    readonly environmentIntensity: number
+    readonly clearCoat: number
+    readonly clearCoatRoughness: number
     readonly unlit: bool
 
 /// UV 使用 Babylon/WebGL 通用的左下原点坐标；生成器已完成 PNG 顶部原点转换。
@@ -46,6 +61,7 @@ export type ClientTextureVariant:
 
 export type ClientTextureResource:
     readonly key: string
+    readonly bankKey: string
     readonly variants: readonly List<readonly ClientTextureVariant>
 
 export type ClientTintResource:
@@ -65,7 +81,7 @@ export type ClientResourcePackArtifact:
     readonly owner: string
     readonly targetContentHash: string
     readonly resourceHash: string
-    readonly atlas: readonly ClientResourceAtlas
+    readonly textureBanks: readonly List<readonly ClientTextureBank>
     readonly environment: readonly ClientResourceEnvironment
     readonly models: readonly List<readonly ClientModelResource>
     readonly materials: readonly List<readonly ClientMaterialResource>
@@ -90,24 +106,29 @@ def requireUniqueKey(key: string, keys: Set<string>, owner: string, label: strin
 /// 包内 JSON 已由生成阶段计算 resourceHash；运行时再次验证结构、范围、命名空间
 /// 和交叉引用，避免损坏的静态资源走到图形引擎边界。
 export def validateClientResourcePack(artifact: readonly ClientResourcePackArtifact) -> readonly ClientResourcePackArtifact:
-    assert artifact.artifactVersion == 3 else "Unsupported client resource pack artifact version"
-    assert artifact.formatVersion == 3 else "Unsupported client resource pack format version"
+    assert artifact.artifactVersion == 4 else "Unsupported client resource pack artifact version"
+    assert artifact.formatVersion == 4 else "Unsupported client resource pack format version"
     assert Text.matches(artifact.owner, r"^[a-z][a-z0-9_.-]*$") else "Client resource pack owner is invalid"
     requireHash(artifact.targetContentHash, "Client resource target content hash")
     requireHash(artifact.resourceHash, "Client resource hash")
-    assert artifact.atlas.width.isInteger() and artifact.atlas.width > 0 and artifact.atlas.width <= 8192 else "Client resource atlas width is invalid"
-    assert artifact.atlas.height.isInteger() and artifact.atlas.height > 0 and artifact.atlas.height <= 8192 else "Client resource atlas height is invalid"
-    assert artifact.atlas.albedoDataUrl.startsWith("data:image/png;base64,") else "Client resource albedo atlas must be an embedded PNG"
-    assert artifact.atlas.normalDataUrl.startsWith("data:image/png;base64,") else "Client resource normal atlas must be an embedded PNG"
-    assert artifact.atlas.specularDataUrl.startsWith("data:image/png;base64,") else "Client resource specular atlas must be an embedded PNG"
     assert artifact.environment.cloudsDataUrl.startsWith("data:image/webp;base64,") else "Client resource clouds must be an embedded WebP image"
 
+    const textureBankKeys: Set<string> = Set()
     const modelKeys: Set<string> = Set()
     const materialKeys: Set<string> = Set()
     const textureKeys: Set<string> = Set()
     const texturesByKey: Map<string, readonly ClientTextureResource> = Map()
     const tintKeys: Set<string> = Set()
     const animationKeys: Set<string> = Set()
+    for bank in artifact.textureBanks:
+        requireUniqueKey(bank.key, textureBankKeys, artifact.owner, "texture bank")
+        assert bank.storage == ClientTextureBankStorage.atlas else f"Texture bank {bank.key} uses unsupported storage {bank.storage}"
+        assert bank.width.isInteger() and bank.width > 0 and bank.width <= 8192 else f"Texture bank {bank.key} width is invalid"
+        assert bank.height.isInteger() and bank.height > 0 and bank.height <= 8192 else f"Texture bank {bank.key} height is invalid"
+        assert bank.albedoDataUrl.startsWith("data:image/png;base64,") else f"Texture bank {bank.key} albedo must be an embedded PNG"
+        assert bank.normalDataUrl.startsWith("data:image/png;base64,") else f"Texture bank {bank.key} normal map must be an embedded PNG"
+        assert bank.materialDataUrl.startsWith("data:image/png;base64,") else f"Texture bank {bank.key} material map must be an embedded PNG"
+        assert bank.emissiveDataUrl.startsWith("data:image/png;base64,") else f"Texture bank {bank.key} emissive map must be an embedded PNG"
     for value in artifact.models: requireUniqueKey(value.key, modelKeys, artifact.owner, "model")
     for value in artifact.materials: requireUniqueKey(value.key, materialKeys, artifact.owner, "material")
     for value in artifact.textures:
@@ -119,10 +140,11 @@ export def validateClientResourcePack(artifact: readonly ClientResourcePackArtif
     for material in artifact.materials:
         requireUnit(material.alpha, f"Material {material.key} alpha")
         requireUnit(material.alphaCutoff, f"Material {material.key} alpha cutoff")
-        requireUnit(material.emissive, f"Material {material.key} emissive level")
-        requireUnit(material.roughness, f"Material {material.key} roughness")
-        requireUnit(material.specular, f"Material {material.key} specular level")
+        assert material.environmentIntensity.isFinite() and material.environmentIntensity >= 0 and material.environmentIntensity <= 4 else f"Material {material.key} environment intensity must be from 0 through 4"
+        requireUnit(material.clearCoat, f"Material {material.key} clear coat")
+        requireUnit(material.clearCoatRoughness, f"Material {material.key} clear coat roughness")
     for texture in artifact.textures:
+        assert texture.bankKey in textureBankKeys else f"Texture {texture.key} references unknown texture bank {texture.bankKey}"
         assert texture.variants.size > 0 else f"Texture {texture.key} has no surface variants"
         let totalWeight = 0
         for variant in texture.variants:
@@ -142,12 +164,16 @@ export def validateClientResourcePack(artifact: readonly ClientResourcePackArtif
     for animation in artifact.animations:
         assert animation.frameDurationMs.isInteger() and animation.frameDurationMs >= 16 and animation.frameDurationMs <= 60_000 else f"Animation {animation.key} frame duration is invalid"
         assert animation.frames.size > 0 else f"Animation {animation.key} has no frames"
+        let frameBankKey: string? = null
         let frameWidth: number? = null
         let frameHeight: number? = null
         for frame in animation.frames:
             assert frame in textureKeys else f"Animation {animation.key} references unknown texture {frame}"
             const texture = texturesByKey.get(frame)!
             assert texture.variants.size == 1 else f"Animation {animation.key} frame {frame} must have exactly one atlas region"
+            if frameBankKey == null: frameBankKey = texture.bankKey
+            else:
+                assert texture.bankKey == frameBankKey else f"Animation {animation.key} frames must use one texture bank"
             const region = texture.variants[0]
             const width = region.u1 - region.u0
             const height = region.v1 - region.v0

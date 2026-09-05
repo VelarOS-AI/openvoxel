@@ -10,11 +10,15 @@
 
 ## 资源与光照
 
-资源包的人工源清单只声明逻辑 texture、材质参数和图像来源。构建器统一输出带边缘填充且像素对齐的 albedo、normal、specular 三张图集，并把环境云层打入同一版本化产物。normal 与 specular 图集和 albedo 使用完全一致的 UV 区域，因此方块网格只需要一套 UV。
+每个逻辑 texture 由一张独立的 32×32 PNG 和一条 YAML 配方维护。terrain、vegetation、fluid 是作者资源分类，environment 单独保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
 
-材质保留 roughness、specular、emissive、alpha、double-sided 和 casts-shadows 语义。动画引用同尺寸、单区域的逻辑纹理帧，运行时只平移同一套 albedo、normal、specular 图集采样，不重建 Chunk 网格。场景使用天空光、方向太阳、PCF 阴影、距离雾和移动云层；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。贴图来源、生成算法或图集布局改变时必须改变资源哈希。
+每个 bank 同时生成带边缘填充、mipmap 配置和完全相同像素布局的 albedo、normal、material、emissive 四张图集。material 图按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 只保存 bank key、带权重的 UV 变体，方块网格因此仍只需要一套 UV。动画的全部帧必须处在同一 bank 且拥有相同区域尺寸，运行时同步平移四张图集的采样区域，不重建 Chunk 网格。
 
-参考项目只提供构建输入和视觉算法依据。OpenVoxel 的 YAML/生成产物仍是资源权威，服务端内容目录仍是方块状态权威，不复制旧项目的数字方块映射、场景对象或运行时模块。
+`textureBanks` 是资源产物与渲染后端之间的存储抽象。当前 format v4 使用 `storage: atlas`，由 Babylon `PBRMaterial` 直接消费生成图集；以后可以增加 `texture_2d_array` 后端而不改变逻辑 texture、方块目录或世界 runtimeId 的身份边界。资源哈希覆盖作者 PNG、YAML 配方、bank 分配、四通道生成结果和环境资源。
+
+运行时材质保留 alpha、alpha-cutoff、double-sided、casts-shadows、environment-intensity、clear-coat、clear-coat-roughness 和 unlit 语义。逐像素的凹凸、粗糙度、金属度和自发光来自对应 bank；emissive 表达表面自身亮度，世界中的方块光传播仍以方块目录的 light emission 为权威。场景使用天空光、方向太阳、PCF 阴影、色调映射、距离雾和移动云层；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。
+
+OpenVoxel 的分类 YAML、独立 PNG 和生成产物共同构成客户端资源权威，服务端内容目录仍是方块状态权威。两者只通过逻辑资源 key 联结，不复制数字方块映射，也不把 Babylon 对象写入内容或世界模型。
 
 ## 网格与面剔除
 
@@ -33,6 +37,7 @@
 - 同一 Chunk 只接受最新 ticket 的 Worker 结果；编辑、邻区加载和视窗淘汰都会使旧结果失效。
 - 网格 Worker 由一个有界池统一调度；资源目录通过池级广播只初始化一次，视窗任务的取消信号继续传入 Chunk 下载、热增量同步和本地生成循环。
 - Worker 初始化时只构造一次 runtimeId 状态索引；网格校验和直接遍历固定缓冲区，不生成 List 快照。
+- texture bank 独立打包并共享四通道布局；Chunk 批次只引用自身职责所需的 bank，生成图像不会进入世界或协议数据。
 - 客户端只保留当前 7×7×5 窗口，默认上限 245 个 Chunk。
 - 单 Chunk 网格继续受 8 MiB 硬上限保护。
 - opaque、cutout、translucent 保持在同一 Babylon rendering group 中共享深度缓冲。

@@ -1,0 +1,15 @@
+import {WorldPreset} from "./saved-world.vel"
+
+export def worldCover(preset: WorldPreset) -> string:
+    match preset:
+        case WorldPreset.meadow: return "/worlds/meadow.webp"
+        case WorldPreset.coast: return "/worlds/coast.webp"
+        case WorldPreset.highlands: return "/worlds/highlands.webp"
+        case WorldPreset.quietShore: return "/worlds/quiet-shore.webp"
+
+export def presetName(preset: WorldPreset) -> string:
+    match preset:
+        case WorldPreset.meadow: return "Meadow"
+        case WorldPreset.coast: return "Coast"
+        case WorldPreset.highlands: return "Highlands"
+        case WorldPreset.quietShore: return "Quiet Shore"

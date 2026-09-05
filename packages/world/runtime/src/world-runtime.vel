@@ -9,6 +9,7 @@ import {WorldAlreadyExistsError} from "./world-errors.vel"
 import {worldSessionCache} from "./world-sessions.vel"
 import {WorldContentSnapshot} from "./world-content.vel"
 import {Cancellation} from "velar/task"
+import {all, field, integer, validator} from "velar/validation"
 
 /// WorldRuntime 是世界应用层的唯一公开门面。
 ///
@@ -55,18 +56,25 @@ export const defaultWorldRuntimeOptions: readonly WorldRuntimeOptions = {
     activeOverrideCapacity: 262144,
 }
 
+const WorldRuntimeOptionsValidator = validator(WorldRuntimeOptions, all([
+    field("activeWorldCapacity", (options: WorldRuntimeOptions) => options.activeWorldCapacity, integer(minimum=1, maximum=4096)),
+    field("activeChunkCapacity", (options: WorldRuntimeOptions) => options.activeChunkCapacity, integer(minimum=1, maximum=1048576)),
+    field("activeOverrideCapacity", (options: WorldRuntimeOptions) => options.activeOverrideCapacity, integer(minimum=1, maximum=16777216)),
+]))
+
+export def validateWorldRuntimeOptions(options: readonly WorldRuntimeOptions) -> WorldRuntimeOptions:
+    return WorldRuntimeOptionsValidator.validate(WorldRuntimeOptions.from(options))
+
 export def worldRuntime(
     store: WorldStore,
     content: ContentCatalog? = null,
     options: readonly WorldRuntimeOptions = defaultWorldRuntimeOptions,
 ) -> WorldRuntime:
-    assert options.activeWorldCapacity.isInteger() and options.activeWorldCapacity > 0 else "Active world capacity must be a positive integer"
-    assert options.activeChunkCapacity.isInteger() and options.activeChunkCapacity > 0 else "Active Chunk capacity must be a positive integer"
-    assert options.activeOverrideCapacity.isInteger() and options.activeOverrideCapacity > 0 else "Active override capacity must be a positive integer"
+    const validatedOptions = validateWorldRuntimeOptions(options)
     const sessions = (
         content == null
-            ? worldSessionCache(store, activeWorldCapacity=options.activeWorldCapacity, activeChunkCapacity=options.activeChunkCapacity, activeOverrideCapacity=options.activeOverrideCapacity)
-            : worldSessionCache(store, content, options.activeWorldCapacity, options.activeChunkCapacity, options.activeOverrideCapacity)
+            ? worldSessionCache(store, activeWorldCapacity=validatedOptions.activeWorldCapacity, activeChunkCapacity=validatedOptions.activeChunkCapacity, activeOverrideCapacity=validatedOptions.activeOverrideCapacity)
+            : worldSessionCache(store, content, validatedOptions.activeWorldCapacity, validatedOptions.activeChunkCapacity, validatedOptions.activeOverrideCapacity)
     )
     const queries = worldChunkQueries(sessions)
     const listeners: Map<number, (batch: readonly BlockChangeBatch) -> null> = Map()

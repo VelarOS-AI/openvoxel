@@ -6,6 +6,7 @@ import {ClientRenderState} from "./render-catalog.vel"
 export type ChunkMeshBatch:
     readonly pipelineKey: string
     readonly layer: BlockRenderLayer
+    readonly bankKey: string
     readonly materialKey: string
     readonly animationKey: string?
     readonly positions: Float32Buffer
@@ -22,7 +23,6 @@ export type ChunkMesh:
     readonly visibleBlocks: number
     readonly quadCount: number
     readonly byteSize: number
-    readonly checksum: number
 
 export const meshingWorkerOperations = {
     initialize: "initialize",

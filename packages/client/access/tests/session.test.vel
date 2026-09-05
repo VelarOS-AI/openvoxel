@@ -54,10 +54,9 @@ def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
     return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
 
 def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
-    const output: List<RealtimeBlockChange> = []
-    for change in batch.changes:
-        if change.changed: output.append(RealtimeBlockChange.from(change))
-    return output
+    return batch.changes
+        .filter(change => change.changed)
+        .map(change => RealtimeBlockChange.from(change))
 
 async def backendHarness() -> BackendHarness:
     const runtime = worldRuntime(memoryWorldStore())
@@ -129,8 +128,7 @@ async def backendHarness() -> BackendHarness:
             const pending = injectedEdit
             injectedEdit = null
             if pending != null: await runtime.editBlocks(worldId, [pending])
-            const output: List<RealtimeChunkDelta> = []
-            for delta in deltas: output.append(RealtimeChunkDelta.from(delta))
+            const output: List<RealtimeChunkDelta> = deltas.map(delta => RealtimeChunkDelta.from(delta))
             return {event: "chunks.synced", requestId, worldId, chunks: output}
 
         async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> BlockEditsAppliedEvent:

@@ -1,0 +1,163 @@
+import {Head, navigate} from "velar/web"
+import {Brand, Navigation} from "../components/app-chrome.vel"
+import {Icon, IconName} from "../icon.vel"
+import {actionGroupLook, actionRowLook, activeDotLook, appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, displayTitleLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, primaryButtonLook, secondaryButtonLook, settingsPanelLook, settingsRowLook, settingsValueLook, subtitleLook, topBarLook, worldInfoLook} from "../look.vel"
+import {WorldPreset} from "../worlds/saved-world.vel"
+import {loadSavedWorlds, touchWorld} from "../worlds/world-library.vel"
+import {presetName, worldCover} from "../worlds/world-presentation.vel"
+
+extern js`
+    let lastWheelAt = 0
+
+    export function wheelDirection(event) {
+        const now = performance.now()
+        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+        if (!Number.isFinite(delta) || Math.abs(delta) < 4 || now - lastWheelAt < 320) return 0
+        lastWheelAt = now
+        return delta > 0 ? 1 : -1
+    }
+`:
+    export def wheelDirection(event: Event) -> number
+
+export component WorldHomePage:
+    state worlds = loadSavedWorlds()
+    state selectedIndex = worlds.size > 0 ? worlds.size - 1 : 0
+    state settingsOpen = false
+
+    computed activeWorld = worlds.get(selectedIndex)
+
+    def selectWorld(index: number):
+        if index < 0 or index >= worlds.size: return
+        selectedIndex = index
+        settingsOpen = false
+
+    def moveSelection(direction: number):
+        if worlds.size <= 1: return
+        selectedIndex = (selectedIndex + direction + worlds.size) % worlds.size
+        settingsOpen = false
+
+    def previousWorld(): moveSelection(-1)
+
+    def nextWorld(): moveSelection(1)
+
+    def switchByWheel(event: Event):
+        const direction = wheelDirection(event)
+        if direction != 0: moveSelection(direction)
+
+    def toggleWorldSettings(): settingsOpen = not settingsOpen
+
+    def play():
+        const selected = activeWorld
+        if selected == null: return
+        touchWorld(selected)
+        navigate(f"/world/{selected.id}")
+
+    def createFirstWorld(): navigate("/worlds/new")
+
+    def openExistingWorld(): navigate("/worlds/open")
+
+    def worldHome() -> WebNode:
+        const selected = activeWorld
+        assert selected != null else "A selected world is required"
+        return <>
+            <button type="button" look={previousArrowLook} on:click={previousWorld} disabled={worlds.size <= 1} aria-label="Previous world" data-carousel-previous>
+                <Icon name={IconName.chevronLeft} />
+            </button>
+            <button type="button" look={nextArrowLook} on:click={nextWorld} disabled={worlds.size <= 1} aria-label="Next world" data-carousel-next>
+                <Icon name={IconName.chevronRight} />
+            </button>
+            <section look={homeContentLook} aria-label="Selected world" data-world-carousel>
+                <div look={worldInfoLook}>
+                    <h1 look={displayTitleLook} data-selected-world-name>{selected.name}</h1>
+                    <div look={metadataLook}>
+                        <span look={metadataItemLook}>
+                            <Icon name={IconName.earthAmericas} />
+                            {selected.mode}
+                        </span>
+                        <span look={metadataItemLook}>
+                            <Icon name={IconName.clock} />
+                            {selected.lastPlayed}
+                        </span>
+                    </div>
+                </div>
+                <div look={actionRowLook}>
+                    <div look={actionGroupLook}>
+                        <button type="button" look={primaryButtonLook} on:click={play} data-play-world>
+                            <Icon name={IconName.play} />
+                            Play
+                        </button>
+                        <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings} aria-expanded={settingsOpen} data-world-settings>
+                            <Icon name={IconName.gear} />
+                            World settings
+                        </button>
+                    </div>
+                    <div look={dotsLook} aria-label="Choose world" data-carousel-dots>
+                        {worlds.map((world, index) => <button
+                            type="button"
+                            look={index == selectedIndex ? activeDotLook : dotLook}
+                            on:pointerenter={() => selectWorld(index)}
+                            on:click={() => selectWorld(index)}
+                            aria-label={f"Show {world.name}"}
+                            aria-current={str(index == selectedIndex)}
+                            data-carousel-dot={world.id}
+                        ></button>)}
+                    </div>
+                </div>
+            </section>
+            {settingsOpen ? <aside look={settingsPanelLook} aria-label="World settings" data-world-settings-panel>
+                <div look={settingsRowLook}>
+                    <strong>{selected.name}</strong>
+                    <span look={settingsValueLook}>{selected.id}</span>
+                </div>
+                <div look={settingsRowLook}>
+                    <span>Seed</span>
+                    <span look={settingsValueLook}>{selected.seed}</span>
+                </div>
+                <div look={settingsRowLook}>
+                    <span>World preset</span>
+                    <span look={settingsValueLook}>{presetName(selected.preset)}</span>
+                </div>
+                <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings}>Close</button>
+            </aside> : <></>}
+        </>
+
+    def emptyHome() -> WebNode:
+        return <section look={emptyContentLook} data-empty-worlds>
+            <div look={worldInfoLook}>
+                <h1 look={displayTitleLook}>Create your first world</h1>
+                <p look={subtitleLook}>Shape a place that is entirely yours.</p>
+            </div>
+            <div look={emptyActionsLook}>
+                <button type="button" look={primaryButtonLook} on:click={createFirstWorld} data-create-first-world>
+                    <Icon name={IconName.plus} />
+                    Create world
+                </button>
+                <button type="button" look={secondaryButtonLook} on:click={openExistingWorld} data-open-existing-world>
+                    <Icon name={IconName.folderOpen} />
+                    Open existing world
+                </button>
+            </div>
+        </section>
+
+    return <div look={appShellLook} on:wheel.prevent={switchByWheel} data-app data-screen="world-home">
+        <Head
+            title="OpenVoxel"
+            description="Create, manage, and enter your OpenVoxel worlds"
+            themeColor="#06101f"
+            language="en"
+        />
+        <img
+            look={backgroundImageLook}
+            src={activeWorld == null ? worldCover(WorldPreset.meadow) : worldCover(activeWorld.preset)}
+            alt=""
+            aria-hidden={true}
+            data-world-background
+        />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand />
+            <Navigation showCreate={activeWorld != null} />
+        </header>
+        {activeWorld == null ? emptyHome() : worldHome()}
+    </div>

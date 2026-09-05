@@ -6,7 +6,7 @@ import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {chunkBlock} from "@openvoxel/world"
 import {BlockEdit, worldRuntime} from "@openvoxel/world-runtime"
-import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore} from "../src/adapters/sqlite-world-store.vel"
+import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore, validateSqliteWorldStoreOptions} from "../src/adapters/sqlite-world-store.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
@@ -28,6 +28,10 @@ def testDatabase(path: string) -> SqliteWorldStoreOptions:
         maxRows: 262144,
         maxResultBytes: 64 * 1024 * 1024,
     }
+
+test "SQLite adapter owns its connection limits":
+    const invalid = SqliteWorldStoreOptions.from(testDatabase("unused.sqlite"), {queueCapacity: 0})
+    expect(() => validateSqliteWorldStoreOptions(invalid)).toThrow()
 
 async def removeDatabase(path: string):
     const files = [path, f"{path}-wal", f"{path}-shm"]

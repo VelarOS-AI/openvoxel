@@ -1,25 +1,70 @@
-import {BlockPosition, ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
+import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
 import {UInt32Buffer, uint32Buffer} from "velar/binary"
 
 def paddedIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
 
-/// 快照只依赖调用方提供的方块读取端口；缺失邻居以当前内容目录的空气 runtimeId
-/// 填充。调用方在邻居载入时会让两侧 Chunk 同时失效，因此临时外露的边界面可以收敛。
+def chunkIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
+
+/// 构网快照只依赖 Chunk 的线性只读视图，不依赖客户端会话或存储实现。
+export type ClientChunkBlockView:
+    readonly position: readonly ChunkPosition
+    readonly edge: number
+    blockAtIndex: (index: number) -> number
+
+/// 网格只读取中心 Chunk 与六个相邻面。先解析七个 Chunk，再按线性索引复制，
+/// 避免为 18³ 快照中的每个方块重复做世界坐标定位和 Chunk Map 查询。
+/// 缺失邻居以当前内容目录的空气 runtimeId 填充；调用方在邻居载入时会让
+/// 两侧 Chunk 同时失效，因此临时外露的边界面可以收敛。
 export def snapshotChunkNeighborhood(
     position: readonly ChunkPosition,
     edge: number,
-    block: (position: readonly BlockPosition) -> number?,
+    chunk: (position: readonly ChunkPosition) -> readonly ClientChunkBlockView?,
     missingRuntimeId: number = 0,
 ) -> UInt32Buffer:
     requireChunkPosition(position)
     requireChunkEdge(edge)
     const paddedEdge = edge + 2
     const snapshot = uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
-    for y in range(paddedEdge):
-        const worldY = position.y * edge + y - 1
-        for z in range(paddedEdge):
-            const worldZ = position.z * edge + z - 1
-            for x in range(paddedEdge):
-                const worldX = position.x * edge + x - 1
-                snapshot[paddedIndex(x, y, z, paddedEdge)] = block({x: worldX, y: worldY, z: worldZ}) ?? missingRuntimeId
+    if missingRuntimeId != 0:
+        for index in range(snapshot.size): snapshot[index] = missingRuntimeId
+
+    def resolve(dx: number, dy: number, dz: number) -> readonly ClientChunkBlockView?:
+        const expected: ChunkPosition = {x: position.x + dx, y: position.y + dy, z: position.z + dz}
+        const value = chunk(expected)
+        if value != null:
+            assert value.edge == edge else "Chunk neighborhood changed edge"
+            assert value.position.x == expected.x and value.position.y == expected.y and value.position.z == expected.z else "Chunk neighborhood returned the wrong position"
+        return value
+
+    const center = resolve(0, 0, 0)
+    assert center != null else "Chunk neighborhood has no center Chunk"
+    for y in range(edge):
+        for z in range(edge):
+            for x in range(edge):
+                snapshot[paddedIndex(x + 1, y + 1, z + 1, paddedEdge)] = center.blockAtIndex(chunkIndex(x, y, z, edge))
+
+    const west = resolve(-1, 0, 0)
+    const east = resolve(1, 0, 0)
+    const below = resolve(0, -1, 0)
+    const above = resolve(0, 1, 0)
+    const north = resolve(0, 0, -1)
+    const south = resolve(0, 0, 1)
+    for y in range(edge):
+        for z in range(edge):
+            if west != null:
+                snapshot[paddedIndex(0, y + 1, z + 1, paddedEdge)] = west.blockAtIndex(chunkIndex(edge - 1, y, z, edge))
+            if east != null:
+                snapshot[paddedIndex(edge + 1, y + 1, z + 1, paddedEdge)] = east.blockAtIndex(chunkIndex(0, y, z, edge))
+    for z in range(edge):
+        for x in range(edge):
+            if below != null:
+                snapshot[paddedIndex(x + 1, 0, z + 1, paddedEdge)] = below.blockAtIndex(chunkIndex(x, edge - 1, z, edge))
+            if above != null:
+                snapshot[paddedIndex(x + 1, edge + 1, z + 1, paddedEdge)] = above.blockAtIndex(chunkIndex(x, 0, z, edge))
+    for y in range(edge):
+        for x in range(edge):
+            if north != null:
+                snapshot[paddedIndex(x + 1, y + 1, 0, paddedEdge)] = north.blockAtIndex(chunkIndex(x, y, edge - 1, edge))
+            if south != null:
+                snapshot[paddedIndex(x + 1, y + 1, edge + 1, paddedEdge)] = south.blockAtIndex(chunkIndex(x, y, 0, edge))
     return snapshot

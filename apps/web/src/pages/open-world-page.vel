@@ -1,0 +1,73 @@
+import {localBackend} from "@openvoxel/client"
+import {Head, navigate} from "velar/web"
+import {Brand} from "../components/app-chrome.vel"
+import {Icon, IconName} from "../icon.vel"
+import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, errorLook, fieldLook, formActionsLook, labelLook, openPanelLook, panelTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, topBarLook} from "../look.vel"
+import {SavedWorld, SavedWorldMode, WorldPreset} from "../worlds/saved-world.vel"
+import {rememberWorld} from "../worlds/world-library.vel"
+import {worldCover} from "../worlds/world-presentation.vel"
+
+export component OpenWorldPage:
+    const backend = localBackend()
+    state worldId = ""
+    state failure = ""
+
+    def cancel(): navigate("/")
+
+    action openWorld():
+        failure = ""
+        try:
+            const id = worldId.trim()
+            assert not id.isBlank() else "World identifier cannot be blank"
+            const found = await backend.findWorld(id)
+            const saved = SavedWorld.from(found, {
+                mode: SavedWorldMode.existing,
+                preset: WorldPreset.meadow,
+                lastPlayed: "Opened just now",
+            })
+            rememberWorld(saved)
+            navigate(f"/world/{found.id}")
+        catch error: failure = error.message
+
+    @cleanup: detach backend.close()
+
+    return <div look={appShellLook} data-app data-screen="open-world">
+        <Head
+            title="Open a world · OpenVoxel"
+            description="Open an existing OpenVoxel world"
+            themeColor="#06101f"
+            language="en"
+        />
+        <img look={backgroundImageLook} src={worldCover(WorldPreset.meadow)} alt="" aria-hidden={true} />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand back={true} />
+        </header>
+        <form look={openPanelLook} on:submit.prevent={openWorld} aria-busy={openWorld.pending} data-open-world-form>
+            <h1 look={panelTitleLook}>Open existing world</h1>
+            <p look={subtitleLook}>Enter the identifier of a world stored on this device.</p>
+            <label look={labelLook}>
+                World identifier
+                <input
+                    look={fieldLook}
+                    name="worldId"
+                    bind:value={worldId}
+                    maxlength="64"
+                    disabled={openWorld.pending}
+                    autofocus={true}
+                    data-open-world-id
+                />
+            </label>
+            {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
+            <div look={formActionsLook}>
+                <button type="submit" look={primaryButtonLook} disabled={openWorld.pending} data-open-world>
+                    {openWorld.pending ? "Opening…" : "Open world"}
+                    <Icon name={IconName.arrowRight} />
+                </button>
+                <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={openWorld.pending}>
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>

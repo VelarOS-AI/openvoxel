@@ -93,6 +93,14 @@ def requireGeneratorPaletteBindings(generators: readonly List<readonly WorldGene
         for mineral in generator.minerals:
             assert mineral.key in materialKeys else f"World generator {generator.key} mineral {mineral.key} has no material binding in palette {palette.key}"
 
+def generatorDefinition(sourceText: string, identityTree: readonly Record<unknown>) -> WorldGeneratorDefinition:
+    const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
+    return validateWorldGeneratorDefinition(WorldGeneratorDefinition.parse(resolution.value))
+
+def paletteDefinition(sourceText: string, identityTree: readonly Record<unknown>) -> WorldGeneratorPaletteDefinition:
+    const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
+    return validateWorldGeneratorPaletteDefinition(WorldGeneratorPaletteDefinition.parse(resolution.value))
+
 /// 把一组 YAML 文本解析成运行时目录。打点身份在这里一次性解析，生成产物中
 /// 保存的已经是真实 key，运行时不会再做字符串路径转换。
 export def compileWorldGeneratorCatalog(
@@ -105,14 +113,8 @@ export def compileWorldGeneratorCatalog(
     assert manifest.formatVersion == 2 else "Unsupported world generator catalog format version"
     assert manifest.generatorSources.size == generatorSourceTexts.size else "World generator source count does not match its manifest"
     assert manifest.paletteSources.size == paletteSourceTexts.size else "World generator palette source count does not match its manifest"
-    const generators: List<WorldGeneratorDefinition> = []
-    for sourceText in generatorSourceTexts:
-        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
-        generators.append(validateWorldGeneratorDefinition(WorldGeneratorDefinition.parse(resolution.value)))
-    const palettes: List<WorldGeneratorPaletteDefinition> = []
-    for sourceText in paletteSourceTexts:
-        const resolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(sourceText), identityTree))
-        palettes.append(validateWorldGeneratorPaletteDefinition(WorldGeneratorPaletteDefinition.parse(resolution.value)))
+    const generators = generatorSourceTexts.map(sourceText => generatorDefinition(sourceText, identityTree))
+    const palettes = paletteSourceTexts.map(sourceText => paletteDefinition(sourceText, identityTree))
     requireUniqueGenerators(generators)
     requireUniquePalettes(palettes)
     requireGeneratorPaletteBindings(generators, palettes)

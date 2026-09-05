@@ -1,0 +1,14 @@
+import {storage} from "velar/storage"
+import {SavedWorld, SavedWorlds} from "./saved-world.vel"
+
+const savedWorldsKey = "openvoxel.worlds.v1"
+
+export def loadSavedWorlds() -> SavedWorlds: return storage.get(savedWorldsKey, SavedWorlds, [])
+
+export def rememberWorld(world: readonly SavedWorld):
+    const worlds = loadSavedWorlds().filter(candidate => candidate.id != world.id)
+    worlds.append(world)
+    storage.set(savedWorldsKey, worlds)
+
+export def touchWorld(world: readonly SavedWorld):
+    rememberWorld(SavedWorld.from(world, {lastPlayed: "Played just now"}))

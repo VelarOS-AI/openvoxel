@@ -47,8 +47,7 @@ def treeBlocks(profile: readonly WorldGeneratorDefinition, blocks: readonly Surv
     return null
 
 def treeFeature(owner: string, ground: Coordinate3, height: number, logBlock: number, leavesBlock: number) -> CompiledFeaturePlan:
-    const writes: List<FeatureWrite> = []
-    for offset in range(height): writes.append({x: 0, y: 1 + offset, z: 0, runtimeId: logBlock})
+    const writes: List<FeatureWrite> = range(height).map(offset => {x: 0, y: 1 + offset, z: 0, runtimeId: logBlock})
     const crownY = height
     for dy in range(-2, 2):
         const radius = dy >= 1 ? 1 : 2
@@ -59,8 +58,7 @@ def treeFeature(owner: string, ground: Coordinate3, height: number, logBlock: nu
     return compiledFeaturePlan(owner, ground, owner, writes)
 
 def cactusFeature(owner: string, ground: Coordinate3, height: number, block: number) -> CompiledFeaturePlan:
-    const writes: List<FeatureWrite> = []
-    for offset in range(1, height + 1): writes.append({x: 0, y: offset, z: 0, runtimeId: block})
+    const writes: List<FeatureWrite> = range(1, height + 1).map(offset => {x: 0, y: offset, z: 0, runtimeId: block})
     return compiledFeaturePlan(owner, ground, owner, writes)
 
 def singleBlockFeature(owner: string, position: Coordinate3, block: number) -> CompiledFeaturePlan:

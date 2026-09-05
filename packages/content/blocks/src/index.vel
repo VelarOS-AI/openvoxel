@@ -5,7 +5,8 @@ export {BlockCatalogArtifact, BlockCatalogContribution, BlockCatalogManifest, Bl
 /// 编译层：规范状态键、方块语义验证和有限状态目录编译。
 export {canonicalStateKey} from "./compiler/state-key.vel"
 export {validateBlockType} from "./compiler/block-validation.vel"
-export {BlockStatePrototype, compileBuiltinBlockCatalog, compileModBlockCatalog, compileModBlockCatalogContribution, enumerateBlockStates} from "./compiler/catalog-compiler.vel"
+export {BlockStatePrototype, enumerateBlockStates} from "./compiler/state-expansion.vel"
+export {compileBuiltinBlockCatalog, compileModBlockCatalog, compileModBlockCatalogContribution} from "./compiler/catalog-compiler.vel"
 export {packBlockCatalog, unpackBlockCatalog} from "./compiler/catalog-packing.vel"
 
 /// 运行时层：基础目录索引、每世界注册表和渲染资源查询。

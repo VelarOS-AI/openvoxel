@@ -1,0 +1,25 @@
+export enum SavedWorldMode:
+    survival = "Survival"
+    creative = "Creative"
+    existing = "Existing world"
+
+export enum WorldPreset:
+    meadow = "meadow"
+    coast = "coast"
+    highlands = "highlands"
+    quietShore = "quiet-shore"
+
+export type SavedWorld:
+    readonly id: string
+    readonly name: string
+    readonly seed: string
+    readonly mode: SavedWorldMode
+    readonly preset: WorldPreset
+    readonly lastPlayed: string
+
+export type SavedWorlds = List<readonly SavedWorld>
+
+export def worldIdFromName(name: string) -> string:
+    const slug = Text.slug(name).slice(0, 44)
+    const prefix = slug.isBlank() ? "world" : slug
+    return f"{prefix}-{Math.randomInt(1_000_000)}"

@@ -12,9 +12,7 @@ export def terrainChunkResponse(chunk: Chunk) -> TerrainChunkResponse:
 
 /// 保持世界运行时返回的 Chunk 顺序，不在传输层重新排序或二次查询。
 export def terrainChunkBatchResponse(worldId: string, chunks: List<Chunk>) -> TerrainChunkBatchResponse:
-    const responses: List<TerrainChunkResponse> = []
-    for chunk in chunks: responses.append(terrainChunkResponse(chunk))
-    return {worldId, chunks: responses}
+    return {worldId, chunks: chunks.map(chunk => terrainChunkResponse(chunk))}
 
 /// 只复制协议公开的 TerrainSample 字段，并补上这次查询所属的世界身份。
 export def generationSampleResponse(worldId: string, sample: TerrainSample) -> GenerationSampleResponse:

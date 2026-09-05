@@ -5,10 +5,17 @@ import {builtinIdentities} from "@openvoxel/identities"
 import {WorldGeneratorCatalogContribution, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog, worldGeneratorDefinitionHash} from "@openvoxel/world-generation"
 import {BlockPosition, ChunkPosition, WorldContentIdentity, WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
-import {BlockChange, BlockChangeBatch, BlockOverrideWrite, ChunkDeltaCommit, WorldAlreadyExistsError, WorldRuntime, WorldStore, activeWorldState, worldRuntime} from "../src/index.vel"
+import {BlockChange, BlockChangeBatch, BlockOverrideWrite, ChunkDeltaCommit, WorldAlreadyExistsError, WorldRuntime, WorldStore, activeWorldState, validateWorldRuntimeOptions, worldRuntime} from "../src/index.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+
+test "world runtime owns its capacity constraints":
+    expect(() => validateWorldRuntimeOptions({
+        activeWorldCapacity: 0,
+        activeChunkCapacity: 2048,
+        activeOverrideCapacity: 262144,
+    })).toThrow()
 
 async def editOne(runtime: WorldRuntime, worldId: string, position: BlockPosition, blockStateRuntimeId: number) -> readonly BlockChange:
     return (await runtime.editBlocks(worldId, [{position, blockStateRuntimeId}])).changes[0]

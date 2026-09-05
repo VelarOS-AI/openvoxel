@@ -1,11 +1,17 @@
 import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
-import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceAtlas, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
+import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTextureVariant, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
+
+export type ClientRenderTexture:
+    readonly key: string
+    readonly bankKey: string
+    readonly variants: readonly List<readonly ClientTextureVariant>
+    readonly totalWeight: number
 
 export type ClientResolvedBlockTextures:
-    readonly top: readonly ClientTextureResource
-    readonly bottom: readonly ClientTextureResource
-    readonly side: readonly ClientTextureResource
+    readonly top: readonly ClientRenderTexture
+    readonly bottom: readonly ClientRenderTexture
+    readonly side: readonly ClientRenderTexture
 
 /// Worker 消费的完整渲染状态。每项由网络状态目录和客户端资源包联结得到；模型、
 /// 材质和纹理仍保留逻辑身份，runtimeId 只作为查表入口。
@@ -15,6 +21,8 @@ export type ClientRenderState:
     readonly model: ClientBlockModelKind?
     readonly layer: BlockRenderLayer?
     readonly materialKey: string?
+    readonly bankKey: string?
+    readonly pipelineKey: string?
     readonly textures: readonly ClientResolvedBlockTextures?
     readonly tintKey: string?
     readonly tintRed: number
@@ -32,7 +40,7 @@ export type ClientRenderState:
 export type ClientRenderCatalog:
     readonly resourceHash: string
     readonly targetContentHash: string
-    readonly atlas: readonly ClientResourceAtlas
+    readonly textureBanks: readonly List<readonly ClientTextureBank>
     readonly environment: readonly ClientResourceEnvironment
     readonly materials: readonly List<readonly ClientMaterialResource>
     readonly textures: readonly List<readonly ClientTextureResource>
@@ -55,7 +63,7 @@ def requireCoverage(required: readonly List<string>, available: Set<string>, lab
 
 def resolvedTextures(
     profile: readonly BlockComponentProfile,
-    textures: Map<string, readonly ClientTextureResource>,
+    textures: Map<string, readonly ClientRenderTexture>,
 ) -> readonly ClientResolvedBlockTextures?:
     const declared = profile.render.textures
     if declared == null: return null
@@ -82,7 +90,9 @@ export def createClientRenderCatalog(
 
     const models: Map<string, readonly ClientModelResource> = Map()
     const materials: Map<string, readonly ClientMaterialResource> = Map()
+    const textureBanks: Map<string, readonly ClientTextureBank> = Map()
     const textures: Map<string, readonly ClientTextureResource> = Map()
+    const renderTextures: Map<string, readonly ClientRenderTexture> = Map()
     const tints: Map<string, readonly ClientTintResource> = Map()
     const animations: Map<string, readonly ClientAnimationResource> = Map()
     for value in pack.models:
@@ -91,9 +101,18 @@ export def createClientRenderCatalog(
     for value in pack.materials:
         assert not materials.has(value.key) else f"Client resources repeat material {value.key}"
         materials.set(value.key, value)
+    for value in pack.textureBanks:
+        assert not textureBanks.has(value.key) else f"Client resources repeat texture bank {value.key}"
+        textureBanks.set(value.key, value)
     for value in pack.textures:
         assert not textures.has(value.key) else f"Client resources repeat texture {value.key}"
         textures.set(value.key, value)
+        renderTextures.set(value.key, {
+            key: value.key,
+            bankKey: value.bankKey,
+            variants: value.variants,
+            totalWeight: value.variants.reduce((total, variant) => total + variant.weight, 0),
+        })
     for value in pack.tints:
         assert not tints.has(value.key) else f"Client resources repeat tint {value.key}"
         tints.set(value.key, value)
@@ -123,6 +142,7 @@ export def createClientRenderCatalog(
         const materialKey = profile.render.material
         if materialKey != null:
             assert materials.has(materialKey) else f"Client resource pack does not provide material {materialKey}"
+        const layer = profile.render.layer
         const tintKey = profile.render.tint
         const tint = tintKey == null ? null : tints.get(tintKey)
         if tintKey != null: assert tint != null else f"Client resource pack does not provide tint {tintKey}"
@@ -131,18 +151,37 @@ export def createClientRenderCatalog(
         if animationKey != null:
             assert animation != null else f"Client resource pack does not provide animation {animationKey}"
 
-        const stateTextures = resolvedTextures(profile, textures)
+        const stateTextures = resolvedTextures(profile, renderTextures)
+        let bankKey: string? = null
+        if stateTextures != null:
+            assert stateTextures.top.bankKey == stateTextures.bottom.bankKey and stateTextures.top.bankKey == stateTextures.side.bankKey else f"Rendered state {state.stateKey} uses textures from multiple banks"
+            bankKey = stateTextures.top.bankKey
+            const textureBank = textureBanks.get(bankKey)
+            assert textureBank != null else f"Rendered state {state.stateKey} references unknown texture bank {bankKey}"
+            assert layer != null else f"Rendered state {state.stateKey} with textures has no render layer"
+            if modelResource?.kind == ClientBlockModelKind.fluid:
+                assert layer == BlockRenderLayer.translucent else f"Fluid state {state.stateKey} must use the translucent render layer"
+                assert textureBank.role == ClientTextureBankRole.fluid else f"Fluid state {state.stateKey} must use a fluid texture bank"
+            else if layer == BlockRenderLayer.opaque:
+                assert textureBank.role == ClientTextureBankRole.opaque else f"Opaque state {state.stateKey} must use an opaque texture bank"
+            else if layer == BlockRenderLayer.cutout:
+                assert textureBank.role == ClientTextureBankRole.cutout else f"Cutout state {state.stateKey} must use a cutout texture bank"
+            else:
+                assert textureBank.role == ClientTextureBankRole.translucent else f"Translucent state {state.stateKey} must use a translucent texture bank"
         if animation != null:
             assert stateTextures != null else f"Animated state {state.stateKey} has no textures"
             const firstFrame = animation.frames[0]
             assert stateTextures.top.key == firstFrame and stateTextures.bottom.key == firstFrame and stateTextures.side.key == firstFrame else f"Animated state {state.stateKey} must use its first animation frame on every face"
+        const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
 
         const resolved: ClientRenderState = {
             runtimeId: state.runtimeId,
             modelKey,
             model: modelResource?.kind,
-            layer: profile.render.layer,
+            layer,
             materialKey,
+            bankKey,
+            pipelineKey,
             textures: stateTextures,
             tintKey,
             tintRed: tint?.red ?? 1,

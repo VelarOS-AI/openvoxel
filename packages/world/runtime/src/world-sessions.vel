@@ -279,10 +279,7 @@ export def worldSessionCache(
         const currentTrim = trimming
         if currentTrim != null: await currentTrim
         assert references.size == 0 else "World session cache cannot close while worlds are still in use"
-        const closures: List<Promise<null>> = []
-        for worldId in loaded:
-            const world = loaded.get(worldId)
-            if world != null: closures.append(world.state.close())
+        const closures = loaded.values().map(world => world.state.close())
         await Promise.all(closures)
         loaded.clear()
         loading.clear()

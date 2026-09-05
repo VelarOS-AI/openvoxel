@@ -197,23 +197,24 @@ export def createWorldBlockRegistry(
     for mapping in mappings: runtimeIdByStateKey.set(mapping.stateKey, mapping.runtimeId)
 
     // 第六步：把世界映射中的最终 ID 投影回当前活动状态和方块定义。
-    const activeStates: List<BlockStateDefinition> = []
-    for stateKey in activeStateKeys.values().sorted():
+    def activeState(stateKey: string) -> BlockStateDefinition:
         const state = statesByKey.get(stateKey)
         const runtimeId = runtimeIdByStateKey.get(stateKey)
         assert state != null and runtimeId != null else f"Active block state {stateKey} is missing its world mapping"
         const mutableState = BlockStateDefinition.parse(state)
-        activeStates.append(BlockStateDefinition.from(mutableState, {runtimeId}))
+        return BlockStateDefinition.from(mutableState, {runtimeId})
 
-    const activeBlocks: List<BlockDefinition> = []
-    for blockKey in blocksByKey.keys().sorted():
+    def activeBlock(blockKey: string) -> BlockDefinition:
         const block = blocksByKey.get(blockKey)
         assert block != null else f"Missing block type {blockKey}"
         const defaultStateKey = canonicalStateKey(block.key, block.defaultState)
         const defaultStateRuntimeId = runtimeIdByStateKey.get(defaultStateKey)
         assert defaultStateRuntimeId != null else f"Block {block.key} default state is missing its world mapping"
         const mutableBlock = BlockDefinition.parse(block)
-        activeBlocks.append(BlockDefinition.from(mutableBlock, {defaultStateRuntimeId}))
+        return BlockDefinition.from(mutableBlock, {defaultStateRuntimeId})
+
+    const activeStates = activeStateKeys.values().sorted().map(stateKey => activeState(stateKey))
+    const activeBlocks = blocksByKey.keys().sorted().map(blockKey => activeBlock(blockKey))
 
     // 第七步：生成完整快照和当前可用运行时目录。
     const snapshot: WorldBlockRegistrySnapshot = {

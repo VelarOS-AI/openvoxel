@@ -57,10 +57,9 @@ def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
     return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
 
 def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
-    const output: List<RealtimeBlockChange> = []
-    for change in batch.changes:
-        if change.changed: output.append(RealtimeBlockChange.from(change))
-    return output
+    return batch.changes
+        .filter(change => change.changed)
+        .map(change => RealtimeBlockChange.from(change))
 
 def runtime() -> WorldRuntime:
     const current = activeRuntime

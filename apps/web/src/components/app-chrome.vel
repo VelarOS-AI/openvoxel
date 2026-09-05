@@ -1,0 +1,34 @@
+import {Link, navigate} from "velar/web"
+import {Icon, IconName} from "../icon.vel"
+import {brandIconLook, brandLook, brandNameLook, navButtonLook, navLabelLook, navLook} from "../look.vel"
+
+export component Brand(back: bool = false):
+    def home(): navigate("/")
+
+    return <div look={brandLook}>
+        {back ? <button type="button" look={navButtonLook} on:click={home} aria-label="Back to worlds" data-back-home>
+            <Icon name={IconName.chevronLeft} />
+        </button> : <></>}
+        <Link to="/" look={brandLook}>
+            <Icon name={IconName.cube} look={brandIconLook} />
+            <span look={brandNameLook}>OpenVoxel</span>
+        </Link>
+    </div>
+
+export component Navigation(showCreate: bool = true):
+    def create(): navigate("/worlds/new")
+
+    return <nav look={navLook} aria-label="Application">
+        {showCreate ? <button type="button" look={navButtonLook} on:click={create} data-new-world>
+            <Icon name={IconName.squarePlus} />
+            <span look={navLabelLook}>New world</span>
+        </button> : <></>}
+        <button type="button" look={navButtonLook} title="Settings">
+            <Icon name={IconName.gear} />
+            <span look={navLabelLook}>Settings</span>
+        </button>
+        <button type="button" look={navButtonLook} title="Help">
+            <Icon name={IconName.circleQuestion} />
+            <span look={navLabelLook}>Help</span>
+        </button>
+    </nav>

@@ -1,0 +1,43 @@
+import {ChunkPosition, WorldManifest, chunkCoordinate, locateBlock} from "@openvoxel/world"
+
+const initialHorizontalChunkRadius = 1
+const verticalRenderChunkRadius = 2
+
+export const horizontalRenderChunkRadius = 3
+
+/// 首屏先加载出生点附近的小窗口，避免首次进入世界被完整流送窗口阻塞。
+export def initialRenderChunkPositions(
+    manifest: readonly WorldManifest,
+    minimumWorldY: number,
+    maximumWorldY: number,
+) -> List<readonly ChunkPosition>:
+    const center = locateBlock(manifest.spawn, manifest.chunkEdge).chunk
+    const minimumChunkY = chunkCoordinate(minimumWorldY, manifest.chunkEdge)
+    const maximumChunkY = chunkCoordinate(maximumWorldY, manifest.chunkEdge)
+    const positions: List<readonly ChunkPosition> = []
+    for dy in range(-1, 2):
+        const y = center.y + dy
+        if y < minimumChunkY or y > maximumChunkY: continue
+        for dz in range(-initialHorizontalChunkRadius, initialHorizontalChunkRadius + 1):
+            for dx in range(-initialHorizontalChunkRadius, initialHorizontalChunkRadius + 1):
+                positions.append({x: center.x + dx, y, z: center.z + dz})
+    return positions
+
+/// 按离视点的环形距离返回完整流送窗口，近处 Chunk 总是先于远处 Chunk。
+export def streamedChunkPositions(
+    centerX: number,
+    centerY: number,
+    centerZ: number,
+    minimumChunkY: number,
+    maximumChunkY: number,
+) -> List<readonly ChunkPosition>:
+    const positions: List<readonly ChunkPosition> = []
+    for ring in range(horizontalRenderChunkRadius + 1):
+        for dz in range(-ring, ring + 1):
+            for dx in range(-ring, ring + 1):
+                if Math.max(dx.abs(), dz.abs()) != ring: continue
+                for dy in range(-verticalRenderChunkRadius, verticalRenderChunkRadius + 1):
+                    const y = centerY + dy
+                    if y >= minimumChunkY and y <= maximumChunkY:
+                        positions.append({x: centerX + dx, y, z: centerZ + dz})
+    return positions

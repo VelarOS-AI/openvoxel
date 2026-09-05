@@ -1,7 +1,8 @@
 import {expect} from "velar/test"
 import {resolve} from "velar/path"
 import {applicationConfigurationPath} from "velar/server"
-import {OpenVoxelConfiguration, ServerConfiguration, ServerLimitsConfiguration, loadOpenVoxelConfiguration, openVoxelConfigurationPath, resolveServerPath, serverApplicationRoot, serverOptions, validateOpenVoxelConfiguration, withResolvedRuntimePaths} from "../src/config.vel"
+import {OpenVoxelConfiguration, ServerConfiguration, ServerLimitsConfiguration, loadOpenVoxelConfiguration, openVoxelConfigurationPath, resolveServerPath, serverApplicationRoot, serverOptions, withResolvedRuntimePaths} from "../src/config.vel"
+import {validateOpenVoxelServerOptions} from "../src/application.vel"
 
 test "server YAML configuration owns network and database settings":
     const configuration = await loadOpenVoxelConfiguration()
@@ -26,9 +27,9 @@ test "server YAML configuration owns network and database settings":
     expect(options.maxConcurrentRequests).toBe(256)
     expect(options.realtimeDrainMilliseconds).toBe(5000)
 
-test "configuration validation rejects all limits before resources are opened":
+test "the server option owner rejects invalid limits before resources are opened":
     const configuration = await loadOpenVoxelConfiguration()
     const invalidLimits = ServerLimitsConfiguration.from(configuration.server.limits, {concurrentRequests: 0})
     const invalidServer = ServerConfiguration.from(configuration.server, {limits: invalidLimits})
     const invalid = OpenVoxelConfiguration.from(configuration, {server: invalidServer})
-    expect(() => validateOpenVoxelConfiguration(invalid)).toThrow()
+    expect(() => validateOpenVoxelServerOptions(serverOptions(invalid))).toThrow()

@@ -5,7 +5,7 @@ import {expect} from "velar/test"
 import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
 import {meshChunk} from "../src/mesher.vel"
 import {createClientRenderCatalog} from "../src/render-catalog.vel"
-import {ClientBlockModelKind, ClientResourcePackArtifact} from "../src/resource-pack.vel"
+import {ClientBlockModelKind, ClientResourcePackArtifact, ClientTextureBankRole, ClientTextureBankStorage} from "../src/resource-pack.vel"
 
 def contentResponse() -> WorldContentResponse:
     return {
@@ -58,13 +58,35 @@ test "resource packs fail before rendering when their target content build diffe
     })
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
-test "cutout plants keep lighting but do not cast atlas-quad shadows":
+test "built-in resources expose role-scoped generated texture banks":
+    expect(builtinClientResourcePack.artifactVersion).toBe(4)
+    expect(builtinClientResourcePack.formatVersion).toBe(4)
+    expect(builtinClientResourcePack.textureBanks.size).toBe(4)
+    const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
+    expect(ClientTextureBankRole.opaque in roles).toBe(true)
+    expect(ClientTextureBankRole.cutout in roles).toBe(true)
+    expect(ClientTextureBankRole.translucent in roles).toBe(true)
+    expect(ClientTextureBankRole.fluid in roles).toBe(true)
+    const bankKeys = Set(builtinClientResourcePack.textureBanks.map(bank => bank.key))
+    for bank in builtinClientResourcePack.textureBanks:
+        expect(bank.storage).toBe(ClientTextureBankStorage.atlas)
+        expect(bank.mipmaps).toBe(true)
+    for texture in builtinClientResourcePack.textures: expect(texture.bankKey in bankKeys).toBe(true)
+
+test "material families preserve lighting, shadow, and PBR response semantics":
     const cross = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/cross")
     const terrain = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/terrain")
-    assert cross != null and terrain != null else "Expected built-in cross and terrain materials"
+    const water = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/water")
+    const magma = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/magma")
+    assert cross != null and terrain != null and water != null and magma != null else "Expected built-in PBR material families"
     expect(cross.unlit).toBe(false)
     expect(terrain.unlit).toBe(false)
-    expect(cross.specular < terrain.specular).toBe(true)
-    expect(cross.roughness < terrain.roughness).toBe(true)
+    expect(water.unlit).toBe(false)
+    expect(magma.unlit).toBe(false)
+    expect(water.environmentIntensity > terrain.environmentIntensity).toBe(true)
+    expect(water.clearCoat > terrain.clearCoat).toBe(true)
+    expect(water.clearCoatRoughness < magma.clearCoatRoughness).toBe(true)
     expect(cross.castsShadows).toBe(false)
     expect(terrain.castsShadows).toBe(true)
+    expect(water.castsShadows).toBe(false)
+    expect(magma.castsShadows).toBe(false)

@@ -1,6 +1,6 @@
 import css unsafe "./styles/fonts.css" before look
 
-import {Color, Look, alpha, border, linearGradient, minmax, repeat, rgb, shadow, spacing, tracks, transition} from "velar/look"
+import {Color, Look, alpha, blur, border, brightness, dropShadow, linearGradient, minmax, repeat, rgb, rgba, shadow, spacing, tracks, transition} from "velar/look"
 
 const white: Color = rgb(247, 250, 255)
 const ink: Color = rgb(6, 15, 29)
@@ -69,7 +69,7 @@ export const brandIconLook: Look = look:
     width = 40px
     textAlign = "center"
     fontSize = 2rem
-    filter = "drop-shadow(0 3px 10px rgba(0, 0, 0, 0.3))"
+    filter = dropShadow(0px, 3px, 10px, rgba(0, 0, 0, 0.3))
 
 export const brandNameLook: Look = look:
     fontFamily = "Rajdhani, Inter, sans-serif"
@@ -128,7 +128,7 @@ export const carouselArrowLook: Look = look:
     border = border(1px, alpha(white, 0.2))
     borderRadius = 18px
     boxShadow = shadow(0px, 14px, 34px, alpha(ink, 0.3))
-    backdropFilter = "blur(18px)"
+    backdropFilter = blur(18px)
     fontSize = 1.65rem
     cursor = "pointer"
     translate = 0px - 50%
@@ -258,7 +258,7 @@ export const primaryButtonLook: Look = look:
     transition = transition("filter", 160ms, "ease-out")
 
     if @hover:
-        filter = "brightness(1.09)"
+        filter = brightness(1.09)
     if @focus:
         outline = border(2px, white)
         outlineOffset = 3px
@@ -376,7 +376,7 @@ export const presetLook: Look = look:
     border = border(1px, alpha(white, 0.18))
     borderRadius = 15px
     boxShadow = shadow(0px, 12px, 28px, alpha(ink, 0.24))
-    backdropFilter = "blur(16px)"
+    backdropFilter = blur(16px)
     textAlign = "start"
     cursor = "pointer"
 
@@ -420,7 +420,7 @@ export const formPanelLook: Look = look:
     border = border(1px, alpha(white, 0.2))
     borderRadius = 24px
     boxShadow = shadow(0px, 30px, 70px, alpha(ink, 0.44))
-    backdropFilter = "blur(26px)"
+    backdropFilter = blur(26px)
 
     if viewport.width <= 980px:
         padding = 22px
@@ -524,7 +524,7 @@ export const settingsPanelLook: Look = look:
     border = border(1px, alpha(white, 0.2))
     borderRadius = 18px
     boxShadow = shadow(0px, 24px, 64px, alpha(ink, 0.52))
-    backdropFilter = "blur(24px)"
+    backdropFilter = blur(24px)
 
 export const settingsRowLook: Look = look:
     display = "grid"
@@ -589,7 +589,7 @@ export const openPanelLook: Look = look:
     border = border(1px, alpha(white, 0.2))
     borderRadius = 22px
     boxShadow = shadow(0px, 30px, 80px, alpha(ink, 0.5))
-    backdropFilter = "blur(26px)"
+    backdropFilter = blur(26px)
 
 export const panelTitleLook: Look = look:
     margin = 0

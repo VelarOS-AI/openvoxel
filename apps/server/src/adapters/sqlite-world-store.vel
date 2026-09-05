@@ -4,6 +4,7 @@ import {SqliteConnection, SqliteJournalMode, SqliteTransaction, openSqlite, sqli
 import {WorldBlockRegistrySnapshot, requireBlockStateRuntimeId} from "@openvoxel/blocks"
 import {ChunkPosition, WorldContentIdentity, WorldManifest, chunkKey, validateWorldManifest} from "@openvoxel/world"
 import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
+import {all as validationRules, field, integer, nonBlank, validator} from "velar/validation"
 
 type WorldRow:
     id: string
@@ -50,6 +51,17 @@ export type SqliteWorldStoreOptions:
     queueCapacity: number
     maxRows: number
     maxResultBytes: number
+
+const SqliteWorldStoreOptionsValidator = validator(SqliteWorldStoreOptions, validationRules([
+    field("path", (options: SqliteWorldStoreOptions) => options.path, nonBlank()),
+    field("busyTimeoutMilliseconds", (options: SqliteWorldStoreOptions) => options.busyTimeoutMilliseconds, integer(minimum=1, maximum=60000)),
+    field("queueCapacity", (options: SqliteWorldStoreOptions) => options.queueCapacity, integer(minimum=1, maximum=1024)),
+    field("maxRows", (options: SqliteWorldStoreOptions) => options.maxRows, integer(minimum=1, maximum=1000000)),
+    field("maxResultBytes", (options: SqliteWorldStoreOptions) => options.maxResultBytes, integer(minimum=1, maximum=134217728)),
+]))
+
+export def validateSqliteWorldStoreOptions(options: SqliteWorldStoreOptions) -> SqliteWorldStoreOptions:
+    return SqliteWorldStoreOptionsValidator.validate(options)
 
 export const sqliteSchemaVersion = 5
 const worldsTable = sqlTable("worlds")
@@ -159,7 +171,8 @@ async def initialize(database: SqliteConnection):
     await database.transaction(initializeTransaction)
 
 export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> WorldStore:
-    const database = await openDatabase(configuration)
+    const validatedConfiguration = validateSqliteWorldStoreOptions(configuration)
+    const database = await openDatabase(validatedConfiguration)
     try: await initialize(database)
     catch error:
         await database.close()
@@ -248,9 +261,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
                     position: {x: row.localX, y: row.localY, z: row.localZ},
                     blockStateRuntimeId: row.blockStateRuntimeId,
                 })
-        const output: List<ChunkDelta> = []
-        for delta in deltas: output.append(ChunkDelta.from(delta))
-        return output
+        return deltas.map(delta => ChunkDelta.from(delta))
 
     async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
         if commits.size == 0: return

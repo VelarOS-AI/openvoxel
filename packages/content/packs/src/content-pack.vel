@@ -85,20 +85,24 @@ export def createContentCatalog(
         assert artifact != null else f"Required content pack {owner} is not installed"
         return artifact
 
+    def blocksFrom(artifact: readonly ContentPackArtifact) -> List<readonly BlockCatalogContribution>:
+        const blocks = artifact.blocks
+        return blocks == null ? [] : [blocks]
+
+    def worldGenerationFrom(artifact: readonly ContentPackArtifact) -> List<readonly WorldGeneratorCatalogContribution>:
+        const worldGeneration = artifact.worldGeneration
+        return worldGeneration == null ? [] : [worldGeneration]
+
     def select(owners: readonly List<string>) -> readonly WorldContentSet:
         const unique: Set<string> = Set()
         for owner in owners:
             requireOwner(owner)
             assert not (owner in unique) else f"Content selection repeats pack {owner}"
             unique.add(owner)
-        const references: List<WorldContentPackReference> = []
-        const blockContributions: List<readonly BlockCatalogContribution> = []
-        const generatorContributions: List<readonly WorldGeneratorCatalogContribution> = []
-        for owner in unique.values().sorted():
-            const artifact = requirePack(owner)
-            references.append({owner, contentHash: artifact.contentHash})
-            if artifact.blocks != null: blockContributions.append(artifact.blocks)
-            if artifact.worldGeneration != null: generatorContributions.append(artifact.worldGeneration)
+        const selected = unique.values().sorted().map(owner => requirePack(owner))
+        const references = selected.map(artifact => WorldContentPackReference.from(artifact))
+        const blockContributions = selected.flatMap(artifact => blocksFrom(artifact))
+        const generatorContributions = selected.flatMap(artifact => worldGenerationFrom(artifact))
         const identity: WorldContentIdentity = {
             contentHash: worldContentHash(references),
             packs: references,

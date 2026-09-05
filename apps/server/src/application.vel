@@ -1,5 +1,6 @@
 import {WorldRuntime} from "@openvoxel/world-runtime"
 import {Cancellation, Task, task} from "velar/task"
+import {all, each, field, integer, nonBlank, refine, validator} from "velar/validation"
 import {provide} from "velar/serve"
 import {WorldLiveState, worldLiveState} from "./world-live-state.vel"
 import {encodeWorldBlockChanges} from "./presentation/realtime.vel"
@@ -18,6 +19,26 @@ export type OpenVoxelServerOptions:
     maxConcurrentRequests: number
     realtimeDrainMilliseconds: number
 
+const OpenVoxelServerOptionsValidator = validator(OpenVoxelServerOptions, all([
+    field("host", (options: OpenVoxelServerOptions) => options.host, nonBlank(maximum=255)),
+    field("port", (options: OpenVoxelServerOptions) => options.port, integer(minimum=0, maximum=65535)),
+    field("bodyLimit", (options: OpenVoxelServerOptions) => options.bodyLimit, integer(minimum=1, maximum=16777216)),
+    field("corsAllowedOrigins", (options: OpenVoxelServerOptions) => options.corsAllowedOrigins, all([
+        refine((origins: List<string>) => origins.size <= 64, "cannot contain more than 64 origins"),
+        each(refine((origin: string) => origin == "*" or origin.startsWith("http://") or origin.startsWith("https://"), "must be * or an HTTP(S) origin")),
+    ])),
+    field("maxMessageBytes", (options: OpenVoxelServerOptions) => options.maxMessageBytes, integer(minimum=1, maximum=67108864)),
+    field("maxQueuedMessages", (options: OpenVoxelServerOptions) => options.maxQueuedMessages, integer(minimum=1, maximum=10000)),
+    field("maxQueuedBytes", (options: OpenVoxelServerOptions) => options.maxQueuedBytes, integer(minimum=1, maximum=67108864)),
+    field("maxPendingSendBytes", (options: OpenVoxelServerOptions) => options.maxPendingSendBytes, integer(minimum=1, maximum=67108864)),
+    field("maxConnections", (options: OpenVoxelServerOptions) => options.maxConnections, integer(minimum=1, maximum=4096)),
+    field("maxConcurrentRequests", (options: OpenVoxelServerOptions) => options.maxConcurrentRequests, integer(minimum=1, maximum=4096)),
+    field("realtimeDrainMilliseconds", (options: OpenVoxelServerOptions) => options.realtimeDrainMilliseconds, integer(minimum=0, maximum=2147483647)),
+]))
+
+export def validateOpenVoxelServerOptions(options: OpenVoxelServerOptions) -> OpenVoxelServerOptions:
+    return OpenVoxelServerOptionsValidator.validate(options)
+
 type AccessLogEntry:
     method: string
     path: string
@@ -34,10 +55,11 @@ export type OpenVoxelApplication:
     close: () -> Promise<null>
 
 export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerOptions) -> OpenVoxelApplication:
+    const validatedOptions = validateOpenVoxelServerOptions(options)
     let closing: Task<null>? = null
 
     def log(level: string, message: string, context: unknown):
-        if not options.logger: return
+        if not validatedOptions.logger: return
         try: print(Json.stringify({level, message, context}))
         catch _error:
             // 日志是旁路观察能力。序列化器或输出设备失败时不能改变请求结果，
@@ -50,7 +72,7 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
 
     def access(entry: AccessLogEntry): info("http.request", entry)
 
-    const live = worldLiveState(options.maxConnections, warn)
+    const live = worldLiveState(validatedOptions.maxConnections, warn)
     const blockChanges = runtime.subscribeBlockChanges(batch => live.publish(batch.worldId, batch.sequence, encodeWorldBlockChanges(batch)))
 
     async def closeApplication(_cancellation: Cancellation):
@@ -70,7 +92,7 @@ export def openVoxelApplication(runtime: WorldRuntime, options: OpenVoxelServerO
         closing = owner
         await owner.result()
 
-    return {runtime, options, live, info, warn, access, close}
+    return {runtime, options: validatedOptions, live, info, warn, access, close}
 
 async def resolveOpenVoxelApplication(_values: Record<unknown>) -> OpenVoxelApplication:
     // 线上启动必须通过 supply 把已经构造好的应用实例绑定进 ServeApp；这个

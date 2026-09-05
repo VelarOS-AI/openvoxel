@@ -1,0 +1,159 @@
+import {localBackend} from "@openvoxel/client"
+import {CreateWorldRequest} from "@openvoxel/protocol"
+import {Head, navigate} from "velar/web"
+import {Brand} from "../components/app-chrome.vel"
+import {Icon, IconName} from "../icon.vel"
+import {advancedButtonLook, advancedFieldsLook, appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, createIntroLook, createLayoutLook, displayTitleLook, errorLook, fieldLook, formActionsLook, formPanelLook, labelLook, presetGridLook, presetImageLook, presetLabelLook, presetLook, primaryButtonLook, secondaryButtonLook, segmentLook, segmentButtonLook, selectedPresetLook, selectedSegmentButtonLook, subtitleLook, topBarLook, worldInfoLook} from "../look.vel"
+import {SavedWorld, SavedWorldMode, WorldPreset, worldIdFromName} from "../worlds/saved-world.vel"
+import {rememberWorld} from "../worlds/world-library.vel"
+import {presetName, worldCover} from "../worlds/world-presentation.vel"
+
+export component CreateWorldPage:
+    const backend = localBackend()
+    state name = "New World"
+    state seed = ""
+    state mode: SavedWorldMode = SavedWorldMode.survival
+    state preset: WorldPreset = WorldPreset.meadow
+    state advancedOpen = false
+    state worldId = ""
+    state failure = ""
+
+    def selectPreset(value: WorldPreset): preset = value
+
+    def selectSurvival(): mode = SavedWorldMode.survival
+
+    def selectCreative(): mode = SavedWorldMode.creative
+
+    def toggleAdvanced(): advancedOpen = not advancedOpen
+
+    def cancel(): navigate("/")
+
+    action createWorld():
+        failure = ""
+        try:
+            const cleanName = name.trim()
+            assert not cleanName.isBlank() else "World name cannot be blank"
+            const requestedId = worldId.trim()
+            const id = requestedId.isBlank() ? worldIdFromName(cleanName) : requestedId
+            const cleanSeed = seed.trim().isBlank() ? id : seed.trim()
+            const command: CreateWorldRequest = {id, name: cleanName, seed: cleanSeed}
+            const created = await backend.createWorld(command)
+            rememberWorld(SavedWorld.from(created, {
+                mode,
+                preset,
+                lastPlayed: "Created just now",
+            }))
+            navigate(f"/world/{created.id}")
+        catch error: failure = error.message
+
+    @cleanup: detach backend.close()
+
+    def presetButton(value: WorldPreset, icon: IconName) -> WebNode:
+        return <button
+            type="button"
+            look={preset == value ? selectedPresetLook : presetLook}
+            on:click={() => selectPreset(value)}
+            aria-pressed={preset == value}
+            data-preset={value}
+        >
+            <img look={presetImageLook} src={worldCover(value)} alt="" aria-hidden={true} />
+            <span look={presetLabelLook}>
+                <Icon name={icon} />
+                {presetName(value)}
+            </span>
+        </button>
+
+    return <div look={appShellLook} data-app data-screen="create-world">
+        <Head
+            title="Create a world · OpenVoxel"
+            description="Create a new OpenVoxel world"
+            themeColor="#06101f"
+            language="en"
+        />
+        <img look={backgroundImageLook} src={worldCover(preset)} alt="" aria-hidden={true} data-preset-background />
+        <div look={backgroundShadeLook}></div>
+        <div look={backgroundBottomShadeLook}></div>
+        <header look={topBarLook}>
+            <Brand back={true} />
+        </header>
+        <main look={createLayoutLook}>
+            <section look={createIntroLook}>
+                <div look={worldInfoLook}>
+                    <h1 look={displayTitleLook}>Create a new world</h1>
+                    <p look={subtitleLook}>Shape your adventure. Choose a landscape and start building your world.</p>
+                </div>
+                <div look={presetGridLook} aria-label="World preset">
+                    {presetButton(WorldPreset.meadow, IconName.leaf)}
+                    {presetButton(WorldPreset.coast, IconName.water)}
+                    {presetButton(WorldPreset.highlands, IconName.mountainSun)}
+                </div>
+            </section>
+            <form look={formPanelLook} on:submit.prevent={createWorld} aria-busy={createWorld.pending} data-create-world-form>
+                <label look={labelLook}>
+                    World name
+                    <input
+                        look={fieldLook}
+                        name="name"
+                        bind:value={name}
+                        maxlength="80"
+                        disabled={createWorld.pending}
+                        data-world-name-input
+                    />
+                </label>
+                <div look={segmentLook} aria-label="Game mode">
+                    <button type="button" look={mode == SavedWorldMode.survival ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={mode == SavedWorldMode.survival} data-mode="survival">
+                        <Icon name={IconName.shieldHalved} />
+                        Survival
+                    </button>
+                    <button type="button" look={mode == SavedWorldMode.creative ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={mode == SavedWorldMode.creative} data-mode="creative">
+                        <Icon name={IconName.wandMagicSparkles} />
+                        Creative
+                    </button>
+                </div>
+                <label look={labelLook}>
+                    Seed (optional)
+                    <input
+                        look={fieldLook}
+                        name="seed"
+                        bind:value={seed}
+                        maxlength="128"
+                        placeholder="Leave blank for a random seed"
+                        disabled={createWorld.pending}
+                        data-seed-input
+                    />
+                </label>
+                <button type="button" look={advancedButtonLook} on:click={toggleAdvanced} aria-expanded={advancedOpen} data-advanced-settings>
+                    <span><Icon name={IconName.sliders} /> Advanced settings</span>
+                    <Icon name={advancedOpen ? IconName.chevronUp : IconName.chevronDown} />
+                </button>
+                {advancedOpen ? <div look={advancedFieldsLook} data-advanced-fields>
+                    <label look={labelLook}>
+                        World identifier
+                        <input
+                            look={fieldLook}
+                            name="worldId"
+                            bind:value={worldId}
+                            maxlength="64"
+                            placeholder="Generated from name"
+                            disabled={createWorld.pending}
+                            data-world-id-input
+                        />
+                    </label>
+                    <label look={labelLook}>
+                        Generator
+                        <input look={fieldLook} value="OpenVoxel Overworld" disabled={true} />
+                    </label>
+                </div> : <></>}
+                {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
+                <div look={formActionsLook}>
+                    <button type="submit" look={primaryButtonLook} disabled={createWorld.pending} data-create-world>
+                        {createWorld.pending ? "Creating…" : "Create world"}
+                        <Icon name={IconName.arrowRight} />
+                    </button>
+                    <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={createWorld.pending}>
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </main>
+    </div>

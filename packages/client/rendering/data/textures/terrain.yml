@@ -1,0 +1,22 @@
+category: terrain
+textures:
+  - {key: openvoxel:texture/block/basalt, surface: rock, file: textures/terrain/basalt.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 5, shiftY: 9, brightness: 0.96, contrast: 1.04}}, {weight: 1, transform: {shiftX: 13, shiftY: 3, brightness: 1.04, contrast: 0.97}}]}
+  - {key: openvoxel:texture/block/clay, surface: soil, file: textures/terrain/clay.png}
+  - {key: openvoxel:texture/block/coal_ore, surface: mineral, file: textures/terrain/coal_ore.png}
+  - {key: openvoxel:texture/block/copper_ore, surface: metallic-mineral, file: textures/terrain/copper_ore.png}
+  - {key: openvoxel:texture/block/diamond_ore, surface: metallic-mineral, file: textures/terrain/diamond_ore.png}
+  - {key: openvoxel:texture/block/dirt, surface: soil, file: textures/terrain/dirt.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 7, shiftY: 11, brightness: 0.96, contrast: 1.03}}, {weight: 1, transform: {shiftX: 15, shiftY: 5, brightness: 1.04, contrast: 0.98}}]}
+  - {key: openvoxel:texture/block/germanium_ore, surface: metallic-mineral, file: textures/terrain/germanium_ore.png}
+  - {key: openvoxel:texture/block/granite, surface: rock, file: textures/terrain/granite.png}
+  - {key: openvoxel:texture/block/grass_side, surface: soil, file: textures/terrain/grass_side.png, weight: 7, variants: [{weight: 1, transform: {shiftX: 5, shiftY: 0, brightness: 0.98, contrast: 1.02}}, {weight: 1, transform: {shiftX: 13, shiftY: 0, brightness: 1.03, contrast: 0.98}}]}
+  - {key: openvoxel:texture/block/grass_top, surface: soil, file: textures/terrain/grass_top.png, weight: 7, variants: [{weight: 1, transform: {shiftX: 7, shiftY: 9, brightness: 0.97, contrast: 1.03}}, {weight: 1, transform: {shiftX: 17, shiftY: 3, brightness: 1.04, contrast: 0.97}}]}
+  - {key: openvoxel:texture/block/gravel, surface: soil, file: textures/terrain/gravel.png}
+  - {key: openvoxel:texture/block/ice, surface: ice, file: textures/terrain/ice.png}
+  - {key: openvoxel:texture/block/iron_ore, surface: metallic-mineral, file: textures/terrain/iron_ore.png}
+  - {key: openvoxel:texture/block/limestone, surface: rock, file: textures/terrain/limestone.png}
+  - {key: openvoxel:texture/block/saltpeter_ore, surface: mineral, file: textures/terrain/saltpeter_ore.png}
+  - {key: openvoxel:texture/block/sand, surface: soil, file: textures/terrain/sand.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 9, shiftY: 7, brightness: 0.97, contrast: 1.02}}, {weight: 1, transform: {shiftX: 3, shiftY: 15, brightness: 1.04, contrast: 0.98}}]}
+  - {key: openvoxel:texture/block/sandstone, surface: rock, file: textures/terrain/sandstone.png}
+  - {key: openvoxel:texture/block/snow, surface: snow, file: textures/terrain/snow.png}
+  - {key: openvoxel:texture/block/stone, surface: rock, file: textures/terrain/stone.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 9, shiftY: 13, brightness: 0.96, contrast: 1.04}}, {weight: 1, transform: {shiftX: 19, shiftY: 5, brightness: 1.04, contrast: 0.98}}]}
+  - {key: openvoxel:texture/block/sulphur_ore, surface: mineral, file: textures/terrain/sulphur_ore.png}

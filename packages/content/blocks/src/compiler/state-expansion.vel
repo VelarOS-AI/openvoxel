@@ -1,0 +1,63 @@
+import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockStateProperty, BlockStateVariant, BlockTypeSource} from "../definition/block.vel"
+import {validateBlockType} from "./block-validation.vel"
+import {canonicalStateKey} from "./state-key.vel"
+
+/// 已经应用 variant、尚未绑定 runtimeId 的生成期状态。
+export type BlockStatePrototype:
+    stateKey: string
+    blockKey: string
+    properties: List<BlockStateProperty>
+    physics: BlockPhysics
+    light: BlockLight
+    render: BlockRender
+    interaction: BlockInteraction
+    behaviors: List<BlockBehavior>
+
+def blockPropertyValue(value: BlockPropertyValue) -> BlockPropertyValue: return value
+
+def propertyValues(property: BlockPropertyDefinition) -> List<BlockPropertyValue>:
+    match property.kind:
+        case BlockPropertyKind.boolean: return [false, true]
+        case BlockPropertyKind.enumeration: return property.values.map(value => blockPropertyValue(value))
+        case BlockPropertyKind.integer:
+            return range(property.minimum, property.maximum + 1).map(value => blockPropertyValue(value))
+
+def propertyValue(properties: List<BlockStateProperty>, name: string) -> BlockPropertyValue?:
+    return properties.find(property => property.name == name)?.value
+
+def variantMatches(variant: BlockStateVariant, state: List<BlockStateProperty>) -> bool:
+    return variant.when.every(expected => equals(propertyValue(state, expected.name), expected.value))
+
+/// 从基础组件开始应用唯一匹配的状态变体，生成完整组件快照。
+def applyVariant(block: BlockTypeSource, properties: List<BlockStateProperty>) -> BlockStatePrototype:
+    let physics = block.physics
+    let light = block.light
+    let render = block.render
+    let interaction = block.interaction
+    let behaviors = block.behaviors
+    let matched = false
+    for variant in block.variants:
+        if not variantMatches(variant, properties): continue
+        assert not matched else f"Block {block.key} state {canonicalStateKey(block.key, properties)} matches multiple variants"
+        matched = true
+        if variant.physics != null: physics = variant.physics
+        if variant.light != null: light = variant.light
+        if variant.render != null: render = variant.render
+        if variant.interaction != null: interaction = variant.interaction
+        if variant.behaviors != null: behaviors = variant.behaviors
+    return {stateKey: canonicalStateKey(block.key, properties), blockKey: block.key, properties, physics, light, render, interaction, behaviors}
+
+/// 按属性定义的笛卡尔积穷举全部有限状态。
+export def enumerateBlockStates(block: BlockTypeSource) -> List<BlockStatePrototype>:
+    validateBlockType(block)
+    let combinations: List<List<BlockStateProperty>> = [[]]
+    for definition in block.properties.sorted(by=property => property.name):
+        const next: List<List<BlockStateProperty>> = []
+        for combination in combinations:
+            for value in propertyValues(definition):
+                const extended = combination.copy()
+                extended.append({name: definition.name, value})
+                next.append(extended)
+        combinations = next
+    assert combinations.size <= 256 else f"Block {block.key} expands to more than 256 states"
+    return combinations.map(properties => applyVariant(block, properties))

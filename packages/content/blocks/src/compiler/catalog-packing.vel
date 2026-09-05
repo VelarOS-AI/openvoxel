@@ -50,12 +50,11 @@ export def unpackBlockCatalog(source: PackedBlockCatalogSource) -> BlockCatalogS
         assert profileById.get(profile.profileId) == null else f"Duplicate block component profile id {profile.profileId}"
         profileById.set(profile.profileId, profile)
 
-    const states: List<BlockStateDefinition> = []
-    for state in source.states:
+    def unpackState(state: PackedBlockStateDefinition) -> BlockStateDefinition:
         requireUInt32(state.componentProfileId, "Block state component profile id")
         const profile = profileById.get(state.componentProfileId)
         assert profile != null else f"Block state {state.stateKey} references unknown component profile {state.componentProfileId}"
-        states.append({
+        return {
             runtimeId: state.runtimeId,
             stateKey: state.stateKey,
             blockKey: state.blockKey,
@@ -65,8 +64,9 @@ export def unpackBlockCatalog(source: PackedBlockCatalogSource) -> BlockCatalogS
             render: profile.render,
             interaction: profile.interaction,
             behaviors: profile.behaviors,
-        })
+        }
 
+    const states = source.states.map(state => unpackState(state))
     return {
         schemaVersion: source.schemaVersion,
         catalogVersion: source.catalogVersion,
