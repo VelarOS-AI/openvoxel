@@ -76,6 +76,7 @@ export def createClientRenderCatalog(
         renderTextures.set(value.key, {
             key: value.key,
             bankKey: value.bankKey,
+            alphaCutoff: value.alphaCutoff,
             variants: value.variants,
             totalWeight: value.variants.reduce((total, variant) => total + variant.weight, 0),
         })
@@ -106,8 +107,10 @@ export def createClientRenderCatalog(
         const modelResource = modelKey == null ? null : models.get(modelKey)
         if modelKey != null: assert modelResource != null else f"Client resource pack does not provide model {modelKey}"
         const materialKey = profile.render.material
+        let materialResource: readonly ClientMaterialResource? = null
         if materialKey != null:
-            assert materials.has(materialKey) else f"Client resource pack does not provide material {materialKey}"
+            materialResource = materials.get(materialKey)
+            assert materialResource != null else f"Client resource pack does not provide material {materialKey}"
         const layer = profile.render.layer
         const tintKey = profile.render.tint
         const tint = tintKey == null ? null : tints.get(tintKey)
@@ -132,12 +135,20 @@ export def createClientRenderCatalog(
                 assert textureBank.role == ClientTextureBankRole.opaque else f"Opaque state {state.stateKey} must use an opaque texture bank"
             else if layer == BlockRenderLayer.cutout:
                 assert textureBank.role == ClientTextureBankRole.cutout else f"Cutout state {state.stateKey} must use a cutout texture bank"
+                assert materialResource != null else f"Cutout state {state.stateKey} has no material"
+                for texture in [stateTextures.top, stateTextures.bottom, stateTextures.side]:
+                    assert texture.alphaCutoff == materialResource.alphaCutoff else f"Cutout state {state.stateKey} texture {texture.key} was filtered for a different alpha cutoff"
             else:
                 assert textureBank.role == ClientTextureBankRole.translucent else f"Translucent state {state.stateKey} must use a translucent texture bank"
         if animation != null:
             assert stateTextures != null else f"Animated state {state.stateKey} has no textures"
             const firstFrame = animation.frames[0]
             assert stateTextures.top.key == firstFrame and stateTextures.bottom.key == firstFrame and stateTextures.side.key == firstFrame else f"Animated state {state.stateKey} must use its first animation frame on every face"
+            for frame in animation.frames:
+                const frameTexture = renderTextures.get(frame)
+                assert frameTexture != null else f"Animation {animation.key} references unknown texture {frame}"
+                if layer == BlockRenderLayer.cutout:
+                    assert materialResource != null and frameTexture.alphaCutoff == materialResource.alphaCutoff else f"Animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
         const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
 
         const resolved: ClientRenderState = {

@@ -67,9 +67,12 @@ export async def openWorldRenderer(
                 paddedBlocks,
                 ticket,
             }, cancellation, 15s)
-            const mesh = response.mesh
             if closed or tickets.get(chunkKey(position)) != ticket: return
+            assert response.operation == meshingWorkerOperations.mesh else "Meshing Worker returned a mismatched operation"
+            const mesh = response.mesh
             assert mesh != null else "Meshing Worker returned no Chunk mesh"
+            assert mesh.ticket == ticket else "Meshing Worker returned a mismatched Chunk ticket"
+            assert mesh.position.x == position.x and mesh.position.y == position.y and mesh.position.z == position.z else "Meshing Worker returned a mismatched Chunk position"
             activeSurface().setChunkMesh(mesh)
         catch error:
             if not closed and tickets.get(chunkKey(position)) == ticket: failed(error.message)

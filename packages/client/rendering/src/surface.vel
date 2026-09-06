@@ -29,10 +29,13 @@ extern js`
       Engine,
       HemisphericLight,
       Material,
+      MaterialPluginBase,
       Mesh,
       MeshBuilder,
       PBRMaterial,
+      RawTexture2DArray,
       Scene,
+      ShadowDepthWrapper,
       ShadowGenerator,
       StandardMaterial,
       Texture,
@@ -41,6 +44,10 @@ extern js`
     } from "@babylonjs/core";
 
     const surfaces = new WeakSet();
+    const maximumTextureBankChannelBytes = 16 * 1024 * 1024;
+    const maximumClientTextureResidentBytes = 128 * 1024 * 1024;
+    const maximumChunkMeshBytes = 8 * 1024 * 1024;
+    const maximumChunkMeshBatches = 256;
 
     function requireCanvas(canvas) {
       if (!(canvas instanceof globalThis.HTMLCanvasElement)) throw new TypeError("Voxel surface requires a canvas element");
@@ -82,7 +89,7 @@ extern js`
           true,
           samplingMode,
           () => resolve(texture),
-          (message, error) => reject(error instanceof Error ? error : new Error(message || "Voxel texture atlas failed to load")),
+          (message, error) => reject(error instanceof Error ? error : new Error(message || "Voxel image texture failed to load")),
         );
       });
     }
@@ -90,57 +97,303 @@ extern js`
     function requireTextureBankDefinitions(value) {
       if (!Array.isArray(value) || value.length === 0) throw new TypeError("Voxel surface texture banks must be a non-empty list");
       const keys = new Set();
+      let estimatedResidentBytes = 0;
       for (const definition of value) {
         if (typeof definition !== "object" || definition === null) throw new TypeError("Voxel surface texture bank must be a record");
         if (typeof definition.key !== "string" || definition.key.length === 0) throw new TypeError("Voxel surface texture bank key must be a non-empty string");
         if (keys.has(definition.key)) throw new Error("Voxel surface repeats texture bank " + definition.key);
         keys.add(definition.key);
         if (!["opaque", "cutout", "translucent", "fluid"].includes(definition.role)) throw new TypeError("Voxel surface texture bank has an invalid role: " + definition.key);
-        if (definition.storage !== "atlas") throw new TypeError("Voxel surface texture bank uses unsupported storage: " + definition.key);
-        requireInteger(definition.width, 1, 8192, "Texture bank width");
-        requireInteger(definition.height, 1, 8192, "Texture bank height");
-        if (typeof definition.mipmaps !== "boolean") throw new TypeError("Voxel surface texture bank mipmaps must be boolean: " + definition.key);
-        for (const [label, dataUrl] of [
-          ["albedo", definition.albedoDataUrl],
-          ["normal", definition.normalDataUrl],
-          ["material", definition.materialDataUrl],
-          ["emissive", definition.emissiveDataUrl],
-        ]) {
-          if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) {
-            throw new TypeError("Voxel surface texture bank " + definition.key + " " + label + " map must be an embedded PNG");
+        if (definition.storage !== "texture_2d_array") throw new TypeError("Voxel surface texture bank uses unsupported storage: " + definition.key);
+        const layerCount = requireInteger(definition.layerCount, 1, 2048, "Texture bank layer count");
+        if (!Array.isArray(definition.levels) || definition.levels.length < 1 || definition.levels.length > 9) {
+          throw new RangeError("Voxel surface texture bank mip level count is invalid: " + definition.key);
+        }
+        let previousWidth = 0;
+        let previousHeight = 0;
+        let channelBytes = 0;
+        let encodedCharacters = 0;
+        for (const [levelIndex, level] of definition.levels.entries()) {
+          if (typeof level !== "object" || level === null) throw new TypeError("Voxel surface texture mip level must be a record");
+          const width = requireInteger(level.width, 1, 256, "Texture bank mip width");
+          const height = requireInteger(level.height, 1, 256, "Texture bank mip height");
+          if (levelIndex > 0 && previousWidth === 1 && previousHeight === 1) {
+            throw new RangeError("Voxel surface texture bank has a mip level after 1x1: " + definition.key);
+          }
+          if (levelIndex > 0 && (width !== Math.max(1, Math.floor(previousWidth / 2)) || height !== Math.max(1, Math.floor(previousHeight / 2)))) {
+            throw new RangeError("Voxel surface texture bank mip dimensions are invalid: " + definition.key);
+          }
+          previousWidth = width;
+          previousHeight = height;
+          const levelBytes = width * height * layerCount * 4;
+          channelBytes += levelBytes;
+          const encodedLength = Math.floor((levelBytes + 2) / 3) * 4;
+          encodedCharacters += encodedLength * 4;
+          if (channelBytes > maximumTextureBankChannelBytes) {
+            throw new RangeError("Voxel surface texture bank exceeds the 16 MiB per-channel limit: " + definition.key);
+          }
+          const currentResidentBytes = channelBytes * 4 * 2 + encodedCharacters * 2;
+          if (estimatedResidentBytes + currentResidentBytes > maximumClientTextureResidentBytes) {
+            throw new RangeError("Voxel surface texture banks exceed the 128 MiB estimated resident texture limit");
+          }
+          const remainder = levelBytes % 3;
+          const pattern = remainder === 0
+            ? /^[A-Za-z0-9+/]+$/u
+            : remainder === 1 ? /^[A-Za-z0-9+/]+==$/u : /^[A-Za-z0-9+/]+=$/u;
+          for (const [label, data] of [
+            ["albedo", level.albedoData],
+            ["normal", level.normalData],
+            ["material", level.materialData],
+            ["emissive", level.emissiveData],
+          ]) {
+            if (typeof data !== "string" || data.length !== encodedLength || !pattern.test(data)) {
+              throw new TypeError("Voxel surface texture bank " + definition.key + " mip " + levelIndex + " " + label + " map must be complete RGBA8 base64 data");
+            }
           }
         }
+        if (definition.levels.length > 1 && (previousWidth !== 1 || previousHeight !== 1)) {
+          throw new RangeError("Voxel surface texture bank mip chain is incomplete: " + definition.key);
+        }
+        const rgbaBytes = channelBytes * 4;
+        estimatedResidentBytes += rgbaBytes * 2 + encodedCharacters * 2;
+      }
+      if (estimatedResidentBytes > maximumClientTextureResidentBytes) {
+        throw new RangeError("Voxel surface texture banks exceed the 128 MiB estimated resident texture limit");
       }
       return value;
     }
 
-    async function loadTextureBank(scene, definition) {
-      const samplingMode = definition.mipmaps ? Texture.NEAREST_NEAREST_MIPNEAREST : Texture.NEAREST_SAMPLINGMODE;
-      const [albedo, normal, material, emissive] = await Promise.all([
-        waitForTexture(scene, definition.albedoDataUrl, definition.mipmaps, samplingMode),
-        waitForTexture(scene, definition.normalDataUrl, definition.mipmaps, samplingMode),
-        waitForTexture(scene, definition.materialDataUrl, definition.mipmaps, samplingMode),
-        waitForTexture(scene, definition.emissiveDataUrl, definition.mipmaps, samplingMode),
-      ]);
-      for (const [label, texture] of [["albedo", albedo], ["normal", normal], ["material", material], ["emissive", emissive]]) {
-        const size = texture.getSize();
-        if (size.width !== definition.width || size.height !== definition.height) {
-          throw new Error("Texture bank " + definition.key + " " + label + " map dimensions do not match its contract");
-        }
-        texture.name = "texture-bank:" + definition.key + ":" + label;
-        texture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+    function decodeRgba8(data, expectedLength, label) {
+      let bytes;
+      try {
+        bytes = Uint8Array.fromBase64(data);
+      } catch (error) {
+        throw new TypeError(label + " is not valid base64", {cause: error});
       }
-      albedo.hasAlpha = true;
-      normal.gammaSpace = false;
-      material.gammaSpace = false;
-      return {key: definition.key, role: definition.role, storage: definition.storage, albedo, normal, material, emissive};
+      if (bytes.byteLength !== expectedLength) throw new RangeError(label + " byte length does not match its texture array contract");
+      return bytes;
+    }
+
+    function uploadTextureMipLevels(scene, texture, levels, label) {
+      const engine = scene.getEngine();
+      const internalTexture = texture.getInternalTexture();
+      const gl = engine._gl;
+      if (internalTexture == null || gl == null || typeof gl.texImage3D !== "function" || typeof engine._bindTextureDirectly !== "function") {
+        throw new Error(label + " cannot access the pinned Babylon WebGL 2 texture upload boundary");
+      }
+      const target = gl.TEXTURE_2D_ARRAY;
+      engine._bindTextureDirectly(target, internalTexture, true);
+      try {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        for (const [mipLevel, level] of levels.entries()) {
+          gl.texImage3D(target, mipLevel, gl.RGBA8, level.width, level.height, texture.depth, 0, gl.RGBA, gl.UNSIGNED_BYTE, level.data);
+        }
+      } finally {
+        engine._bindTextureDirectly(target, null, true);
+      }
+      internalTexture.useMipMaps = levels.length > 1;
+      internalTexture.generateMipMaps = false;
+      internalTexture.mipLevelCount = levels.length;
+      const samplingMode = levels.length > 1 ? Texture.NEAREST_NEAREST_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
+      engine.updateTextureSamplingMode(samplingMode, internalTexture, false);
+    }
+
+    function loadTextureBank(scene, definition, maximumLayers) {
+      if (definition.layerCount > maximumLayers) {
+        throw new RangeError("Texture bank " + definition.key + " exceeds this GPU's texture array layer limit of " + maximumLayers);
+      }
+      const decodedLevels = definition.levels.map((level, mipLevel) => {
+        const byteLength = level.width * level.height * definition.layerCount * 4;
+        return {
+          width: level.width,
+          height: level.height,
+          albedo: decodeRgba8(level.albedoData, byteLength, "Texture bank " + definition.key + " mip " + mipLevel + " albedo"),
+          normal: decodeRgba8(level.normalData, byteLength, "Texture bank " + definition.key + " mip " + mipLevel + " normal"),
+          material: decodeRgba8(level.materialData, byteLength, "Texture bank " + definition.key + " mip " + mipLevel + " material"),
+          emissive: decodeRgba8(level.emissiveData, byteLength, "Texture bank " + definition.key + " mip " + mipLevel + " emissive"),
+        };
+      });
+      const base = decodedLevels[0];
+      const textures = [];
+      const create = (channel, label) => {
+        const levels = decodedLevels.map((level) => ({width: level.width, height: level.height, data: level[channel]}));
+        const texture = RawTexture2DArray.CreateRGBATexture(
+          levels[0].data,
+          base.width,
+          base.height,
+          definition.layerCount,
+          scene,
+          false,
+          false,
+          Texture.NEAREST_SAMPLINGMODE,
+        );
+        textures.push(texture);
+        texture.name = "texture-bank:" + definition.key + ":" + label;
+        uploadTextureMipLevels(scene, texture, levels, texture.name);
+        texture.wrapU = Texture.WRAP_ADDRESSMODE;
+        texture.wrapV = Texture.WRAP_ADDRESSMODE;
+        texture.anisotropicFilteringLevel = 1;
+        return texture;
+      };
+      try {
+        const albedo = create("albedo", "albedo");
+        const normal = create("normal", "normal");
+        const material = create("material", "material");
+        const emissive = create("emissive", "emissive");
+        for (const [label, texture] of [["albedo", albedo], ["normal", normal], ["material", material], ["emissive", emissive]]) {
+          const size = texture.getSize();
+          if (size.width !== base.width || size.height !== base.height) {
+            throw new Error("Texture bank " + definition.key + " " + label + " map dimensions do not match its contract");
+          }
+          if (texture.depth !== definition.layerCount) throw new Error("Texture bank " + definition.key + " " + label + " layer count does not match its contract");
+        }
+        const restore = () => {
+          uploadTextureMipLevels(scene, albedo, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.albedo})), albedo.name);
+          uploadTextureMipLevels(scene, normal, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.normal})), normal.name);
+          uploadTextureMipLevels(scene, material, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.material})), material.name);
+          uploadTextureMipLevels(scene, emissive, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.emissive})), emissive.name);
+        };
+        return {key: definition.key, role: definition.role, storage: definition.storage, layerCount: definition.layerCount, albedo, normal, material, emissive, restore};
+      } catch (error) {
+        for (const texture of textures) texture.dispose();
+        throw error;
+      }
+    }
+
+    class VoxelTextureArrayPlugin extends MaterialPluginBase {
+      constructor(material, textureBank) {
+        super(material, "OpenVoxelTextureArray", 200, {}, true, false, true);
+        this.registerForExtraEvents = true;
+        this.textureBank = textureBank;
+        this.animationLayerOffset = 0;
+        this._enable(true);
+      }
+
+      getClassName() {
+        return "OpenVoxelTextureArrayPlugin";
+      }
+
+      isCompatible(shaderLanguage) {
+        return shaderLanguage === 0;
+      }
+
+      isReadyForSubMesh() {
+        return this.textureBank.albedo.isReady()
+          && this.textureBank.normal.isReady()
+          && this.textureBank.material.isReady()
+          && this.textureBank.emissive.isReady();
+      }
+
+      prepareDefinesBeforeAttributes(defines) {
+        defines._needUVs = true;
+        defines.MAINUV1 = true;
+      }
+
+      getAttributes(attributes) {
+        attributes.push("textureLayer");
+      }
+
+      getSamplers(samplers) {
+        samplers.push("ovAlbedoSampler", "ovNormalSampler", "ovMaterialSampler", "ovEmissiveSampler");
+      }
+
+      getUniforms() {
+        return {ubo: [{name: "ovAnimationLayerOffset", size: 1, type: "float"}]};
+      }
+
+      bindForSubMesh(uniformBuffer) {
+        uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
+        uniformBuffer.setTexture("ovAlbedoSampler", this.textureBank.albedo);
+        uniformBuffer.setTexture("ovNormalSampler", this.textureBank.normal);
+        uniformBuffer.setTexture("ovMaterialSampler", this.textureBank.material);
+        uniformBuffer.setTexture("ovEmissiveSampler", this.textureBank.emissive);
+      }
+
+      hardBindForSubMesh(uniformBuffer) {
+        uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
+      }
+
+      hasTexture(texture) {
+        return texture === this.textureBank.albedo
+          || texture === this.textureBank.normal
+          || texture === this.textureBank.material
+          || texture === this.textureBank.emissive;
+      }
+
+      getActiveTextures(textures) {
+        textures.push(this.textureBank.albedo, this.textureBank.normal, this.textureBank.material, this.textureBank.emissive);
+      }
+
+      getCustomCode(shaderType) {
+        if (shaderType === "vertex") {
+          return {
+            CUSTOM_VERTEX_DEFINITIONS: `
+attribute float textureLayer;
+varying vec2 ovTextureUv;
+varying float ovTextureLayer;`,
+            CUSTOM_VERTEX_MAIN_END: `
+ovTextureUv = uv;
+ovTextureLayer = textureLayer;`,
+          };
+        }
+        if (shaderType !== "fragment") return null;
+        return {
+          CUSTOM_FRAGMENT_DEFINITIONS: `
+varying vec2 ovTextureUv;
+varying float ovTextureLayer;
+precision highp sampler2DArray;
+uniform sampler2DArray ovAlbedoSampler;
+uniform sampler2DArray ovNormalSampler;
+uniform sampler2DArray ovMaterialSampler;
+uniform sampler2DArray ovEmissiveSampler;
+uniform float ovAnimationLayerOffset;
+vec4 ovAlbedoSample;
+vec4 ovNormalSample;
+vec4 ovMaterialSample;
+vec4 ovEmissiveSample;
+mat3 ovCotangentFrame(vec3 normal, vec3 position, vec2 textureUv) {
+  vec3 positionDx = dFdx(position);
+  vec3 positionDy = dFdy(position);
+  vec2 uvDx = dFdx(textureUv);
+  vec2 uvDy = dFdy(textureUv);
+  vec3 positionDyPerpendicular = cross(positionDy, normal);
+  vec3 positionDxPerpendicular = cross(normal, positionDx);
+  vec3 tangent = positionDyPerpendicular * uvDx.x + positionDxPerpendicular * uvDy.x;
+  vec3 bitangent = positionDyPerpendicular * uvDx.y + positionDxPerpendicular * uvDy.y;
+  float determinant = max(dot(tangent, tangent), dot(bitangent, bitangent));
+  float inverseMaximum = determinant == 0.0 ? 0.0 : inversesqrt(determinant);
+  return mat3(tangent * inverseMaximum, bitangent * inverseMaximum, normal);
+}`,
+          CUSTOM_FRAGMENT_MAIN_BEGIN: `
+float ovSampleLayer = floor(ovTextureLayer + ovAnimationLayerOffset + 0.5);
+vec3 ovTextureCoordinate = vec3(ovTextureUv, ovSampleLayer);
+ovAlbedoSample = texture(ovAlbedoSampler, ovTextureCoordinate);
+ovNormalSample = texture(ovNormalSampler, ovTextureCoordinate);
+ovMaterialSample = texture(ovMaterialSampler, ovTextureCoordinate);
+ovEmissiveSample = texture(ovEmissiveSampler, ovTextureCoordinate);`,
+          CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
+surfaceAlbedo *= toLinearSpace(ovAlbedoSample.rgb);
+alpha *= ovAlbedoSample.a;`,
+          CUSTOM_FRAGMENT_UPDATE_METALLICROUGHNESS: `
+metallicRoughness.r = ovMaterialSample.b;
+metallicRoughness.g = ovMaterialSample.g;`,
+          CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
+vec2 ovNormalUv = gl_FrontFacing ? ovTextureUv : -ovTextureUv;
+normalW = normalize(ovCotangentFrame(normalW, vPositionW, ovNormalUv) * (ovNormalSample.xyz * 2.0 - 1.0));`,
+          "!(aoOut=ambientOcclusionBlock\\([\\s\\S]*?\\);)": `$1
+aoOut.ambientOcclusionColor *= vec3(ovMaterialSample.r);`,
+          CUSTOM_FRAGMENT_BEFORE_FINALCOLORCOMPOSITION: `
+finalEmissive += toLinearSpace(ovEmissiveSample.rgb);`,
+        };
+      }
     }
 
     export class BabylonVoxelSurface {
       constructor(canvas, options, engine, scene, camera, textureBanks, environment) {
         this.canvas = canvas;
-        this.options = options;
+        this.edge = options.edge;
+        this.viewChanged = options.viewChanged;
         this.engine = engine;
         this.scene = scene;
         this.camera = camera;
@@ -149,6 +402,18 @@ extern js`
         this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
         this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
         this.animationDefinitions = new Map(options.animations.map((definition) => [definition.key, definition]));
+        this.textureLayerAlphaCutoffs = new Map();
+        for (const texture of options.textures) {
+          let layers = this.textureLayerAlphaCutoffs.get(texture.bankKey);
+          if (layers === undefined) {
+            layers = new Map();
+            this.textureLayerAlphaCutoffs.set(texture.bankKey, layers);
+          }
+          for (const variant of texture.variants) {
+            if (layers.has(variant.layer)) throw new Error("Voxel texture array layer is assigned more than once: " + texture.bankKey + ":" + variant.layer);
+            layers.set(variant.layer, texture.alphaCutoff);
+          }
+        }
         this.materials = new Map();
         this.animatedMaterials = [];
         this.chunks = new Map();
@@ -217,14 +482,14 @@ extern js`
           this.camera.target.x += (forwardX * forward + rightX * sideways) * step;
           this.camera.target.z += (forwardZ * forward + rightZ * sideways) * step;
         }
-        const centerX = Math.floor(this.camera.target.x / this.options.edge);
-        const centerY = Math.floor(this.camera.target.y / this.options.edge);
-        const centerZ = Math.floor(this.camera.target.z / this.options.edge);
+        const centerX = Math.floor(this.camera.target.x / this.edge);
+        const centerY = Math.floor(this.camera.target.y / this.edge);
+        const centerZ = Math.floor(this.camera.target.z / this.edge);
         if (centerX !== this.lastViewCenterX || centerY !== this.lastViewCenterY || centerZ !== this.lastViewCenterZ) {
           this.lastViewCenterX = centerX;
           this.lastViewCenterY = centerY;
           this.lastViewCenterZ = centerZ;
-          this.options.viewChanged(centerX, centerY, centerZ);
+          this.viewChanged(centerX, centerY, centerZ);
         }
       }
 
@@ -256,10 +521,7 @@ extern js`
           if (frameIndex === animation.frameIndex) continue;
           animation.frameIndex = frameIndex;
           const frame = animation.frames[frameIndex];
-          for (const texture of animation.textures) {
-            texture.uOffset = frame.uOffset;
-            texture.vOffset = frame.vOffset;
-          }
+          animation.plugin.animationLayerOffset = frame.layerOffset;
         }
       }
 
@@ -277,38 +539,12 @@ extern js`
           throw new Error("Voxel texture bank " + batch.bankKey + " cannot serve render layer " + batch.layer);
         }
         const material = new PBRMaterial("material:" + key, this.scene);
-        const albedoTexture = textureBank.albedo.clone();
-        albedoTexture.name = "albedo-bank:" + batch.bankKey + ":" + key;
-        albedoTexture.hasAlpha = true;
-        albedoTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        albedoTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        const normalTexture = textureBank.normal.clone();
-        normalTexture.name = "normal-bank:" + batch.bankKey + ":" + key;
-        normalTexture.gammaSpace = false;
-        normalTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        normalTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        const materialTexture = textureBank.material.clone();
-        materialTexture.name = "material-bank:" + batch.bankKey + ":" + key;
-        materialTexture.gammaSpace = false;
-        materialTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        materialTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        const emissiveTexture = textureBank.emissive.clone();
-        emissiveTexture.name = "emissive-bank:" + batch.bankKey + ":" + key;
-        emissiveTexture.wrapU = Texture.CLAMP_ADDRESSMODE;
-        emissiveTexture.wrapV = Texture.CLAMP_ADDRESSMODE;
-        material.albedoTexture = albedoTexture;
-        material.bumpTexture = normalTexture;
-        material.metallicTexture = materialTexture;
-        material.emissiveTexture = emissiveTexture;
+        const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank);
         material.albedoColor = Color3.White();
         material.ambientColor = new Color3(0.38, 0.4, 0.38);
-        material.emissiveColor = Color3.White();
+        material.emissiveColor = Color3.Black();
         material.metallic = 1;
         material.roughness = 1;
-        material.useRoughnessFromMetallicTextureAlpha = false;
-        material.useRoughnessFromMetallicTextureGreen = true;
-        material.useMetallnessFromMetallicTextureBlue = true;
-        material.useAmbientOcclusionFromMetallicTextureRed = true;
         material.environmentIntensity = definition.environmentIntensity;
         material.clearCoat.isEnabled = definition.clearCoat > 0;
         material.clearCoat.intensity = definition.clearCoat;
@@ -323,11 +559,9 @@ extern js`
         if (batch.layer === "cutout") {
           material.transparencyMode = Material.MATERIAL_ALPHATEST;
           material.alphaCutOff = definition.alphaCutoff;
-          material.useAlphaFromAlbedoTexture = true;
         } else if (batch.layer === "translucent") {
           material.transparencyMode = Material.MATERIAL_ALPHABLEND;
           material.alpha = definition.alpha;
-          material.useAlphaFromAlbedoTexture = true;
         } else {
           material.transparencyMode = Material.MATERIAL_OPAQUE;
           material.alpha = 1;
@@ -344,19 +578,145 @@ extern js`
             if (texture === undefined || texture.variants.length !== 1) throw new Error("Animated voxel texture must have exactly one variant: " + key);
             if (texture.bankKey !== batch.bankKey) throw new Error("Voxel animation " + batch.animationKey + " crosses texture banks");
             const frame = texture.variants[0];
-            return {uOffset: frame.u0 - base.u0, vOffset: frame.v0 - base.v0};
+            return {layerOffset: frame.layer - base.layer};
           });
           if (frames.length > 1) {
             this.animatedMaterials.push({
               frameDurationMs: animation.frameDurationMs,
               frames,
               frameIndex: -1,
-              textures: [albedoTexture, normalTexture, materialTexture, emissiveTexture],
+              plugin: texturePlugin,
             });
           }
         }
+        if (batch.layer === "cutout" && definition.castsShadows) {
+          material.shadowDepthWrapper = new ShadowDepthWrapper(material, this.scene);
+        }
         this.materials.set(key, material);
         return material;
+      }
+
+      validateBatchResources(batch) {
+        if (typeof batch !== "object" || batch === null) throw new TypeError("Chunk mesh batch must be a record");
+        if (typeof batch.pipelineKey !== "string" || batch.pipelineKey.length === 0) throw new TypeError("Chunk mesh pipeline key must be non-empty text");
+        if (typeof batch.bankKey !== "string" || batch.bankKey.length === 0) throw new TypeError("Chunk mesh bank key must be non-empty text");
+        if (typeof batch.materialKey !== "string" || batch.materialKey.length === 0) throw new TypeError("Chunk mesh material key must be non-empty text");
+        if (batch.animationKey != null && (typeof batch.animationKey !== "string" || batch.animationKey.length === 0)) {
+          throw new TypeError("Chunk mesh animation key must be non-empty text or null");
+        }
+        if (!["opaque", "cutout", "translucent"].includes(batch.layer)) throw new TypeError("Chunk mesh render layer is invalid");
+        const expectedKey = batch.layer + "|" + batch.bankKey + "|" + batch.materialKey + "|" + (batch.animationKey ?? "-");
+        if (batch.pipelineKey !== expectedKey) throw new Error("Voxel material pipeline key does not match its batch contract");
+        const materialDefinition = this.materialDefinitions.get(batch.materialKey);
+        if (materialDefinition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
+        const textureBank = this.textureBanks.get(batch.bankKey);
+        if (textureBank === undefined) throw new Error("Unknown voxel texture bank " + batch.bankKey);
+        if (textureBank.role !== batch.layer && !(batch.layer === "translucent" && textureBank.role === "fluid")) {
+          throw new Error("Voxel texture bank " + batch.bankKey + " cannot serve render layer " + batch.layer);
+        }
+        let animationBaseLayer = null;
+        if (batch.animationKey != null) {
+          const animation = this.animationDefinitions.get(batch.animationKey);
+          if (animation === undefined) throw new Error("Unknown voxel animation " + batch.animationKey);
+          for (const [frameIndex, key] of animation.frames.entries()) {
+            const texture = this.textureDefinitions.get(key);
+            if (texture === undefined || texture.variants.length !== 1) throw new Error("Animated voxel texture must have exactly one variant: " + key);
+            if (texture.bankKey !== batch.bankKey) throw new Error("Voxel animation " + batch.animationKey + " crosses texture banks");
+            if (batch.layer === "cutout" && texture.alphaCutoff !== materialDefinition.alphaCutoff) {
+              throw new Error("Voxel animation " + batch.animationKey + " frame " + key + " was filtered for a different material alpha cutoff");
+            }
+            if (frameIndex === 0) animationBaseLayer = texture.variants[0].layer;
+          }
+        }
+        return {textureBank, materialDefinition, animationBaseLayer};
+      }
+
+      validateChunkMesh(chunk) {
+        if (typeof chunk !== "object" || chunk === null) throw new TypeError("Chunk mesh must be a record");
+        const position = chunk.position;
+        const x = requireInteger(position?.x, -33_554_431, 33_554_431, "Chunk x");
+        const y = requireInteger(position?.y, -33_554_431, 33_554_431, "Chunk y");
+        const z = requireInteger(position?.z, -33_554_431, 33_554_431, "Chunk z");
+        requireInteger(chunk.ticket, 0, Number.MAX_SAFE_INTEGER, "Chunk mesh ticket");
+        requireInteger(chunk.visibleBlocks, 0, this.edge * this.edge * this.edge, "Chunk mesh visible block count");
+        const declaredQuads = requireInteger(chunk.quadCount, 0, 1_000_000, "Chunk mesh quad count");
+        const declaredBytes = requireInteger(chunk.byteSize, 0, maximumChunkMeshBytes, "Chunk mesh byte size");
+        if (!Array.isArray(chunk.batches)) throw new TypeError("Chunk mesh batches must be a list");
+        if (chunk.batches.length > maximumChunkMeshBatches) throw new RangeError("Chunk mesh has too many material batches");
+
+        const pipelineKeys = new Set();
+        const batches = [];
+        let actualBytes = 0;
+        let actualQuads = 0;
+        for (const [index, batch] of chunk.batches.entries()) {
+          const resources = this.validateBatchResources(batch);
+          const textureBank = resources.textureBank;
+          if (pipelineKeys.has(batch.pipelineKey)) throw new Error("Chunk mesh repeats material pipeline " + batch.pipelineKey);
+          pipelineKeys.add(batch.pipelineKey);
+          const positions = requireTypedArray(batch.positions, Float32Array, "Chunk mesh positions");
+          const normals = requireTypedArray(batch.normals, Float32Array, "Chunk mesh normals");
+          const uvs = requireTypedArray(batch.uvs, Float32Array, "Chunk mesh UVs");
+          const textureLayers = requireTypedArray(batch.textureLayers, Float32Array, "Chunk mesh texture layers");
+          const colors = requireTypedArray(batch.colors, Float32Array, "Chunk mesh colors");
+          const indices = requireTypedArray(batch.indices, Uint32Array, "Chunk mesh indices");
+          const vertexCount = positions.length / 3;
+          if (positions.length % 3 !== 0 || normals.length !== positions.length || uvs.length !== vertexCount * 2 || textureLayers.length !== vertexCount || colors.length !== vertexCount * 4) {
+            throw new Error("Chunk mesh vertex buffers have inconsistent lengths");
+          }
+          const quadCount = requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh batch quad count");
+          if (vertexCount !== quadCount * 4 || indices.length !== quadCount * 6 || indices.length % 3 !== 0) {
+            throw new Error("Chunk mesh topology does not match its quad count");
+          }
+          for (const [label, values] of [["positions", positions], ["normals", normals], ["UVs", uvs], ["colors", colors]]) {
+            for (const value of values) {
+              if (!Number.isFinite(value)) throw new RangeError("Chunk mesh " + label + " contain a non-finite value");
+            }
+          }
+          for (const layer of textureLayers) {
+            if (!Number.isInteger(layer) || layer < 0 || layer >= textureBank.layerCount) {
+              throw new RangeError("Chunk mesh texture layer is outside texture bank " + batch.bankKey);
+            }
+          }
+          const layerAlphaCutoffs = this.textureLayerAlphaCutoffs.get(batch.bankKey);
+          if (layerAlphaCutoffs === undefined) throw new Error("Chunk mesh texture bank has no layer ownership map: " + batch.bankKey);
+          for (let offset = 0; offset < textureLayers.length; offset += 4) {
+            const layer = textureLayers[offset];
+            for (let vertexOffset = 1; vertexOffset < 4; vertexOffset += 1) {
+              if (textureLayers[offset + vertexOffset] !== layer) throw new Error("Chunk mesh quad interpolates between texture array layers");
+            }
+            if (!layerAlphaCutoffs.has(layer)) throw new Error("Chunk mesh texture layer has no resource owner: " + batch.bankKey + ":" + layer);
+            if (batch.layer === "cutout" && layerAlphaCutoffs.get(layer) !== resources.materialDefinition.alphaCutoff) {
+              throw new Error("Chunk mesh cutout layer was filtered for a different material alpha cutoff");
+            }
+            if (resources.animationBaseLayer !== null && layer !== resources.animationBaseLayer) {
+              throw new Error("Animated Chunk mesh must use its animation's first texture layer");
+            }
+          }
+          for (const vertexIndex of indices) {
+            if (vertexIndex >= vertexCount) throw new RangeError("Chunk mesh index is outside its vertex buffer");
+          }
+          for (let quadIndex = 0; quadIndex < quadCount; quadIndex += 1) {
+            const vertexOffset = quadIndex * 4;
+            const indexOffset = quadIndex * 6;
+            if (
+              indices[indexOffset] !== vertexOffset
+              || indices[indexOffset + 1] !== vertexOffset + 1
+              || indices[indexOffset + 2] !== vertexOffset + 2
+              || indices[indexOffset + 3] !== vertexOffset
+              || indices[indexOffset + 4] !== vertexOffset + 2
+              || indices[indexOffset + 5] !== vertexOffset + 3
+            ) {
+              throw new Error("Chunk mesh indices do not match canonical quad topology");
+            }
+          }
+          actualBytes += positions.byteLength + normals.byteLength + uvs.byteLength + textureLayers.byteLength + colors.byteLength + indices.byteLength;
+          if (actualBytes > maximumChunkMeshBytes) throw new RangeError("Chunk mesh exceeds the 8 MiB upload limit");
+          actualQuads += quadCount;
+          batches.push({index, batch, positions, normals, uvs, textureLayers, colors, indices});
+        }
+        if (actualBytes !== declaredBytes) throw new Error("Chunk mesh byte size does not match its buffers");
+        if (actualQuads !== declaredQuads) throw new Error("Chunk mesh quad count does not match its batches");
+        return {key: chunkKey(x, y, z), x, y, z, batches, quads: actualQuads};
       }
 
       disposeChunk(key) {
@@ -374,26 +734,13 @@ extern js`
 
       setChunkMesh(chunk) {
         this.requireLive();
-        const position = chunk?.position;
-        const x = requireInteger(position?.x, -33_554_431, 33_554_431, "Chunk x");
-        const y = requireInteger(position?.y, -33_554_431, 33_554_431, "Chunk y");
-        const z = requireInteger(position?.z, -33_554_431, 33_554_431, "Chunk z");
-        if (!Array.isArray(chunk.batches)) throw new TypeError("Chunk mesh batches must be a list");
-        const key = chunkKey(x, y, z);
-        this.disposeChunk(key);
+        const validated = this.validateChunkMesh(chunk);
         const meshes = [];
-        let quads = 0;
         try {
-          for (const [index, batch] of chunk.batches.entries()) {
-            const positions = requireTypedArray(batch.positions, Float32Array, "Chunk mesh positions");
-            const normals = requireTypedArray(batch.normals, Float32Array, "Chunk mesh normals");
-            const uvs = requireTypedArray(batch.uvs, Float32Array, "Chunk mesh UVs");
-            const colors = requireTypedArray(batch.colors, Float32Array, "Chunk mesh colors");
-            const indices = requireTypedArray(batch.indices, Uint32Array, "Chunk mesh indices");
-            if (positions.length % 3 !== 0 || normals.length !== positions.length || uvs.length / 2 !== positions.length / 3 || colors.length / 4 !== positions.length / 3) {
-              throw new Error("Chunk mesh vertex buffers have inconsistent lengths");
-            }
-            const mesh = new Mesh("chunk:" + key + ":" + index, this.scene);
+          for (const item of validated.batches) {
+            const {index, batch, positions, normals, uvs, textureLayers, colors, indices} = item;
+            const material = this.materialFor(batch);
+            const mesh = new Mesh("chunk:" + validated.key + ":" + index, this.scene);
             meshes.push(mesh);
             const data = new VertexData();
             data.positions = positions;
@@ -404,8 +751,9 @@ extern js`
             // Babylon 只会在 Mesh 之间排序透明对象。水面和侧壁在一个 Chunk
             // 内仍需按三角形从远到近排序，因此透明索引缓冲必须保持可更新。
             data.applyToMesh(mesh, batch.layer === "translucent");
-            mesh.material = this.materialFor(batch);
-            mesh.position.set(x * this.options.edge, y * this.options.edge, z * this.options.edge);
+            mesh.setVerticesData("textureLayer", textureLayers, false, 1);
+            mesh.material = material;
+            mesh.position.set(validated.x * this.edge, validated.y * this.edge, validated.z * this.edge);
             mesh.useVertexColors = true;
             mesh.hasVertexAlpha = false;
             mesh.isPickable = false;
@@ -424,11 +772,13 @@ extern js`
               if (definition === undefined) throw new Error("Unknown voxel material " + batch.materialKey);
               if (definition.castsShadows) this.environment.shadowGenerator.addShadowCaster(mesh, false);
             }
-            quads += requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh quad count");
           }
+          // Keep the previous visible Chunk until the complete replacement has
+          // passed validation and every new mesh has reached GPU staging.
+          this.disposeChunk(validated.key);
           this.meshCount += meshes.length;
-          this.quadCount += quads;
-          this.chunks.set(key, {meshes, quads});
+          this.quadCount += validated.quads;
+          this.chunks.set(validated.key, {meshes, quads: validated.quads});
         } catch (error) {
           for (const mesh of meshes) {
             this.translucentMeshes.delete(mesh);
@@ -461,7 +811,11 @@ extern js`
         for (const key of [...this.chunks.keys()]) this.disposeChunk(key);
         this.translucentMeshes.clear();
         this.animatedMaterials.length = 0;
-        for (const material of this.materials.values()) material.dispose(true, true);
+        for (const material of this.materials.values()) {
+          material.shadowDepthWrapper?.dispose();
+          material.shadowDepthWrapper = null;
+          material.dispose(true, false);
+        }
         this.materials.clear();
         for (const textureBank of this.textureBanks.values()) {
           textureBank.albedo.dispose();
@@ -470,6 +824,7 @@ extern js`
           textureBank.emissive.dispose();
         }
         this.textureBanks.clear();
+        this.engine.onContextRestoredObservable.remove(this.environment.contextRestoreObserver);
         this.scene.dispose();
         this.engine.dispose();
         surfaces.delete(this);
@@ -479,6 +834,7 @@ extern js`
     export async function createBabylonVoxelSurface(canvas, options) {
       canvas = requireCanvas(canvas);
       if (typeof options !== "object" || options === null) throw new TypeError("Voxel surface options must be a record");
+      if (typeof Uint8Array.fromBase64 !== "function") throw new Error("Voxel rendering requires the modern Uint8Array.fromBase64 Web API");
       const edge = requireInteger(options.edge, 4, 64, "Voxel Chunk edge");
       const textureBankDefinitions = requireTextureBankDefinitions(options.textureBanks);
       if (typeof options.cloudsDataUrl !== "string" || !options.cloudsDataUrl.startsWith("data:image/webp;base64,")) throw new TypeError("Voxel surface clouds must be an embedded WebP image");
@@ -486,6 +842,15 @@ extern js`
       if (typeof options.viewChanged !== "function") throw new TypeError("Voxel surface viewChanged must be a function");
       if (canvas.tabIndex < 0) canvas.tabIndex = 0;
       const engine = new Engine(canvas, true, {preserveDrawingBuffer: false, stencil: true, antialias: true}, true);
+      if (engine.webGLVersion < 2) {
+        engine.dispose();
+        throw new Error("Voxel rendering requires WebGL 2 texture arrays");
+      }
+      const maximumTextureArrayLayers = engine.getCaps().texture2DArrayMaxLayerCount;
+      if (!Number.isSafeInteger(maximumTextureArrayLayers) || maximumTextureArrayLayers < 1) {
+        engine.dispose();
+        throw new Error("Voxel rendering could not determine the GPU texture array layer limit");
+      }
       const scene = new Scene(engine);
       scene.useRightHandedSystem = true;
       scene.collisionsEnabled = true;
@@ -524,8 +889,8 @@ extern js`
       shadowGenerator.setDarkness(0.55);
       shadowGenerator.usePercentageCloserFiltering = true;
       shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
-      // cutout 植物和树叶共享图集；阴影阶段也必须读取 diffuse alpha，不能把
-      // 整张交叉四边形当成不透明遮挡体投到地面。
+      // cutout 植物和树叶的阴影阶段也必须读取纹理数组 alpha，不能把整张
+      // 交叉四边形当成不透明遮挡体投到地面。
       shadowGenerator.transparencyShadow = true;
       shadowGenerator.enableSoftTransparentShadow = true;
       const renderDistance = edge * (horizontalChunkRadius + 1.5);
@@ -533,12 +898,14 @@ extern js`
       scene.fogColor = new Color3(0.19, 0.4, 0.66);
       scene.fogStart = renderDistance * 0.78;
       scene.fogEnd = renderDistance * 1.2;
+      let contextRestoreObserver = null;
       try {
-        const [loadedTextureBanks, cloudTexture] = await Promise.all([
-          Promise.all(textureBankDefinitions.map((definition) => loadTextureBank(scene, definition))),
-          waitForTexture(scene, options.cloudsDataUrl, false, Texture.BILINEAR_SAMPLINGMODE),
-        ]);
+        const loadedTextureBanks = textureBankDefinitions.map((definition) => loadTextureBank(scene, definition, maximumTextureArrayLayers));
         const textureBanks = new Map(loadedTextureBanks.map((bank) => [bank.key, bank]));
+        contextRestoreObserver = engine.onContextRestoredObservable.add(() => {
+          for (const bank of textureBanks.values()) bank.restore();
+        });
+        const cloudTexture = await waitForTexture(scene, options.cloudsDataUrl, false, Texture.BILINEAR_SAMPLINGMODE);
         cloudTexture.name = "openvoxel-clouds";
         cloudTexture.hasAlpha = true;
         cloudTexture.wrapU = Texture.WRAP_ADDRESSMODE;
@@ -567,9 +934,10 @@ extern js`
           scene,
           camera,
           textureBanks,
-          {cloudLayer, cloudTexture, shadowGenerator},
+          {cloudLayer, cloudTexture, shadowGenerator, contextRestoreObserver},
         );
       } catch (error) {
+        if (contextRestoreObserver !== null) engine.onContextRestoredObservable.remove(contextRestoreObserver);
         scene.dispose();
         engine.dispose();
         throw error;

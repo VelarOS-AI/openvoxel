@@ -8,6 +8,14 @@ export function requireRecord(value, label) {
   return value;
 }
 
+export function requireKnownFields(value, fields, label) {
+  const known = new Set(fields);
+  for (const field of Object.keys(value)) {
+    if (!known.has(field)) throw new Error(`${label} contains unknown field ${field}`);
+  }
+  return value;
+}
+
 export function requireText(value, label) {
   if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${label} must be non-empty text`);
   return value;
@@ -37,10 +45,16 @@ export function requireBoolean(value, label) {
   return value;
 }
 
+export function compareText(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return Object.fromEntries(Object.keys(value).sort(compareText).map((key) => [key, canonical(value[key])]));
 }
 
 export function stableJson(value) {

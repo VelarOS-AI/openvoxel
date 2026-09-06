@@ -1,4 +1,4 @@
-formatVersion: 5
+formatVersion: 6
 owner: openvoxel
 
 textureCatalogs:
@@ -8,8 +8,7 @@ textureCatalogs:
 
 texturePipeline:
   tileSize: 32
-  atlasPadding: 4
-  maximumAtlasColumns: 8
+  maximumArrayLayers: 256
   mipmaps: true
 
 environment:

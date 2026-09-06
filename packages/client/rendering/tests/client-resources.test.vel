@@ -6,7 +6,7 @@ import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
 import {meshChunk} from "../src/mesher.vel"
 import {createClientRenderCatalog} from "../src/render-catalog.vel"
 import {ClientBlockModelKind} from "../src/contracts.vel"
-import {ClientResourcePackArtifact, ClientTextureBankRole, ClientTextureBankStorage} from "../src/resource-pack.vel"
+import {ClientAnimationResource, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankLevel, ClientTextureBankRole, ClientTextureBankStorage, ClientTextureResource, validateClientResourcePack} from "../src/resource-pack.vel"
 
 def contentResponse() -> WorldContentResponse:
     return {
@@ -59,9 +59,9 @@ test "resource packs fail before rendering when their target content build diffe
     })
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
-test "built-in resources expose role-scoped generated texture banks":
-    expect(builtinClientResourcePack.artifactVersion).toBe(4)
-    expect(builtinClientResourcePack.formatVersion).toBe(4)
+test "built-in resources expose role-scoped generated texture arrays":
+    expect(builtinClientResourcePack.artifactVersion).toBe(5)
+    expect(builtinClientResourcePack.formatVersion).toBe(5)
     expect(builtinClientResourcePack.textureBanks.size).toBe(4)
     const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
     expect(ClientTextureBankRole.opaque in roles).toBe(true)
@@ -69,10 +69,31 @@ test "built-in resources expose role-scoped generated texture banks":
     expect(ClientTextureBankRole.translucent in roles).toBe(true)
     expect(ClientTextureBankRole.fluid in roles).toBe(true)
     const bankKeys = Set(builtinClientResourcePack.textureBanks.map(bank => bank.key))
+    const bankRoles: Map<string, ClientTextureBankRole> = Map()
     for bank in builtinClientResourcePack.textureBanks:
-        expect(bank.storage).toBe(ClientTextureBankStorage.atlas)
-        expect(bank.mipmaps).toBe(true)
-    for texture in builtinClientResourcePack.textures: expect(texture.bankKey in bankKeys).toBe(true)
+        bankRoles.set(bank.key, bank.role)
+        expect(bank.storage).toBe(ClientTextureBankStorage.texture2dArray)
+        expect(bank.layerCount > 0).toBe(true)
+        expect(bank.levels.size > 1).toBe(true)
+        let expectedWidth = 32
+        let expectedHeight = 32
+        for level in bank.levels:
+            expect(level.width).toBe(expectedWidth)
+            expect(level.height).toBe(expectedHeight)
+            const expectedDataSize = ((level.width * level.height * bank.layerCount * 4 + 2) / 3).floor() * 4
+            expect(level.albedoData.size).toBe(expectedDataSize)
+            expect(level.normalData.size).toBe(expectedDataSize)
+            expect(level.materialData.size).toBe(expectedDataSize)
+            expect(level.emissiveData.size).toBe(expectedDataSize)
+            expectedWidth = Math.max(1, (expectedWidth / 2).floor())
+            expectedHeight = Math.max(1, (expectedHeight / 2).floor())
+        expect(bank.levels[bank.levels.size - 1].width).toBe(1)
+        expect(bank.levels[bank.levels.size - 1].height).toBe(1)
+    for texture in builtinClientResourcePack.textures:
+        expect(texture.bankKey in bankKeys).toBe(true)
+        if bankRoles.get(texture.bankKey) == ClientTextureBankRole.cutout:
+            expect(texture.alphaCutoff != null).toBe(true)
+        else: expect(texture.alphaCutoff).toBe(null)
 
 test "material families preserve lighting, shadow, and PBR response semantics":
     const cross = builtinClientResourcePack.materials.find(material => material.key == "openvoxel:material/cross")
@@ -91,3 +112,77 @@ test "material families preserve lighting, shadow, and PBR response semantics":
     expect(terrain.castsShadows).toBe(true)
     expect(water.castsShadows).toBe(false)
     expect(magma.castsShadows).toBe(false)
+
+test "resource pack validation rejects malformed array bytes and inert animations":
+    const bank = builtinClientResourcePack.textureBanks[0]
+    const firstLevel = bank.levels[0]
+    const malformedLevel = ClientTextureBankLevel.from(firstLevel, {albedoData: firstLevel.albedoData.replace("==", "A=")})
+    const malformedBank = ClientTextureBank.from(bank, {
+        levels: bank.levels.map((level, index) => index == 0 ? malformedLevel : level),
+    })
+    const malformedData = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textureBanks: builtinClientResourcePack.textureBanks.map(current => current.key == bank.key ? malformedBank : current),
+    })
+    expect(() => validateClientResourcePack(malformedData)).toThrow()
+
+    const repeatedLevels: List<readonly ClientTextureBankLevel> = []
+    for level in bank.levels: repeatedLevels.append(level)
+    repeatedLevels.append(bank.levels[bank.levels.size - 1])
+    const repeatedFinalMip = ClientTextureBank.from(bank, {levels: repeatedLevels})
+    const redundantMipData = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textureBanks: builtinClientResourcePack.textureBanks.map(current => current.key == bank.key ? repeatedFinalMip : current),
+    })
+    expect(() => validateClientResourcePack(redundantMipData)).toThrow()
+
+    const animation = builtinClientResourcePack.animations[0]
+    const singleFrame = ClientAnimationResource.from(animation, {frames: [animation.frames[0]]})
+    const repeatedFrame = ClientAnimationResource.from(animation, {frames: [animation.frames[0], animation.frames[0]]})
+    const withAnimation = (replacement: readonly ClientAnimationResource) => ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        animations: builtinClientResourcePack.animations.map(current => current.key == animation.key ? replacement : current),
+    })
+    expect(() => validateClientResourcePack(withAnimation(singleFrame))).toThrow()
+    expect(() => validateClientResourcePack(withAnimation(repeatedFrame))).toThrow()
+
+    const opaqueTexture = builtinClientResourcePack.textures.find(texture => bankRolesForPack().get(texture.bankKey) == ClientTextureBankRole.opaque)
+    assert opaqueTexture != null else "Expected an opaque texture"
+    const opaqueTextureKey = opaqueTexture.key
+    const unexpectedCutoff = ClientTextureResource.from(opaqueTexture, {alphaCutoff: 0.45})
+    const withUnexpectedCutoff = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textures: builtinClientResourcePack.textures.map(texture => texture.key == opaqueTextureKey ? unexpectedCutoff : texture),
+    })
+    expect(() => validateClientResourcePack(withUnexpectedCutoff)).toThrow()
+
+def bankRolesForPack() -> Map<string, ClientTextureBankRole>:
+    const roles: Map<string, ClientTextureBankRole> = Map()
+    for bank in builtinClientResourcePack.textureBanks: roles.set(bank.key, bank.role)
+    return roles
+
+test "render catalog rejects cutout textures filtered for another material threshold":
+    const texture = builtinClientResourcePack.textures.find(candidate => candidate.alphaCutoff == 0.45)
+    assert texture != null else "Expected a thresholded cutout texture"
+    const textureKey = texture.key
+    const changed = ClientTextureResource.from(texture, {alphaCutoff: 0.35})
+    const pack = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textures: builtinClientResourcePack.textures.map(candidate => candidate.key == textureKey ? changed : candidate),
+    })
+    expect(() => createClientRenderCatalog(contentResponse(), pack)).toThrow()
+
+test "resource pack validation rejects texture layouts outside the memory envelope":
+    const baseLevel = builtinClientResourcePack.textureBanks[0].levels[0]
+    const oversizedLevel = ClientTextureBankLevel.from(baseLevel, {width: 256, height: 256})
+    const oversizedBank = ClientTextureBank.from(builtinClientResourcePack.textureBanks[0], {
+        layerCount: 65,
+        levels: [oversizedLevel],
+    })
+    const oversized = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textureBanks: builtinClientResourcePack.textureBanks.map((bank, index) => index == 0 ? oversizedBank : bank),
+    })
+    expect(() => validateClientResourcePack(oversized)).toThrow()
+
+    const aggregate = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textureBanks: builtinClientResourcePack.textureBanks.map(bank => ClientTextureBank.from(bank, {
+            layerCount: 64,
+            levels: [oversizedLevel],
+        })),
+    })
+    expect(() => validateClientResourcePack(aggregate)).toThrow()

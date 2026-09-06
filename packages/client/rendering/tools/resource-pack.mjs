@@ -4,6 +4,7 @@ import {fileURLToPath} from "node:url";
 import sharp from "sharp";
 import {loadResourceManifest} from "./resource-manifest.mjs";
 import {
+  compareText,
   requireBoolean,
   requireInteger,
   requireList,
@@ -15,7 +16,7 @@ import {
   stableJson,
   uniqueByKey,
 } from "./resource-pack-values.mjs";
-import {buildTextureAtlas} from "./texture-atlas.mjs";
+import {buildTextureArray} from "./texture-array.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = resolve(packageRoot, "data");
@@ -24,6 +25,8 @@ const blockCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/blocks/bl
 const generatorCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/world-generation/world-generator-catalog-data"));
 const bankRoles = ["opaque", "cutout", "translucent", "fluid"];
 const textureChannels = ["albedo", "normal", "material", "emissive"];
+const maximumTextureBankChannelBytes = 16 * 1024 * 1024;
+const maximumClientTextureResidentBytes = 128 * 1024 * 1024;
 
 function requiredResources(blockCatalog) {
   const resources = {
@@ -61,28 +64,42 @@ function bankRole(render) {
   throw new Error(`Rendered component profile has unsupported layer ${render.layer}`);
 }
 
-function textureBankAssignments(blockCatalog, animations) {
+function textureBankPlan(blockCatalog, animations, materials) {
   const animationByKey = new Map(animations.map((animation) => [animation.key, animation]));
+  const materialByKey = new Map(materials.map((material) => [material.key, material]));
   const assignments = new Map();
-  const assign = (key, role) => {
+  const textureAlphaCutoffs = new Map();
+  const assign = (key, role, alphaCutoff) => {
     const current = assignments.get(key);
     if (current != null && current !== role) {
       throw new Error(`Texture ${key} is used by both ${current} and ${role} banks; duplicate it under distinct logical keys`);
     }
     assignments.set(key, role);
+    if (role !== "cutout") return;
+    const currentCutoff = textureAlphaCutoffs.get(key);
+    if (currentCutoff != null && currentCutoff !== alphaCutoff) {
+      throw new Error(`Cutout texture ${key} is used with both ${currentCutoff} and ${alphaCutoff} alpha cutoffs; duplicate it under distinct logical keys`);
+    }
+    textureAlphaCutoffs.set(key, alphaCutoff);
   };
   for (const profile of blockCatalog.catalog.componentProfiles) {
     const render = profile.render;
     if (render.model == null) continue;
     const role = bankRole(render);
-    for (const key of textureKeys(render)) assign(key, role);
+    let alphaCutoff = null;
+    if (role === "cutout") {
+      const material = materialByKey.get(render.material);
+      if (material == null) throw new Error(`Cutout component profile references unknown material ${render.material}`);
+      alphaCutoff = material.alphaCutoff;
+    }
+    for (const key of textureKeys(render)) assign(key, role, alphaCutoff);
     if (render.animation != null) {
       const animation = animationByKey.get(render.animation);
       if (animation == null) throw new Error(`Rendered component profile references unknown animation ${render.animation}`);
-      for (const frame of animation.frames) assign(frame, role);
+      for (const frame of animation.frames) assign(frame, role, alphaCutoff);
     }
   }
-  return assignments;
+  return {assignments, textureAlphaCutoffs};
 }
 
 function requireCoverage(required, declared, label) {
@@ -109,14 +126,43 @@ function dataUrl(type, bytes) {
   return `data:${type};base64,${bytes.toString("base64")}`;
 }
 
-function variantCount(textures) {
+function base64(bytes) {
+  return bytes.toString("base64");
+}
+
+function textureVariantCount(textures) {
   return textures.reduce((total, texture) => total + 1 + (texture.variants?.length ?? 0), 0);
 }
 
-function compareText(left, right) {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
+function textureArrayLevelDimensions(size, mipmaps) {
+  const levels = [{width: size, height: size}];
+  while (mipmaps && (levels.at(-1).width > 1 || levels.at(-1).height > 1)) {
+    const previous = levels.at(-1);
+    levels.push({
+      width: Math.max(1, Math.floor(previous.width / 2)),
+      height: Math.max(1, Math.floor(previous.height / 2)),
+    });
+  }
+  return levels;
+}
+
+function textureArrayMemory(levels, layerCount) {
+  const levelChannelBytes = levels.map(({width, height}) => width * height * layerCount * 4);
+  const channelBytes = levelChannelBytes.reduce((total, bytes) => total + bytes, 0);
+  const gpuBytes = channelBytes * textureChannels.length;
+  const cpuRestoreBytes = gpuBytes;
+  const encodedCharacters = levelChannelBytes.reduce(
+    (total, bytes) => total + Math.floor((bytes + 2) / 3) * 4 * textureChannels.length,
+    0,
+  );
+  const encodedHeapBytes = encodedCharacters * 2;
+  return {
+    channelBytes,
+    gpuBytes,
+    cpuRestoreBytes,
+    encodedHeapBytes,
+    residentBytes: gpuBytes + cpuRestoreBytes + encodedHeapBytes,
+  };
 }
 
 /**
@@ -124,7 +170,7 @@ function compareText(left, right) {
  * YAML object key order and source-file or mapping enumeration order do not affect the
  * result; authored list order remains significant because it can change layout or animation.
  */
-export function computeResourceHash({manifest, catalogs, sourceImages, bankAssignments, payload, bankImages}) {
+export function computeResourceHash({manifest, catalogs, sourceImages, bankAssignments, payload, bankChannels}) {
   const normalizedCatalogs = catalogs
     .map(({file, document}) => ({file, document}))
     .sort((left, right) => compareText(left.file, right.file));
@@ -134,14 +180,14 @@ export function computeResourceHash({manifest, catalogs, sourceImages, bankAssig
   const normalizedAssignments = [...bankAssignments.entries()]
     .map(([texture, role]) => ({texture, role}))
     .sort((left, right) => compareText(left.texture, right.texture));
-  const normalizedBankImages = bankImages
-    .flatMap((bank) => textureChannels.map((channel) => ({
-      path: `texture-banks/${bank.role}-${channel}.png`,
-      sha256: sha256([bank[`${channel}Bytes`]]),
-    })))
+  const normalizedBankChannels = bankChannels
+    .flatMap((bank) => bank.levels.flatMap((level, mipLevel) => textureChannels.map((channel) => ({
+      path: `texture-arrays/${bank.role}-mip-${mipLevel}-${channel}.rgba8`,
+      sha256: sha256([level[`${channel}Bytes`]]),
+    }))))
     .sort((left, right) => compareText(left.path, right.path));
   return sha256([stableJson({
-    identityVersion: 1,
+    identityVersion: 2,
     source: {
       manifest,
       catalogs: normalizedCatalogs,
@@ -150,7 +196,7 @@ export function computeResourceHash({manifest, catalogs, sourceImages, bankAssig
     bankAssignments: normalizedAssignments,
     generated: {
       artifactPayload: payload,
-      textureBankImages: normalizedBankImages,
+      textureBankChannels: normalizedBankChannels,
     },
   })]);
 }
@@ -204,6 +250,7 @@ export async function buildResourcePack() {
     const frames = requireList(entry.frames, `animation ${entry.key} frames`)
       .map((frame) => requireText(frame, `animation ${entry.key} frame`));
     if (frames.length < 2) throw new Error(`Animation ${entry.key} needs at least two frames`);
+    if (new Set(frames).size !== frames.length) throw new Error(`Animation ${entry.key} repeats a frame`);
     for (const frame of frames) {
       if (!declaredTextures.has(frame)) throw new Error(`Animation ${entry.key} references unknown texture ${frame}`);
     }
@@ -239,46 +286,59 @@ export async function buildResourcePack() {
     throw new Error("Environment clouds must be a WebP image no larger than 2048x2048");
   }
 
-  const assignments = textureBankAssignments(blockCatalog, animations);
+  const {assignments, textureAlphaCutoffs} = textureBankPlan(blockCatalog, animations, materials);
+  const plannedLevels = textureArrayLevelDimensions(source.packing.tileSize, source.packing.mipmaps);
+  const plannedMemory = bankRoles.reduce((total, role) => {
+    const sources = source.textures.filter((texture) => assignments.get(texture.key) === role);
+    const memory = textureArrayMemory(plannedLevels, textureVariantCount(sources));
+    if (memory.channelBytes > maximumTextureBankChannelBytes) {
+      throw new RangeError(`Texture bank ${role} needs ${memory.channelBytes} bytes per channel; the limit is ${maximumTextureBankChannelBytes}`);
+    }
+    return total + memory.residentBytes;
+  }, 0);
+  if (plannedMemory > maximumClientTextureResidentBytes) {
+    throw new RangeError(`Client resource pack needs an estimated ${plannedMemory} resident texture bytes; the limit is ${maximumClientTextureResidentBytes}`);
+  }
   const bankArtifacts = [];
-  const bankImages = [];
+  const bankChannels = [];
   const textures = [];
   const bankAudits = [];
   for (const role of bankRoles) {
     const bankSources = source.textures.filter((texture) => assignments.get(texture.key) === role);
     if (bankSources.length === 0) continue;
-    const columns = Math.min(source.packing.columns, Math.ceil(Math.sqrt(variantCount(bankSources))));
-    const built = await buildTextureAtlas({
+    const built = await buildTextureArray({
       dataRoot,
-      atlas: {...source.packing, columns},
+      array: source.packing,
       textureSources: bankSources,
       surfaceProfiles: source.surfaceProfiles,
+      role,
+      textureAlphaCutoffs,
     });
     const key = `${owner}:texture-bank/${role}`;
     bankArtifacts.push({
       key,
       role,
-      storage: "atlas",
-      width: built.width,
-      height: built.height,
-      mipmaps: built.mipmaps,
-      albedoDataUrl: dataUrl("image/png", built.albedoBytes),
-      normalDataUrl: dataUrl("image/png", built.normalBytes),
-      materialDataUrl: dataUrl("image/png", built.materialBytes),
-      emissiveDataUrl: dataUrl("image/png", built.emissiveBytes),
+      storage: "texture_2d_array",
+      layerCount: built.layerCount,
+      levels: built.levels.map((level) => ({
+        width: level.width,
+        height: level.height,
+        albedoData: base64(level.albedoBytes),
+        normalData: base64(level.normalBytes),
+        materialData: base64(level.materialBytes),
+        emissiveData: base64(level.emissiveBytes),
+      })),
     });
     textures.push(...built.textures.map((texture) => ({...texture, bankKey: key})));
-    bankImages.push({
+    bankChannels.push({
       role,
-      albedoBytes: built.albedoBytes,
-      normalBytes: built.normalBytes,
-      materialBytes: built.materialBytes,
-      emissiveBytes: built.emissiveBytes,
+      levels: built.levels,
     });
-    bankAudits.push({key, role, storage: "atlas", ...built.audit});
+    const memory = textureArrayMemory(built.levels, built.layerCount);
+    bankAudits.push({key, role, storage: "texture_2d_array", ...built.audit, memory});
   }
   if (textures.length !== source.textures.length) throw new Error("Some client textures were not assigned to a render bank");
-  textures.sort((left, right) => left.key.localeCompare(right.key));
+  textures.sort((left, right) => compareText(left.key, right.key));
 
   const sourceImageEntries = await Promise.all(source.referencedImageFiles.map(async (file) => ({
     path: file,
@@ -286,8 +346,8 @@ export async function buildResourcePack() {
   })));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
-    artifactVersion: 4,
-    formatVersion: 4,
+    artifactVersion: 5,
+    formatVersion: 5,
     owner,
     targetContentHash,
     textureBanks: bankArtifacts,
@@ -304,7 +364,7 @@ export async function buildResourcePack() {
     sourceImages: sourceImageEntries,
     bankAssignments: assignments,
     payload,
-    bankImages,
+    bankChannels,
   });
   const artifact = {...payload, resourceHash};
   const sourceImages = await Promise.all(sourceImageEntries.map(async ({path, bytes}) => {
@@ -313,7 +373,7 @@ export async function buildResourcePack() {
   }));
   const categories = Object.fromEntries(source.catalogs.map(({category, textures: entries}) => [category, entries.length]));
   const audit = {
-    formatVersion: 1,
+    formatVersion: 2,
     resourceHash,
     sourceImages,
     unusedFiles: source.unusedFiles,
@@ -321,14 +381,15 @@ export async function buildResourcePack() {
     variantCount: textures.reduce((total, texture) => total + texture.variants.length, 0),
     categories,
     banks: bankAudits,
-    estimatedGpuBytes: bankAudits.reduce((total, bank) => total + bank.atlas.estimatedGpuBytes, 0),
+    gpuBytes: bankAudits.reduce((total, bank) => total + bank.memory.gpuBytes, 0),
+    estimatedResidentBytes: bankAudits.reduce((total, bank) => total + bank.memory.residentBytes, 0),
   };
   return {
     artifact,
     artifactText: `${JSON.stringify(artifact, null, 2)}\n`,
     audit,
     auditText: `${JSON.stringify(audit, null, 2)}\n`,
-    bankImages,
+    bankChannels,
   };
 }
 
@@ -336,9 +397,5 @@ export const paths = {
   packageRoot,
   artifact: resolve(packageRoot, "generated/client-resource-pack.json"),
   audit: resolve(packageRoot, "generated/resource-audit.json"),
-  bankImage(role, channel) {
-    if (!bankRoles.includes(role)) throw new Error(`Unknown texture bank role ${role}`);
-    if (!["albedo", "normal", "material", "emissive"].includes(channel)) throw new Error(`Unknown texture channel ${channel}`);
-    return resolve(packageRoot, `generated/texture-banks/${role}-${channel}.png`);
-  },
+  bankRoot: resolve(packageRoot, "generated/texture-banks"),
 };

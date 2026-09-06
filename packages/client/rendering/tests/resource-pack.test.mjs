@@ -1,34 +1,51 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import test from "node:test";
-import sharp from "sharp";
 import {buildResourcePack, computeResourceHash} from "../tools/resource-pack.mjs";
+import {buildTextureArray, textureArrayLayerBytes} from "../tools/texture-array.mjs";
 
 const channels = ["albedo", "normal", "material", "emissive"];
 const roles = ["opaque", "cutout", "translucent", "fluid"];
 const outputPromise = buildResourcePack();
 
-function pixel(data, width, x, y) {
-  const offset = (y * width + x) * 4;
+test("texture array storage converts RGBA8 layers to GPU row order without changing channels", () => {
+  const topToBottom = Buffer.from([
+    1, 2, 3, 4, 5, 6, 7, 8,
+    9, 10, 11, 12, 13, 14, 15, 16,
+  ]);
+  assert.deepEqual(textureArrayLayerBytes(topToBottom, 2), Buffer.from([
+    9, 10, 11, 12, 13, 14, 15, 16,
+    1, 2, 3, 4, 5, 6, 7, 8,
+  ]));
+  assert.throws(() => textureArrayLayerBytes(Buffer.alloc(15), 2), /one complete RGBA8 tile/u);
+});
+
+test("texture array construction rejects a bank before exceeding its channel memory budget", async () => {
+  const variants = Array.from({length: 64}, () => ({}));
+  await assert.rejects(buildTextureArray({
+    dataRoot: "/does-not-need-to-exist",
+    array: {tileSize: 256, maximumLayers: 256, mipmaps: true},
+    textureSources: [{key: "openvoxel:texture/block/oversized", variants}],
+    surfaceProfiles: new Map(),
+  }), /bytes per channel/u);
+});
+
+function pixel(data, width, height, layer, x, y) {
+  const layerBytes = width * height * 4;
+  const offset = layer * layerBytes + (y * width + x) * 4;
   return [...data.subarray(offset, offset + 4)];
 }
 
-function regionBounds(bank, variant) {
-  return {
-    left: Math.floor(variant.u0 * bank.width),
-    right: Math.floor(variant.u1 * bank.width),
-    top: bank.height - 1 - Math.floor(variant.v1 * bank.height),
-    bottom: bank.height - 1 - Math.floor(variant.v0 * bank.height),
-  };
+function decodedChannel(level, channel) {
+  return Buffer.from(level[`${channel}Data`], "base64");
 }
 
-function channelAverage(decoded, bank, variant, channel) {
-  const {left, right, top, bottom} = regionBounds(bank, variant);
+function channelAverage(data, level, variant, channel) {
   let total = 0;
   let count = 0;
-  for (let y = top; y <= bottom; y += 1) {
-    for (let x = left; x <= right; x += 1) {
-      const value = pixel(decoded.data, bank.width, x, y);
+  for (let y = 0; y < level.height; y += 1) {
+    for (let x = 0; x < level.width; x += 1) {
+      const value = pixel(data, level.width, level.height, variant.layer, x, y);
       if (value[3] === 0) continue;
       total += value[channel];
       count += 1;
@@ -38,9 +55,20 @@ function channelAverage(decoded, bank, variant, channel) {
   return total / count;
 }
 
+function identityLevel(name, width, height) {
+  return {
+    width,
+    height,
+    albedoBytes: Buffer.from(`${name}-albedo`),
+    normalBytes: Buffer.from(`${name}-normal`),
+    materialBytes: Buffer.from(`${name}-material`),
+    emissiveBytes: Buffer.from(`${name}-emissive`),
+  };
+}
+
 function identityFixture(overrides = {}) {
   return {
-    manifest: {formatVersion: 5, owner: "openvoxel", texturePipeline: {tileSize: 32, mipmaps: true}},
+    manifest: {formatVersion: 6, owner: "openvoxel", texturePipeline: {tileSize: 32, maximumArrayLayers: 256, mipmaps: true}},
     catalogs: [{
       file: "textures/terrain.yml",
       document: {category: "terrain", textures: [{key: "openvoxel:texture/block/stone", file: "textures/terrain/stone.png"}]},
@@ -49,48 +77,60 @@ function identityFixture(overrides = {}) {
       {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
       {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
     ],
-    bankAssignments: new Map([["openvoxel:texture/block/stone", "opaque"]]),
-    payload: {artifactVersion: 4, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
-    bankImages: [{
-      role: "opaque",
-      albedoBytes: Buffer.from("albedo"),
-      normalBytes: Buffer.from("normal"),
-      materialBytes: Buffer.from("material"),
-      emissiveBytes: Buffer.from("emissive"),
-    }],
+    bankAssignments: new Map([
+      ["openvoxel:texture/block/stone", "opaque"],
+      ["openvoxel:texture/block/dirt", "opaque"],
+    ]),
+    payload: {artifactVersion: 5, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
+    bankChannels: [
+      {role: "opaque", levels: [identityLevel("opaque-0", 2, 2), identityLevel("opaque-1", 1, 1)]},
+      {role: "cutout", levels: [identityLevel("cutout-0", 2, 2), identityLevel("cutout-1", 1, 1)]},
+    ],
     ...overrides,
   };
 }
 
-async function decodedBanks(output) {
-  const decoded = new Map();
-  for (const images of output.bankImages) {
-    decoded.set(images.role, Object.fromEntries(await Promise.all(channels.map(async (channel) => [
-      channel,
-      await sharp(images[`${channel}Bytes`]).ensureAlpha().raw().toBuffer({resolveWithObject: true}),
-    ]))));
-  }
-  return decoded;
-}
-
-test("resource pack exposes four generated texture banks and a closed authoring inventory", async () => {
-  const {artifact, audit, bankImages} = await outputPromise;
-  assert.equal(artifact.artifactVersion, 4);
-  assert.equal(artifact.formatVersion, 4);
+test("resource pack exposes four generated texture arrays and a closed authoring inventory", async () => {
+  const {artifact, audit, bankChannels} = await outputPromise;
+  assert.equal(artifact.artifactVersion, 5);
+  assert.equal(artifact.formatVersion, 5);
+  assert.equal(audit.formatVersion, 2);
   assert.equal(artifact.textureBanks.length, 4);
   assert.deepEqual(artifact.textureBanks.map((bank) => bank.role), roles);
-  assert.deepEqual(bankImages.map((bank) => bank.role), roles);
+  assert.deepEqual(bankChannels.map((bank) => bank.role), roles);
   assert.equal(artifact.textures.length, 45);
   assert.equal(artifact.textures.reduce((total, texture) => total + texture.variants.length, 0), 57);
+  assert.deepEqual(
+    artifact.textures.map(({key}) => key),
+    artifact.textures.map(({key}) => key).sort(),
+    "texture artifacts must use deterministic key order",
+  );
 
   for (const bank of artifact.textureBanks) {
     assert.equal(bank.key, `openvoxel:texture-bank/${bank.role}`);
-    assert.equal(bank.storage, "atlas");
-    assert.equal(bank.mipmaps, true);
-    assert.ok(bank.width > 0 && bank.height > 0);
-    for (const channel of channels) {
-      assert.match(bank[`${channel}DataUrl`], /^data:image\/png;base64,/u);
+    assert.equal(bank.storage, "texture_2d_array");
+    assert.ok(bank.layerCount > 0);
+    assert.deepEqual(bank.levels.map(({width, height}) => [width, height]), [
+      [32, 32],
+      [16, 16],
+      [8, 8],
+      [4, 4],
+      [2, 2],
+      [1, 1],
+    ]);
+    for (const level of bank.levels) {
+      for (const channel of channels) {
+        assert.match(level[`${channel}Data`], /^[A-Za-z0-9+/]+={0,2}$/u);
+        assert.equal(decodedChannel(level, channel).byteLength, level.width * level.height * bank.layerCount * 4);
+      }
     }
+  }
+  const banksByKey = new Map(artifact.textureBanks.map((bank) => [bank.key, bank]));
+  for (const texture of artifact.textures) {
+    const bank = banksByKey.get(texture.bankKey);
+    assert.ok(bank != null, `${texture.key} texture bank`);
+    if (bank.role === "cutout") assert.ok(typeof texture.alphaCutoff === "number", `${texture.key} cutout alpha cutoff`);
+    else assert.equal(texture.alphaCutoff, null, `${texture.key} non-cutout alpha cutoff`);
   }
 
   assert.equal(audit.sourceImages.length, 80);
@@ -109,6 +149,21 @@ test("resource pack exposes four generated texture banks and a closed authoring 
     Object.fromEntries(audit.banks.map((bank) => [bank.role, bank.variantCount])),
     {opaque: 40, cutout: 12, translucent: 1, fluid: 4},
   );
+  for (const bank of audit.banks) {
+    assert.equal(bank.storage, "texture_2d_array");
+    assert.equal(bank.array.width, 32);
+    assert.equal(bank.array.height, 32);
+    assert.equal(bank.array.layers, bank.variantCount);
+    assert.equal(bank.array.mipmaps, true);
+    assert.equal(bank.array.mipLevelCount, 6);
+    assert.equal(bank.array.gpuBytes, bank.memory.gpuBytes);
+    assert.equal(bank.memory.cpuRestoreBytes, bank.memory.gpuBytes);
+    assert.ok(bank.memory.encodedHeapBytes > 0);
+    assert.equal(
+      bank.memory.residentBytes,
+      bank.memory.gpuBytes + bank.memory.cpuRestoreBytes + bank.memory.encodedHeapBytes,
+    );
+  }
   const channelSources = {normal: {}, material: {}, emissive: {}};
   for (const bank of audit.banks) {
     for (const channel of Object.keys(channelSources)) {
@@ -122,19 +177,27 @@ test("resource pack exposes four generated texture banks and a closed authoring 
     material: {"authored-material": 24, generated: 33},
     emissive: {"authored-emissive": 2, generated: 55},
   });
-  assert.ok(audit.estimatedGpuBytes > 0);
+  assert.equal(audit.gpuBytes, audit.banks.reduce((total, bank) => total + bank.memory.gpuBytes, 0));
+  assert.equal(audit.estimatedResidentBytes, audit.banks.reduce((total, bank) => total + bank.memory.residentBytes, 0));
 });
 
 test("resource hash is deterministic and covers every authoring and generated boundary", () => {
-  const baseline = computeResourceHash(identityFixture());
+  const fixture = identityFixture();
+  const baseline = computeResourceHash(fixture);
   const reordered = identityFixture({
-    manifest: {texturePipeline: {mipmaps: true, tileSize: 32}, owner: "openvoxel", formatVersion: 5},
+    manifest: {texturePipeline: {mipmaps: true, maximumArrayLayers: 256, tileSize: 32}, owner: "openvoxel", formatVersion: 6},
     sourceImages: [
       {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
       {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
     ],
+    bankAssignments: new Map([...fixture.bankAssignments].reverse()),
+    bankChannels: [...fixture.bankChannels].reverse(),
   });
-  assert.equal(computeResourceHash(reordered), baseline, "object keys and source image enumeration must be normalized");
+  assert.equal(
+    computeResourceHash(reordered),
+    baseline,
+    "object keys, source images, assignments, and bank enumeration must be normalized",
+  );
 
   const cases = [
     ["manifest recipe", {manifest: {...identityFixture().manifest, owner: "changed"}}],
@@ -146,15 +209,20 @@ test("resource hash is deterministic and covers every authoring and generated bo
       {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
       {path: "textures/terrain/stone.png", bytes: Buffer.from("changed")},
     ]}],
-    ["bank assignment", {bankAssignments: new Map([["openvoxel:texture/block/stone", "cutout"]])}],
-    ["artifact payload", {payload: {artifactVersion: 4, textureBanks: [{key: "changed"}]}}],
-    ["generated bank bytes", {bankImages: [{
-      role: "opaque",
-      albedoBytes: Buffer.from("changed"),
-      normalBytes: Buffer.from("normal"),
-      materialBytes: Buffer.from("material"),
-      emissiveBytes: Buffer.from("emissive"),
-    }]}],
+    ["bank assignment", {bankAssignments: new Map([
+      ["openvoxel:texture/block/stone", "cutout"],
+      ["openvoxel:texture/block/dirt", "opaque"],
+    ])}],
+    ["artifact payload", {payload: {artifactVersion: 5, textureBanks: [{key: "changed"}]}}],
+    ["base generated bank bytes", {bankChannels: fixture.bankChannels.map((bank) => bank.role === "opaque"
+      ? {...bank, levels: [{...bank.levels[0], albedoBytes: Buffer.from("changed")}, bank.levels[1]]}
+      : bank)}],
+    ["non-base generated bank bytes", {bankChannels: fixture.bankChannels.map((bank) => bank.role === "opaque"
+      ? {...bank, levels: [bank.levels[0], {...bank.levels[1], normalBytes: Buffer.from("changed")}]}
+      : bank)}],
+    ["mip level order", {bankChannels: fixture.bankChannels.map((bank) => bank.role === "opaque"
+      ? {...bank, levels: [...bank.levels].reverse()}
+      : bank)}],
   ];
   for (const [label, overrides] of cases) {
     assert.notEqual(computeResourceHash(identityFixture(overrides)), baseline, `${label} must affect resource identity`);
@@ -166,80 +234,139 @@ test("resource pack identity is reproducible across complete builds", async () =
   assert.equal(second.artifact.resourceHash, first.artifact.resourceHash);
 });
 
-test("every bank keeps four channels aligned with texel-centered UVs and copied padding", async () => {
+test("every bank keeps complete mip levels and four RGBA8 channels aligned by layer", async () => {
   const output = await outputPromise;
-  const decoded = await decodedBanks(output);
   const banksByKey = new Map(output.artifact.textureBanks.map((bank) => [bank.key, bank]));
-  const imagesByRole = new Map(output.bankImages.map((images) => [images.role, images]));
-  const regionsByBank = new Map(roles.map((role) => [role, new Set()]));
+  const channelsByRole = new Map(output.bankChannels.map((bank) => [bank.role, bank]));
+  const layersByBank = new Map(roles.map((role) => [role, new Set()]));
 
   for (const bank of output.artifact.textureBanks) {
-    const bankChannels = decoded.get(bank.role);
-    const images = imagesByRole.get(bank.role);
-    assert.ok(bankChannels != null && images != null, `${bank.role} bank images`);
-    assert.equal(bankChannels.albedo.info.width, bank.width);
-    assert.equal(bankChannels.albedo.info.height, bank.height);
-    for (const channel of channels) {
-      assert.deepEqual(bankChannels[channel].info, bankChannels.albedo.info, `${bank.role} ${channel} dimensions`);
-      const dataUrl = bank[`${channel}DataUrl`];
-      const encoded = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      assert.deepEqual(Buffer.from(encoded, "base64"), images[`${channel}Bytes`], `${bank.role} ${channel} artifact bytes`);
+    const bankChannels = channelsByRole.get(bank.role);
+    assert.ok(bankChannels != null, `${bank.role} bank channels`);
+    assert.equal(bank.levels.length, bankChannels.levels.length, `${bank.role} mip level count`);
+    let previousWidth = bank.levels[0].width;
+    let previousHeight = bank.levels[0].height;
+    for (const [mipLevel, level] of bank.levels.entries()) {
+      const rawLevel = bankChannels.levels[mipLevel];
+      assert.equal(rawLevel.width, level.width, `${bank.role} mip ${mipLevel} width`);
+      assert.equal(rawLevel.height, level.height, `${bank.role} mip ${mipLevel} height`);
+      if (mipLevel > 0) {
+        assert.equal(level.width, Math.max(1, Math.floor(previousWidth / 2)), `${bank.role} mip ${mipLevel} halved width`);
+        assert.equal(level.height, Math.max(1, Math.floor(previousHeight / 2)), `${bank.role} mip ${mipLevel} halved height`);
+      }
+      previousWidth = level.width;
+      previousHeight = level.height;
+      const levelChannels = Object.fromEntries(channels.map((channel) => [channel, decodedChannel(level, channel)]));
+      for (const channel of channels) {
+        assert.deepEqual(levelChannels[channel], rawLevel[`${channel}Bytes`], `${bank.role} mip ${mipLevel} ${channel} artifact bytes`);
+      }
+      for (let layer = 0; layer < bank.layerCount; layer += 1) {
+        for (let y = 0; y < level.height; y += 1) {
+          for (let x = 0; x < level.width; x += 1) {
+            const alpha = pixel(levelChannels.albedo, level.width, level.height, layer, x, y)[3];
+            for (const channel of channels.slice(1)) {
+              assert.equal(
+                pixel(levelChannels[channel], level.width, level.height, layer, x, y)[3],
+                alpha,
+                `${bank.role} mip ${mipLevel} layer ${layer} ${channel} alpha`,
+              );
+            }
+          }
+        }
+      }
     }
+    assert.deepEqual([previousWidth, previousHeight], [1, 1], `${bank.role} mip chain must reach 1x1`);
   }
 
   for (const texture of output.artifact.textures) {
     const bank = banksByKey.get(texture.bankKey);
     assert.ok(bank != null, `${texture.key} must reference a texture bank`);
-    const bankChannels = decoded.get(bank.role);
+    const baseLevel = bank.levels[0];
+    const bankChannels = Object.fromEntries(channels.map((channel) => [channel, decodedChannel(baseLevel, channel)]));
     const texturePixels = new Set();
     assert.ok(texture.variants.length > 0, `${texture.key} must provide at least one variant`);
     for (const [variantIndex, variant] of texture.variants.entries()) {
       const label = `${texture.key} variant ${variantIndex}`;
-      for (const [coordinate, extent] of [
-        [variant.u0, bank.width],
-        [variant.u1, bank.width],
-        [variant.v0, bank.height],
-        [variant.v1, bank.height],
-      ]) {
-        const texelCoordinate = coordinate * extent;
-        assert.ok(Math.abs(texelCoordinate - Math.floor(texelCoordinate) - 0.5) < 1e-9, `${label} UV must address a texel center`);
-      }
-
-      const {left, right, top, bottom} = regionBounds(bank, variant);
-      const middleX = Math.floor((left + right) / 2);
-      const middleY = Math.floor((top + bottom) / 2);
-      const region = `${left}:${top}:${right}:${bottom}`;
-      assert.equal(regionsByBank.get(bank.role).has(region), false, `${label} must own a distinct ${bank.role} region`);
-      regionsByBank.get(bank.role).add(region);
+      assert.equal(Number.isInteger(variant.layer), true, `${label} layer must be an integer`);
+      assert.ok(variant.layer >= 0 && variant.layer < bank.layerCount, `${label} layer must be in bounds`);
+      assert.equal(layersByBank.get(bank.role).has(variant.layer), false, `${label} must own a distinct ${bank.role} layer`);
+      layersByBank.get(bank.role).add(variant.layer);
 
       const albedoTile = [];
-      for (let y = top; y <= bottom; y += 1) {
-        for (let x = left; x <= right; x += 1) {
-          const albedo = pixel(bankChannels.albedo.data, bank.width, x, y);
+      for (let y = 0; y < baseLevel.height; y += 1) {
+        for (let x = 0; x < baseLevel.width; x += 1) {
+          const albedo = pixel(bankChannels.albedo, baseLevel.width, baseLevel.height, variant.layer, x, y);
           albedoTile.push(...albedo);
           for (const channel of channels.slice(1)) {
-            assert.equal(pixel(bankChannels[channel].data, bank.width, x, y)[3], albedo[3], `${label} ${channel} alpha`);
+            assert.equal(
+              pixel(bankChannels[channel], baseLevel.width, baseLevel.height, variant.layer, x, y)[3],
+              albedo[3],
+              `${label} ${channel} alpha`,
+            );
           }
         }
       }
       const textureHash = createHash("sha256").update(Uint8Array.from(albedoTile)).digest("hex");
       assert.equal(texturePixels.has(textureHash), false, `${label} must not duplicate another variant of the same logical texture`);
       texturePixels.add(textureHash);
+    }
+  }
 
-      for (const channel of channels) {
-        const data = bankChannels[channel].data;
-        assert.deepEqual(pixel(data, bank.width, left - 1, middleY), pixel(data, bank.width, left, middleY), `${label} ${channel} left padding`);
-        assert.deepEqual(pixel(data, bank.width, right + 1, middleY), pixel(data, bank.width, right, middleY), `${label} ${channel} right padding`);
-        assert.deepEqual(pixel(data, bank.width, middleX, top - 1), pixel(data, bank.width, middleX, top), `${label} ${channel} top padding`);
-        assert.deepEqual(pixel(data, bank.width, middleX, bottom + 1), pixel(data, bank.width, middleX, bottom), `${label} ${channel} bottom padding`);
+  for (const bank of output.artifact.textureBanks) {
+    const bankTextures = output.artifact.textures.filter((texture) => texture.bankKey === bank.key);
+    assert.deepEqual(
+      bankTextures.flatMap((texture) => texture.variants.map((variant) => variant.layer)),
+      [...Array(bank.layerCount).keys()],
+      `${bank.role} layers must follow deterministic texture-key and variant order`,
+    );
+    assert.deepEqual([...layersByBank.get(bank.role)].sort((left, right) => left - right), [...Array(bank.layerCount).keys()]);
+  }
+});
+
+test("cutout mip levels retain each layer's nearest practical alpha coverage", async () => {
+  const {artifact} = await outputPromise;
+  const bank = artifact.textureBanks.find(({role}) => role === "cutout");
+  assert.ok(bank != null, "Expected a cutout texture bank");
+  const cutoffByLayer = new Map();
+  for (const texture of artifact.textures.filter(({bankKey}) => bankKey === bank.key)) {
+    assert.ok(typeof texture.alphaCutoff === "number", `${texture.key} alpha cutoff`);
+    for (const variant of texture.variants) cutoffByLayer.set(variant.layer, texture.alphaCutoff);
+  }
+  assert.equal(cutoffByLayer.size, bank.layerCount);
+  const coverage = (level, layer, cutoff) => {
+    const cutoffByte = Math.ceil(cutoff * 255);
+    const data = decodedChannel(level, "albedo");
+    const layerBytes = level.width * level.height * 4;
+    let passing = 0;
+    for (let offset = layer * layerBytes + 3; offset < (layer + 1) * layerBytes; offset += 4) {
+      if (data[offset] >= cutoffByte) passing += 1;
+    }
+    return passing / (level.width * level.height);
+  };
+  let partialLayerCount = 0;
+  for (let layer = 0; layer < bank.layerCount; layer += 1) {
+    const cutoff = cutoffByLayer.get(layer);
+    if (cutoff === 0) continue;
+    const reference = coverage(bank.levels[0], layer, cutoff);
+    if (reference > 0 && reference < 1) partialLayerCount += 1;
+    for (const [mipLevel, level] of bank.levels.entries()) {
+      const actual = coverage(level, layer, cutoff);
+      const tolerance = 1 / Math.min(level.width, level.height);
+      assert.ok(
+        Math.abs(actual - reference) <= tolerance + Number.EPSILON,
+        `cutout layer ${layer} mip ${mipLevel} alpha coverage drift`,
+      );
+      if (reference > 0) assert.ok(actual > 0, `cutout layer ${layer} mip ${mipLevel} must remain visible`);
+      if (reference === 0 || reference === 1) {
+        assert.equal(actual, reference, `cutout layer ${layer} mip ${mipLevel} endpoint coverage`);
       }
     }
   }
+  assert.ok(partialLayerCount > 0, "Cutout coverage check must exercise partially transparent layers");
 });
 
 test("generated ORM and emissive channels preserve material intent and animation locality", async () => {
   const output = await outputPromise;
-  const decoded = await decodedBanks(output);
   const banksByKey = new Map(output.artifact.textureBanks.map((bank) => [bank.key, bank]));
   const textures = new Map(output.artifact.textures.map((texture) => [texture.key, texture]));
   const sample = (key, channel, component) => {
@@ -247,7 +374,8 @@ test("generated ORM and emissive channels preserve material intent and animation
     assert.ok(texture != null, `Expected texture ${key}`);
     const bank = banksByKey.get(texture.bankKey);
     assert.ok(bank != null, `Expected bank ${texture.bankKey}`);
-    return channelAverage(decoded.get(bank.role)[channel], bank, texture.variants[0], component);
+    const baseLevel = bank.levels[0];
+    return channelAverage(decodedChannel(baseLevel, channel), baseLevel, texture.variants[0], component);
   };
 
   const stone = "openvoxel:texture/block/stone";
@@ -264,17 +392,11 @@ test("generated ORM and emissive channels preserve material intent and animation
     assert.ok(animation.frames.length > 1, `${animation.key} must contain visible motion`);
     const frames = animation.frames.map((key) => {
       const texture = textures.get(key);
-      assert.equal(texture?.variants.length, 1, `${animation.key} frame ${key} must own one bank region`);
+      assert.equal(texture?.variants.length, 1, `${animation.key} frame ${key} must own one array layer`);
       return texture;
     });
     assert.equal(new Set(frames.map((texture) => texture.bankKey)).size, 1, `${animation.key} frames must share a bank`);
-    const bank = banksByKey.get(frames[0].bankKey);
-    const regions = frames.map((texture) => texture.variants[0]);
-    const width = (regions[0].u1 - regions[0].u0) * bank.width;
-    const height = (regions[0].v1 - regions[0].v0) * bank.height;
-    for (const region of regions) {
-      assert.ok(Math.abs((region.u1 - region.u0) * bank.width - width) < 1e-9, `${animation.key} frame width`);
-      assert.ok(Math.abs((region.v1 - region.v0) * bank.height - height) < 1e-9, `${animation.key} frame height`);
-    }
+    const layers = frames.map((texture) => texture.variants[0].layer);
+    assert.equal(new Set(layers).size, frames.length, `${animation.key} frames must own distinct array layers`);
   }
 });

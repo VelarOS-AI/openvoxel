@@ -4,6 +4,7 @@ import {parse} from "yaml";
 import {
   requireBoolean,
   requireInteger,
+  requireKnownFields,
   requireList,
   requireNumber,
   requireRecord,
@@ -14,6 +15,10 @@ import {
 const imageExtension = /\.(?:avif|jpe?g|png|webp)$/iu;
 const catalogExtension = /\.ya?ml$/iu;
 const textureMapNames = new Set(["normal", "height", "material", "emissive"]);
+const transformFields = ["rotate", "flipX", "flipY", "shiftX", "shiftY", "hue", "saturation", "brightness", "contrast"];
+const textureFields = ["key", "surface", "file", "maps", "transform", "weight", "variants"];
+const variantFields = ["weight", "transform", "layers"];
+const layerFields = ["file", "opacity", "blend", "transform"];
 
 function isCategoryPng(file, category) {
   return file.startsWith(`textures/${category}/`)
@@ -32,22 +37,31 @@ async function filesBelow(root, current = root) {
   return output;
 }
 
-function collectImageReferences(value, output) {
-  if (Array.isArray(value)) {
-    for (const item of value) collectImageReferences(item, output);
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, item] of Object.entries(value)) {
-    if ((key === "file" || key === "clouds") && typeof item === "string") output.add(item);
-    collectImageReferences(item, output);
+function requireOptionalTransform(value, label) {
+  if (value == null) return;
+  requireKnownFields(requireRecord(value, label), transformFields, label);
+}
+
+function requireSectionEntries(values, label, fields) {
+  for (const [index, raw] of requireList(values, label).entries()) {
+    requireKnownFields(requireRecord(raw, `${label} entry ${index}`), fields, `${label} entry ${index}`);
   }
 }
 
 function surfaceProfiles(values) {
   const profiles = new Map();
   for (const raw of requireList(values, "surfaceProfiles")) {
-    const entry = requireRecord(raw, "surfaceProfiles entry");
+    const entry = requireKnownFields(requireRecord(raw, "surfaceProfiles entry"), [
+      "key",
+      "normalStrength",
+      "occlusionStrength",
+      "roughness",
+      "roughnessVariation",
+      "metallic",
+      "metallicVariation",
+      "emissive",
+      "emissiveThreshold",
+    ], "surfaceProfiles entry");
     const key = requireText(entry.key, "surface profile key");
     if (!/^[a-z][a-z0-9-]*$/u.test(key)) throw new Error(`Surface profile key ${key} is invalid`);
     if (profiles.has(key)) throw new Error(`surfaceProfiles repeats ${key}`);
@@ -88,23 +102,51 @@ function textureMaps(value, category, textureKey) {
   }));
 }
 
-function requireMappedTextureVariants(texture, textureKey) {
-  if (Object.keys(texture.maps).length === 0) return;
+function requireTextureVariants(texture, textureKey) {
+  requireOptionalTransform(texture.transform, `texture ${textureKey} transform`);
   for (const [index, rawVariant] of requireList(texture.variants ?? [], `texture ${textureKey} variants`).entries()) {
-    const variant = requireRecord(rawVariant, `texture ${textureKey} variant ${index + 1}`);
+    const label = `texture ${textureKey} variant ${index + 1}`;
+    const variant = requireKnownFields(requireRecord(rawVariant, label), variantFields, label);
+    requireOptionalTransform(variant.transform, `${label} transform`);
     const layers = requireList(variant.layers ?? [], `texture ${textureKey} variant ${index + 1} layers`);
-    if (layers.length > 0) {
+    if (layers.length > 0 && Object.keys(texture.maps).length > 0) {
       throw new Error(`Texture ${textureKey} variant ${index + 1} cannot combine author maps with albedo layers`);
+    }
+    for (const [layerIndex, rawLayer] of layers.entries()) {
+      const layerLabel = `${label} layer ${layerIndex}`;
+      const layer = requireKnownFields(requireRecord(rawLayer, layerLabel), layerFields, layerLabel);
+      const file = requireText(layer.file, `${layerLabel} file`);
+      if (!isCategoryPng(file, texture.category)) {
+        throw new Error(`${layerLabel} must use a PNG inside textures/${texture.category}`);
+      }
+      requireOptionalTransform(layer.transform, `${layerLabel} transform`);
     }
   }
 }
 
 export async function loadResourceManifest(dataRoot, manifestPath) {
   const manifestText = await readFile(manifestPath, "utf8");
-  const manifest = requireRecord(parse(manifestText), "Client resource pack manifest");
-  if (manifest.formatVersion !== 5) throw new Error("Unsupported client resource pack source format");
+  const manifest = requireKnownFields(requireRecord(parse(manifestText), "Client resource pack manifest"), [
+    "formatVersion",
+    "owner",
+    "textureCatalogs",
+    "texturePipeline",
+    "environment",
+    "surfaceProfiles",
+    "models",
+    "materials",
+    "tints",
+    "animations",
+  ], "Client resource pack manifest");
+  if (manifest.formatVersion !== 6) throw new Error("Unsupported client resource pack source format");
   const owner = requireText(manifest.owner, "Client resource pack owner");
   if (!/^[a-z][a-z0-9_.-]*$/u.test(owner)) throw new Error("Client resource pack owner is invalid");
+  const environment = requireKnownFields(requireRecord(manifest.environment, "environment"), ["clouds"], "environment");
+  const cloudsFile = requireText(environment.clouds, "environment clouds");
+  requireSectionEntries(manifest.models, "models", ["key", "kind"]);
+  requireSectionEntries(manifest.materials, "materials", ["key", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"]);
+  requireSectionEntries(manifest.tints, "tints", ["key", "red", "green", "blue"]);
+  requireSectionEntries(manifest.animations, "animations", ["key", "frameDurationMs", "frames"]);
 
   const catalogFiles = requireList(manifest.textureCatalogs, "textureCatalogs").map((value, index) => {
     const file = requireText(value, `textureCatalogs entry ${index}`);
@@ -116,13 +158,13 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
 
   const catalogs = await Promise.all(catalogFiles.map(async (file) => {
     const path = resolveInside(dataRoot, file, `texture catalog ${file}`);
-    const document = requireRecord(parse(await readFile(path, "utf8")), `texture catalog ${file}`);
+    const document = requireKnownFields(requireRecord(parse(await readFile(path, "utf8")), `texture catalog ${file}`), ["category", "textures"], `texture catalog ${file}`);
     const category = requireText(document.category, `texture catalog ${file} category`);
     if (!/^[a-z][a-z0-9-]*$/u.test(category)) throw new Error(`Texture catalog category ${category} is invalid`);
-    const textures = requireList(document.textures, `texture catalog ${file} textures`).map((texture) => ({
-      ...requireRecord(texture, `texture catalog ${file} entry`),
-      category,
-    }));
+    const textures = requireList(document.textures, `texture catalog ${file} textures`).map((rawTexture) => {
+      const texture = requireKnownFields(requireRecord(rawTexture, `texture catalog ${file} entry`), textureFields, `texture catalog ${file} entry`);
+      return {...texture, category};
+    });
     if (textures.length === 0) throw new Error(`Texture catalog ${file} is empty`);
     return {file, category, document, textures};
   }));
@@ -141,12 +183,17 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     const profileKey = requireText(texture.surface, `texture ${key} surface`);
     if (!profiles.has(profileKey)) throw new Error(`Texture ${key} references unknown surface profile ${profileKey}`);
     texture.maps = textureMaps(texture.maps, texture.category, key);
-    requireMappedTextureVariants(texture, key);
+    requireTextureVariants(texture, key);
   }
 
-  const imageReferences = new Set();
-  collectImageReferences(manifest, imageReferences);
-  for (const catalog of catalogs) collectImageReferences(catalog.textures, imageReferences);
+  const imageReferences = new Set([cloudsFile]);
+  for (const texture of textures) {
+    imageReferences.add(texture.file);
+    for (const map of Object.values(texture.maps)) imageReferences.add(map.file);
+    for (const variant of texture.variants ?? []) {
+      for (const layer of variant.layers ?? []) imageReferences.add(layer.file);
+    }
+  }
   for (const file of imageReferences) resolveInside(dataRoot, file, `resource image ${file}`);
   const referencedImageFiles = [...imageReferences].sort();
 
@@ -162,15 +209,15 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
   if (unlistedCatalogs.length > 0) throw new Error(`Client resource data contains unlisted texture catalogs: ${unlistedCatalogs.join(", ")}`);
 
   const pipeline = requireRecord(manifest.texturePipeline, "texturePipeline");
+  const knownPipelineFields = new Set(["tileSize", "maximumArrayLayers", "mipmaps"]);
+  for (const field of Object.keys(pipeline)) {
+    if (!knownPipelineFields.has(field)) throw new Error(`texturePipeline contains unknown field ${field}`);
+  }
   const packing = {
     tileSize: requireInteger(pipeline.tileSize, 1, 256, "texturePipeline tileSize"),
-    padding: requireInteger(pipeline.atlasPadding, 0, 32, "texturePipeline atlasPadding"),
-    columns: requireInteger(pipeline.maximumAtlasColumns, 1, 64, "texturePipeline maximumAtlasColumns"),
+    maximumLayers: requireInteger(pipeline.maximumArrayLayers, 1, 2048, "texturePipeline maximumArrayLayers"),
     mipmaps: requireBoolean(pipeline.mipmaps, "texturePipeline mipmaps"),
   };
-  if (packing.mipmaps && packing.padding < 2) {
-    throw new Error("Mipmapped atlases need at least two pixels of edge padding");
-  }
 
   return {
     manifest,

@@ -29,6 +29,7 @@ type MutableMeshBatch:
     positions: Float32Builder
     normals: Float32Builder
     uvs: Float32Builder
+    textureLayers: Float32Builder
     colors: Float32Builder
     indices: UInt32Builder
     vertexCount: number
@@ -109,6 +110,7 @@ def batchFor(
         positions: float32Builder(maximumFaces * 12),
         normals: float32Builder(maximumFaces * 12),
         uvs: float32Builder(maximumFaces * 8),
+        textureLayers: float32Builder(maximumFaces * 4),
         colors: float32Builder(maximumFaces * 16),
         indices: uint32Builder(maximumFaces * 6),
         vertexCount: 0,
@@ -129,6 +131,7 @@ def pushVertex(
     nz: number,
     u: number,
     v: number,
+    textureLayer: number,
 ):
     batch.positions.push(x)
     batch.positions.push(y)
@@ -138,6 +141,7 @@ def pushVertex(
     batch.normals.push(nz)
     batch.uvs.push(u)
     batch.uvs.push(v)
+    batch.textureLayers.push(textureLayer)
     batch.colors.push(state.tintRed * shade)
     batch.colors.push(state.tintGreen * shade)
     batch.colors.push(state.tintBlue * shade)
@@ -166,10 +170,10 @@ def emitQuad(
 ):
     const first = batch.vertexCount
     const shade = faceShade(face, state.emission)
-    pushVertex(batch, state, shade, ax, ay, az, nx, ny, nz, texture.u0, texture.v0)
-    pushVertex(batch, state, shade, bx, by, bz, nx, ny, nz, texture.u1, texture.v0)
-    pushVertex(batch, state, shade, cx, cy, cz, nx, ny, nz, texture.u1, texture.v1)
-    pushVertex(batch, state, shade, dx, dy, dz, nx, ny, nz, texture.u0, texture.v1)
+    pushVertex(batch, state, shade, ax, ay, az, nx, ny, nz, 0, 0, texture.layer)
+    pushVertex(batch, state, shade, bx, by, bz, nx, ny, nz, 1, 0, texture.layer)
+    pushVertex(batch, state, shade, cx, cy, cz, nx, ny, nz, 1, 1, texture.layer)
+    pushVertex(batch, state, shade, dx, dy, dz, nx, ny, nz, 0, 1, texture.layer)
     batch.indices.push(first)
     batch.indices.push(first + 1)
     batch.indices.push(first + 2)
@@ -378,12 +382,13 @@ export def meshChunkWithIndex(
             positions: batch.positions.finish(),
             normals: batch.normals.finish(),
             uvs: batch.uvs.finish(),
+            textureLayers: batch.textureLayers.finish(),
             colors: batch.colors.finish(),
             indices: batch.indices.finish(),
             quadCount: batch.quadCount,
         }
         quadCount += output.quadCount
-        byteSize += (output.positions.size + output.normals.size + output.uvs.size + output.colors.size + output.indices.size) * 4
+        byteSize += (output.positions.size + output.normals.size + output.uvs.size + output.textureLayers.size + output.colors.size + output.indices.size) * 4
         assert byteSize <= maximumChunkMeshBytes else "Chunk mesh exceeds the 8 MiB output bound"
         finished.append(output)
     return {

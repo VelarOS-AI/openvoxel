@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join} from "node:path";
 import test from "node:test";
 import sharp from "sharp";
-import {stringify} from "yaml";
+import {parse, stringify} from "yaml";
 import {loadResourceManifest} from "../tools/resource-manifest.mjs";
 
 const surfaceProfile = {
@@ -24,7 +24,7 @@ async function imageBytes(format = "png") {
   return format === "webp" ? image.webp().toBuffer() : image.png().toBuffer();
 }
 
-async function fixture(context, {formatVersion = 5, maps = {}, variants = []} = {}) {
+async function fixture(context, {formatVersion = 6, maps = {}, variants = [], texturePipeline = null} = {}) {
   const root = await mkdtemp(join(tmpdir(), "openvoxel-resource-manifest-"));
   context.after(() => rm(root, {recursive: true, force: true}));
   await Promise.all([
@@ -42,14 +42,23 @@ async function fixture(context, {formatVersion = 5, maps = {}, variants = []} = 
     formatVersion,
     owner: "openvoxel",
     textureCatalogs: ["textures/terrain.yml"],
-    texturePipeline: {tileSize: 2, atlasPadding: 2, maximumAtlasColumns: 1, mipmaps: true},
+    texturePipeline: texturePipeline ?? {tileSize: 2, maximumArrayLayers: 32, mipmaps: true},
     environment: {clouds: "environment/clouds.webp"},
     surfaceProfiles: [surfaceProfile],
+    models: [],
+    materials: [],
+    tints: [],
+    animations: [],
   };
-  const referencedFiles = [texture.file, ...Object.values(maps).map(({file}) => file)];
+  const referencedFiles = [
+    texture.file,
+    ...Object.values(maps).map(({file}) => file),
+    ...variants.flatMap((variant) => (variant.layers ?? []).map(({file}) => file)),
+  ];
+  const catalogPath = join(root, "textures", "terrain.yml");
   await Promise.all([
     writeFile(join(root, "resource-pack.yml"), stringify(manifest)),
-    writeFile(join(root, "textures", "terrain.yml"), stringify({category: "terrain", textures: [texture]})),
+    writeFile(catalogPath, stringify({category: "terrain", textures: [texture]})),
     writeFile(join(root, "environment", "clouds.webp"), await imageBytes("webp")),
     ...referencedFiles.map(async (file) => {
       const path = join(root, file);
@@ -57,10 +66,16 @@ async function fixture(context, {formatVersion = 5, maps = {}, variants = []} = 
       await writeFile(path, await imageBytes());
     }),
   ]);
-  return {root, manifestPath: join(root, "resource-pack.yml")};
+  return {root, manifestPath: join(root, "resource-pack.yml"), catalogPath};
 }
 
-test("author format v5 normalizes optional PBR map declarations", async (context) => {
+async function updateYaml(path, update) {
+  const document = parse(await readFile(path, "utf8"));
+  update(document);
+  await writeFile(path, stringify(document));
+}
+
+test("author format v6 normalizes optional PBR map declarations and array limits", async (context) => {
   const maps = {
     height: {file: "textures/terrain/maps/stone.height.png"},
     material: {file: "textures/terrain/maps/stone.material.png"},
@@ -69,6 +84,7 @@ test("author format v5 normalizes optional PBR map declarations", async (context
   const {root, manifestPath} = await fixture(context, {maps});
   const source = await loadResourceManifest(root, manifestPath);
   assert.deepEqual(source.textures[0].maps, maps);
+  assert.deepEqual(source.packing, {tileSize: 2, maximumLayers: 32, mipmaps: true});
   assert.equal(source.imageFiles.length, 5);
   assert.deepEqual(source.unusedFiles, []);
 });
@@ -103,6 +119,40 @@ test("author map schema rejects ambiguous, unknown, misplaced, and stale declara
     /cannot combine author maps with albedo layers/u,
   );
 
-  const stale = await fixture(context, {formatVersion: 4});
+  const atlas = await fixture(context, {
+    texturePipeline: {tileSize: 2, atlasPadding: 2, maximumAtlasColumns: 1, mipmaps: true},
+  });
+  await assert.rejects(
+    loadResourceManifest(atlas.root, atlas.manifestPath),
+    /texturePipeline contains unknown field atlasPadding/u,
+  );
+
+  const stale = await fixture(context, {formatVersion: 5});
   await assert.rejects(loadResourceManifest(stale.root, stale.manifestPath), /Unsupported client resource pack source format/u);
+});
+
+test("author schema rejects unknown fields at every resource ownership boundary", async (context) => {
+  const manifest = await fixture(context);
+  await updateYaml(manifest.manifestPath, (document) => {
+    document.rogue = {file: "textures/terrain/stone.png"};
+  });
+  await assert.rejects(loadResourceManifest(manifest.root, manifest.manifestPath), /manifest contains unknown field rogue/u);
+
+  const catalog = await fixture(context);
+  await updateYaml(catalog.catalogPath, (document) => {
+    document.rogue = true;
+  });
+  await assert.rejects(loadResourceManifest(catalog.root, catalog.manifestPath), /catalog .* contains unknown field rogue/u);
+
+  const texture = await fixture(context);
+  await updateYaml(texture.catalogPath, (document) => {
+    document.textures[0].rogue = true;
+  });
+  await assert.rejects(loadResourceManifest(texture.root, texture.manifestPath), /entry contains unknown field rogue/u);
+
+  const variant = await fixture(context, {variants: [{rogue: true}]});
+  await assert.rejects(loadResourceManifest(variant.root, variant.manifestPath), /variant 1 contains unknown field rogue/u);
+
+  const layer = await fixture(context, {variants: [{layers: [{file: "textures/terrain/overlay.png", rogue: true}]}]});
+  await assert.rejects(loadResourceManifest(layer.root, layer.manifestPath), /layer 0 contains unknown field rogue/u);
 });

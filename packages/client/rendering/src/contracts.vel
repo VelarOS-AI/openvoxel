@@ -11,15 +11,13 @@ export enum ClientBlockModelKind:
     fluid
 
 export type ClientTextureVariant:
-    readonly u0: number
-    readonly v0: number
-    readonly u1: number
-    readonly v1: number
+    readonly layer: number
     readonly weight: number
 
 export type ClientRenderTexture:
     readonly key: string
     readonly bankKey: string
+    readonly alphaCutoff: number?
     readonly variants: readonly List<readonly ClientTextureVariant>
     readonly totalWeight: number
 
@@ -60,6 +58,7 @@ export type ChunkMeshBatch:
     readonly positions: Float32Buffer
     readonly normals: Float32Buffer
     readonly uvs: Float32Buffer
+    readonly textureLayers: Float32Buffer
     readonly colors: Float32Buffer
     readonly indices: UInt32Buffer
     readonly quadCount: number

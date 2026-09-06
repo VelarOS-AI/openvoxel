@@ -10,13 +10,13 @@
 
 ## 资源与光照
 
-作者格式 v5 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；normal、height 与 material 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。缺失通道继续由 surface profile 确定性生成。terrain、vegetation、fluid 是作者资源分类，environment 单独保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
+作者格式 v6 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；manifest 及其 catalog、texture、variant、layer、transform 均使用闭合字段集，图片使用清单只来自验证后的配方。normal、height 与 material 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。缺失通道继续由 surface profile 确定性生成。terrain、vegetation、fluid 是作者资源分类，environment 单独保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
 
-每个 bank 同时生成带边缘填充、mipmap 配置和完全相同像素布局的 albedo、normal、material、emissive 四张图集。material 图按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 只保存 bank key、带权重的 UV 变体，方块网格因此仍只需要一套 UV。作者图的空间变换按 base、variant 顺序同步执行，切线法线的 XY 方向随旋转和翻转重映射，颜色调整只改变 albedo，最终 alpha 则统一取 albedo。动画的全部帧必须处在同一 bank 且拥有相同区域尺寸，运行时同步平移四张图集的采样区域，不重建 Chunk 网格。
+每个 bank 同时生成 layer-major 的 albedo、normal、material、emissive 四通道完整 mip 链，四通道共享每一级尺寸、层数与 layer 顺序，并在生成期逐级转换为 GPU 自下而上的行序。这个存储转换只重排 texel，不改变 normal 的通道值；运行时可以关闭 WebGL unpack Y 翻转并逐级上传数组。albedo 与 emissive 在生成 mip 时先转入线性光空间，normal 以切线空间向量平均后重归一化，material 的 AO、roughness、metallic 保持线性平均。cutout 的每个逻辑纹理从实际使用它的材质取得 `alphaCutoff`，据此跨 mip 保持最接近可表达值的覆盖率；同一纹理不能同时服务不同阈值。material 通道按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 保存 bank key、生成阈值和带权重的稳定 layer 变体。作者图的空间变换按 base、variant 顺序同步执行，切线法线的 XY 方向随旋转和翻转重映射，颜色调整只改变 albedo，最终四通道 alpha 统一取 albedo。独立作者纹理是可增删改查的资源源，纹理数组仅是确定性构建产物。
 
-`textureBanks` 是资源产物与渲染后端之间的存储抽象。生成 artifact v4 使用 `storage: atlas`，由 Babylon `PBRMaterial` 直接消费生成图集；以后可以增加 `texture_2d_array` 后端而不改变逻辑 texture、方块目录或世界 runtimeId 的身份边界。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道生成图像共同计算；YAML 对象字段顺序及源文件与映射的枚举顺序不会产生伪变更，列表顺序仍保留其布局与动画语义。
+生成 artifact v5 的 `textureBanks` 使用 `storage: texture_2d_array`，并把四通道每一级 RGBA8 数组数据嵌入产物。构网仍为每个面写入 0..1 UV，同时以独立的 `textureLayer` 顶点属性选择数组层；纹理层分配不会进入方块目录、世界 runtimeId 或协议身份。动画至少有两个互不重复的帧，全部帧必须处在同一 bank 且各自只有一个 layer，运行时只更新材质的 layer 偏移，不重建 Chunk 网格。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道 mip 字节共同计算；YAML 对象字段顺序及源文件与映射的枚举顺序不会产生伪变更，列表顺序仍保留其变体与动画语义。
 
-运行时材质保留 alpha、alpha-cutoff、double-sided、casts-shadows、environment-intensity、clear-coat、clear-coat-roughness 和 unlit 语义。逐像素的凹凸、粗糙度、金属度和自发光来自对应 bank；emissive 表达表面自身亮度，世界中的方块光传播仍以方块目录的 light emission 为权威。场景使用天空光、方向太阳、PCF 阴影、色调映射、距离雾和移动云层；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。
+运行时要求 WebGL 2，并在创建表面时先验证所有 mip 尺寸、数据、常驻预算，再以设备的 `texture2DArrayMaxLayerCount` 校验每个 bank；不满足能力边界时在提交 GPU 资源前失败。四通道分别上传为 Babylon `RawTexture2DArray`，上下文恢复后从已验证的 CPU 副本重放完整 mip 链；PBR 材质插件通过 `textureLayer` 一次性接入 albedo/alpha、切线空间 normal、AO/roughness/metallic 与 emissive。运行时材质保留 alpha、alpha-cutoff、double-sided、casts-shadows、environment-intensity、clear-coat、clear-coat-roughness 和 unlit 语义；emissive 表达表面自身亮度，世界中的方块光传播仍以方块目录的 light emission 为权威。场景使用天空光、方向太阳、PCF 阴影、色调映射、距离雾和移动云层；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。
 
 OpenVoxel 的分类 YAML、独立 PNG 和生成产物共同构成客户端资源权威，服务端内容目录仍是方块状态权威。两者只通过逻辑资源 key 联结，不复制数字方块映射，也不把 Babylon 对象写入内容或世界模型。
 
@@ -38,7 +38,8 @@ OpenVoxel 的分类 YAML、独立 PNG 和生成产物共同构成客户端资源
 - 网格 Worker 由一个有界池统一调度；资源目录通过池级广播只初始化一次，视窗任务的取消信号继续传入 Chunk 下载、热增量同步和本地生成循环。
 - 网格 Worker 只从 `@openvoxel/renderer/meshing-worker` 精确入口启动；该入口与渲染器主入口拥有独立依赖图，不携带 Babylon 表面、PBR 管线或生成的材质纹理资源。
 - Worker 初始化时只构造一次 runtimeId 状态索引；网格校验和直接遍历固定缓冲区，不生成 List 快照。
-- texture bank 独立打包并共享四通道布局；Chunk 批次只引用自身职责所需的 bank，生成图像不会进入世界或协议数据。
+- texture bank 独立打包并共享四通道 layer 布局；Chunk 批次只引用自身职责所需的 bank，并以单独的每顶点 layer 缓冲选择纹理，数组数据不会进入世界或协议数据。
+- 每个 texture bank 的单通道完整 mip 链最多 16 MiB；完整资源包的估算常驻量最多 128 MiB，并同时计入 GPU mip、上下文恢复用 CPU 字节和 JSON base64 的保守堆占用。生成、artifact 校验和 GPU 提交使用同一上限。
 - 客户端只保留当前 7×7×5 窗口，默认上限 245 个 Chunk。
 - 单 Chunk 网格继续受 8 MiB 硬上限保护。
 - opaque、cutout、translucent 保持在同一 Babylon rendering group 中共享深度缓冲。

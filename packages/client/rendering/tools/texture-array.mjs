@@ -2,6 +2,7 @@ import {readFile} from "node:fs/promises";
 import sharp from "sharp";
 import {
   clamp,
+  compareText,
   requireBoolean,
   requireInteger,
   requireList,
@@ -10,8 +11,10 @@ import {
   resolveInside,
 } from "./resource-pack-values.mjs";
 import {resolveTextureChannels} from "./texture-channels.mjs";
+import {buildPbrTextureArrayMipLevels} from "./texture-mipmaps.mjs";
 
-const pngOptions = {compressionLevel: 9, adaptiveFiltering: false};
+const channelNames = ["albedo", "normal", "material", "emissive"];
+const maximumTextureArrayChannelBytes = 16 * 1024 * 1024;
 
 function wrap(value, size) {
   return (value % size + size) % size;
@@ -19,6 +22,23 @@ function wrap(value, size) {
 
 function pixelOffset(x, y, size) {
   return (y * size + x) * 4;
+}
+
+/**
+ * WebGL 2 does not permit UNPACK_FLIP_Y_WEBGL for texImage3D uploads. Generated
+ * array layers therefore use bottom-to-top GPU row order instead of deferring
+ * the conversion to runtime. This is a storage conversion, not a normal-space
+ * transform, so every channel keeps its RGBA values unchanged.
+ */
+function textureArrayLayerBytes(source, width, height = width) {
+  const rowBytes = width * 4;
+  if (source.byteLength !== rowBytes * height) throw new Error("Texture array layer must contain one complete RGBA8 tile");
+  const output = Buffer.allocUnsafe(source.byteLength);
+  for (let outputY = 0; outputY < height; outputY += 1) {
+    const sourceY = height - 1 - outputY;
+    source.copy(output, outputY * rowBytes, sourceY * rowBytes, (sourceY + 1) * rowBytes);
+  }
+  return output;
 }
 
 function transformDefinition(value, label, tileSize) {
@@ -140,14 +160,6 @@ function mixLayer(base, pixels, opacity, mode) {
   }
 }
 
-async function paddedPng(pixels, size, padding) {
-  const image = sharp(pixels, {raw: {width: size, height: size, channels: 4}});
-  if (padding > 0) {
-    image.extend({top: padding, bottom: padding, left: padding, right: padding, extendWith: "copy"});
-  }
-  return image.png(pngOptions).toBuffer();
-}
-
 function channelTransform(definition) {
   if (definition == null) return null;
   return {
@@ -167,10 +179,26 @@ function channelSourceFiles(texture) {
   }));
 }
 
-export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfaceProfiles}) {
-  const {tileSize, padding, columns, mipmaps} = atlas;
+/**
+ * Builds four layer-major RGBA8 buffers. For every layer index, albedo, normal,
+ * material, and emissive contain the same logical texture variant.
+ */
+export async function buildTextureArray({dataRoot, array, textureSources, surfaceProfiles, role = "opaque", textureAlphaCutoffs = new Map()}) {
+  const {tileSize, maximumLayers, mipmaps} = array;
   const sourceBytes = new Map();
   const sourcePixels = new Map();
+
+  function alphaCutoffFor(textureKey) {
+    if (role !== "cutout") return null;
+    if (!(textureAlphaCutoffs instanceof Map) || !textureAlphaCutoffs.has(textureKey)) {
+      throw new Error(`Cutout texture ${textureKey} has no material alpha cutoff`);
+    }
+    const cutoff = textureAlphaCutoffs.get(textureKey);
+    if (typeof cutoff !== "number" || !Number.isFinite(cutoff) || cutoff < 0 || cutoff > 1) {
+      throw new RangeError(`Cutout texture ${textureKey} alpha cutoff must be from zero through one`);
+    }
+    return cutoff;
+  }
 
   async function bytesFor(path) {
     let bytes = sourceBytes.get(path);
@@ -227,10 +255,16 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
     return {albedo: pixels, channelTransforms};
   }
 
-  const sortedTextures = [...textureSources].sort((left, right) => left.key.localeCompare(right.key));
+  const sortedTextures = [...textureSources].sort((left, right) => compareText(left.key, right.key));
   const variants = [];
   for (const texture of sortedTextures) {
-    variants.push({texture, recipe: null, variantIndex: 0, weight: requireInteger(texture.weight ?? 1, 1, 1024, `texture ${texture.key} base weight`)});
+    variants.push({
+      texture,
+      recipe: null,
+      variantIndex: 0,
+      weight: requireInteger(texture.weight ?? 1, 1, 1024, `texture ${texture.key} base weight`),
+      alphaCutoff: alphaCutoffFor(texture.key),
+    });
     for (const [index, rawRecipe] of requireList(texture.variants ?? [], `texture ${texture.key} variants`).entries()) {
       const recipe = requireRecord(rawRecipe, `texture ${texture.key} variant ${index + 1}`);
       variants.push({
@@ -238,20 +272,28 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
         recipe,
         variantIndex: index + 1,
         weight: requireInteger(recipe.weight ?? 1, 1, 1024, `texture ${texture.key} variant ${index + 1} weight`),
+        alphaCutoff: alphaCutoffFor(texture.key),
       });
     }
   }
+  if (variants.length > maximumLayers) {
+    throw new RangeError(`Texture array needs ${variants.length} layers but texturePipeline.maximumArrayLayers is ${maximumLayers}`);
+  }
+  const channelByteLength = tileSize * tileSize * variants.length * 4;
+  if (channelByteLength > maximumTextureArrayChannelBytes) {
+    throw new RangeError(`Texture array needs ${channelByteLength} bytes per channel; the limit is ${maximumTextureArrayChannelBytes}`);
+  }
 
-  const cellSize = tileSize + padding * 2;
-  const rows = Math.ceil(variants.length / columns);
-  const width = columns * cellSize;
-  const height = rows * cellSize;
-  const composites = {albedo: [], normal: [], material: [], emissive: []};
-  const textureArtifacts = new Map(sortedTextures.map(({key}) => [key, {key, variants: []}]));
+  const channelLayers = Object.fromEntries(channelNames.map((channel) => [channel, []]));
+  const textureArtifacts = new Map(sortedTextures.map(({key}) => [key, {
+    key,
+    alphaCutoff: alphaCutoffFor(key),
+    variants: [],
+  }]));
   let emissiveVariantCount = 0;
   const channelSources = {normal: {}, material: {}, emissive: {}};
 
-  for (const [index, {texture, recipe, variantIndex, weight}] of variants.entries()) {
+  for (const [layer, {texture, recipe, variantIndex, weight}] of variants.entries()) {
     const profile = surfaceProfiles.get(texture.surface);
     if (profile == null) throw new Error(`Texture ${texture.key} references unknown surface profile ${texture.surface}`);
     const {albedo, channelTransforms} = await variantPixels(texture, recipe, texture.key, variantIndex);
@@ -264,60 +306,63 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
       transforms: channelTransforms,
       label: `texture ${texture.key} variant ${variantIndex}`,
     });
+    channelLayers.albedo.push(albedo);
+    channelLayers.normal.push(channels.normal);
+    channelLayers.material.push(channels.material);
+    channelLayers.emissive.push(channels.emissive);
     for (const channel of ["normal", "material", "emissive"]) {
       const source = channels.sources[channel];
       channelSources[channel][source] = (channelSources[channel][source] ?? 0) + 1;
     }
-    const cellLeft = index % columns * cellSize;
-    const cellTop = Math.floor(index / columns) * cellSize;
-    const left = cellLeft + padding;
-    const top = cellTop + padding;
-    const [paddedAlbedo, paddedNormal, paddedMaterial, paddedEmissive] = await Promise.all([
-      paddedPng(albedo, tileSize, padding),
-      paddedPng(channels.normal, tileSize, padding),
-      paddedPng(channels.material, tileSize, padding),
-      paddedPng(channels.emissive, tileSize, padding),
-    ]);
-    composites.albedo.push({input: paddedAlbedo, left: cellLeft, top: cellTop});
-    composites.normal.push({input: paddedNormal, left: cellLeft, top: cellTop});
-    composites.material.push({input: paddedMaterial, left: cellLeft, top: cellTop});
-    composites.emissive.push({input: paddedEmissive, left: cellLeft, top: cellTop});
     if (channels.sources.emissive === "authored-emissive" || profile.emissive > 0) emissiveVariantCount += 1;
-    textureArtifacts.get(texture.key).variants.push({
-      u0: (left + 0.5) / width,
-      v0: 1 - (top + tileSize - 0.5) / height,
-      u1: (left + tileSize - 0.5) / width,
-      v1: 1 - (top + 0.5) / height,
-      weight,
-    });
+    textureArtifacts.get(texture.key).variants.push({layer, weight});
   }
 
-  async function atlasBytes(channel, background) {
-    return sharp({create: {width, height, channels: 4, background}})
-      .composite(composites[channel])
-      .png(pngOptions)
-      .toBuffer();
-  }
-
-  const [albedoBytes, normalBytes, materialBytes, emissiveBytes] = await Promise.all([
-    atlasBytes("albedo", {r: 0, g: 0, b: 0, alpha: 0}),
-    atlasBytes("normal", {r: 128, g: 128, b: 255, alpha: 0}),
-    atlasBytes("material", {r: 255, g: 255, b: 0, alpha: 0}),
-    atlasBytes("emissive", {r: 0, g: 0, b: 0, alpha: 0}),
-  ]);
-  const categoryCounts = Object.fromEntries([...new Set(sortedTextures.map(({category}) => category))]
-    .sort()
-    .map((category) => [category, sortedTextures.filter((texture) => texture.category === category).length]));
-  const baseGpuBytes = width * height * 4 * 4;
-  return {
-    width,
-    height,
+  const generatedLevels = buildPbrTextureArrayMipLevels({
+    width: tileSize,
+    height: tileSize,
+    albedoLayers: channelLayers.albedo,
+    normalLayers: channelLayers.normal,
+    materialLayers: channelLayers.material,
+    emissiveLayers: channelLayers.emissive,
     mipmaps,
+    alphaCutoffs: variants.map(({alphaCutoff}) => alphaCutoff === 0 ? null : alphaCutoff),
+  });
+  const levels = generatedLevels.map(({width, height, layers}) => {
+    const bytes = Object.fromEntries(channelNames.map((channel) => [
+      channel,
+      Buffer.concat(layers.map((layer) => textureArrayLayerBytes(layer[channel], width, height))),
+    ]));
+    const expectedBytes = width * height * variants.length * 4;
+    for (const channel of channelNames) {
+      if (bytes[channel].byteLength !== expectedBytes) {
+        throw new Error(`Texture array ${channel} channel has ${bytes[channel].byteLength} bytes; expected ${expectedBytes}`);
+      }
+    }
+    return {
+      width,
+      height,
+      albedoBytes: bytes.albedo,
+      normalBytes: bytes.normal,
+      materialBytes: bytes.material,
+      emissiveBytes: bytes.emissive,
+    };
+  });
+  const channelMipBytes = levels.reduce((total, level) => total + level.albedoBytes.byteLength, 0);
+  if (channelMipBytes > maximumTextureArrayChannelBytes) {
+    throw new RangeError(`Texture array mip chain needs ${channelMipBytes} bytes per channel; the limit is ${maximumTextureArrayChannelBytes}`);
+  }
+  const categoryCounts = Object.fromEntries([...new Set(sortedTextures.map(({category}) => category))]
+    .sort(compareText)
+    .map((category) => [category, sortedTextures.filter((texture) => texture.category === category).length]));
+  const gpuBytes = channelMipBytes * channelNames.length;
+  return {
+    width: tileSize,
+    height: tileSize,
+    layerCount: variants.length,
+    mipmaps,
+    levels,
     textures: sortedTextures.map(({key}) => textureArtifacts.get(key)),
-    albedoBytes,
-    normalBytes,
-    materialBytes,
-    emissiveBytes,
     audit: {
       textureCount: sortedTextures.length,
       variantCount: variants.length,
@@ -329,19 +374,17 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
         emissive: emissiveVariantCount,
       },
       channelSources,
-      atlas: {
-        width,
-        height,
-        tileSize,
-        padding,
-        columns,
-        rows,
+      array: {
+        width: tileSize,
+        height: tileSize,
+        layers: variants.length,
         mipmaps,
-        occupancy: Number((variants.length * tileSize * tileSize / (width * height)).toFixed(6)),
-        estimatedGpuBytes: Math.ceil(baseGpuBytes * (mipmaps ? 4 / 3 : 1)),
+        mipLevelCount: levels.length,
+        alphaCutoffs: [...new Set(variants.map(({alphaCutoff}) => alphaCutoff))],
+        gpuBytes,
       },
     },
   };
 }
 
-export {transformPixels};
+export {textureArrayLayerBytes, transformPixels};
