@@ -1,9 +1,7 @@
 import {BlockRenderLayer} from "@openvoxel/blocks"
 import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
 import {Float32Builder, UInt32Builder, UInt32Buffer, float32Builder, uint32Builder} from "velar/binary"
-import {ChunkMesh, ChunkMeshBatch} from "./contracts.vel"
-import {ClientRenderState, ClientRenderTexture} from "./render-catalog.vel"
-import {ClientBlockModelKind, ClientTextureVariant} from "./resource-pack.vel"
+import {ChunkMesh, ChunkMeshBatch, ClientBlockModelKind, ClientRenderState, ClientRenderTexture, ClientTextureVariant} from "./contracts.vel"
 
 const maximumChunkMeshBytes = 8 * 1024 * 1024
 

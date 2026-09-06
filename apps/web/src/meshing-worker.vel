@@ -1,3 +1,3 @@
-import {serveMeshingWorker} from "@openvoxel/renderer"
+import {serveMeshingWorker} from "@openvoxel/renderer/meshing-worker"
 
 serveMeshingWorker()

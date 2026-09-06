@@ -51,6 +51,9 @@ LocalBackend 的主线程通过类型化 Worker 信封调用同一组后端操�
 `@openvoxel/renderer` 单独拥有呈现职责。资源包身份、逻辑渲染目录、Chunk 邻域
 快照、网格生成与 Babylon 表面都由它维护；公开边界使用 OpenVoxel 数据类型，不把
 Scene、Mesh 或 GPU 资源泄露给世界模型和协议包。
+主入口提供目录、快照与 GPU 表面，`@openvoxel/renderer/meshing-worker` 是独立的精确
+包入口，只闭包构网协议和 CPU 网格代码。Web 应用保留 Worker 宿主启动壳，但必须从
+该精确入口装配，不能通过渲染器主入口把 Babylon/PBR 或生成资源带入 Worker。
 
 `apps/web` 是这些适配器的最小真实消费者。客户端源码不保存任何
 `/api/worlds/...` 路径副本；服务端改路径后只要操作身份和数据语义不变就无需改客户端。

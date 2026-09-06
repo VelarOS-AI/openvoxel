@@ -1,8 +1,7 @@
 import {Cancellation} from "velar/task"
 import {serveWorker} from "velar/worker"
-import {MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations} from "./contracts.vel"
+import {ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations} from "./contracts.vel"
 import {indexRenderStates, meshChunkWithIndex} from "./mesher.vel"
-import {ClientRenderState} from "./render-catalog.vel"
 
 let activeStates: Map<number, readonly ClientRenderState>? = null
 
@@ -26,4 +25,6 @@ async def handleMeshingWorker(request: readonly MeshingWorkerRequest, cancellati
         return {operation: request.operation, mesh}
     throw Error(f"Unsupported Meshing Worker operation {request.operation}")
 
+/// 这是 @openvoxel/renderer/meshing-worker 的唯一宿主启动 API。精确包入口
+/// 只闭包构网依赖；Babylon 表面和内置资源包仍只属于渲染器主入口。
 export def serveMeshingWorker(): serveWorker(MeshingWorkerRequest, MeshingWorkerResponse, handleMeshingWorker, 32)

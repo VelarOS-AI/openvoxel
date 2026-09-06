@@ -2,8 +2,8 @@ import {BlockRenderLayer} from "@openvoxel/blocks"
 import {expect} from "velar/test"
 import {UInt32Buffer, uint32Buffer} from "velar/binary"
 import {meshChunk} from "../src/mesher.vel"
-import {ClientRenderState, ClientRenderTexture} from "../src/render-catalog.vel"
-import {ClientBlockModelKind, ClientTextureResource} from "../src/resource-pack.vel"
+import {ClientBlockModelKind, ClientRenderState, ClientRenderTexture} from "../src/contracts.vel"
+import {ClientTextureResource} from "../src/resource-pack.vel"
 
 const edge = 4
 const paddedEdge = edge + 2

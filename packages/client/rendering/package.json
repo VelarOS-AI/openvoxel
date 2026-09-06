@@ -10,10 +10,14 @@
   ],
   "exports": {
     ".": "./dist/index.js",
+    "./meshing-worker": "./dist/meshing-worker.js",
     "./resource-pack-data": "./generated/client-resource-pack.json"
   },
   "velar": {
     "entry": "src/index.vel",
+    "entries": {
+      "./meshing-worker": "src/meshing-worker.vel"
+    },
     "targets": [
       "web",
       "desktop"
@@ -36,7 +40,7 @@
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
-    "test": "velar test && node --test tests/resource-pack.test.mjs",
+    "test": "velar test && node --test tests/*.test.mjs",
     "build": "velar build"
   },
   "dependencies": {

@@ -1,7 +1,55 @@
 import {BlockRenderLayer} from "@openvoxel/blocks"
 import {ChunkPosition} from "@openvoxel/world"
 import {Float32Buffer, UInt32Buffer} from "velar/binary"
-import {ClientRenderState} from "./render-catalog.vel"
+
+export enum ClientBlockModelKind:
+    cube
+    column
+    cross
+    cactus
+    snowLayer = "snow_layer"
+    fluid
+
+export type ClientTextureVariant:
+    readonly u0: number
+    readonly v0: number
+    readonly u1: number
+    readonly v1: number
+    readonly weight: number
+
+export type ClientRenderTexture:
+    readonly key: string
+    readonly bankKey: string
+    readonly variants: readonly List<readonly ClientTextureVariant>
+    readonly totalWeight: number
+
+export type ClientResolvedBlockTextures:
+    readonly top: readonly ClientRenderTexture
+    readonly bottom: readonly ClientRenderTexture
+    readonly side: readonly ClientRenderTexture
+
+/// Worker 消费的完整渲染状态只保留构网所需的纯数据，不引用 GPU 材质或资源包。
+export type ClientRenderState:
+    readonly runtimeId: number
+    readonly modelKey: string?
+    readonly model: ClientBlockModelKind?
+    readonly layer: BlockRenderLayer?
+    readonly materialKey: string?
+    readonly bankKey: string?
+    readonly pipelineKey: string?
+    readonly textures: readonly ClientResolvedBlockTextures?
+    readonly tintKey: string?
+    readonly tintRed: number
+    readonly tintGreen: number
+    readonly tintBlue: number
+    readonly animationKey: string?
+    readonly cullFaces: bool
+    readonly occludes: bool
+    readonly emission: number
+    readonly axis: string?
+    readonly level: number?
+    readonly falling: bool?
+    readonly layers: number?
 
 export type ChunkMeshBatch:
     readonly pipelineKey: string

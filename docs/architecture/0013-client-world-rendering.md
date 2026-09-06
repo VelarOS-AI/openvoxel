@@ -36,6 +36,7 @@ OpenVoxel 的分类 YAML、独立 PNG 和生成产物共同构成客户端资源
 - 首帧下载与远景流式加载分离，单次流式提交最多 12 个 Chunk。
 - 同一 Chunk 只接受最新 ticket 的 Worker 结果；编辑、邻区加载和视窗淘汰都会使旧结果失效。
 - 网格 Worker 由一个有界池统一调度；资源目录通过池级广播只初始化一次，视窗任务的取消信号继续传入 Chunk 下载、热增量同步和本地生成循环。
+- 网格 Worker 只从 `@openvoxel/renderer/meshing-worker` 精确入口启动；该入口与渲染器主入口拥有独立依赖图，不携带 Babylon 表面、PBR 管线或生成的材质纹理资源。
 - Worker 初始化时只构造一次 runtimeId 状态索引；网格校验和直接遍历固定缓冲区，不生成 List 快照。
 - texture bank 独立打包并共享四通道布局；Chunk 批次只引用自身职责所需的 bank，生成图像不会进入世界或协议数据。
 - 客户端只保留当前 7×7×5 窗口，默认上限 245 个 Chunk。

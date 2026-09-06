@@ -1,41 +1,7 @@
 import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
-import {ClientAnimationResource, ClientBlockModelKind, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTextureVariant, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
-
-export type ClientRenderTexture:
-    readonly key: string
-    readonly bankKey: string
-    readonly variants: readonly List<readonly ClientTextureVariant>
-    readonly totalWeight: number
-
-export type ClientResolvedBlockTextures:
-    readonly top: readonly ClientRenderTexture
-    readonly bottom: readonly ClientRenderTexture
-    readonly side: readonly ClientRenderTexture
-
-/// Worker 消费的完整渲染状态。每项由网络状态目录和客户端资源包联结得到；模型、
-/// 材质和纹理仍保留逻辑身份，runtimeId 只作为查表入口。
-export type ClientRenderState:
-    readonly runtimeId: number
-    readonly modelKey: string?
-    readonly model: ClientBlockModelKind?
-    readonly layer: BlockRenderLayer?
-    readonly materialKey: string?
-    readonly bankKey: string?
-    readonly pipelineKey: string?
-    readonly textures: readonly ClientResolvedBlockTextures?
-    readonly tintKey: string?
-    readonly tintRed: number
-    readonly tintGreen: number
-    readonly tintBlue: number
-    readonly animationKey: string?
-    readonly cullFaces: bool
-    readonly occludes: bool
-    readonly emission: number
-    readonly axis: string?
-    readonly level: number?
-    readonly falling: bool?
-    readonly layers: number?
+import {ClientBlockModelKind, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures} from "./contracts.vel"
+import {ClientAnimationResource, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
 export type ClientRenderCatalog:
     readonly resourceHash: string

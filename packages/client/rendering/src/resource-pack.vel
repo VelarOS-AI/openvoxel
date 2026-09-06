@@ -1,14 +1,8 @@
+import {ClientBlockModelKind, ClientTextureVariant} from "./contracts.vel"
+
 /// 客户端资源包把世界内容中的逻辑资源身份解析成有界的呈现配方。
 /// 这个格式没有 runtimeId 字段；数字状态只通过 WorldContentResponse 的状态目录
 /// 到达 RenderCatalog，资源包本身不会成为第二份方块目录。
-
-export enum ClientBlockModelKind:
-    cube
-    column
-    cross
-    cactus
-    snowLayer = "snow_layer"
-    fluid
 
 export enum ClientTextureBankRole:
     opaque
@@ -52,13 +46,6 @@ export type ClientMaterialResource:
 
 /// UV 使用 Babylon/WebGL 通用的左下原点坐标；生成器已完成 PNG 顶部原点转换。
 /// weight 只参与确定性的表面变体选择，不改变纹理的逻辑资源身份。
-export type ClientTextureVariant:
-    readonly u0: number
-    readonly v0: number
-    readonly u1: number
-    readonly v1: number
-    readonly weight: number
-
 export type ClientTextureResource:
     readonly key: string
     readonly bankKey: string
