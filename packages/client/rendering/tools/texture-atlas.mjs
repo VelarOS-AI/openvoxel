@@ -9,6 +9,7 @@ import {
   requireRecord,
   resolveInside,
 } from "./resource-pack-values.mjs";
+import {resolveTextureChannels} from "./texture-channels.mjs";
 
 const pngOptions = {compressionLevel: 9, adaptiveFiltering: false};
 
@@ -114,96 +115,6 @@ function transformPixels(source, definition, size) {
   return pixels;
 }
 
-function linearChannel(value) {
-  const normalized = value / 255;
-  return normalized <= 0.04045
-    ? normalized / 12.92
-    : ((normalized + 0.055) / 1.055) ** 2.4;
-}
-
-function luminanceAt(source, offset) {
-  return linearChannel(source[offset]) * 0.2126
-    + linearChannel(source[offset + 1]) * 0.7152
-    + linearChannel(source[offset + 2]) * 0.0722;
-}
-
-function deriveChannels(albedo, profile, size) {
-  const normal = Buffer.alloc(albedo.length);
-  const material = Buffer.alloc(albedo.length);
-  const emissive = Buffer.alloc(albedo.length);
-  const luminance = new Float64Array(size * size);
-  let weightedLuminance = 0;
-  let alphaWeight = 0;
-
-  for (let index = 0; index < luminance.length; index += 1) {
-    const offset = index * 4;
-    const alpha = albedo[offset + 3] / 255;
-    luminance[index] = luminanceAt(albedo, offset) * alpha;
-    weightedLuminance += luminance[index];
-    alphaWeight += alpha;
-  }
-  const averageLuminance = alphaWeight === 0 ? 0 : weightedLuminance / alphaWeight;
-  const heightAt = (x, y) => luminance[wrap(y, size) * size + wrap(x, size)];
-
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const offset = pixelOffset(x, y, size);
-      const alpha = albedo[offset + 3];
-      if (alpha === 0) {
-        normal[offset] = 128;
-        normal[offset + 1] = 128;
-        normal[offset + 2] = 255;
-        normal[offset + 3] = 0;
-        material[offset] = 255;
-        material[offset + 1] = Math.round(profile.roughness * 255);
-        material[offset + 2] = Math.round(profile.metallic * 255);
-        material[offset + 3] = 0;
-        continue;
-      }
-
-      const horizontal = (heightAt(x + 1, y - 1) + 2 * heightAt(x + 1, y) + heightAt(x + 1, y + 1))
-        - (heightAt(x - 1, y - 1) + 2 * heightAt(x - 1, y) + heightAt(x - 1, y + 1));
-      const vertical = (heightAt(x - 1, y + 1) + 2 * heightAt(x, y + 1) + heightAt(x + 1, y + 1))
-        - (heightAt(x - 1, y - 1) + 2 * heightAt(x, y - 1) + heightAt(x + 1, y - 1));
-      const normalX = -horizontal * profile.normalStrength;
-      const normalY = vertical * profile.normalStrength;
-      const inverseLength = 1 / Math.hypot(normalX, normalY, 1);
-      normal[offset] = Math.round((normalX * inverseLength * 0.5 + 0.5) * 255);
-      normal[offset + 1] = Math.round((normalY * inverseLength * 0.5 + 0.5) * 255);
-      normal[offset + 2] = Math.round(inverseLength * 255);
-      normal[offset + 3] = alpha;
-
-      let neighborhood = 0;
-      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-        for (let offsetX = -1; offsetX <= 1; offsetX += 1) neighborhood += heightAt(x + offsetX, y + offsetY);
-      }
-      neighborhood /= 9;
-      const pixelLuminance = luminance[y * size + x];
-      const cavity = Math.max(0, neighborhood - pixelLuminance);
-      const occlusion = clamp(1 - cavity * profile.occlusionStrength * 3.2);
-      const roughness = clamp(profile.roughness + (0.5 - pixelLuminance) * profile.roughnessVariation);
-      const maximum = Math.max(albedo[offset], albedo[offset + 1], albedo[offset + 2]) / 255;
-      const minimum = Math.min(albedo[offset], albedo[offset + 1], albedo[offset + 2]) / 255;
-      const saturation = maximum === 0 ? 0 : (maximum - minimum) / maximum;
-      const materialSignal = clamp(Math.abs(pixelLuminance - averageLuminance) * 2.2 + saturation * 0.55);
-      const metallic = clamp(profile.metallic + materialSignal * profile.metallicVariation);
-      material[offset] = Math.round(occlusion * 255);
-      material[offset + 1] = Math.round(roughness * 255);
-      material[offset + 2] = Math.round(metallic * 255);
-      material[offset + 3] = alpha;
-
-      const thresholdRange = Math.max(1e-6, 1 - profile.emissiveThreshold);
-      const emission = profile.emissive * clamp((pixelLuminance - profile.emissiveThreshold) / thresholdRange);
-      emissive[offset] = Math.round(albedo[offset] * emission);
-      emissive[offset + 1] = Math.round(albedo[offset + 1] * emission);
-      emissive[offset + 2] = Math.round(albedo[offset + 2] * emission);
-      emissive[offset + 3] = alpha;
-    }
-  }
-
-  return {normal, material, emissive};
-}
-
 function blendedChannel(base, layer, mode) {
   if (mode === "normal") return layer;
   if (mode === "multiply") return base * layer / 255;
@@ -237,6 +148,25 @@ async function paddedPng(pixels, size, padding) {
   return image.png(pngOptions).toBuffer();
 }
 
+function channelTransform(definition) {
+  if (definition == null) return null;
+  return {
+    rotate: definition.rotate,
+    flipX: definition.flipX,
+    flipY: definition.flipY,
+    shiftX: definition.shiftX,
+    shiftY: definition.shiftY,
+  };
+}
+
+function channelSourceFiles(texture) {
+  const maps = requireRecord(texture.maps ?? {}, `texture ${texture.key} maps`);
+  return Object.fromEntries(Object.entries(maps).map(([channel, raw]) => {
+    const source = requireRecord(raw, `texture ${texture.key} ${channel} map`);
+    return [channel, source.file];
+  }));
+}
+
 export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfaceProfiles}) {
   const {tileSize, padding, columns, mipmaps} = atlas;
   const sourceBytes = new Map();
@@ -266,28 +196,35 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
       pixels = await image.ensureAlpha().raw().toBuffer();
       sourcePixels.set(cacheKey, pixels);
     }
-    return transformPixels(pixels, transformDefinition(source.transform, `${label} transform`, tileSize), tileSize);
+    const transform = transformDefinition(source.transform, `${label} transform`, tileSize);
+    return {pixels: transformPixels(pixels, transform, tileSize), transform};
   }
 
   async function variantPixels(texture, recipe, textureKey, variantIndex) {
-    let pixels = await pixelsFor(texture, `texture ${textureKey} base`);
-    if (recipe == null) return pixels;
+    const base = await pixelsFor(texture, `texture ${textureKey} base`);
+    let pixels = base.pixels;
+    const channelTransforms = [channelTransform(base.transform)];
+    if (recipe == null) return {albedo: pixels, channelTransforms};
     const transform = transformDefinition(recipe.transform, `texture ${textureKey} variant ${variantIndex} transform`, tileSize);
     const layers = requireList(recipe.layers ?? [], `texture ${textureKey} variant ${variantIndex} layers`);
     if (transform == null && layers.length === 0) {
       throw new Error(`texture ${textureKey} variant ${variantIndex} needs a transform or at least one layer`);
     }
     if (layers.length > 4) throw new RangeError(`texture ${textureKey} variant ${variantIndex} cannot contain more than four layers`);
+    if (layers.length > 0 && Object.keys(texture.maps ?? {}).length > 0) {
+      throw new Error(`texture ${textureKey} variant ${variantIndex} cannot combine author maps with albedo layers`);
+    }
     pixels = transformPixels(pixels, transform, tileSize);
+    channelTransforms.push(channelTransform(transform));
     for (const [layerIndex, rawLayer] of layers.entries()) {
       const label = `texture ${textureKey} variant ${variantIndex} layer ${layerIndex}`;
       const layer = requireRecord(rawLayer, label);
       const opacity = requireNumber(layer.opacity ?? 1, 0.000001, 1, `${label} opacity`);
       const mode = layer.blend ?? "normal";
       if (!["normal", "multiply", "overlay"].includes(mode)) throw new Error(`${label} has unsupported blend mode ${mode}`);
-      mixLayer(pixels, await pixelsFor(layer, label), opacity, mode);
+      mixLayer(pixels, (await pixelsFor(layer, label)).pixels, opacity, mode);
     }
-    return pixels;
+    return {albedo: pixels, channelTransforms};
   }
 
   const sortedTextures = [...textureSources].sort((left, right) => left.key.localeCompare(right.key));
@@ -312,12 +249,25 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
   const composites = {albedo: [], normal: [], material: [], emissive: []};
   const textureArtifacts = new Map(sortedTextures.map(({key}) => [key, {key, variants: []}]));
   let emissiveVariantCount = 0;
+  const channelSources = {normal: {}, material: {}, emissive: {}};
 
   for (const [index, {texture, recipe, variantIndex, weight}] of variants.entries()) {
     const profile = surfaceProfiles.get(texture.surface);
     if (profile == null) throw new Error(`Texture ${texture.key} references unknown surface profile ${texture.surface}`);
-    const albedo = await variantPixels(texture, recipe, texture.key, variantIndex);
-    const channels = deriveChannels(albedo, profile, tileSize);
+    const {albedo, channelTransforms} = await variantPixels(texture, recipe, texture.key, variantIndex);
+    const channels = await resolveTextureChannels({
+      dataRoot,
+      tileSize,
+      albedoPixels: albedo,
+      profile,
+      sourceFiles: channelSourceFiles(texture),
+      transforms: channelTransforms,
+      label: `texture ${texture.key} variant ${variantIndex}`,
+    });
+    for (const channel of ["normal", "material", "emissive"]) {
+      const source = channels.sources[channel];
+      channelSources[channel][source] = (channelSources[channel][source] ?? 0) + 1;
+    }
     const cellLeft = index % columns * cellSize;
     const cellTop = Math.floor(index / columns) * cellSize;
     const left = cellLeft + padding;
@@ -332,7 +282,7 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
     composites.normal.push({input: paddedNormal, left: cellLeft, top: cellTop});
     composites.material.push({input: paddedMaterial, left: cellLeft, top: cellTop});
     composites.emissive.push({input: paddedEmissive, left: cellLeft, top: cellTop});
-    if (profile.emissive > 0) emissiveVariantCount += 1;
+    if (channels.sources.emissive === "authored-emissive" || profile.emissive > 0) emissiveVariantCount += 1;
     textureArtifacts.get(texture.key).variants.push({
       u0: (left + 0.5) / width,
       v0: 1 - (top + tileSize - 0.5) / height,
@@ -378,6 +328,7 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
         material: variants.length,
         emissive: emissiveVariantCount,
       },
+      channelSources,
       atlas: {
         width,
         height,
@@ -393,4 +344,4 @@ export async function buildTextureAtlas({dataRoot, atlas, textureSources, surfac
   };
 }
 
-export {deriveChannels, transformPixels};
+export {transformPixels};

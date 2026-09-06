@@ -1,6 +1,6 @@
 category: fluid
 textures:
-  - {key: openvoxel:texture/block/magma, surface: magma, file: textures/fluid/magma.png}
-  - {key: openvoxel:texture/block/magma_flow, surface: magma, file: textures/fluid/magma_flow.png}
-  - {key: openvoxel:texture/block/water, surface: water, file: textures/fluid/water.png}
-  - {key: openvoxel:texture/block/water_flow, surface: water, file: textures/fluid/water_flow.png}
+  - {key: openvoxel:texture/block/magma, surface: magma, file: textures/fluid/magma.png, maps: {height: {file: textures/fluid/maps/magma.height.png}, material: {file: textures/fluid/maps/magma.material.png}, emissive: {file: textures/fluid/maps/magma.emissive.png}}}
+  - {key: openvoxel:texture/block/magma_flow, surface: magma, file: textures/fluid/magma_flow.png, maps: {height: {file: textures/fluid/maps/magma_flow.height.png}, material: {file: textures/fluid/maps/magma_flow.material.png}, emissive: {file: textures/fluid/maps/magma_flow.emissive.png}}}
+  - {key: openvoxel:texture/block/water, surface: water, file: textures/fluid/water.png, maps: {normal: {file: textures/fluid/maps/water.normal.png}, material: {file: textures/fluid/maps/water.material.png}}}
+  - {key: openvoxel:texture/block/water_flow, surface: water, file: textures/fluid/water_flow.png, maps: {normal: {file: textures/fluid/maps/water_flow.normal.png}, material: {file: textures/fluid/maps/water_flow.material.png}}}

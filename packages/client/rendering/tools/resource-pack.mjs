@@ -23,6 +23,7 @@ const manifestPath = resolve(dataRoot, "resource-pack.yml");
 const blockCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/blocks/block-catalog-data"));
 const generatorCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/world-generation/world-generator-catalog-data"));
 const bankRoles = ["opaque", "cutout", "translucent", "fluid"];
+const textureChannels = ["albedo", "normal", "material", "emissive"];
 
 function requiredResources(blockCatalog) {
   const resources = {
@@ -110,6 +111,48 @@ function dataUrl(type, bytes) {
 
 function variantCount(textures) {
   return textures.reduce((total, texture) => total + 1 + (texture.variants?.length ?? 0), 0);
+}
+
+function compareText(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+/**
+ * Builds the content identity for an authored resource pack and its generated outputs.
+ * YAML object key order and source-file or mapping enumeration order do not affect the
+ * result; authored list order remains significant because it can change layout or animation.
+ */
+export function computeResourceHash({manifest, catalogs, sourceImages, bankAssignments, payload, bankImages}) {
+  const normalizedCatalogs = catalogs
+    .map(({file, document}) => ({file, document}))
+    .sort((left, right) => compareText(left.file, right.file));
+  const normalizedSourceImages = sourceImages
+    .map(({path, bytes}) => ({path, sha256: sha256([bytes])}))
+    .sort((left, right) => compareText(left.path, right.path));
+  const normalizedAssignments = [...bankAssignments.entries()]
+    .map(([texture, role]) => ({texture, role}))
+    .sort((left, right) => compareText(left.texture, right.texture));
+  const normalizedBankImages = bankImages
+    .flatMap((bank) => textureChannels.map((channel) => ({
+      path: `texture-banks/${bank.role}-${channel}.png`,
+      sha256: sha256([bank[`${channel}Bytes`]]),
+    })))
+    .sort((left, right) => compareText(left.path, right.path));
+  return sha256([stableJson({
+    identityVersion: 1,
+    source: {
+      manifest,
+      catalogs: normalizedCatalogs,
+      images: normalizedSourceImages,
+    },
+    bankAssignments: normalizedAssignments,
+    generated: {
+      artifactPayload: payload,
+      textureBankImages: normalizedBankImages,
+    },
+  })]);
 }
 
 export async function buildResourcePack() {
@@ -237,6 +280,10 @@ export async function buildResourcePack() {
   if (textures.length !== source.textures.length) throw new Error("Some client textures were not assigned to a render bank");
   textures.sort((left, right) => left.key.localeCompare(right.key));
 
+  const sourceImageEntries = await Promise.all(source.referencedImageFiles.map(async (file) => ({
+    path: file,
+    bytes: await readFile(resolveInside(dataRoot, file, `resource image ${file}`)),
+  })));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
     artifactVersion: 4,
@@ -251,12 +298,18 @@ export async function buildResourcePack() {
     tints,
     animations,
   };
-  const resourceHash = sha256([stableJson(payload)]);
+  const resourceHash = computeResourceHash({
+    manifest,
+    catalogs: source.catalogs,
+    sourceImages: sourceImageEntries,
+    bankAssignments: assignments,
+    payload,
+    bankImages,
+  });
   const artifact = {...payload, resourceHash};
-  const sourceImages = await Promise.all(source.imageFiles.map(async (file) => {
-    const bytes = await readFile(resolveInside(dataRoot, file, `resource image ${file}`));
+  const sourceImages = await Promise.all(sourceImageEntries.map(async ({path, bytes}) => {
     const metadata = await sharp(bytes).metadata();
-    return {path: file, width: metadata.width, height: metadata.height, sha256: sha256([bytes])};
+    return {path, width: metadata.width, height: metadata.height, sha256: sha256([bytes])};
   }));
   const categories = Object.fromEntries(source.catalogs.map(({category, textures: entries}) => [category, entries.length]));
   const audit = {

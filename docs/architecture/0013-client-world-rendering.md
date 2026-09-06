@@ -10,11 +10,11 @@
 
 ## 资源与光照
 
-每个逻辑 texture 由一张独立的 32×32 PNG 和一条 YAML 配方维护。terrain、vegetation、fluid 是作者资源分类，environment 单独保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
+作者格式 v5 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；normal、height 与 material 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。缺失通道继续由 surface profile 确定性生成。terrain、vegetation、fluid 是作者资源分类，environment 单独保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
 
-每个 bank 同时生成带边缘填充、mipmap 配置和完全相同像素布局的 albedo、normal、material、emissive 四张图集。material 图按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 只保存 bank key、带权重的 UV 变体，方块网格因此仍只需要一套 UV。动画的全部帧必须处在同一 bank 且拥有相同区域尺寸，运行时同步平移四张图集的采样区域，不重建 Chunk 网格。
+每个 bank 同时生成带边缘填充、mipmap 配置和完全相同像素布局的 albedo、normal、material、emissive 四张图集。material 图按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 只保存 bank key、带权重的 UV 变体，方块网格因此仍只需要一套 UV。作者图的空间变换按 base、variant 顺序同步执行，切线法线的 XY 方向随旋转和翻转重映射，颜色调整只改变 albedo，最终 alpha 则统一取 albedo。动画的全部帧必须处在同一 bank 且拥有相同区域尺寸，运行时同步平移四张图集的采样区域，不重建 Chunk 网格。
 
-`textureBanks` 是资源产物与渲染后端之间的存储抽象。当前 format v4 使用 `storage: atlas`，由 Babylon `PBRMaterial` 直接消费生成图集；以后可以增加 `texture_2d_array` 后端而不改变逻辑 texture、方块目录或世界 runtimeId 的身份边界。资源哈希覆盖作者 PNG、YAML 配方、bank 分配、四通道生成结果和环境资源。
+`textureBanks` 是资源产物与渲染后端之间的存储抽象。生成 artifact v4 使用 `storage: atlas`，由 Babylon `PBRMaterial` 直接消费生成图集；以后可以增加 `texture_2d_array` 后端而不改变逻辑 texture、方块目录或世界 runtimeId 的身份边界。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道生成图像共同计算；YAML 对象字段顺序及源文件与映射的枚举顺序不会产生伪变更，列表顺序仍保留其布局与动画语义。
 
 运行时材质保留 alpha、alpha-cutoff、double-sided、casts-shadows、environment-intensity、clear-coat、clear-coat-roughness 和 unlit 语义。逐像素的凹凸、粗糙度、金属度和自发光来自对应 bank；emissive 表达表面自身亮度，世界中的方块光传播仍以方块目录的 light emission 为权威。场景使用天空光、方向太阳、PCF 阴影、色调映射、距离雾和移动云层；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。
 

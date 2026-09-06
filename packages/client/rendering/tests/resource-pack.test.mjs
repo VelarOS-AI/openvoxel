@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import test from "node:test";
 import sharp from "sharp";
-import {buildResourcePack} from "../tools/resource-pack.mjs";
+import {buildResourcePack, computeResourceHash} from "../tools/resource-pack.mjs";
 
 const channels = ["albedo", "normal", "material", "emissive"];
 const roles = ["opaque", "cutout", "translucent", "fluid"];
@@ -38,6 +38,30 @@ function channelAverage(decoded, bank, variant, channel) {
   return total / count;
 }
 
+function identityFixture(overrides = {}) {
+  return {
+    manifest: {formatVersion: 5, owner: "openvoxel", texturePipeline: {tileSize: 32, mipmaps: true}},
+    catalogs: [{
+      file: "textures/terrain.yml",
+      document: {category: "terrain", textures: [{key: "openvoxel:texture/block/stone", file: "textures/terrain/stone.png"}]},
+    }],
+    sourceImages: [
+      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
+      {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
+    ],
+    bankAssignments: new Map([["openvoxel:texture/block/stone", "opaque"]]),
+    payload: {artifactVersion: 4, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
+    bankImages: [{
+      role: "opaque",
+      albedoBytes: Buffer.from("albedo"),
+      normalBytes: Buffer.from("normal"),
+      materialBytes: Buffer.from("material"),
+      emissiveBytes: Buffer.from("emissive"),
+    }],
+    ...overrides,
+  };
+}
+
 async function decodedBanks(output) {
   const decoded = new Map();
   for (const images of output.bankImages) {
@@ -69,9 +93,10 @@ test("resource pack exposes four generated texture banks and a closed authoring 
     }
   }
 
-  assert.equal(audit.sourceImages.length, 46);
-  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 46);
-  assert.equal(audit.sourceImages.filter((source) => source.path.startsWith("textures/")).length, 45);
+  assert.equal(audit.sourceImages.length, 80);
+  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 80);
+  assert.equal(audit.sourceImages.filter((source) => source.path.startsWith("textures/")).length, 79);
+  assert.equal(audit.sourceImages.filter((source) => source.path.includes("/maps/")).length, 34);
   for (const source of audit.sourceImages.filter((candidate) => candidate.path.startsWith("textures/"))) {
     assert.equal(source.width, 32, `${source.path} width`);
     assert.equal(source.height, 32, `${source.path} height`);
@@ -84,7 +109,61 @@ test("resource pack exposes four generated texture banks and a closed authoring 
     Object.fromEntries(audit.banks.map((bank) => [bank.role, bank.variantCount])),
     {opaque: 40, cutout: 12, translucent: 1, fluid: 4},
   );
+  const channelSources = {normal: {}, material: {}, emissive: {}};
+  for (const bank of audit.banks) {
+    for (const channel of Object.keys(channelSources)) {
+      for (const [source, count] of Object.entries(bank.channelSources[channel])) {
+        channelSources[channel][source] = (channelSources[channel][source] ?? 0) + count;
+      }
+    }
+  }
+  assert.deepEqual(channelSources, {
+    normal: {"authored-height": 20, "authored-normal": 4, generated: 33},
+    material: {"authored-material": 24, generated: 33},
+    emissive: {"authored-emissive": 2, generated: 55},
+  });
   assert.ok(audit.estimatedGpuBytes > 0);
+});
+
+test("resource hash is deterministic and covers every authoring and generated boundary", () => {
+  const baseline = computeResourceHash(identityFixture());
+  const reordered = identityFixture({
+    manifest: {texturePipeline: {mipmaps: true, tileSize: 32}, owner: "openvoxel", formatVersion: 5},
+    sourceImages: [
+      {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
+      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
+    ],
+  });
+  assert.equal(computeResourceHash(reordered), baseline, "object keys and source image enumeration must be normalized");
+
+  const cases = [
+    ["manifest recipe", {manifest: {...identityFixture().manifest, owner: "changed"}}],
+    ["catalog recipe", {catalogs: [{
+      file: "textures/terrain.yml",
+      document: {category: "terrain", textures: [{key: "openvoxel:texture/block/stone", file: "textures/terrain/changed.png"}]},
+    }]}],
+    ["source image bytes", {sourceImages: [
+      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
+      {path: "textures/terrain/stone.png", bytes: Buffer.from("changed")},
+    ]}],
+    ["bank assignment", {bankAssignments: new Map([["openvoxel:texture/block/stone", "cutout"]])}],
+    ["artifact payload", {payload: {artifactVersion: 4, textureBanks: [{key: "changed"}]}}],
+    ["generated bank bytes", {bankImages: [{
+      role: "opaque",
+      albedoBytes: Buffer.from("changed"),
+      normalBytes: Buffer.from("normal"),
+      materialBytes: Buffer.from("material"),
+      emissiveBytes: Buffer.from("emissive"),
+    }]}],
+  ];
+  for (const [label, overrides] of cases) {
+    assert.notEqual(computeResourceHash(identityFixture(overrides)), baseline, `${label} must affect resource identity`);
+  }
+});
+
+test("resource pack identity is reproducible across complete builds", async () => {
+  const [first, second] = await Promise.all([outputPromise, buildResourcePack()]);
+  assert.equal(second.artifact.resourceHash, first.artifact.resourceHash);
 });
 
 test("every bank keeps four channels aligned with texel-centered UVs and copied padding", async () => {

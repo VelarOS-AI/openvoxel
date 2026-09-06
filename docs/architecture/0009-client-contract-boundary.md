@@ -79,11 +79,11 @@ WebSocket 错误使用 MessagePack `error` 事件，并在能够读取时回显 
 
 方块 YAML 只保存逻辑资源 key。`GET /api/worlds/{worldId}/content` 从该世界权威目录确定性聚合并排序 materials、textures、models、tints 和 animations。
 
-客户端资源包完整覆盖这些逻辑 key；具体 key 到作者 PNG、texture bank、着色器和模型实现的映射属于客户端资源包。每个逻辑 texture 使用一张独立的 32×32 PNG，可以声明带权重的多个确定性表面变体。变体允许旋转、翻转、平移和颜色变换，也可以叠加最多四层 `normal`、`multiply` 或 `overlay` 混合；这些处理只发生在构建阶段。
+客户端资源包完整覆盖这些逻辑 key；具体 key 到作者 PNG、texture bank、着色器和模型实现的映射属于客户端资源包。作者格式 v5 中，每个逻辑 texture 以一张独立的 32×32 albedo PNG 为根，可以按需附加切线空间 normal 或线性 height、ORM material 与 emissive 单图，也可以声明带权重的多个确定性表面变体。normal、height 与 material 使用无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 是经过 sRGB 归一化的 8-bit 颜色 PNG；构建器不会对数据通道执行颜色管理或位深量化。缺少的 PBR 通道由 surface profile 确定性生成，最终四通道 alpha 始终跟随 albedo。变体允许旋转、翻转、平移和颜色变换；空间变换同步作用于作者通道并重映射法线方向，颜色变换只作用于 albedo。带作者通道的 texture 不允许再叠加 albedo layer，避免生成期静默错位。
 
 作者资源按 terrain、vegetation、fluid 分类，environment 单独维护。GPU bank 不从作者目录、material 名称或 model 名称猜测，而是遍历世界内容中的最终 component profile：普通纹理按 opaque、cutout、translucent 层归组，fluid model 优先进入 fluid bank，动画帧继承使用它的 bank。一个逻辑 texture 若被多个 bank 使用必须以不同逻辑 key 明确拆分，构建器不会产生含糊的运行时映射。
 
-format v4 的 `textureBanks` 当前使用生成 atlas。每个 bank 的 albedo、normal、material 和 emissive 图集共享尺寸、padding、mipmap 设置及 UV 区域，其中 material 使用 R=AO、G=roughness、B=metallic。texture 产物保存 bank key 和 UV 变体；运行时依据绝对世界坐标、runtimeId 和方块面确定性选择变体，因此 Chunk 边界、Worker 顺序和重连不会改变既有表面。bank 的存储身份允许后续增加 `texture_2d_array`，当前 Babylon PBR 后端仍消费 `storage: atlas`。
+生成 artifact v4 的 `textureBanks` 当前使用 atlas。每个 bank 的 albedo、normal、material 和 emissive 图集共享尺寸、padding、mipmap 设置及 UV 区域，其中 material 使用 R=AO、G=roughness、B=metallic。texture 产物保存 bank key 和 UV 变体；运行时依据绝对世界坐标、runtimeId 和方块面确定性选择变体，因此 Chunk 边界、Worker 顺序和重连不会改变既有表面。bank 的存储身份允许后续增加 `texture_2d_array`，当前 Babylon PBR 后端仍消费 `storage: atlas`。
 
 作者图像、生成规则、bank 分配、四通道图集和环境资源共同进入资源哈希。大世界驻留窗口、PBR 光照管线与跨 Chunk 剔除规则见 ADR 0013。
 

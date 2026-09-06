@@ -3,14 +3,14 @@ textures:
   - {key: openvoxel:texture/block/birch_leaves, surface: foliage, file: textures/vegetation/birch_leaves.png}
   - {key: openvoxel:texture/block/birch_log_side, surface: wood, file: textures/vegetation/birch_log_side.png}
   - {key: openvoxel:texture/block/birch_log_top, surface: wood, file: textures/vegetation/birch_log_top.png}
-  - {key: openvoxel:texture/block/cactus, surface: cactus, file: textures/vegetation/cactus.png}
+  - {key: openvoxel:texture/block/cactus, surface: cactus, file: textures/vegetation/cactus.png, maps: {height: {file: textures/vegetation/maps/cactus.height.png}, material: {file: textures/vegetation/maps/cactus.material.png}}}
   - {key: openvoxel:texture/block/dry_bush, surface: plant, file: textures/vegetation/dry_bush.png}
   - {key: openvoxel:texture/block/mimosa_leaves, surface: foliage, file: textures/vegetation/mimosa_leaves.png}
   - {key: openvoxel:texture/block/mimosa_log_side, surface: wood, file: textures/vegetation/mimosa_log_side.png}
   - {key: openvoxel:texture/block/mimosa_log_top, surface: wood, file: textures/vegetation/mimosa_log_top.png}
-  - {key: openvoxel:texture/block/oak_leaves, surface: foliage, file: textures/vegetation/oak_leaves.png}
-  - {key: openvoxel:texture/block/oak_log_side, surface: wood, file: textures/vegetation/oak_log_side.png}
-  - {key: openvoxel:texture/block/oak_log_top, surface: wood, file: textures/vegetation/oak_log_top.png}
+  - {key: openvoxel:texture/block/oak_leaves, surface: foliage, file: textures/vegetation/oak_leaves.png, maps: {normal: {file: textures/vegetation/maps/oak_leaves.normal.png}, material: {file: textures/vegetation/maps/oak_leaves.material.png}}}
+  - {key: openvoxel:texture/block/oak_log_side, surface: wood, file: textures/vegetation/oak_log_side.png, maps: {height: {file: textures/vegetation/maps/oak_log_side.height.png}, material: {file: textures/vegetation/maps/oak_log_side.material.png}}}
+  - {key: openvoxel:texture/block/oak_log_top, surface: wood, file: textures/vegetation/oak_log_top.png, maps: {height: {file: textures/vegetation/maps/oak_log_top.height.png}, material: {file: textures/vegetation/maps/oak_log_top.material.png}}}
   - {key: openvoxel:texture/block/poplar_leaves, surface: foliage, file: textures/vegetation/poplar_leaves.png}
   - {key: openvoxel:texture/block/poplar_log_side, surface: wood, file: textures/vegetation/poplar_log_side.png}
   - {key: openvoxel:texture/block/poplar_log_top, surface: wood, file: textures/vegetation/poplar_log_top.png}
@@ -19,5 +19,5 @@ textures:
   - {key: openvoxel:texture/block/spruce_leaves, surface: foliage, file: textures/vegetation/spruce_leaves.png}
   - {key: openvoxel:texture/block/spruce_log_side, surface: wood, file: textures/vegetation/spruce_log_side.png}
   - {key: openvoxel:texture/block/spruce_log_top, surface: wood, file: textures/vegetation/spruce_log_top.png}
-  - {key: openvoxel:texture/block/tall_grass, surface: plant, file: textures/vegetation/tall_grass.png}
+  - {key: openvoxel:texture/block/tall_grass, surface: plant, file: textures/vegetation/tall_grass.png, maps: {normal: {file: textures/vegetation/maps/tall_grass.normal.png}, material: {file: textures/vegetation/maps/tall_grass.material.png}}}
   - {key: openvoxel:texture/block/white_flower, surface: plant, file: textures/vegetation/white_flower.png}
