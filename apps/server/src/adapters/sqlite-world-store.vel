@@ -77,8 +77,8 @@ def insertWorldOperation(world: WorldManifest) -> DatabaseCommand:
         worldsTable,
         ["id", "name", "seed", "format_version", "chunk_edge", "generator", "generator_hash", "spawn_x", "spawn_y", "spawn_z", "content_json", "block_registry_json"],
         [[world.id, world.name, world.seed, world.formatVersion, world.chunkEdge, world.generator, world.generatorHash, world.spawn.x, world.spawn.y, world.spawn.z, Json.stableStringify(world.content), Json.stableStringify(world.blockRegistry)]],
-        minimumAffected = 1,
-        maximumAffected = 1,
+        minimumAffected=1,
+        maximumAffected=1,
     )
 
 def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
@@ -99,9 +99,9 @@ def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
             sqlNamedField("block_registry_json", alias="blockRegistryJson"),
         ],
         WorldRow,
-        where = sqlColumnEqual("id", worldId),
-        limit = 1,
-        maximumRows = 1,
+        where=sqlColumnEqual("id", worldId),
+        limit=1,
+        maximumRows=1,
     )
 
 def findChunkStatesOperation(worldId: string, coordinates: List<List<unknown>>) -> DatabaseQuery<ChunkStateRow>:
@@ -112,7 +112,7 @@ def findChunkStatesOperation(worldId: string, coordinates: List<List<unknown>>) 
             "))",
         ], [worldId, Json.stableStringify(coordinates)]),
         ChunkStateRow,
-        maximumRows = coordinates.size,
+        maximumRows=coordinates.size,
     )
 
 def saveChunkStatesOperation(rows: List<List<unknown>>) -> DatabaseCommand:
@@ -216,13 +216,13 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
                 sqlNamedField("block_state_runtime_id", alias="blockStateRuntimeId", qualifier="override"),
             ],
             ChunkDeltaRow,
-            joins = [sqlLeftJoin(overrideTable, sqlAnd([
+            joins=[sqlLeftJoin(overrideTable, sqlAnd([
                 sqlEqual(sqlColumn("world_id", qualifier="override"), sqlColumn("world_id", qualifier="state")),
                 sqlEqual(sqlColumn("chunk_x", qualifier="override"), sqlColumn("chunk_x", qualifier="state")),
                 sqlEqual(sqlColumn("chunk_y", qualifier="override"), sqlColumn("chunk_y", qualifier="state")),
                 sqlEqual(sqlColumn("chunk_z", qualifier="override"), sqlColumn("chunk_z", qualifier="state")),
             ]))],
-            where = sqlAnd([
+            where=sqlAnd([
                 sqlColumnEqual("world_id", worldId, qualifier="state"),
                 sqlTupleIn([
                     sqlColumn("chunk_x", qualifier="state"),
@@ -230,7 +230,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
                     sqlColumn("chunk_z", qualifier="state"),
                 ], coordinateRows),
             ]),
-            orderBy = [
+            orderBy=[
                 sqlAscending(sqlColumn("chunk_x", qualifier="state")),
                 sqlAscending(sqlColumn("chunk_y", qualifier="state")),
                 sqlAscending(sqlColumn("chunk_z", qualifier="state")),
@@ -238,7 +238,7 @@ export async def sqliteWorldStore(configuration: SqliteWorldStoreOptions) -> Wor
                 sqlAscending(sqlColumn("local_z", qualifier="override")),
                 sqlAscending(sqlColumn("local_x", qualifier="override")),
             ],
-            maximumRows = 1000000,
+            maximumRows=1000000,
         )
         const rows = await all(databaseExecutor, findChunkDeltas)
 

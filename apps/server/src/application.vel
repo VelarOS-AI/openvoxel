@@ -102,9 +102,9 @@ async def resolveOpenVoxelApplication(_values: Record<unknown>) -> OpenVoxelAppl
 async def releaseOpenVoxelApplication(application: OpenVoxelApplication): await application.close()
 
 export const openVoxelApplicationProvider = provide(
-    inputs = {},
-    resolve = resolveOpenVoxelApplication,
-    scope = "app",
-    release = releaseOpenVoxelApplication,
-    eager = true,
+    inputs={},
+    resolve=resolveOpenVoxelApplication,
+    scope="app",
+    release=releaseOpenVoxelApplication,
+    eager=true,
 )

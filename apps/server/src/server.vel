@@ -27,15 +27,15 @@ export def createOpenVoxelApp(application: OpenVoxelApplication) -> ServeApp:
     // OpenAPI 从上面的真实注解生成。协议包不再维护平行的 method/path 字符串表。
     let app = docs(
         openVoxelRoutes,
-        title = "OpenVoxel API",
-        version = str(protocolVersion),
-        path = "/api/docs",
-        openapiPath = "/api/openapi.json",
+        title="OpenVoxel API",
+        version=str(protocolVersion),
+        path="/api/docs",
+        openapiPath="/api/openapi.json",
     )
     app = bodyLimit(app, application.options.bodyLimit)
     app = use(app, middleware.cors(
-        origins = application.options.corsAllowedOrigins,
-        headers = ["content-type", "if-none-match"],
+        origins=application.options.corsAllowedOrigins,
+        headers=["content-type", "if-none-match"],
     ))
     app = use(app, middleware.requestId())
     app = use(app, middleware.securityHeaders())

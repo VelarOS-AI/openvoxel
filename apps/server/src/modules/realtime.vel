@@ -178,10 +178,10 @@ export async def handleRealtimeConnection(application: OpenVoxelApplication, wor
         connection,
         messagePackCodec,
         receive,
-        opened = opened,
-        failed = failed,
-        closed = closed,
-        options = {
+        opened=opened,
+        failed=failed,
+        closed=closed,
+        options={
             maxQueuedMessages: application.options.maxQueuedMessages,
             maxQueuedBytes: application.options.maxQueuedBytes,
             drainTimeout: 1ms * application.options.realtimeDrainMilliseconds,

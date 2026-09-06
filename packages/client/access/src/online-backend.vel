@@ -212,9 +212,9 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
             realtimeUrl(routes, worldId),
             realtimeCodec,
             receive,
-            failed = failed,
-            closed = closed,
-            options = {retryInitial: false},
+            failed=failed,
+            closed=closed,
+            options={retryInitial: false},
         )
         await realtime.start()
         const opened = await opening.next()
