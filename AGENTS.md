@@ -33,7 +33,7 @@ Run these before considering any change done:
 - `match` dispatches finite states; `case _:` is the fallback.
 - `await task()` or `detach task()` — a dropped Promise is a
   compile error.
-- `range` needs `import {range} from "velar/collections"`.
+- `range(...)` is a Core prelude function and needs no import.
 - Multi-line text is a layout string: a quote followed by a newline opens
   it; a quote at the opening line's indentation closes it.
 - `print(value)` inspects any value; f-strings and `str()` accept only
