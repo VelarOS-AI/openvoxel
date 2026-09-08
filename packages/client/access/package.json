@@ -29,10 +29,10 @@
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/world": "0.2.0",
     "@openvoxel/world-runtime": "0.2.0",
-    "@velarscript-labs/msgpack": "0.1.6"
+    "@velarscript-labs/msgpack": "0.1.7"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.29.2",
-    "@velarscript/web": "0.29.2"
+    "@velarscript/cli": "0.33.1",
+    "@velarscript/web": "0.33.1"
   }
 }

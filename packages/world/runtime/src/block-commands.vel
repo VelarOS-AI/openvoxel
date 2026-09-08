@@ -1,5 +1,5 @@
-import {BlockPosition, Chunk, ChunkPosition, LocalPosition, chunkBlock, chunkKey, locateBlock, maximumWorldCoordinate} from "@openvoxel/world"
-import {BlockOverrideWrite} from "./contracts.vel"
+import {BlockPosition, Chunk, ChunkPosition, LocalPosition, WorldManifest, blockIndex, chunkBlock, chunkKey, locateBlock, maximumWorldCoordinate} from "@openvoxel/world"
+import {BlockOverrideWrite} from "./active-world-state.vel"
 import {maximumBlockEditBatchSize} from "./runtime-limits.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
@@ -46,6 +46,7 @@ export type WorldBlockCommands:
 export def worldBlockCommands(
     sessions: WorldSessionCache,
     publish: (batch: readonly BlockChangeBatch) -> null,
+    worldMilliseconds: (manifest: readonly WorldManifest) -> number,
 ) -> WorldBlockCommands:
     const pending: Map<string, Promise<BlockChangeBatch>> = Map()
     let closed = false
@@ -86,6 +87,7 @@ export def worldBlockCommands(
                     generated = world.generator.generate(located.chunk)
                     generatedChunks.set(generatedKey, generated)
                 const baseBlockStateRuntimeId = chunkBlock(generated!, located.local)
+                const seasonal = world.generator.seasonalSurfaces(located.chunk).some(candidate => blockIndex(candidate.position, world.manifest.chunkEdge) == blockIndex(located.local, world.manifest.chunkEdge))
 
                 chunks.append(located.chunk)
                 locals.append(located.local)
@@ -94,9 +96,14 @@ export def worldBlockCommands(
                     chunk: located.chunk,
                     local: located.local,
                     // 恢复到固定地形时删除覆盖，数据库只保存与种子生成结果不同的值。
-                    blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId ? null : edit.blockStateRuntimeId,
+                    blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId and not seasonal ? null : edit.blockStateRuntimeId,
                 })
 
+            const visibleDeltas = await world.ecology.deltas(chunks.keyBy(position => chunkKey(position)).values(), worldMilliseconds(world.manifest))
+            const visibleBlocks: Map<string, number> = Map()
+            for delta in visibleDeltas:
+                for entry in delta.overrides:
+                    visibleBlocks.set(f"{chunkKey(delta.position)}:{blockIndex(entry.position, world.manifest.chunkEdge)}", entry.blockStateRuntimeId)
             const commits = await world.state.commitBlocks(writes)
             assert commits.size == edits.size else "World delta store returned an incomplete block edit batch"
             const changes: List<BlockChange> = []
@@ -107,7 +114,7 @@ export def worldBlockCommands(
                     position: edit.position,
                     chunk: chunks[index],
                     local: locals[index],
-                    previousBlockStateRuntimeId: commit.previousOverrideBlockStateRuntimeId ?? bases[index],
+                    previousBlockStateRuntimeId: visibleBlocks.get(f"{chunkKey(chunks[index])}:{blockIndex(locals[index], world.manifest.chunkEdge)}") ?? bases[index],
                     blockStateRuntimeId: edit.blockStateRuntimeId,
                     revision: commit.revision,
                     changed: commit.changed,

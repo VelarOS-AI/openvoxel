@@ -1,0 +1,90 @@
+import {BlockRegistry, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {Chunk, ChunkPosition, chunkBlockAtIndex} from "@openvoxel/world"
+import {SeasonalSurfaceCandidate, SeasonalSurfaceKind} from "../seasonal-surface.vel"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {ColumnPlanner} from "./terrain.vel"
+import {DecorationPlanner} from "./vegetation.vel"
+import {evictOldest} from "./lru-cache.vel"
+
+export type SeasonalSurfacePlanner:
+    candidates: (position: readonly ChunkPosition) -> readonly List<readonly SeasonalSurfaceCandidate>
+    remember: (chunk: readonly Chunk) -> readonly List<readonly SeasonalSurfaceCandidate>
+
+/// 季节候选缓存和地形列缓存有相同的有界生命周期；换季只重算候选的温度，
+/// 不重新采样密度场、洞穴或树木。
+export def seasonalSurfacePlanner(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    registry: readonly BlockRegistry,
+    columns: ColumnPlanner,
+    decorations: DecorationPlanner,
+    generate: (position: readonly ChunkPosition) -> Chunk,
+) -> SeasonalSurfacePlanner:
+    const cache: Map<string, readonly List<readonly SeasonalSurfaceCandidate>> = Map()
+    const snowSupports: Set<number> = Set()
+    for state in registry.states():
+        if resolveBlockShapeBoxes(state.physics.collision, state.properties).size > 0: snowSupports.add(state.runtimeId)
+
+    def remember(chunk: readonly Chunk) -> readonly List<readonly SeasonalSurfaceCandidate>:
+        const position = chunk.position
+        const minimumY = position.y * 16
+        const maximumY = minimumY + 15
+        if minimumY > Math.max(profile.world.maximumNaturalSurfaceY + 11, profile.world.seaLevel) or maximumY < profile.world.minimumY:
+            return []
+        const key = f"{position.x}:{position.y}:{position.z}"
+        const existing = cache.get(key)
+        if existing != null:
+            cache.remove(key)
+            cache.set(key, existing)
+            return existing
+        const plan = columns.columns(position.x, position.z)
+        if maximumY < Math.min(plan.minimumSurfaceY, profile.world.seaLevel) or minimumY > Math.max(plan.maximumSurfaceY + 11, profile.world.seaLevel):
+            return []
+        const topHeights: List<number> = []
+        for localZ in range(16):
+            for localX in range(16):
+                topHeights.append(Math.max(plan.surfaceYAt(plan.minimumX + localX, plan.minimumZ + localZ), profile.world.seaLevel))
+        for feature in decorations.decorations(position.x, position.z).features:
+            for write in feature.writes:
+                if (write.runtimeId not in snowSupports) or write.runtimeId == blocks.snow: continue
+                const x = feature.origin.x + write.x - plan.minimumX
+                const z = feature.origin.z + write.z - plan.minimumZ
+                if x < 0 or x >= 16 or z < 0 or z >= 16: continue
+                const index = x + z * 16
+                topHeights[index] = Math.max(topHeights[index], feature.origin.y + write.y)
+        let below: Chunk? = null
+        const output: List<SeasonalSurfaceCandidate> = []
+        for index in range(chunk.indices.size):
+            const runtimeId = chunkBlockAtIndex(chunk, index)
+            const x = index % 16
+            const y = (index / 256).floor()
+            const z = ((index % 256) / 16).floor()
+            const worldY = minimumY + y
+            const top = topHeights[x + z * 16]
+            if runtimeId == blocks.ice or (runtimeId == blocks.water and worldY == top):
+                output.append({position: {x, y, z}, kind: SeasonalSurfaceKind.water, baselineBlockStateRuntimeId: runtimeId, warmBlockStateRuntimeId: blocks.water, coldBlockStateRuntimeId: blocks.ice, exposed: worldY == top})
+            else if runtimeId == blocks.snow or (runtimeId == blocks.air and worldY == top + 1):
+                let support = blocks.air
+                if y > 0: support = chunkBlockAtIndex(chunk, index - 256)
+                else:
+                    if below == null: below = generate({x: position.x, y: position.y - 1, z: position.z})
+                    support = chunkBlockAtIndex(below!, x + 16 * z + 256 * 15)
+                output.append({position: {x, y, z}, kind: SeasonalSurfaceKind.snow, baselineBlockStateRuntimeId: runtimeId, warmBlockStateRuntimeId: blocks.air, coldBlockStateRuntimeId: blocks.snow, exposed: worldY == top + 1 and (support in snowSupports) and support != blocks.ice})
+        if cache.size >= profile.sampling.columnCacheCapacity * 4: evictOldest(cache)
+        cache.set(key, output)
+        return output
+
+    def candidates(position: readonly ChunkPosition) -> readonly List<readonly SeasonalSurfaceCandidate>:
+        const key = f"{position.x}:{position.y}:{position.z}"
+        const existing = cache.get(key)
+        if existing != null: return existing
+        const minimumY = position.y * 16
+        if minimumY > Math.max(profile.world.maximumNaturalSurfaceY + 11, profile.world.seaLevel) or minimumY + 15 < profile.world.minimumY:
+            return []
+        const plan = columns.columns(position.x, position.z)
+        if minimumY + 15 < Math.min(plan.minimumSurfaceY, profile.world.seaLevel) or minimumY > Math.max(plan.maximumSurfaceY + 11, profile.world.seaLevel):
+            return []
+        return remember(generate(position))
+
+    return {candidates, remember}

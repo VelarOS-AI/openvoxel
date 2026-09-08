@@ -18,5 +18,24 @@ textures:
   - {key: openvoxel:texture/block/sand, surface: soil, file: textures/terrain/sand.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 9, shiftY: 7, brightness: 0.97, contrast: 1.02}}, {weight: 1, transform: {shiftX: 3, shiftY: 15, brightness: 1.04, contrast: 0.98}}]}
   - {key: openvoxel:texture/block/sandstone, surface: rock, file: textures/terrain/sandstone.png}
   - {key: openvoxel:texture/block/snow, surface: snow, file: textures/terrain/snow.png, maps: {height: {file: textures/terrain/maps/snow.height.png}, material: {file: textures/terrain/maps/snow.material.png}}}
-  - {key: openvoxel:texture/block/stone, surface: rock, file: textures/terrain/stone.png, maps: {height: {file: textures/terrain/maps/stone.height.png}, material: {file: textures/terrain/maps/stone.material.png}}, weight: 5, variants: [{weight: 1, transform: {shiftX: 9, shiftY: 13, brightness: 0.96, contrast: 1.04}}, {weight: 1, transform: {shiftX: 19, shiftY: 5, brightness: 1.04, contrast: 0.98}}]}
+  - key: openvoxel:texture/block/stone
+    surface: rock
+    file: textures/terrain/stone.png
+    maps:
+      height: {file: textures/terrain/maps/stone.height.png}
+      material: {file: textures/terrain/maps/stone.material.png}
+    weight: 5
+    variants:
+      - weight: 1
+        transform: {shiftX: 9, shiftY: 13, brightness: 0.96, contrast: 1.04}
+        layers:
+          - albedo: {file: textures/terrain/stone.png}
+            maps:
+              height: {file: textures/terrain/maps/stone.height.png}
+              material: {file: textures/terrain/maps/stone.material.png}
+            mask: {file: textures/terrain/maps/stone.height.png}
+            transform: {shiftX: 4, shiftY: 7, contrast: 1.08}
+            opacity: 0.28
+            blend: overlay
+      - {weight: 1, transform: {shiftX: 19, shiftY: 5, brightness: 1.04, contrast: 0.98}}
   - {key: openvoxel:texture/block/sulphur_ore, surface: mineral, file: textures/terrain/sulphur_ore.png}

@@ -1,0 +1,86 @@
+import {Coordinate3, requireCoordinate3} from "../spatial/coordinates.vel"
+import {maximumWorldEnvironmentMilliseconds, worldDayMilliseconds} from "./environment.vel"
+import {random} from "velar/random"
+
+export enum WorldSeason:
+    spring
+    summer
+    autumn
+    winter
+
+/// 每季八个世界日；新世界从仲春开始，季节相位随持久化世界时间推进。
+export const worldYearMilliseconds = worldDayMilliseconds * 32
+export const worldEcologyEpochMilliseconds = 30_000
+
+export def worldYearProgress(worldMilliseconds: number) -> number:
+    assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Climate world milliseconds are outside the supported range"
+    return (worldMilliseconds / worldYearMilliseconds + 0.125) % 1
+
+export type WorldClimateSample:
+    readonly season: WorldSeason
+    readonly yearProgress: number
+    readonly seasonProgress: number
+    readonly temperatureCelsius: number
+    readonly humidity: number
+    readonly snowCover: number
+    readonly frozenWater: bool
+
+const climateCellSize = 2_048
+const seasons: readonly List<WorldSeason> = [WorldSeason.spring, WorldSeason.summer, WorldSeason.autumn, WorldSeason.winter]
+const climateNodes: Map<string, number> = Map()
+
+def smooth(value: number) -> number:
+    const amount = Math.clamp(value, 0, 1)
+    return amount * amount * (3 - 2 * amount)
+
+def interpolate(left: number, right: number, amount: number) -> number: return left + (right - left) * amount
+
+def climateNode(seed: string, channel: string, x: number, z: number) -> number:
+    const key = f"{seed.size}:{seed}:{channel}:{x}:{z}"
+    const cached = climateNodes.get(key)
+    if cached != null: return cached
+    const value = random(seed).fork(f"environment:climate:{channel}:{x}:{z}").number()
+    if climateNodes.size >= 2048:
+        const oldest = climateNodes.iterator().next()?.value
+        if oldest != null: climateNodes.remove(oldest)
+    climateNodes.set(key, value)
+    return value
+
+def climateField(seed: string, channel: string, position: readonly Coordinate3) -> number:
+    const x = (position.x / climateCellSize).floor()
+    const z = (position.z / climateCellSize).floor()
+    const amountX = smooth(position.x / climateCellSize - x)
+    const amountZ = smooth(position.z / climateCellSize - z)
+    return interpolate(
+        interpolate(climateNode(seed, channel, x, z), climateNode(seed, channel, x + 1, z), amountX),
+        interpolate(climateNode(seed, channel, x, z + 1), climateNode(seed, channel, x + 1, z + 1), amountX),
+        amountZ,
+    )
+
+/// 温度和湿度属于同一个确定性气候场。短时天气不改变生态冰雪状态；积雪和冰面
+/// 使用低频世界时间槽采样，避免气温细小波动让整个地表逐帧变更。
+export def worldClimateAt(seed: string, worldMilliseconds: number, position: readonly Coordinate3) -> WorldClimateSample:
+    assert not seed.isBlank() and seed.size <= 128 else "Climate seed must contain from 1 through 128 characters"
+    assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Climate world milliseconds are outside the supported range"
+    requireCoordinate3(position, "Climate sample")
+    const yearProgress = worldYearProgress(worldMilliseconds)
+    const seasonIndex = (yearProgress * 4).floor()
+    const humidity = Math.clamp(climateField(seed, "humidity", position) * 1.2 - 0.1, 0, 1)
+    const annualTemperature = 4 + climateField(seed, "temperature", position) * 22
+    const seasonalTemperature = Math.cos((yearProgress - 0.375) * Math.tau) * (18 - humidity * 4)
+    const altitudeTemperature = Math.max(0, position.y - 64) * 0.14
+    const temperatureCelsius = annualTemperature + seasonalTemperature - altitudeTemperature
+    const snowCover = smooth((2 - temperatureCelsius) / 8) * smooth((humidity - 0.08) / 0.35)
+    return {
+        season: seasons[seasonIndex],
+        yearProgress,
+        seasonProgress: yearProgress * 4 - seasonIndex,
+        temperatureCelsius,
+        humidity,
+        snowCover,
+        frozenWater: temperatureCelsius <= -1,
+    }
+
+export def worldEcologyEpoch(worldMilliseconds: number) -> number:
+    assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Ecology world milliseconds are outside the supported range"
+    return (worldMilliseconds / worldEcologyEpochMilliseconds).floor()

@@ -1,10 +1,11 @@
 import {expect} from "velar/test"
-import {GenerationSampleResponse, TerrainChunkBatchRequest, apiOperationNames, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "../src/http.vel"
-import {ApplyBlockEditsCommand, RealtimeCommandEnvelope, SocketErrorEvent, SyncChunksCommand} from "../src/realtime.vel"
+import {CreateWorldRequest, GenerationSampleResponse, TerrainChunkBatchRequest, apiOperationNames, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientCapabilities, clientContractVersion, httpEncoding, protocolErrorCodes, protocolServiceName, protocolVersion, realtimeCommandNames, realtimeEncoding, realtimeEventNames} from "../src/http.vel"
+import {ApplyBlockEditsCommand, RealtimeCommandEnvelope, SocketErrorEvent, SyncChunksCommand, WorldReadyEvent} from "../src/realtime.vel"
+import {WorldEnvironmentSample, WorldGameMode, WorldPrecipitationKind} from "@openvoxel/world"
 
 test "protocol package owns wire facts without duplicating route strings":
     expect(protocolServiceName).toBe("openvoxel")
-    expect(protocolVersion).toBe(8)
+    expect(protocolVersion).toBe(13)
     expect(clientContractVersion).toBe(8)
     expect(httpEncoding).toBe("json")
     expect(realtimeEncoding).toBe("messagepack")
@@ -15,6 +16,8 @@ test "protocol package owns wire facts without duplicating route strings":
     expect(realtimeEventNames).toEqual(["world.ready", "chunks.synced", "blocks.applied", "blocks.changed", "error"])
     expect(clientCapabilities).toContain("openapi-3.1")
     expect(clientCapabilities).toContain("realtime-sequence-cursor")
+    expect(clientCapabilities).toContain("world-environment-snapshots")
+    expect(clientCapabilities).toContain("block-collision-boxes")
     expect(protocolErrorCodes).toContain("request.invalid")
     expect(Set([
         apiOperationNames.health,
@@ -29,6 +32,14 @@ test "protocol package owns wire facts without duplicating route strings":
     ]).size).toBe(9)
 
 test "cold terrain and realtime commands keep world identity outside their bodies":
+    const create = CreateWorldRequest.parse({
+        id: "creative-world",
+        name: "Creative World",
+        seed: "creative",
+        mode: "creative",
+    })
+    expect(create.mode).toBe(WorldGameMode.creative)
+
     const batch = TerrainChunkBatchRequest.parse({positions: [{x: 1, y: 2, z: 3}]})
     expect(batch.positions.size).toBe(1)
 
@@ -75,3 +86,25 @@ test "generation sample response is a standalone wire contract":
     expect(response.worldId).toBe("protocol")
     expect(response.position.z).toBe(-8)
     expect(response.biome).toBe("openvoxel:biome/forest")
+
+test "world ready carries the authoritative environment anchor":
+    const environment: WorldEnvironmentSample = {
+        worldMilliseconds: 120000,
+        samplePosition: {x: 16, y: 72, z: -8},
+        timeOfDay: 0.5,
+        moonPhase: 0,
+        cloudiness: 0.4,
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 0.6,
+        windX: 2,
+        windZ: -1,
+        lightning: null,
+    }
+    const ready = WorldReadyEvent.parse({
+        event: "world.ready",
+        worldId: "protocol",
+        protocolVersion,
+        sequence: 4,
+        environment,
+    })
+    expect(ready.environment).toEqual(environment)

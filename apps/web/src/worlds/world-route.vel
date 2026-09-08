@@ -1,0 +1,7 @@
+import {encode} from "velar/url"
+
+/// 世界标识占据一个且仅一个路由 segment。运行时 Router 会在读取 params 时解码，
+/// 因此这里使用 Core URL component 编码，不让 `/`、`?`、`#` 改变路由结构。
+export def worldRoute(worldId: string) -> string:
+    assert not worldId.isBlank() else "World identifier cannot be blank"
+    return f"/world/{encode(worldId)}"

@@ -1,0 +1,119 @@
+import {Look, alpha, border, brightness, linearGradient, shadow, spacing, transition} from "velar/look"
+import {blue, brightBlue, danger, ink, white} from "./theme.vel"
+
+export const worldInfoLook: Look = look:
+    display = "grid"
+    gap = 10px
+
+export const displayTitleLook: Look = look:
+    margin = 0
+    maxWidth = 760px
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 4.4rem
+    fontWeight = 700
+    lineHeight = 0.95
+    letterSpacing = 0.01em
+    textShadow = shadow(0px, 6px, 24px, alpha(ink, 0.64))
+
+    if viewport.width <= 720px:
+        fontSize = 3.2rem
+
+export const subtitleLook: Look = look:
+    margin = 0
+    maxWidth = 560px
+    color = alpha(white, 0.72)
+    fontSize = 1rem
+    lineHeight = 1.6
+    textShadow = shadow(0px, 3px, 14px, alpha(ink, 0.6))
+
+export const primaryButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 11px
+    minWidth = 190px
+    minHeight = 52px
+    padding = spacing(12px, 24px)
+    color = white
+    backgroundImage = linearGradient(135deg, brightBlue, blue)
+    border = border(1px, alpha(white, 0.28))
+    borderRadius = 13px
+    boxShadow = shadow(0px, 12px, 30px, alpha(blue, 0.34))
+    fontFamily = "Inter, sans-serif"
+    fontSize = 1rem
+    fontWeight = 600
+    textDecoration = "none"
+    cursor = "pointer"
+    transition = transition("filter", 160ms, "ease-out")
+
+    if @hover:
+        filter = brightness(1.09)
+    if @focus:
+        outline = border(2px, white)
+        outlineOffset = 3px
+    if @disabled:
+        opacity = 0.58
+        cursor = "wait"
+
+export const secondaryButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 10px
+    minHeight = 46px
+    padding = spacing(10px, 14px)
+    color = alpha(white, 0.88)
+    backgroundColor = "transparent"
+    border = border(1px, alpha(white, 0))
+    borderRadius = 11px
+    fontFamily = "Inter, sans-serif"
+    fontSize = 0.95rem
+    fontWeight = 500
+    textDecoration = "none"
+    cursor = "pointer"
+
+    if @hover:
+        color = white
+        backgroundColor = alpha(white, 0.09)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 2px
+
+export const labelLook: Look = look:
+    display = "grid"
+    gap = 8px
+    color = alpha(white, 0.82)
+    fontSize = 0.84rem
+    fontWeight = 500
+
+export const fieldLook: Look = look:
+    width = 100%
+    minWidth = 0
+    boxSizing = "border-box"
+    padding = spacing(12px, 14px)
+    color = white
+    backgroundColor = alpha(ink, 0.52)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 11px
+    fontFamily = "Inter, sans-serif"
+    fontSize = 0.98rem
+
+    if @focus:
+        borderColor = brightBlue
+        outline = border(2px, alpha(brightBlue, 0.28))
+        outlineOffset = 1px
+
+export const formActionsLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 14px
+    paddingTop = 4px
+
+export const errorLook: Look = look:
+    margin = 0
+    padding = spacing(11px, 13px)
+    color = danger
+    backgroundColor = alpha(danger, 0.12)
+    border = border(1px, alpha(danger, 0.4))
+    borderRadius = 10px
+    fontSize = 0.88rem

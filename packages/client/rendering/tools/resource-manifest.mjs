@@ -15,15 +15,59 @@ import {
 const imageExtension = /\.(?:avif|jpe?g|png|webp)$/iu;
 const catalogExtension = /\.ya?ml$/iu;
 const textureMapNames = new Set(["normal", "height", "material", "emissive"]);
+const layerBlendModes = new Set(["normal", "multiply", "overlay"]);
 const transformFields = ["rotate", "flipX", "flipY", "shiftX", "shiftY", "hue", "saturation", "brightness", "contrast"];
 const textureFields = ["key", "surface", "file", "maps", "transform", "weight", "variants"];
 const variantFields = ["weight", "transform", "layers"];
-const layerFields = ["file", "opacity", "blend", "transform"];
+const layerFields = ["albedo", "maps", "mask", "opacity", "blend", "transform"];
 
 function isCategoryPng(file, category) {
   return file.startsWith(`textures/${category}/`)
     && file.endsWith(".png")
     && posix.normalize(file) === file;
+}
+
+function environmentImage(value, directory, label) {
+  const file = requireText(value, label);
+  if (!file.startsWith(`${directory}/`) || !file.endsWith(".webp") || posix.normalize(file) !== file) {
+    throw new Error(`${label} must use a WebP inside ${directory}`);
+  }
+  return file;
+}
+
+function environmentDefinition(value) {
+  const environment = requireKnownFields(
+    requireRecord(value, "environment"),
+    ["sky", "clouds", "precipitation"],
+    "environment",
+  );
+  const sky = requireKnownFields(requireRecord(environment.sky, "environment sky"), ["sun", "glow", "star", "moons"], "environment sky");
+  const clouds = requireKnownFields(requireRecord(environment.clouds, "environment clouds"), ["texture"], "environment clouds");
+  const precipitation = requireKnownFields(
+    requireRecord(environment.precipitation, "environment precipitation"),
+    ["rain", "rainSplash", "snow"],
+    "environment precipitation",
+  );
+  const moons = requireList(sky.moons, "environment sky moons")
+    .map((file, index) => environmentImage(file, "environment/sky", `environment sky moon ${index + 1}`));
+  if (moons.length !== 8) throw new RangeError("environment sky must declare exactly eight moon phases");
+  if (new Set(moons).size !== moons.length) throw new Error("environment sky moon phases must use distinct images");
+  return {
+    sky: {
+      sun: environmentImage(sky.sun, "environment/sky", "environment sky sun"),
+      glow: environmentImage(sky.glow, "environment/sky", "environment sky glow"),
+      star: environmentImage(sky.star, "environment/sky", "environment sky star"),
+      moons,
+    },
+    clouds: {
+      texture: environmentImage(clouds.texture, "environment/sky", "environment clouds texture"),
+    },
+    precipitation: {
+      rain: environmentImage(precipitation.rain, "environment/weather", "environment precipitation rain"),
+      rainSplash: environmentImage(precipitation.rainSplash, "environment/weather", "environment precipitation rain splash"),
+      snow: environmentImage(precipitation.snow, "environment/weather", "environment precipitation snow"),
+    },
+  };
 }
 
 async function filesBelow(root, current = root) {
@@ -81,25 +125,26 @@ function surfaceProfiles(values) {
   return profiles;
 }
 
-function textureMaps(value, category, textureKey) {
+function imageReference(value, category, label) {
+  const image = requireKnownFields(requireRecord(value, label), ["file"], label);
+  const file = requireText(image.file, `${label} file`);
+  if (!isCategoryPng(file, category)) {
+    throw new Error(`${label} must use a PNG inside textures/${category}`);
+  }
+  return {file};
+}
+
+function textureMaps(value, category, label) {
   if (value == null) return {};
-  const maps = requireRecord(value, `texture ${textureKey} maps`);
+  const maps = requireRecord(value, `${label} maps`);
   for (const name of Object.keys(maps)) {
-    if (!textureMapNames.has(name)) throw new Error(`Texture ${textureKey} contains unknown map ${name}`);
+    if (!textureMapNames.has(name)) throw new Error(`${label} contains unknown map ${name}`);
   }
   if (maps.normal != null && maps.height != null) {
-    throw new Error(`Texture ${textureKey} cannot declare both normal and height maps`);
+    throw new Error(`${label} cannot declare both normal and height maps`);
   }
-  return Object.fromEntries(Object.entries(maps).map(([name, raw]) => {
-    const map = requireRecord(raw, `texture ${textureKey} ${name} map`);
-    const unknown = Object.keys(map).filter((key) => key !== "file");
-    if (unknown.length > 0) throw new Error(`Texture ${textureKey} ${name} map contains unknown field ${unknown[0]}`);
-    const file = requireText(map.file, `texture ${textureKey} ${name} map file`);
-    if (!isCategoryPng(file, category)) {
-      throw new Error(`Texture ${textureKey} ${name} map must use a PNG inside textures/${category}`);
-    }
-    return [name, {file}];
-  }));
+  return Object.fromEntries(Object.entries(maps)
+    .map(([name, raw]) => [name, imageReference(raw, category, `${label} ${name} map`)]));
 }
 
 function requireTextureVariants(texture, textureKey) {
@@ -109,15 +154,17 @@ function requireTextureVariants(texture, textureKey) {
     const variant = requireKnownFields(requireRecord(rawVariant, label), variantFields, label);
     requireOptionalTransform(variant.transform, `${label} transform`);
     const layers = requireList(variant.layers ?? [], `texture ${textureKey} variant ${index + 1} layers`);
-    if (layers.length > 0 && Object.keys(texture.maps).length > 0) {
-      throw new Error(`Texture ${textureKey} variant ${index + 1} cannot combine author maps with albedo layers`);
-    }
+    if (layers.length > 4) throw new RangeError(`${label} cannot contain more than four material layers`);
     for (const [layerIndex, rawLayer] of layers.entries()) {
       const layerLabel = `${label} layer ${layerIndex}`;
       const layer = requireKnownFields(requireRecord(rawLayer, layerLabel), layerFields, layerLabel);
-      const file = requireText(layer.file, `${layerLabel} file`);
-      if (!isCategoryPng(file, texture.category)) {
-        throw new Error(`${layerLabel} must use a PNG inside textures/${texture.category}`);
+      layer.albedo = imageReference(layer.albedo, texture.category, `${layerLabel} albedo`);
+      layer.maps = textureMaps(layer.maps, texture.category, layerLabel);
+      if (layer.mask != null) layer.mask = imageReference(layer.mask, texture.category, `${layerLabel} mask`);
+      if (layer.opacity != null) requireNumber(layer.opacity, 0.000001, 1, `${layerLabel} opacity`);
+      if (layer.blend != null) {
+        const blend = requireText(layer.blend, `${layerLabel} blend`);
+        if (!layerBlendModes.has(blend)) throw new Error(`${layerLabel} has unsupported blend mode ${blend}`);
       }
       requireOptionalTransform(layer.transform, `${layerLabel} transform`);
     }
@@ -138,14 +185,18 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     "tints",
     "animations",
   ], "Client resource pack manifest");
-  if (manifest.formatVersion !== 6) throw new Error("Unsupported client resource pack source format");
+  if (manifest.formatVersion !== 9) throw new Error("Unsupported client resource pack source format");
   const owner = requireText(manifest.owner, "Client resource pack owner");
   if (!/^[a-z][a-z0-9_.-]*$/u.test(owner)) throw new Error("Client resource pack owner is invalid");
-  const environment = requireKnownFields(requireRecord(manifest.environment, "environment"), ["clouds"], "environment");
-  const cloudsFile = requireText(environment.clouds, "environment clouds");
+  const environment = environmentDefinition(manifest.environment);
   requireSectionEntries(manifest.models, "models", ["key", "kind"]);
-  requireSectionEntries(manifest.materials, "materials", ["key", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"]);
-  requireSectionEntries(manifest.tints, "tints", ["key", "red", "green", "blue"]);
+  requireSectionEntries(manifest.materials, "materials", ["key", "precipitationSurface", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"]);
+  for (const material of manifest.materials) {
+    if (!["none", "solid", "water"].includes(material.precipitationSurface)) {
+      throw new Error(`Material ${material.key} precipitationSurface must be none, solid, or water`);
+    }
+  }
+  requireSectionEntries(manifest.tints, "tints", ["key", "climate", "coverage", "red", "green", "blue"]);
   requireSectionEntries(manifest.animations, "animations", ["key", "frameDurationMs", "frames"]);
 
   const catalogFiles = requireList(manifest.textureCatalogs, "textureCatalogs").map((value, index) => {
@@ -182,16 +233,29 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     }
     const profileKey = requireText(texture.surface, `texture ${key} surface`);
     if (!profiles.has(profileKey)) throw new Error(`Texture ${key} references unknown surface profile ${profileKey}`);
-    texture.maps = textureMaps(texture.maps, texture.category, key);
+    texture.maps = textureMaps(texture.maps, texture.category, `Texture ${key}`);
     requireTextureVariants(texture, key);
   }
 
-  const imageReferences = new Set([cloudsFile]);
+  const imageReferences = new Set([
+    environment.sky.sun,
+    environment.sky.glow,
+    environment.sky.star,
+    ...environment.sky.moons,
+    environment.clouds.texture,
+    environment.precipitation.rain,
+    environment.precipitation.rainSplash,
+    environment.precipitation.snow,
+  ]);
   for (const texture of textures) {
     imageReferences.add(texture.file);
     for (const map of Object.values(texture.maps)) imageReferences.add(map.file);
     for (const variant of texture.variants ?? []) {
-      for (const layer of variant.layers ?? []) imageReferences.add(layer.file);
+      for (const layer of variant.layers ?? []) {
+        imageReferences.add(layer.albedo.file);
+        for (const map of Object.values(layer.maps)) imageReferences.add(map.file);
+        if (layer.mask != null) imageReferences.add(layer.mask.file);
+      }
     }
   }
   for (const file of imageReferences) resolveInside(dataRoot, file, `resource image ${file}`);
@@ -223,6 +287,7 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     manifest,
     manifestText,
     owner,
+    environment,
     catalogs,
     textures,
     surfaceProfiles: profiles,

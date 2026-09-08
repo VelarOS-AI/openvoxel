@@ -1,0 +1,7 @@
+import {expect} from "velar/test"
+import {worldRoute} from "../src/worlds/world-route.vel"
+
+test "world routes encode identifiers as exactly one path segment":
+    expect(worldRoute("realm/branch?mode#spawn %")).toBe("/world/realm%2Fbranch%3Fmode%23spawn%20%25")
+    expect(worldRoute("雪 原")).toBe("/world/%E9%9B%AA%20%E5%8E%9F")
+    expect(() => worldRoute("   ")).toThrow()

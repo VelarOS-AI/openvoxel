@@ -1,12 +1,65 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
+import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {dirname, join} from "node:path";
 import test from "node:test";
-import {buildResourcePack, computeResourceHash} from "../tools/resource-pack.mjs";
+import sharp from "sharp";
+import {
+  buildResourcePack,
+  computeResourceHash,
+  loadEnvironmentResources,
+  planTextureBanks,
+  requireClientTextureMemoryBudget,
+} from "../tools/resource-pack.mjs";
 import {buildTextureArray, textureArrayLayerBytes} from "../tools/texture-array.mjs";
 
 const channels = ["albedo", "normal", "material", "emissive"];
 const roles = ["opaque", "cutout", "translucent", "fluid"];
 const outputPromise = buildResourcePack();
+const environment = {
+  sky: {
+    sun: "environment/sky/sun.webp",
+    glow: "environment/sky/sky-glow.webp",
+    star: "environment/sky/star.webp",
+    moons: Array.from({length: 8}, (_value, index) => `environment/sky/moon-${String(index + 1).padStart(2, "0")}.webp`),
+  },
+  clouds: {texture: "environment/sky/clouds.webp"},
+  precipitation: {
+    rain: "environment/weather/rain.webp",
+    rainSplash: "environment/weather/rain-splash.webp",
+    snow: "environment/weather/snow.webp",
+  },
+};
+const environmentFiles = [
+  environment.sky.sun,
+  environment.sky.glow,
+  environment.sky.star,
+  ...environment.sky.moons,
+  environment.clouds.texture,
+  environment.precipitation.rain,
+  environment.precipitation.rainSplash,
+  environment.precipitation.snow,
+];
+
+test("texture bank roles follow model behavior instead of a reserved model key", () => {
+  const customFluidModel = "example:model/liquid-surface";
+  const texture = "example:texture/liquid";
+  const blockCatalog = {catalog: {componentProfiles: [{render: {
+    model: customFluidModel,
+    material: "example:material/liquid",
+    layer: "translucent",
+    textures: {all: texture},
+    animation: null,
+  }}]}};
+  const plan = planTextureBanks(blockCatalog, [], [], [{key: customFluidModel, kind: "fluid"}]);
+
+  assert.equal(plan.assignments.get(texture), "fluid");
+  assert.throws(
+    () => planTextureBanks(blockCatalog, [], [], []),
+    /references unknown model example:model\/liquid-surface/u,
+  );
+});
 
 test("texture array storage converts RGBA8 layers to GPU row order without changing channels", () => {
   const topToBottom = Buffer.from([
@@ -55,6 +108,11 @@ function channelAverage(data, level, variant, channel) {
   return total / count;
 }
 
+function channelLayer(data, level, variant) {
+  const layerBytes = level.width * level.height * 4;
+  return data.subarray(variant.layer * layerBytes, (variant.layer + 1) * layerBytes);
+}
+
 function identityLevel(name, width, height) {
   return {
     width,
@@ -68,20 +126,37 @@ function identityLevel(name, width, height) {
 
 function identityFixture(overrides = {}) {
   return {
-    manifest: {formatVersion: 6, owner: "openvoxel", texturePipeline: {tileSize: 32, maximumArrayLayers: 256, mipmaps: true}},
-    catalogs: [{
-      file: "textures/terrain.yml",
-      document: {category: "terrain", textures: [{key: "openvoxel:texture/block/stone", file: "textures/terrain/stone.png"}]},
-    }],
+    manifest: {
+      formatVersion: 9,
+      owner: "openvoxel",
+      textureCatalogs: ["textures/terrain.yml", "textures/fluid.yml"],
+      texturePipeline: {tileSize: 32, maximumArrayLayers: 256, mipmaps: true},
+      environment,
+    },
+    catalogs: [
+      {
+        file: "textures/terrain.yml",
+        document: {category: "terrain", textures: [
+          {key: "openvoxel:texture/block/stone", file: "textures/terrain/stone.png"},
+          {key: "openvoxel:texture/block/dirt", file: "textures/terrain/dirt.png"},
+        ]},
+      },
+      {
+        file: "textures/fluid.yml",
+        document: {category: "fluid", textures: [{key: "openvoxel:texture/block/water", file: "textures/fluid/water.png"}]},
+      },
+    ],
     sourceImages: [
-      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
+      {path: environment.clouds.texture, bytes: Buffer.from("clouds")},
+      {path: environment.sky.sun, bytes: Buffer.from("sun")},
+      {path: environment.precipitation.rain, bytes: Buffer.from("rain")},
       {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
     ],
     bankAssignments: new Map([
       ["openvoxel:texture/block/stone", "opaque"],
       ["openvoxel:texture/block/dirt", "opaque"],
     ]),
-    payload: {artifactVersion: 5, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
+    payload: {artifactVersion: 8, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
     bankChannels: [
       {role: "opaque", levels: [identityLevel("opaque-0", 2, 2), identityLevel("opaque-1", 1, 1)]},
       {role: "cutout", levels: [identityLevel("cutout-0", 2, 2), identityLevel("cutout-1", 1, 1)]},
@@ -90,11 +165,141 @@ function identityFixture(overrides = {}) {
   };
 }
 
+async function writeEnvironmentImage(root, file, width, height, format = "webp") {
+  const path = join(root, file);
+  await mkdir(dirname(path), {recursive: true});
+  const image = sharp({create: {width, height, channels: 4, background: {r: 255, g: 255, b: 255, alpha: 1}}});
+  await (format === "webp" ? image.webp() : image.png()).toFile(path);
+}
+
+async function environmentFixture(context) {
+  const root = await mkdtemp(join(tmpdir(), "openvoxel-environment-resources-"));
+  context.after(() => rm(root, {recursive: true, force: true}));
+  await Promise.all(environmentFiles.map((file) => writeEnvironmentImage(
+    root,
+    file,
+    file === environment.precipitation.rain ? 1 : 2,
+    2,
+  )));
+  return root;
+}
+
+test("environment image resources validate transport format and role-specific shape", async (context) => {
+  const root = await environmentFixture(context);
+  const loaded = await loadEnvironmentResources(root, environment);
+  assert.equal(loaded.sourceImages.length, 15);
+  const encodedHeapBytes = loaded.sourceImages.reduce(
+    (total, image) => total + Math.floor((image.bytes.byteLength + 2) / 3) * 4 * 2,
+    0,
+  );
+  assert.deepEqual(loaded.memory, {
+    imageCount: 15,
+    decodedRgbaBytes: 232,
+    gpuBytes: 232,
+    encodedHeapBytes,
+    residentBytes: 232 + encodedHeapBytes,
+  });
+  assert.deepEqual(Object.keys(loaded.artifact), ["sky", "clouds", "precipitation"]);
+  assert.equal(loaded.artifact.sky.moonDataUrls.length, 8);
+  for (const value of [
+    loaded.artifact.sky.sunDataUrl,
+    loaded.artifact.sky.glowDataUrl,
+    loaded.artifact.sky.starDataUrl,
+    ...loaded.artifact.sky.moonDataUrls,
+    loaded.artifact.clouds.textureDataUrl,
+    loaded.artifact.precipitation.rainDataUrl,
+    loaded.artifact.precipitation.rainSplashDataUrl,
+    loaded.artifact.precipitation.snowDataUrl,
+  ]) assert.match(value, /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/u);
+
+  await writeEnvironmentImage(root, environment.sky.sun, 2, 2, "png");
+  await assert.rejects(loadEnvironmentResources(root, environment), /Environment sky sun must be a WebP image/u);
+  await writeEnvironmentImage(root, environment.sky.sun, 2, 1);
+  await assert.rejects(loadEnvironmentResources(root, environment), /Environment sky sun must be square/u);
+  await writeEnvironmentImage(root, environment.sky.sun, 2, 2);
+
+  await writeEnvironmentImage(root, environment.clouds.texture, 2, 1);
+  await assert.rejects(loadEnvironmentResources(root, environment), /Environment clouds texture must be square/u);
+  await writeEnvironmentImage(root, environment.clouds.texture, 2, 2);
+
+  await writeEnvironmentImage(root, environment.precipitation.rain, 3, 2);
+  await assert.rejects(loadEnvironmentResources(root, environment), /rain height must be at least its width/u);
+  await writeEnvironmentImage(root, environment.precipitation.rain, 1, 2049);
+  await assert.rejects(loadEnvironmentResources(root, environment), /must not exceed 2048 pixels on either axis/u);
+});
+
+test("environment decoded RGBA memory participates in the shared 128 MiB texture budget", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "openvoxel-environment-budget-"));
+  context.after(() => rm(root, {recursive: true, force: true}));
+  const image = await sharp({
+    create: {width: 2048, height: 2048, channels: 4, background: {r: 255, g: 255, b: 255, alpha: 1}},
+  }).webp().toBuffer();
+  await Promise.all(environmentFiles.map(async (file) => {
+    const path = join(root, file);
+    await mkdir(dirname(path), {recursive: true});
+    await writeFile(path, image);
+  }));
+  const decodedRgbaBytes = 15 * 2048 * 2048 * 4;
+  const encodedHeapBytes = 15 * Math.floor((image.byteLength + 2) / 3) * 4 * 2;
+  const estimatedResidentBytes = decodedRgbaBytes + encodedHeapBytes;
+
+  await assert.rejects(
+    loadEnvironmentResources(root, environment),
+    new RegExp(`estimated ${estimatedResidentBytes} resident texture bytes; the limit is 134217728`, "u"),
+  );
+
+  const environmentMemory = {
+    imageCount: 15,
+    decodedRgbaBytes: 32,
+    gpuBytes: 32,
+    encodedHeapBytes: 16,
+    residentBytes: 48,
+  };
+  assert.equal(
+    requireClientTextureMemoryBudget([{gpuBytes: 1, residentBytes: 134217680}], environmentMemory).estimatedResidentBytes,
+    134217728,
+  );
+  assert.throws(
+    () => requireClientTextureMemoryBudget([{gpuBytes: 1, residentBytes: 134217681}], environmentMemory),
+    /estimated 134217729 resident texture bytes; the limit is 134217728/u,
+  );
+});
+
+test("generated material metadata distinguishes water, solid, and permeable precipitation surfaces", async () => {
+  const {artifact} = await outputPromise;
+  const expected = {
+    "openvoxel:material/cross": "none",
+    "openvoxel:material/ice": "solid",
+    "openvoxel:material/leaves": "solid",
+    "openvoxel:material/magma": "solid",
+    "openvoxel:material/metal": "solid",
+    "openvoxel:material/model": "solid",
+    "openvoxel:material/terrain": "solid",
+    "openvoxel:material/water": "water",
+  };
+  assert.deepEqual(Object.fromEntries(artifact.materials.map((material) => [material.key, material.precipitationSurface])), expected);
+});
+
 test("resource pack exposes four generated texture arrays and a closed authoring inventory", async () => {
   const {artifact, audit, bankChannels} = await outputPromise;
-  assert.equal(artifact.artifactVersion, 5);
-  assert.equal(artifact.formatVersion, 5);
-  assert.equal(audit.formatVersion, 2);
+  assert.equal(artifact.artifactVersion, 8);
+  assert.equal(artifact.formatVersion, 8);
+  assert.equal(audit.formatVersion, 4);
+  assert.deepEqual(Object.keys(artifact.environment), ["sky", "clouds", "precipitation"]);
+  assert.deepEqual(Object.keys(artifact.environment.sky), ["sunDataUrl", "glowDataUrl", "starDataUrl", "moonDataUrls"]);
+  assert.deepEqual(Object.keys(artifact.environment.clouds), ["textureDataUrl"]);
+  assert.deepEqual(Object.keys(artifact.environment.precipitation), ["rainDataUrl", "rainSplashDataUrl", "snowDataUrl"]);
+  assert.equal(artifact.environment.sky.moonDataUrls.length, 8);
+  for (const value of [
+    artifact.environment.sky.sunDataUrl,
+    artifact.environment.sky.glowDataUrl,
+    artifact.environment.sky.starDataUrl,
+    ...artifact.environment.sky.moonDataUrls,
+    artifact.environment.clouds.textureDataUrl,
+    artifact.environment.precipitation.rainDataUrl,
+    artifact.environment.precipitation.rainSplashDataUrl,
+    artifact.environment.precipitation.snowDataUrl,
+  ]) assert.match(value, /^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/u);
   assert.equal(artifact.textureBanks.length, 4);
   assert.deepEqual(artifact.textureBanks.map((bank) => bank.role), roles);
   assert.deepEqual(bankChannels.map((bank) => bank.role), roles);
@@ -133,14 +338,53 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     else assert.equal(texture.alphaCutoff, null, `${texture.key} non-cutout alpha cutoff`);
   }
 
-  assert.equal(audit.sourceImages.length, 80);
-  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 80);
+  assert.equal(audit.sourceImages.length, 94);
+  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 94);
   assert.equal(audit.sourceImages.filter((source) => source.path.startsWith("textures/")).length, 79);
   assert.equal(audit.sourceImages.filter((source) => source.path.includes("/maps/")).length, 34);
   for (const source of audit.sourceImages.filter((candidate) => candidate.path.startsWith("textures/"))) {
     assert.equal(source.width, 32, `${source.path} width`);
     assert.equal(source.height, 32, `${source.path} height`);
   }
+  const environmentDimensions = new Map([
+    ["environment/sky/clouds.webp", [256, 256]],
+    ["environment/sky/sun.webp", [64, 64]],
+    ["environment/sky/sky-glow.webp", [32, 32]],
+    ["environment/sky/star.webp", [32, 32]],
+    ...environment.sky.moons.map((file) => [file, [64, 64]]),
+    ["environment/weather/rain.webp", [8, 64]],
+    ["environment/weather/rain-splash.webp", [10, 10]],
+    ["environment/weather/snow.webp", [64, 64]],
+  ]);
+  const environmentImages = audit.sourceImages.filter(({path}) => path.startsWith("environment/"));
+  assert.equal(environmentImages.length, environmentDimensions.size);
+  for (const source of environmentImages) {
+    assert.deepEqual([source.width, source.height], environmentDimensions.get(source.path), `${source.path} dimensions`);
+    assert.match(source.sha256, /^[0-9a-f]{64}$/u);
+  }
+  const expectedEnvironmentDecodedRgbaBytes = [...environmentDimensions.values()]
+    .reduce((total, [width, height]) => total + width * height * 4, 0);
+  const environmentDataUrls = [
+    artifact.environment.sky.sunDataUrl,
+    artifact.environment.sky.glowDataUrl,
+    artifact.environment.sky.starDataUrl,
+    ...artifact.environment.sky.moonDataUrls,
+    artifact.environment.clouds.textureDataUrl,
+    artifact.environment.precipitation.rainDataUrl,
+    artifact.environment.precipitation.rainSplashDataUrl,
+    artifact.environment.precipitation.snowDataUrl,
+  ];
+  const expectedEnvironmentEncodedHeapBytes = environmentDataUrls.reduce(
+    (total, url) => total + (url.length - "data:image/webp;base64,".length) * 2,
+    0,
+  );
+  assert.deepEqual(audit.environment, {
+    imageCount: 15,
+    decodedRgbaBytes: expectedEnvironmentDecodedRgbaBytes,
+    gpuBytes: expectedEnvironmentDecodedRgbaBytes,
+    encodedHeapBytes: expectedEnvironmentEncodedHeapBytes,
+    residentBytes: expectedEnvironmentDecodedRgbaBytes + expectedEnvironmentEncodedHeapBytes,
+  });
   assert.deepEqual(audit.unusedFiles, []);
   assert.equal(audit.textureCount, 45);
   assert.equal(audit.variantCount, 57);
@@ -173,47 +417,75 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     }
   }
   assert.deepEqual(channelSources, {
-    normal: {"authored-height": 20, "authored-normal": 4, generated: 33},
-    material: {"authored-material": 24, generated: 33},
-    emissive: {"authored-emissive": 2, generated: 55},
+    normal: {"authored-height": 19, "authored-normal": 4, composed: 1, generated: 33},
+    material: {"authored-material": 23, composed: 1, generated: 33},
+    emissive: {"authored-emissive": 2, composed: 1, generated: 54},
   });
-  assert.equal(audit.gpuBytes, audit.banks.reduce((total, bank) => total + bank.memory.gpuBytes, 0));
-  assert.equal(audit.estimatedResidentBytes, audit.banks.reduce((total, bank) => total + bank.memory.residentBytes, 0));
+  const auditedVariants = audit.banks.flatMap((bank) => bank.variants);
+  assert.equal(auditedVariants.length, 57);
+  const stoneLayer = auditedVariants.find((variant) => variant.textureKey === "openvoxel:texture/block/stone" && variant.variantIndex === 1);
+  assert.ok(stoneLayer != null, "Stone composed variant must be individually auditable");
+  assert.deepEqual(stoneLayer.channels.albedo, {mode: "composed", inputs: ["authored-albedo"]});
+  assert.deepEqual(stoneLayer.channels.normal, {mode: "composed", inputs: ["authored-height"]});
+  assert.deepEqual(stoneLayer.channels.material, {mode: "composed", inputs: ["authored-material"]});
+  assert.deepEqual(stoneLayer.channels.emissive, {mode: "composed", inputs: ["generated"]});
+  assert.equal(audit.maximumResidentBytes, 128 * 1024 * 1024);
+  assert.equal(
+    audit.gpuBytes,
+    audit.environment.gpuBytes + audit.banks.reduce((total, bank) => total + bank.memory.gpuBytes, 0),
+  );
+  assert.equal(
+    audit.estimatedResidentBytes,
+    audit.environment.residentBytes + audit.banks.reduce((total, bank) => total + bank.memory.residentBytes, 0),
+  );
+  assert.ok(audit.estimatedResidentBytes <= audit.maximumResidentBytes);
 });
 
 test("resource hash is deterministic and covers every authoring and generated boundary", () => {
   const fixture = identityFixture();
   const baseline = computeResourceHash(fixture);
   const reordered = identityFixture({
-    manifest: {texturePipeline: {mipmaps: true, maximumArrayLayers: 256, tileSize: 32}, owner: "openvoxel", formatVersion: 6},
-    sourceImages: [
-      {path: "textures/terrain/stone.png", bytes: Buffer.from("stone")},
-      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
-    ],
+    manifest: {
+      texturePipeline: {mipmaps: true, maximumArrayLayers: 256, tileSize: 32},
+      textureCatalogs: [...fixture.manifest.textureCatalogs].reverse(),
+      environment: fixture.manifest.environment,
+      owner: "openvoxel",
+      formatVersion: 9,
+    },
+    catalogs: [...fixture.catalogs].reverse().map((catalog) => ({
+      ...catalog,
+      document: catalog.document.textures == null
+        ? catalog.document
+        : {...catalog.document, textures: [...catalog.document.textures].reverse()},
+    })),
+    sourceImages: [...fixture.sourceImages].reverse(),
     bankAssignments: new Map([...fixture.bankAssignments].reverse()),
     bankChannels: [...fixture.bankChannels].reverse(),
   });
   assert.equal(
     computeResourceHash(reordered),
     baseline,
-    "object keys, source images, assignments, and bank enumeration must be normalized",
+    "object keys, catalog and texture declarations, source images, assignments, and bank enumeration must be normalized",
   );
 
   const cases = [
     ["manifest recipe", {manifest: {...identityFixture().manifest, owner: "changed"}}],
-    ["catalog recipe", {catalogs: [{
-      file: "textures/terrain.yml",
-      document: {category: "terrain", textures: [{key: "openvoxel:texture/block/stone", file: "textures/terrain/changed.png"}]},
-    }]}],
-    ["source image bytes", {sourceImages: [
-      {path: "environment/clouds.webp", bytes: Buffer.from("clouds")},
-      {path: "textures/terrain/stone.png", bytes: Buffer.from("changed")},
-    ]}],
+    ["catalog recipe", {catalogs: fixture.catalogs.map((catalog) => catalog.file === "textures/terrain.yml"
+      ? {...catalog, document: {...catalog.document, textures: catalog.document.textures.map((texture) => (
+        texture.key === "openvoxel:texture/block/stone" ? {...texture, file: "textures/terrain/changed.png"} : texture
+      ))}}
+      : catalog)}],
+    ["source image bytes", {sourceImages: fixture.sourceImages.map((source) => (
+      source.path === "textures/terrain/stone.png" ? {...source, bytes: Buffer.from("changed")} : source
+    ))}],
+    ["environment image bytes", {sourceImages: fixture.sourceImages.map((source) => (
+      source.path === environment.sky.sun ? {...source, bytes: Buffer.from("changed")} : source
+    ))}],
     ["bank assignment", {bankAssignments: new Map([
       ["openvoxel:texture/block/stone", "cutout"],
       ["openvoxel:texture/block/dirt", "opaque"],
     ])}],
-    ["artifact payload", {payload: {artifactVersion: 5, textureBanks: [{key: "changed"}]}}],
+    ["artifact payload", {payload: {artifactVersion: 8, textureBanks: [{key: "changed"}]}}],
     ["base generated bank bytes", {bankChannels: fixture.bankChannels.map((bank) => bank.role === "opaque"
       ? {...bank, levels: [{...bank.levels[0], albedoBytes: Buffer.from("changed")}, bank.levels[1]]}
       : bank)}],
@@ -283,7 +555,7 @@ test("every bank keeps complete mip levels and four RGBA8 channels aligned by la
     assert.ok(bank != null, `${texture.key} must reference a texture bank`);
     const baseLevel = bank.levels[0];
     const bankChannels = Object.fromEntries(channels.map((channel) => [channel, decodedChannel(baseLevel, channel)]));
-    const texturePixels = new Set();
+    const textureSurfaces = new Set();
     assert.ok(texture.variants.length > 0, `${texture.key} must provide at least one variant`);
     for (const [variantIndex, variant] of texture.variants.entries()) {
       const label = `${texture.key} variant ${variantIndex}`;
@@ -292,11 +564,9 @@ test("every bank keeps complete mip levels and four RGBA8 channels aligned by la
       assert.equal(layersByBank.get(bank.role).has(variant.layer), false, `${label} must own a distinct ${bank.role} layer`);
       layersByBank.get(bank.role).add(variant.layer);
 
-      const albedoTile = [];
       for (let y = 0; y < baseLevel.height; y += 1) {
         for (let x = 0; x < baseLevel.width; x += 1) {
           const albedo = pixel(bankChannels.albedo, baseLevel.width, baseLevel.height, variant.layer, x, y);
-          albedoTile.push(...albedo);
           for (const channel of channels.slice(1)) {
             assert.equal(
               pixel(bankChannels[channel], baseLevel.width, baseLevel.height, variant.layer, x, y)[3],
@@ -306,9 +576,11 @@ test("every bank keeps complete mip levels and four RGBA8 channels aligned by la
           }
         }
       }
-      const textureHash = createHash("sha256").update(Uint8Array.from(albedoTile)).digest("hex");
-      assert.equal(texturePixels.has(textureHash), false, `${label} must not duplicate another variant of the same logical texture`);
-      texturePixels.add(textureHash);
+      const surfaceHash = createHash("sha256");
+      for (const channel of channels) surfaceHash.update(channelLayer(bankChannels[channel], baseLevel, variant));
+      const textureHash = surfaceHash.digest("hex");
+      assert.equal(textureSurfaces.has(textureHash), false, `${label} must not duplicate another PBR surface of the same logical texture`);
+      textureSurfaces.add(textureHash);
     }
   }
 
@@ -398,5 +670,32 @@ test("generated ORM and emissive channels preserve material intent and animation
     assert.equal(new Set(frames.map((texture) => texture.bankKey)).size, 1, `${animation.key} frames must share a bank`);
     const layers = frames.map((texture) => texture.variants[0].layer);
     assert.equal(new Set(layers).size, frames.length, `${animation.key} frames must own distinct array layers`);
+  }
+});
+
+test("the shipped stone material layer changes PBR detail without emissive leakage", async () => {
+  const {artifact} = await outputPromise;
+  const stone = artifact.textures.find(({key}) => key === "openvoxel:texture/block/stone");
+  assert.ok(stone != null, "Expected the shipped stone texture");
+  assert.ok(stone.variants.length >= 2, "Stone must expose a composed material-layer variant");
+  const bank = artifact.textureBanks.find(({key}) => key === stone.bankKey);
+  assert.ok(bank != null, `Expected texture bank ${stone.bankKey}`);
+  const level = bank.levels[0];
+  const base = Object.fromEntries(channels.map((channel) => [
+    channel,
+    channelLayer(decodedChannel(level, channel), level, stone.variants[0]),
+  ]));
+  const composed = Object.fromEntries(channels.map((channel) => [
+    channel,
+    channelLayer(decodedChannel(level, channel), level, stone.variants[1]),
+  ]));
+
+  for (const channel of ["albedo", "normal", "material"]) {
+    assert.equal(composed[channel].equals(base[channel]), false, `Stone ${channel} detail must change after composition`);
+  }
+  for (let offset = 0; offset < composed.albedo.byteLength; offset += 4) {
+    const alpha = composed.albedo[offset + 3];
+    for (const channel of channels.slice(1)) assert.equal(composed[channel][offset + 3], alpha, `${channel} alpha`);
+    assert.deepEqual([...composed.emissive.subarray(offset, offset + 3)], [0, 0, 0], "Stone must remain non-emissive");
   }
 });

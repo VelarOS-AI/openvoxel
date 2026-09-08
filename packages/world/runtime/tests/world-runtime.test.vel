@@ -1,11 +1,12 @@
+import {BlockOverrideWrite, activeWorldState} from "../src/active-world-state.vel"
 import {expect} from "velar/test"
 import {BlockCatalogContribution, BlockDefinition, BlockTypeSource, blockTypeDefinition, compileModBlockCatalogContribution, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId} from "@openvoxel/blocks"
 import {ContentCatalog, ContentPackArtifact, createContentCatalog, createContentPackArtifact} from "@openvoxel/content"
 import {builtinIdentities} from "@openvoxel/identities"
 import {WorldGeneratorCatalogContribution, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog, worldGeneratorDefinitionHash} from "@openvoxel/world-generation"
-import {BlockPosition, ChunkPosition, WorldContentIdentity, WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
+import {BlockPosition, ChunkPosition, WorldContentIdentity, WorldGameMode, WorldManifest, chunkBlock, chunkChecksum} from "@openvoxel/world"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
-import {BlockChange, BlockChangeBatch, BlockOverrideWrite, ChunkDeltaCommit, WorldAlreadyExistsError, WorldRuntime, WorldStore, activeWorldState, validateWorldRuntimeOptions, worldRuntime} from "../src/index.vel"
+import {BlockChange, BlockChangeBatch, ChunkDeltaCommit, WorldAlreadyExistsError, WorldRuntime, WorldStore, validateWorldRuntimeOptions, worldRuntime} from "../src/index.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
@@ -48,6 +49,7 @@ test "world runtime creates generates modifies and restores":
     const firstRuntime = worldRuntime(store)
     const manifest = await firstRuntime.createWorld({id: "lesson-one", name: "Lesson One", seed: "first-seed"})
     expect(manifest.chunkEdge).toBe(16)
+    expect(manifest.mode).toBe(WorldGameMode.survival)
 
     const generated = await firstRuntime.chunk(manifest.id, {x: -1, y: 1, z: 0})
     const generatedChecksum = chunkChecksum(generated)
@@ -273,6 +275,21 @@ test "world runtime serializes concurrent creation for the same world identity":
     catch error: rejectedDuplicate = error is WorldAlreadyExistsError
     expect(rejectedDuplicate).toBe(true)
 
+test "world runtime persists an explicitly selected creative mode":
+    const store = memoryWorldStore()
+    const first = worldRuntime(store)
+    const created = await first.createWorld({
+        id: "creative",
+        name: "Creative",
+        seed: "creative",
+        mode: WorldGameMode.creative,
+    })
+    expect(created.mode).toBe(WorldGameMode.creative)
+    await first.close()
+    const reopened = worldRuntime(store)
+    try: expect((await reopened.requireWorld(created.id)).mode).toBe(WorldGameMode.creative)
+    finally: await reopened.close()
+
 test "world runtime composes Mod content before saving a new world":
     const contribution = terrainGeneratorContribution()
     const runtime = worldRuntime(memoryWorldStore(), createContentCatalog([terrainGeneratorPack()]))
@@ -319,13 +336,56 @@ test "active world state caches sparse Chunk reads and evicts by configured LRU 
     expect(pair.size).toBe(2)
     expect(storageReads).toBe(2)
     const repeatedSecond = await runtime.chunkDeltas(world.id, [second])
-    expect(repeatedSecond[0] == pair[1]).toBe(true)
+    expect(repeatedSecond[0]).toEqual(pair[1])
+    expect(repeatedSecond[0].overrides == pair[1].overrides).toBe(true)
     expect(storageReads).toBe(2)
     await runtime.chunkDeltas(world.id, [first])
     expect(storageReads).toBe(3)
     await runtime.unloadWorld(world.id)
     await runtime.chunkDeltas(world.id, [first])
     expect(storageReads).toBe(4)
+
+test "active world state retains request-owned hits while a mixed batch fills its LRU":
+    const backing = memoryWorldStore()
+
+    def validateBlockStateRuntimeId(_runtimeId: number): pass
+
+    const state = activeWorldState("mixed-lru", backing.deltas, 1, 1024, validateBlockStateRuntimeId)
+    const cached = {x: 1, y: 1, z: 0}
+    const missing = {x: 0, y: 1, z: 0}
+    const firstRead = await state.deltas([cached])
+    const repeatedRead = await state.deltas([cached])
+    expect(repeatedRead[0] == firstRead[0]).toBe(true)
+
+    // missing 先解析并占用唯一 LRU 槽位；同一请求仍必须能返回开始
+    // 时命中的 cached 快照。高速跨 Chunk 流送会大量命中这种顺序。
+    const result = await state.deltas([missing, cached])
+    expect(result.map(delta => delta.position)).toEqual([missing, cached])
+    expect(result.every(delta => delta.revision == 0)).toBe(true)
+    expect(state.cachedChunkCount()).toBe(1)
+    await state.close()
+
+test "active world state retains request-owned hits while override pressure evicts cache entries":
+    const backing = memoryWorldStore()
+
+    def validateBlockStateRuntimeId(_runtimeId: number): pass
+
+    const cached = {x: 1, y: 1, z: 0}
+    const missing = {x: 0, y: 1, z: 0}
+    const seed = activeWorldState("mixed-overrides", backing.deltas, 64, 64, validateBlockStateRuntimeId)
+    await seed.commitBlocks([
+        {chunk: cached, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: stoneBlock},
+        {chunk: missing, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: dirtBlock},
+    ])
+    await seed.close()
+
+    const state = activeWorldState("mixed-overrides", backing.deltas, 64, 1, validateBlockStateRuntimeId)
+    await state.deltas([cached])
+    const result = await state.deltas([missing, cached])
+    expect(result.map(delta => delta.position)).toEqual([missing, cached])
+    expect(result.map(delta => delta.revision)).toEqual([1, 1])
+    expect(state.cachedOverrideCount()).toBe(1)
+    await state.close()
 
 test "active world state also bounds dense override memory":
     const backing = memoryWorldStore()

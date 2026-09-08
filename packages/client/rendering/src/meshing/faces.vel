@@ -1,0 +1,119 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
+import {ClientBlockModelKind, ClientClimateTint, ClientRenderState, ClientRenderTexture, ClientTextureVariant, ClientTintCoverage} from "../contracts.vel"
+
+export type MeshFace:
+    readonly salt: number
+    readonly shade: number
+    readonly top: bool
+    readonly bottom: bool
+    readonly columnTopAxis: string
+    readonly columnBottomAxis: string
+
+type BoxBounds:
+    readonly minimumX: number
+    readonly minimumY: number
+    readonly minimumZ: number
+    readonly maximumX: number
+    readonly maximumY: number
+    readonly maximumZ: number
+
+export const eastFace: MeshFace = {salt: 0x45d9, shade: 0.98, top: false, bottom: false, columnTopAxis: "x", columnBottomAxis: ""}
+export const westFace: MeshFace = {salt: 0x119d, shade: 0.95, top: false, bottom: false, columnTopAxis: "", columnBottomAxis: "x"}
+export const topFace: MeshFace = {salt: 0x27d4, shade: 1, top: true, bottom: false, columnTopAxis: "", columnBottomAxis: ""}
+export const bottomFace: MeshFace = {salt: 0x1656, shade: 0.9, top: false, bottom: true, columnTopAxis: "", columnBottomAxis: ""}
+export const southFace: MeshFace = {salt: 0x9e37, shade: 1, top: false, bottom: false, columnTopAxis: "z", columnBottomAxis: ""}
+export const northFace: MeshFace = {salt: 0x7f4a, shade: 0.94, top: false, bottom: false, columnTopAxis: "", columnBottomAxis: "z"}
+
+def textureResourceForFace(state: readonly ClientRenderState, face: MeshFace) -> readonly ClientRenderTexture:
+    const textures = state.textures
+    assert textures != null else f"Rendered state {state.runtimeId} has no textures"
+    if state.model == ClientBlockModelKind.column:
+        const axis = state.axis ?? "y"
+        if axis == face.columnTopAxis: return textures.top
+        if axis == face.columnBottomAxis: return textures.bottom
+        if axis == "x" or axis == "z": return textures.side
+    if face.top: return textures.top
+    if face.bottom: return textures.bottom
+    return textures.side
+
+def mixTextureHash(value: number, component: number, salt: number) -> number:
+    const modulus = 2_147_483_647
+    const normalized = ((component % modulus) + modulus) % modulus
+    return (value * 4093 + normalized * salt + 9973) % modulus
+
+/// 选择只取决于持久世界坐标、方块状态和面；同一位置在重新加载或由另一个
+/// Worker 构网时会得到同一个结果，区块边界也不会成为纹理分布边界。
+export def textureForFace(
+    state: readonly ClientRenderState,
+    face: MeshFace,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+) -> readonly ClientTextureVariant:
+    const texture = textureResourceForFace(state, face)
+    const variants = texture.variants
+    assert variants.size > 0 else f"Texture {texture.key} has no surface variants"
+    if variants.size == 1: return variants[0]
+    let value = state.runtimeId % 2_147_483_647
+    value = mixTextureHash(value, worldX, 97)
+    value = mixTextureHash(value, worldY, 193)
+    value = mixTextureHash(value, worldZ, 389)
+    value = mixTextureHash(value, face.salt, 769)
+    let offset = value % texture.totalWeight
+    for variant in variants:
+        if offset < variant.weight: return variant
+        offset -= variant.weight
+    return variants[variants.size - 1]
+
+export def faceShade(face: MeshFace, emission: number) -> number:
+    // 真实场景光负责主要明暗，这里只保留轻微方向差，避免每层方块底面形成黑线。
+    return Math.max(face.shade, emission / 15)
+
+export def climateTintRole(state: readonly ClientRenderState, face: MeshFace) -> number:
+    match state.climateTint:
+        case ClientClimateTint.neutral: return 0
+        case ClientClimateTint.foliage: return 2
+        case ClientClimateTint.water: return 3
+        case ClientClimateTint.grass:
+            if state.tintCoverage == ClientTintCoverage.all: return 1
+            if face.bottom: return 0
+            return face.top ? 1 : 4
+
+export def sameTranslucentVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    return current.layer == BlockRenderLayer.translucent and neighbor.layer == BlockRenderLayer.translucent and current.model == neighbor.model and current.materialKey == neighbor.materialKey
+
+def fullFaceModel(state: readonly ClientRenderState) -> bool:
+    return state.model == ClientBlockModelKind.cube or state.model == ClientBlockModelKind.column
+
+/// Cutout 方块不会遮挡它旁边的不透明表面，但同一剔除组里的完整立方体仍共享
+/// 一张内部边界。树叶种类可以使用不同纹理，只要材质职责相同就不会重复生成
+/// 两组永远不可见的内部面。
+def sameCullVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    return current.cullFaces and neighbor.cullFaces and fullFaceModel(current) and fullFaceModel(neighbor) and current.layer == neighbor.layer and current.materialKey == neighbor.materialKey
+
+export def boxBounds(state: readonly ClientRenderState) -> BoxBounds?:
+    const model = state.model
+    if model == ClientBlockModelKind.cube or model == ClientBlockModelKind.column:
+        return {minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1}
+    if model == ClientBlockModelKind.cactus:
+        return {minimumX: 1 / 16, minimumY: 0, minimumZ: 1 / 16, maximumX: 15 / 16, maximumY: 1, maximumZ: 15 / 16}
+    if model == ClientBlockModelKind.snowLayer:
+        return {minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: (state.layers ?? 1) / 8, maximumZ: 1}
+    return null
+
+export def sameBoxContactVolume(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> bool:
+    return current.model == neighbor.model and current.layer == neighbor.layer and current.materialKey == neighbor.materialKey
+
+/// 相邻格只会遮住落在共享格边界上的模型面。仙人掌的四个侧面内缩，雪层顶面
+/// 通常低于格顶；这些面与相邻格之间仍有空间，不能仅凭邻居是实体方块就剔除。
+export def faceVisible(
+    current: readonly ClientRenderState,
+    neighbor: readonly ClientRenderState,
+    currentTouchesBoundary: bool,
+    neighborTouchesBoundary: bool,
+) -> bool:
+    if neighbor.model == null or not currentTouchesBoundary or not neighborTouchesBoundary: return true
+    if neighbor.occludes: return false
+    if sameCullVolume(current, neighbor): return false
+    if sameTranslucentVolume(current, neighbor): return false
+    return not sameBoxContactVolume(current, neighbor)

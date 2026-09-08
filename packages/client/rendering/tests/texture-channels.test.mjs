@@ -120,7 +120,7 @@ test("authored channels follow ordered base and variant transforms", async (cont
   });
   const rotatedNormal = pixel(output.normal, size, 1, 1);
   assert.ok(Math.abs(rotatedNormal[0] - 128) <= 1);
-  assert.ok(rotatedNormal[1] <= 1, "the second transform flips the rotated normal upward");
+  assert.ok(rotatedNormal[1] >= 254, "the vertical flip turns the clockwise-rotated normal toward tangent +Y");
   assert.ok(Math.abs(rotatedNormal[2] - 128) <= 1);
   assert.deepEqual(pixel(output.material, size, 1, 1), [11, 22, 33, 255]);
   assert.deepEqual(pixel(output.emissive, size, 1, 1), [44, 55, 66, 255]);
@@ -144,7 +144,23 @@ test("an authored height map replaces only normal generation", async (context) =
   });
 
   assert.deepEqual(output.sources, {normal: "authored-height", material: "generated", emissive: "generated"});
-  assert.equal(pixel(output.normal, size, 1, 1)[0] < 128, true);
+  const center = pixel(output.normal, size, 1, 1);
+  assert.equal(center[0] < 128, true);
+  assert.ok(center[2] > 128, "height normals must encode positive Z in signed tangent space");
+
+  const rotated = await resolveTextureChannels({
+    dataRoot: root,
+    tileSize: size,
+    albedoPixels: solid(size, [160, 140, 120, 255]),
+    profile,
+    sourceFiles: {height: "height.png"},
+    transforms: [{rotate: 90}],
+    label: "rotated height texture",
+  });
+  const rotatedCenter = pixel(rotated.normal, size, 1, 1);
+  assert.ok(Math.abs(rotatedCenter[0] - 128) <= 1, "clockwise height rotation removes the horizontal slope");
+  assert.ok(rotatedCenter[1] > 128, "clockwise height rotation tilts the tangent normal upward");
+  assert.ok(rotatedCenter[2] > 128, "rotated height normal must keep positive Z");
 });
 
 test("all tangent-space normal orientations follow image rotation then flips", () => {
@@ -153,7 +169,7 @@ test("all tangent-space normal orientations follow image rotation then flips", (
     for (const flipX of [false, true]) {
       for (const flipY of [false, true]) {
         let {x, y} = original;
-        for (let angle = 0; angle < rotate; angle += 90) [x, y] = [-y, x];
+        for (let angle = 0; angle < rotate; angle += 90) [x, y] = [y, -x];
         if (flipX) x = -x;
         if (flipY) y = -y;
         assert.deepEqual(

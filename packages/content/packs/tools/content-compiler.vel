@@ -34,7 +34,7 @@ def compileBlockContribution(
     const mergedIdentities = mergeIdentityTrees(baseIdentities, identityDocument.identities)
     const manifestResolution = IdentityResolution.parse(resolveIdentityReferences(parseYaml(manifestText), mergedIdentities))
     const manifest = BlockCatalogManifest.parse(manifestResolution.value)
-    assert manifest.schemaVersion == 3 else "Unsupported Mod block catalog schema version"
+    assert manifest.schemaVersion == 4 else "Unsupported Mod block catalog schema version"
     assert manifest.sources.size == sourceTexts.size else "Mod block source count does not match its manifest"
     const blocks: List<BlockTypeSource> = []
     for sourceText in sourceTexts:

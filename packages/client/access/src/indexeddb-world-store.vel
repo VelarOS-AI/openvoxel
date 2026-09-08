@@ -2,7 +2,7 @@ import {Bytes} from "velar/binary"
 import {database} from "velar/storage"
 import {decode, encode} from "@velarscript-labs/msgpack"
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
-import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
+import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
 
 type DatabaseBatchChange:
     key: string
@@ -29,13 +29,13 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
     async def findManifest(worldId: string) -> WorldManifest?:
         return await storage.get(manifestKey(worldId), WorldManifest)
 
-    async def storedDelta(worldId: string, position: readonly ChunkPosition) -> ChunkDelta?:
+    async def storedDelta(worldId: string, position: readonly ChunkPosition) -> StoredChunkDelta?:
         const bytes = await storage.getBytes(deltaKey(worldId, position))
         if bytes == null: return null
-        return ChunkDelta.parse(decode(bytes))
+        return StoredChunkDelta.parse(decode(bytes))
 
-    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<ChunkDelta>:
-        const found: List<ChunkDelta> = []
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<StoredChunkDelta>:
+        const found: List<StoredChunkDelta> = []
         for position in positions:
             const delta = await storedDelta(worldId, position)
             if delta != null: found.append(delta)
@@ -61,7 +61,7 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
                     }))
                 else: byPosition.remove(localKey(write.position))
             const overrides = byPosition.values().sorted(by=localOrder)
-            const next = ChunkDelta.from(commit, {overrides})
+            const next = StoredChunkDelta.from(commit, {overrides})
             changes.append({key: deltaKey(worldId, commit.position), bytes: encode(next)})
 
         await storage.batch(changes)

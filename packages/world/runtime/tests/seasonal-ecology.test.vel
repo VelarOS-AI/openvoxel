@@ -1,0 +1,111 @@
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {SeasonalSurfaceCandidate, SeasonalSurfaceKind, WorldGenerator} from "@openvoxel/world-generation"
+import {ChunkPosition, Coordinate2, emptyChunk, worldClimateAt, worldEcologyEpoch, worldYearMilliseconds} from "@openvoxel/world"
+import {activeWorldState} from "../src/active-world-state.vel"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldSeasonalEcology} from "../src/seasonal-ecology.vel"
+import {StoredChunkDelta} from "../src/contracts.vel"
+import {WorldChunkSnapshot} from "../src/world-chunk-snapshot.vel"
+
+const air = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const water = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
+const ice = defaultBlockStateRuntimeId(builtinIdentities.blocks.ice)
+const snow = defaultBlockStateRuntimeId(builtinIdentities.blocks.snow)
+const stone = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const position: ChunkPosition = {x: 0, y: 4, z: 0}
+const summer = worldYearMilliseconds * 0.25
+const winter = worldYearMilliseconds * 0.75
+
+def coldSeed() -> string:
+    for index in range(100):
+        const seed = f"ecology-{index}"
+        const climate = worldClimateAt(seed, winter, {x: 0, y: 64, z: 0})
+        if climate.frozenWater and climate.snowCover >= 0.3: return seed
+    throw Error("Ecology fixture requires a freezing humid region")
+
+const candidates: readonly List<readonly SeasonalSurfaceCandidate> = [
+    {position: {x: 0, y: 0, z: 0}, kind: SeasonalSurfaceKind.water, baselineBlockStateRuntimeId: water, warmBlockStateRuntimeId: water, coldBlockStateRuntimeId: ice, exposed: true},
+    {position: {x: 1, y: 1, z: 0}, kind: SeasonalSurfaceKind.snow, baselineBlockStateRuntimeId: air, warmBlockStateRuntimeId: air, coldBlockStateRuntimeId: snow, exposed: true},
+    {position: {x: 2, y: 1, z: 0}, kind: SeasonalSurfaceKind.snow, baselineBlockStateRuntimeId: snow, warmBlockStateRuntimeId: air, coldBlockStateRuntimeId: snow, exposed: false},
+    {position: {x: 3, y: 0, z: 0}, kind: SeasonalSurfaceKind.water, baselineBlockStateRuntimeId: ice, warmBlockStateRuntimeId: water, coldBlockStateRuntimeId: ice, exposed: true},
+]
+
+def generator() -> WorldGenerator:
+    return {
+        generate: position => emptyChunk(position, 16, air),
+        findSpawn: () => {x: 0, y: 65, z: 0},
+        seasonalSurfaces: position => position.x == 0 and position.y == 4 and position.z == 0 ? candidates : [],
+        sample: position => {position: Coordinate2.from(position), surfaceY: 64, slope: 0, continentalness: 0, erosion: 0, ridge: 0, riverStrength: 0, temperature: 8, humidity: 8, forestDensity: 0, terrainType: "plain", biome: "plains"},
+    }
+
+def validateRuntimeId(runtimeId: number): baseWorldBlockRegistry.registry.requireStateByRuntimeId(runtimeId)
+
+test "seasonal ice and exposed snow freeze thaw and preserve player edits without persistence":
+    const store = memoryWorldStore()
+    const state = activeWorldState("ecology", store.deltas, 64, 1024, validateRuntimeId)
+    const ecology = worldSeasonalEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state)
+    const frozen = (await ecology.deltas([position], winter))[0]
+    expect(frozen.ecologyEpoch).toBe(worldEcologyEpoch(winter))
+    expect(frozen.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 2 and entry.blockStateRuntimeId == air)).toBe(true)
+    expect((await state.deltas([position]))[0].overrides).toEqual([])
+
+    const thawed = (await ecology.deltas([position], summer))[0]
+    expect(thawed.overrides.some(entry => entry.position.x == 0)).toBe(false)
+    expect(thawed.overrides.some(entry => entry.position.x == 1)).toBe(false)
+    expect(thawed.overrides.some(entry => entry.position.x == 3 and entry.blockStateRuntimeId == water)).toBe(true)
+    await state.commitBlocks([
+        {chunk: position, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: ice},
+        {chunk: position, local: {x: 1, y: 1, z: 0}, blockStateRuntimeId: snow},
+    ])
+    const preserved = (await ecology.deltas([position], summer))[0]
+    expect(preserved.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(preserved.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
+    await state.close()
+    await store.close()
+
+test "snapshot epochs belong to visible ecology while storage keeps only player deltas":
+    const store = memoryWorldStore()
+    const state = activeWorldState("snapshots", store.deltas, 64, 1024, validateRuntimeId)
+    try:
+        const ecology = worldSeasonalEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state)
+        const underground = {x: 0, y: 1, z: 0}
+        await state.commitBlocks([{chunk: underground, local: {x: 1, y: 1, z: 1}, blockStateRuntimeId: stone}])
+        const stored = (await state.deltas([underground]))[0]
+        const visible = (await ecology.deltas([underground], winter))[0]
+        expect(visible.ecologyEpoch).toBe(worldEcologyEpoch(winter))
+        expect(visible.revision).toBe(stored.revision)
+        expect(visible.overrides == stored.overrides).toBe(true)
+        expect(WorldChunkSnapshot.is(stored)).toBe(false)
+        expect(Json.stringify(stored).has("ecologyEpoch")).toBe(false)
+        const projected: readonly StoredChunkDelta = StoredChunkDelta.from(visible)
+        expect(projected).toEqual(stored)
+        const persisted = (await store.deltas.findChunks("snapshots", [underground]))[0]
+        expect(Json.stringify(persisted).has("ecologyEpoch")).toBe(false)
+    finally:
+        await state.close()
+        await store.close()
+
+test "remote player roofs and removed ground suppress natural snow and water freezing":
+    const store = memoryWorldStore()
+    const state = activeWorldState("shelter", store.deltas, 64, 1024, validateRuntimeId)
+    const ecology = worldSeasonalEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state)
+    const roof = {x: 0, y: 10, z: 0}
+    await state.commitBlocks([
+        {chunk: roof, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: stone},
+        {chunk: roof, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: stone},
+    ])
+    const sheltered = (await ecology.deltas([position], winter))[0]
+    expect(sheltered.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(false)
+    expect(sheltered.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(false)
+    await state.commitBlocks([
+        {chunk: roof, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: null},
+        {chunk: position, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: air},
+    ])
+    const unsupported = (await ecology.deltas([position], winter))[0]
+    expect(unsupported.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(false)
+    await state.close()
+    await store.close()

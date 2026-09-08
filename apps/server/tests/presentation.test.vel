@@ -4,7 +4,7 @@ import {builtinIdentities} from "@openvoxel/identities"
 import {ClientContractResponse, GenerationSampleResponse, RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBootstrapResponse, WorldContentResponse, chunkBlockIndexOrder, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
 import {TerrainSample, defaultGenerator, sampleTerrain} from "@openvoxel/world-generation"
 import {emptyChunk, setChunkBlock} from "@openvoxel/world"
-import {BlockChangeBatch, ChunkDelta, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {BlockChangeBatch, WorldChunkSnapshot, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 import {worldContentResponse} from "../src/presentation/world-content.vel"
 import {generationSampleResponse, terrainChunkBatchResponse, terrainChunkResponse} from "../src/presentation/chunk.vel"
 import {clientContractResponse} from "../src/presentation/client-contract.vel"
@@ -30,7 +30,7 @@ test "server presentation assembles current generation and client metadata":
     const content = await runtime.worldContent(manifest.id)
     const catalog = worldContentResponse(content)
     expect(WorldContentResponse.is(catalog)).toBe(true)
-    expect(catalog.schemaVersion).toBe(3)
+    expect(catalog.schemaVersion).toBe(4)
     expect(catalog.catalogVersion).toBe(blockCatalogVersion)
     expect(catalog.stateMapHash.size).toBe(64)
     expect(catalog.content.contentHash.size).toBe(64)
@@ -61,6 +61,7 @@ test "server presentation assembles current generation and client metadata":
     expect(WorldBootstrapResponse.is(bootstrap)).toBe(true)
     expect(bootstrap.protocolVersion).toBe(protocolVersion)
     expect(bootstrap.clientContractVersion).toBe(clientContractVersion)
+    expect(bootstrap.worldTimeOriginMilliseconds).toBe(manifest.worldTimeOriginMilliseconds)
     expect(bootstrap.blockRegistry.states.size).toBe(catalog.states.size)
     expect(bootstrap.blockRegistry == manifest.blockRegistry).toBe(true)
     expect(bootstrap.content.contentHash).toBe(catalog.content.contentHash)
@@ -76,6 +77,7 @@ test "server presentation assembles current generation and client metadata":
     expect(contract.realtime.events).toEqual(["world.ready", "chunks.synced", "blocks.applied", "blocks.changed", "error"])
     expect(contract.capabilities).toContain("terrain-chunk-batches")
     expect(contract.capabilities).toContain("world-scoped-realtime")
+    expect(contract.capabilities).toContain("world-environment-snapshots")
     expect(contract.chunks.indexOrder).toBe(chunkBlockIndexOrder)
     expect(contract.chunks.paletteEntries).toBe("uint32-runtime-id")
     expect(contract.chunks.localIndices).toBe("uint16-list")
@@ -122,12 +124,13 @@ test "realtime presentation sends only committed changes and preserves delta ord
     expect(RealtimeBlockChange.is(changes[0])).toBe(true)
     expect(changes[0].revision).toBe(4)
 
-    const deltas: List<ChunkDelta> = [
-        {position: {x: 2, y: 1, z: 0}, revision: 7, overrides: []},
-        {position: {x: -2, y: 1, z: 0}, revision: 0, overrides: []},
+    const deltas: List<WorldChunkSnapshot> = [
+        {position: {x: 2, y: 1, z: 0}, revision: 7, ecologyEpoch: 12, overrides: []},
+        {position: {x: -2, y: 1, z: 0}, revision: 0, ecologyEpoch: 12, overrides: []},
     ]
     const projected = realtimeChunkDeltas(deltas)
     expect(projected.size).toBe(2)
     expect(RealtimeChunkDelta.is(projected[0])).toBe(true)
     expect(projected[0].position.x).toBe(2)
+    expect(projected[0].ecologyEpoch).toBe(12)
     expect(projected[1].position.x).toBe(-2)

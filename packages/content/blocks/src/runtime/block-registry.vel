@@ -45,7 +45,7 @@ export type BlockRegistry:
 
 /// 从完整编译目录一次性建立索引，并验证默认状态与状态键的一致性。
 export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegistry:
-    assert source.schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert source.schemaVersion == 4 else "Unsupported block catalog schema version"
     assert not source.catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert source.blocks.size > 0 else "Block catalog cannot be empty"
     assert source.states.size > 0 and source.states.size <= 0x100000000 else "Block state catalog must contain from 1 through 4294967296 states"

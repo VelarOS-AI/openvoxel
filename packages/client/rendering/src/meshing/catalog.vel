@@ -1,0 +1,49 @@
+import {UInt32Buffer} from "velar/binary"
+import {ClientRenderState} from "../contracts.vel"
+
+export def blockIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
+
+export def indexRenderStates(states: readonly List<readonly ClientRenderState>) -> Map<number, readonly ClientRenderState>:
+    const result: Map<number, readonly ClientRenderState> = Map()
+    for state in states:
+        assert not result.has(state.runtimeId) else f"Meshing catalog repeats runtimeId {state.runtimeId}"
+        result.set(state.runtimeId, state)
+    return result
+
+def requireRenderState(
+    byRuntimeId: Map<number, readonly ClientRenderState>,
+    runtimeId: number,
+) -> readonly ClientRenderState:
+    const state = byRuntimeId.get(runtimeId)
+    assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
+    return state
+
+def centerStateAtIndex(
+    index: number,
+    edge: number,
+    paddedBlocks: readonly UInt32Buffer,
+    byRuntimeId: Map<number, readonly ClientRenderState>,
+) -> readonly ClientRenderState:
+    const paddedEdge = edge + 2
+    const x = index % edge
+    const z = (index / edge).floor() % edge
+    const y = (index / (edge * edge)).floor()
+    return requireRenderState(byRuntimeId, paddedBlocks[blockIndex(x + 1, y + 1, z + 1, paddedEdge)])
+
+export def centerChunkStates(
+    edge: number,
+    paddedBlocks: readonly UInt32Buffer,
+    byRuntimeId: Map<number, readonly ClientRenderState>,
+) -> List<readonly ClientRenderState>:
+    return range(edge * edge * edge).map(index => centerStateAtIndex(index, edge, paddedBlocks, byRuntimeId))
+
+export def stateAt(
+    states: Map<number, readonly ClientRenderState>,
+    blocks: readonly UInt32Buffer,
+    paddedEdge: number,
+    x: number,
+    y: number,
+    z: number,
+) -> readonly ClientRenderState:
+    const runtimeId = blocks[blockIndex(x, y, z, paddedEdge)]
+    return requireRenderState(states, runtimeId)

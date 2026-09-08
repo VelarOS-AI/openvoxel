@@ -1,0 +1,149 @@
+import {ChunkPosition, maximumWorldCoordinate, requireChunkEdge} from "@openvoxel/world"
+
+/// 创造模式飞行只保存连续空间状态；键盘、指针锁与 Babylon Camera 都属于宿主
+/// 适配器，不能进入这份可确定性测试的移动策略。
+export type CreativeFlightState:
+    readonly x: number
+    readonly y: number
+    readonly z: number
+    readonly velocityX: number
+    readonly velocityY: number
+    readonly velocityZ: number
+
+export type CreativeFlightIntent:
+    readonly forward: number
+    readonly sideways: number
+    readonly vertical: number
+    readonly boosted: bool
+
+/// 由宿主相机投影出的水平单位基。策略不读取 Babylon 对象，也不假设左右手坐标系。
+export type CreativeFlightBasis:
+    readonly forwardX: number
+    readonly forwardZ: number
+    readonly rightX: number
+    readonly rightZ: number
+
+export type CreativeFlightBounds:
+    readonly minimumY: number
+    readonly maximumY: number
+
+export const creativeFlightSpeed = 12
+export const creativeFlightBoostSpeed = 36
+export const creativeFlightAcceleration = 48
+export const creativeFlightBraking = 72
+export const creativeFlightMaximumFrameMilliseconds = 50
+
+type CreativeFlightVelocity:
+    readonly x: number
+    readonly y: number
+    readonly z: number
+
+/// 三维位移使用缩放后的范数，避免先平方大值导致不必要的溢出。
+def hypot3(x: number, y: number, z: number) -> number:
+    const scale = Math.max(x.abs(), Math.max(y.abs(), z.abs()))
+    if scale == 0: return 0
+    const normalizedX = x / scale
+    const normalizedY = y / scale
+    const normalizedZ = z / scale
+    return scale * Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY + normalizedZ * normalizedZ)
+
+def requireFiniteState(state: readonly CreativeFlightState):
+    assert state.x.isFinite() and state.y.isFinite() and state.z.isFinite() else "Creative flight position must be finite"
+    assert state.velocityX.isFinite() and state.velocityY.isFinite() and state.velocityZ.isFinite() else "Creative flight velocity must be finite"
+
+def requireHorizontalBasis(basis: readonly CreativeFlightBasis):
+    assert basis.forwardX.isFinite() and basis.forwardZ.isFinite() and basis.rightX.isFinite() and basis.rightZ.isFinite() else "Creative flight basis must be finite"
+    const forwardLength = Math.hypot(basis.forwardX, basis.forwardZ)
+    const rightLength = Math.hypot(basis.rightX, basis.rightZ)
+    const orthogonality = basis.forwardX * basis.rightX + basis.forwardZ * basis.rightZ
+    assert (forwardLength - 1).abs() <= 0.000001 else "Creative flight forward basis must be normalized"
+    assert (rightLength - 1).abs() <= 0.000001 else "Creative flight right basis must be normalized"
+    assert orthogonality.abs() <= 0.000001 else "Creative flight basis must be orthogonal"
+
+def moveVelocityToward(
+    currentX: number,
+    currentY: number,
+    currentZ: number,
+    targetX: number,
+    targetY: number,
+    targetZ: number,
+    maximumDelta: number,
+) -> CreativeFlightVelocity:
+    const differenceX = targetX - currentX
+    const differenceY = targetY - currentY
+    const differenceZ = targetZ - currentZ
+    const distance = hypot3(differenceX, differenceY, differenceZ)
+    if distance <= maximumDelta or distance == 0: return {x: targetX, y: targetY, z: targetZ}
+    const factor = maximumDelta / distance
+    return {
+        x: currentX + differenceX * factor,
+        y: currentY + differenceY * factor,
+        z: currentZ + differenceZ * factor,
+    }
+
+export def creativeFlightState(x: number, y: number, z: number) -> CreativeFlightState:
+    const state: CreativeFlightState = {x, y, z, velocityX: 0, velocityY: 0, velocityZ: 0}
+    requireFiniteState(state)
+    return state
+
+/// 固定时间步上限防止后台标签页恢复时瞬移；三轴输入统一归一化，使斜向和升降
+/// 组合不会获得额外速度。返回新状态，适配器可以原子替换而不共享可变记录。
+export def stepCreativeFlight(
+    state: readonly CreativeFlightState,
+    intent: readonly CreativeFlightIntent,
+    basis: readonly CreativeFlightBasis,
+    deltaMilliseconds: number,
+    bounds: readonly CreativeFlightBounds,
+) -> CreativeFlightState:
+    requireFiniteState(state)
+    requireHorizontalBasis(basis)
+    assert deltaMilliseconds.isFinite() and deltaMilliseconds >= 0 else "Creative flight delta must be finite and non-negative"
+    assert bounds.minimumY.isFinite() and bounds.maximumY.isFinite() and bounds.minimumY < bounds.maximumY else "Creative flight vertical bounds are invalid"
+    assert intent.forward.isFinite() and intent.sideways.isFinite() and intent.vertical.isFinite() else "Creative flight intent must be finite"
+    assert intent.forward >= -1 and intent.forward <= 1 else "Creative flight forward intent is outside -1 through 1"
+    assert intent.sideways >= -1 and intent.sideways <= 1 else "Creative flight sideways intent is outside -1 through 1"
+    assert intent.vertical >= -1 and intent.vertical <= 1 else "Creative flight vertical intent is outside -1 through 1"
+
+    const deltaSeconds = Math.min(deltaMilliseconds, creativeFlightMaximumFrameMilliseconds) / 1000
+    const intentLength = hypot3(intent.forward, intent.sideways, intent.vertical)
+    const speed = intent.boosted ? creativeFlightBoostSpeed : creativeFlightSpeed
+    let targetX = 0
+    let targetY = 0
+    let targetZ = 0
+    if intentLength > 0:
+        const scale = speed / intentLength
+        targetX = (basis.forwardX * intent.forward + basis.rightX * intent.sideways) * scale
+        targetY = intent.vertical * scale
+        targetZ = (basis.forwardZ * intent.forward + basis.rightZ * intent.sideways) * scale
+
+    const rate = intentLength > 0 ? creativeFlightAcceleration : creativeFlightBraking
+    const velocity = moveVelocityToward(
+        state.velocityX,
+        state.velocityY,
+        state.velocityZ,
+        targetX,
+        targetY,
+        targetZ,
+        rate * deltaSeconds,
+    )
+    let x = Math.clamp(state.x + velocity.x * deltaSeconds, -maximumWorldCoordinate, maximumWorldCoordinate)
+    let y = Math.clamp(state.y + velocity.y * deltaSeconds, bounds.minimumY, bounds.maximumY)
+    let z = Math.clamp(state.z + velocity.z * deltaSeconds, -maximumWorldCoordinate, maximumWorldCoordinate)
+    let velocityX = velocity.x
+    let velocityY = velocity.y
+    let velocityZ = velocity.z
+    if x == -maximumWorldCoordinate or x == maximumWorldCoordinate: velocityX = 0
+    if y == bounds.minimumY or y == bounds.maximumY: velocityY = 0
+    if z == -maximumWorldCoordinate or z == maximumWorldCoordinate: velocityZ = 0
+    const next: CreativeFlightState = {x, y, z, velocityX, velocityY, velocityZ}
+    requireFiniteState(next)
+    return next
+
+export def creativeFlightChunk(state: readonly CreativeFlightState, edge: number) -> ChunkPosition:
+    requireFiniteState(state)
+    requireChunkEdge(edge)
+    return {
+        x: (state.x / edge).floor(),
+        y: (state.y / edge).floor(),
+        z: (state.z / edge).floor(),
+    }

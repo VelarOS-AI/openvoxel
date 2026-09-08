@@ -5,4 +5,9 @@ export {BlockPosition, ChunkPosition, Coordinate2, Coordinate3, LocatedBlock, Lo
 export {Chunk, ChunkPaletteTemplate, blockIndex, chunk, chunkBlock, chunkBlockAtIndex, chunkChecksum, chunkPaletteTemplate, chunkVolume, emptyChunk, emptyPaletteChunk, paintChunkBlockAtIndex, setChunkBlock} from "./chunk/chunk.vel"
 
 /// 清单层：世界持久化身份与格式不变量。
-export {WorldContentIdentity, WorldContentPackReference, WorldManifest, WorldSpawn, initialChunkEdge, validateWorldContentIdentity, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"
+export {WorldContentIdentity, WorldContentPackReference, WorldGameMode, WorldManifest, WorldSpawn, initialChunkEdge, validateWorldContentIdentity, validateWorldManifest, worldFormatVersion} from "./manifest/world-manifest.vel"
+
+/// 环境层：权威天气状态、确定性世界时间线与无 seed 的时间锚点推进。
+export {WorldEnvironmentSample, WorldEnvironmentState, WorldLightningEvent, WorldPrecipitationKind, maximumWorldEnvironmentMilliseconds, sampleWorldEnvironment, validateWorldEnvironmentSample, validateWorldEnvironmentState, validateWorldLightningEvent, worldDayMilliseconds} from "./environment/environment.vel"
+export {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldLightningSlotMilliseconds, worldWeatherWindowMilliseconds} from "./environment/timeline.vel"
+export {WorldClimateSample, WorldSeason, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds, worldYearMilliseconds, worldYearProgress} from "./environment/climate.vel"

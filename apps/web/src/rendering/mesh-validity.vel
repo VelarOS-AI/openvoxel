@@ -1,0 +1,51 @@
+/// Chunk 网格是否存在与它是否仍对应最新世界状态是两个事实。离屏时可以取消
+/// 尚未开始的重建，但不能因此把旧 GPU 网格重新标记为最新。
+export type ChunkMeshValidity:
+    hasInstalled: (key: string) -> bool
+    requiresBuild: (key: string) -> bool
+    markDirty: (key: string) -> null
+    markInstalled: (key: string) -> null
+    remove: (key: string) -> null
+    clear: () -> null
+
+/// Worker 结果、排队替换和 GPU 提交跨越多个异步边界。ticket 必须在整个
+/// Renderer 生命周期单调且不复用；Map 中“当前期望值”的删除不能让旧任务
+/// 与后来任务再次取得相同身份。
+export type MeshTicketSequence:
+    issue: () -> number
+
+export def meshTicketSequence() -> MeshTicketSequence:
+    let nextTicket = 1
+
+    def issue() -> number:
+        assert nextTicket <= 9007199254740991 else "Chunk mesh ticket sequence exhausted safe integers"
+        const ticket = nextTicket
+        nextTicket += 1
+        return ticket
+
+    return {issue}
+
+export def chunkMeshValidity() -> ChunkMeshValidity:
+    const installed: Set<string> = Set()
+    const dirty: Set<string> = Set()
+
+    def hasInstalled(key: string) -> bool: return key in installed
+
+    def requiresBuild(key: string) -> bool: return (key not in installed) or (key in dirty)
+
+    def markDirty(key: string):
+        if key in installed: dirty.add(key)
+
+    def markInstalled(key: string):
+        installed.add(key)
+        dirty.remove(key)
+
+    def remove(key: string):
+        installed.remove(key)
+        dirty.remove(key)
+
+    def clear():
+        installed.clear()
+        dirty.clear()
+
+    return {hasInstalled, requiresBuild, markDirty, markInstalled, remove, clear}

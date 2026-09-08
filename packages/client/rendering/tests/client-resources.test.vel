@@ -1,4 +1,4 @@
-import {basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
+import {BlockRenderLayer, basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
 import {uint32Buffer} from "velar/binary"
 import {expect} from "velar/test"
@@ -6,7 +6,7 @@ import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
 import {meshChunk} from "../src/mesher.vel"
 import {createClientRenderCatalog} from "../src/render-catalog.vel"
 import {ClientBlockModelKind} from "../src/contracts.vel"
-import {ClientAnimationResource, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankLevel, ClientTextureBankRole, ClientTextureBankStorage, ClientTextureResource, validateClientResourcePack} from "../src/resource-pack.vel"
+import {ClientAnimationResource, ClientMaterialResource, ClientPrecipitationSurface, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankLevel, ClientTextureBankRole, ClientTextureBankStorage, ClientTextureResource, validateClientResourcePack} from "../src/resource-pack.vel"
 
 def contentResponse() -> WorldContentResponse:
     return {
@@ -53,6 +53,47 @@ test "every rendered backend state produces visible geometry":
         renderedStates += 1
     expect(renderedStates > 0).toBe(true)
 
+test "render catalog resolves gameplay collision independently from visual layers":
+    const catalog = createClientRenderCatalog(contentResponse(), builtinClientResourcePack)
+    const invisible = catalog.states.find(state => state.model == null)
+    const cross = catalog.states.find(state => state.model == ClientBlockModelKind.cross)
+    const fluid = catalog.states.find(state => state.model == ClientBlockModelKind.fluid)
+    const translucentCube = catalog.states.find(state => state.model == ClientBlockModelKind.cube and state.layer == BlockRenderLayer.translucent)
+    const cutoutCube = catalog.states.find(state => state.model == ClientBlockModelKind.cube and state.layer == BlockRenderLayer.cutout)
+    const cactus = catalog.states.find(state => state.model == ClientBlockModelKind.cactus)
+    const snow = catalog.states.find(state => state.model == ClientBlockModelKind.snowLayer and state.layers == 4)
+    assert invisible != null and cross != null and fluid != null and translucentCube != null and cutoutCube != null and cactus != null and snow != null else "Expected representative render states"
+
+    expect(invisible.collisionBoxes).toEqual([])
+    expect(cross.collisionBoxes).toEqual([])
+    expect(fluid.collisionBoxes).toEqual([])
+
+    expect(translucentCube.collisionBoxes).toEqual([{
+        minimumX: 0,
+        minimumY: 0,
+        minimumZ: 0,
+        maximumX: 1,
+        maximumY: 1,
+        maximumZ: 1,
+    }])
+    expect(cutoutCube.collisionBoxes).toEqual([{
+        minimumX: 0,
+        minimumY: 0,
+        minimumZ: 0,
+        maximumX: 1,
+        maximumY: 1,
+        maximumZ: 1,
+    }])
+    expect(cactus.collisionBoxes).toEqual([{
+        minimumX: 0.0625,
+        minimumY: 0,
+        minimumZ: 0.0625,
+        maximumX: 0.9375,
+        maximumY: 1,
+        maximumZ: 0.9375,
+    }])
+    expect(snow.collisionBoxes[0].maximumY).toBe(0.5)
+
 test "resource packs fail before rendering when their target content build differs":
     const incompatible = ClientResourcePackArtifact.from(builtinClientResourcePack, {
         targetContentHash: "1111111111111111111111111111111111111111111111111111111111111111",
@@ -60,8 +101,8 @@ test "resource packs fail before rendering when their target content build diffe
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
 test "built-in resources expose role-scoped generated texture arrays":
-    expect(builtinClientResourcePack.artifactVersion).toBe(5)
-    expect(builtinClientResourcePack.formatVersion).toBe(5)
+    expect(builtinClientResourcePack.artifactVersion).toBe(8)
+    expect(builtinClientResourcePack.formatVersion).toBe(8)
     expect(builtinClientResourcePack.textureBanks.size).toBe(4)
     const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
     expect(ClientTextureBankRole.opaque in roles).toBe(true)
@@ -112,6 +153,38 @@ test "material families preserve lighting, shadow, and PBR response semantics":
     expect(terrain.castsShadows).toBe(true)
     expect(water.castsShadows).toBe(false)
     expect(magma.castsShadows).toBe(false)
+
+test "precipitation feedback follows material metadata through catalog projection":
+    const catalog = createClientRenderCatalog(contentResponse(), builtinClientResourcePack)
+    const water = catalog.materials.find(material => material.key == "openvoxel:material/water")
+    assert water != null else "Expected the authored water material"
+    expect(water.precipitationSurface).toBe(ClientPrecipitationSurface.water)
+    const cross = catalog.materials.find(material => material.key == "openvoxel:material/cross")
+    assert cross != null else "Expected the authored plant material"
+    expect(cross.precipitationSurface).toBe(ClientPrecipitationSurface.permeable)
+    const waterKey = water.key
+    const crossKey = cross.key
+    expect(catalog.materials.filter(material => material.key != waterKey and material.key != crossKey).every(material => material.precipitationSurface == ClientPrecipitationSurface.solid)).toBe(true)
+    const custom = ClientMaterialResource.from(water, {key: "example:material/custom"})
+    expect(custom.precipitationSurface).toBe(ClientPrecipitationSurface.water)
+    const frozen = ClientMaterialResource.from(water, {precipitationSurface: ClientPrecipitationSurface.solid})
+    expect(frozen.precipitationSurface).toBe(ClientPrecipitationSurface.solid)
+
+test "material parsing rejects unrecognized precipitation surface values":
+    const material = builtinClientResourcePack.materials[0]
+    const invalid: unknown = {
+        key: material.key,
+        precipitationSurface: "liquid",
+        alpha: material.alpha,
+        alphaCutoff: material.alphaCutoff,
+        doubleSided: material.doubleSided,
+        castsShadows: material.castsShadows,
+        environmentIntensity: material.environmentIntensity,
+        clearCoat: material.clearCoat,
+        clearCoatRoughness: material.clearCoatRoughness,
+        unlit: material.unlit,
+    }
+    expect(() => ClientMaterialResource.parse(invalid)).toThrow()
 
 test "resource pack validation rejects malformed array bytes and inert animations":
     const bank = builtinClientResourcePack.textureBanks[0]

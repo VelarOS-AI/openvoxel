@@ -1,0 +1,63 @@
+import {TerrainChunkBatchResponse, TerrainChunkResponse} from "@openvoxel/protocol"
+import {ChunkPosition, chunkVolume, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
+import {UInt16Buffer, uint16Buffer} from "velar/binary"
+
+/// 客户端内部唯一的固定地形形状。协议 DTO 的普通数字 List 只存在于 HTTP
+/// 边界；会话、世界状态和渲染链路始终共享这份紧凑索引快照。
+export type ClientTerrainChunkSnapshot:
+    readonly position: readonly ChunkPosition
+    readonly edge: number
+    readonly palette: readonly List<number>
+    readonly indices: readonly UInt16Buffer
+
+export type ClientTerrainBatchSnapshot:
+    readonly worldId: string
+    readonly chunks: readonly List<readonly ClientTerrainChunkSnapshot>
+
+def requireRuntimeId(value: number):
+    assert value.isInteger() and value >= 0 and value <= 0xffffffff else "Client terrain runtime ids must be UInt32 values"
+
+/// 在不可信 HTTP DTO 进入客户端端口时完成唯一一次语义验证和压缩。返回值拥有
+/// 独立的 position、palette 与 UInt16Buffer，不再让状态层逐项重建索引。
+def compactTerrainChunk(response: readonly TerrainChunkResponse) -> ClientTerrainChunkSnapshot:
+    requireChunkPosition(response.position)
+    requireChunkEdge(response.edge)
+    assert response.palette.size >= 1 and response.palette.size <= 0x10000 else "Client terrain palette size is invalid"
+
+    const palette = response.palette.copy()
+    const runtimeIds: Set<number> = Set()
+    for runtimeId in palette:
+        requireRuntimeId(runtimeId)
+        assert runtimeId not in runtimeIds else "Client terrain palette repeats a runtime id"
+        runtimeIds.add(runtimeId)
+
+    assert response.indices.size == chunkVolume(response.edge) else "Client terrain indices have the wrong size"
+    const indices = uint16Buffer(response.indices.size)
+    for offset in range(response.indices.size):
+        const paletteIndex = response.indices[offset]
+        assert paletteIndex.isInteger() and paletteIndex >= 0 and paletteIndex < palette.size else "Client terrain contains an invalid palette index"
+        indices[offset] = paletteIndex
+
+    return {
+        position: {x: response.position.x, y: response.position.y, z: response.position.z},
+        edge: response.edge,
+        palette,
+        indices,
+    }
+
+/// 保持请求顺序是 WorldBackend 的端口语义；HTTP 返回数量、世界身份或坐标漂移
+/// 都在适配器边界失败，不把半可信批次交给会话状态机。
+export def clientTerrainBatchSnapshot(
+    response: readonly TerrainChunkBatchResponse,
+    expectedWorldId: string,
+    expectedPositions: readonly List<readonly ChunkPosition>,
+) -> ClientTerrainBatchSnapshot:
+    assert response.worldId == expectedWorldId else "Client terrain response belongs to a different world"
+    assert response.chunks.size == expectedPositions.size else "Client terrain response returned the wrong Chunk count"
+
+    const chunks: List<readonly ClientTerrainChunkSnapshot> = []
+    for terrain, offset in response.chunks:
+        const expected = expectedPositions[offset]
+        assert terrain.position.x == expected.x and terrain.position.y == expected.y and terrain.position.z == expected.z else "Client terrain response changed the requested Chunk order"
+        chunks.append(compactTerrainChunk(terrain))
+    return {worldId: response.worldId, chunks}

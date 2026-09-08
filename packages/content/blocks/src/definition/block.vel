@@ -12,7 +12,8 @@ export enum BlockPropertyKind:
     integer
 
 /// 描述碰撞、选取和遮挡所使用的逻辑形状。
-/// empty 表示没有体积，fullCube 表示完整方块，custom 通过 key 引用自定义形状。
+/// empty 表示没有体积，fullCube 表示完整方块，custom 通过 key 和声明式盒集合
+/// 描述可扩展形状。
 export enum BlockShapeKind:
     empty = "none"
     fullCube = "full_cube"
@@ -89,11 +90,34 @@ export type IntegerBlockProperty:
 /// 三类属性定义的联合。kind 字段决定当前记录采用哪一种结构。
 export type BlockPropertyDefinition = BooleanBlockProperty | EnumBlockProperty | IntegerBlockProperty
 
-/// 自定义形状的 key 指向 identities.shapes 中的逻辑资源身份。
-/// kind 不是 custom 时 key 必须为空。
+/// 自定义形状由一个或多个规范化局部 AABB 组成。maximumYProperty 用于雪层等
+/// 高度由整数状态属性决定的盒子，最终高度等于属性值乘 maximumYScale，
+/// 并限制在 minimumY 到 maximumY 内。
+export type BlockShapeBox:
+    minimumX: number
+    minimumY: number
+    minimumZ: number
+    maximumX: number
+    maximumY: number
+    maximumZ: number
+    maximumYProperty: string?
+    maximumYScale: number?
+
+/// 解析状态属性后的局部 AABB；运行时物理系统只消费这个稳定形状。
+export type ResolvedBlockShapeBox:
+    readonly minimumX: number
+    readonly minimumY: number
+    readonly minimumZ: number
+    readonly maximumX: number
+    readonly maximumY: number
+    readonly maximumZ: number
+
+/// 自定义形状的 key 指向 identities.shapes 中的逻辑资源身份；boxes 是物理系统
+/// 可直接消费的几何包围盒。kind 不是 custom 时 key 和 boxes 必须为空。
 export type BlockShape:
     kind: BlockShapeKind
     key: string?
+    boxes: List<BlockShapeBox>?
 
 /// 描述实体移动、鼠标选取和面遮挡所需的物理信息。
 export type BlockPhysics:

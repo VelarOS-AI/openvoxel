@@ -1,0 +1,196 @@
+import {expect} from "velar/test"
+import {WorldEnvironmentSample, WorldPrecipitationKind, sampleWorldEnvironment, worldDayMilliseconds, worldYearMilliseconds} from "@openvoxel/world"
+import {ClientEnvironmentColor, ClientEnvironmentFrame, environmentFrame} from "../src/environment/frame.vel"
+
+def clearSample() -> WorldEnvironmentSample:
+    return {
+        worldMilliseconds: worldDayMilliseconds / 2,
+        samplePosition: {x: 0, y: 64, z: 0},
+        timeOfDay: 0.5,
+        moonPhase: 0,
+        cloudiness: 0,
+        precipitation: WorldPrecipitationKind.clear,
+        precipitationIntensity: 0,
+        windX: 0,
+        windZ: 0,
+        lightning: null,
+    }
+
+def expectUnit(value: number): expect(value >= 0 and value <= 1).toBe(true)
+
+def expectColor(value: readonly ClientEnvironmentColor):
+    expectUnit(value.red)
+    expectUnit(value.green)
+    expectUnit(value.blue)
+
+def expectBoundedFrame(frame: readonly ClientEnvironmentFrame):
+    expectUnit(frame.daylightIntensity)
+    expectUnit(frame.nightIntensity)
+    expectUnit(frame.starIntensity)
+    expectUnit(frame.sunIntensity)
+    expectUnit(frame.moonIntensity)
+    expectUnit(frame.skyIntensity)
+    expectUnit(frame.cloudOpacity)
+    expectUnit(frame.cloudBrightness)
+    expectUnit(frame.weatherDimming)
+    expectUnit(frame.lightningFlash)
+    expect(frame.fogDensityFactor >= 1 and frame.fogDensityFactor <= 4.4).toBe(true)
+    expectColor(frame.skyTop)
+    expectColor(frame.horizon)
+    expectColor(frame.ground)
+    expectColor(frame.fog)
+
+def vectorLengthSquared(frame: readonly ClientEnvironmentFrame, sun: bool) -> number:
+    const direction = sun ? frame.sunDirection : frame.moonDirection
+    return direction.x * direction.x + direction.y * direction.y + direction.z * direction.z
+
+test "clear noon and midnight produce opposite normalized celestial light directions":
+    const noon = environmentFrame(clearSample())
+    expect(noon.sunDirection.y < -0.8 and noon.sunDirection.y > -0.95).toBe(true)
+    expect(noon.moonDirection.y > 0.8).toBe(true)
+    expect(noon.daylightIntensity > 0.999).toBe(true)
+    expect(noon.nightIntensity < 0.001).toBe(true)
+    expect(noon.starIntensity < 0.001).toBe(true)
+    expect(vectorLengthSquared(noon, true) > 0.999 and vectorLengthSquared(noon, true) < 1.001).toBe(true)
+    expect(vectorLengthSquared(noon, false) > 0.999 and vectorLengthSquared(noon, false) < 1.001).toBe(true)
+
+    const midnight = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0}))
+    expect(midnight.sunDirection.y > 0.8).toBe(true)
+    expect(midnight.moonDirection.y < -0.8).toBe(true)
+    expect(midnight.daylightIntensity < 0.001).toBe(true)
+    expect(midnight.nightIntensity > 0.999).toBe(true)
+    expect(midnight.starIntensity > 0.7).toBe(true)
+    expectBoundedFrame(noon)
+    expectBoundedFrame(midnight)
+
+test "sunrise transitions continuously across the horizon":
+    const before = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0.249}))
+    const after = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0.251}))
+    expect(before.sunDirection.y > 0).toBe(true)
+    expect(after.sunDirection.y < 0).toBe(true)
+    expect((after.daylightIntensity - before.daylightIntensity).abs() < 0.08).toBe(true)
+    expect((after.horizon.red - before.horizon.red).abs() < 0.08).toBe(true)
+    expect((after.fog.red - before.fog.red).abs() < 0.08).toBe(true)
+
+test "a complete year closes its time seam and keeps every sampled frame bounded":
+    const midnight = WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0})
+    for step in range(256):
+        const frame = environmentFrame(WorldEnvironmentSample.from(midnight, {
+            worldMilliseconds: step * worldDayMilliseconds / 256,
+            timeOfDay: step / 256,
+            moonPhase: step % 8,
+        }))
+        expectBoundedFrame(frame)
+        expect(vectorLengthSquared(frame, true) > 0.999 and vectorLengthSquared(frame, true) < 1.001).toBe(true)
+        expect(vectorLengthSquared(frame, false) > 0.999 and vectorLengthSquared(frame, false) < 1.001).toBe(true)
+
+    const beginning = environmentFrame(midnight)
+    const ending = environmentFrame(sampleWorldEnvironment(midnight, worldYearMilliseconds))
+    expect((beginning.sunDirection.x - ending.sunDirection.x).abs() < 0.000001).toBe(true)
+    expect((beginning.sunDirection.y - ending.sunDirection.y).abs() < 0.000001).toBe(true)
+    expect((beginning.sunDirection.z - ending.sunDirection.z).abs() < 0.000001).toBe(true)
+
+test "seasonal sunlight has a higher summer noon and a longer summer day":
+    const summer = worldYearMilliseconds * 0.25
+    const winter = worldYearMilliseconds * 0.75
+    const summerNoon = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: summer}))
+    const winterNoon = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: winter}))
+    expect(-summerNoon.sunDirection.y > 0.97).toBe(true)
+    expect(-winterNoon.sunDirection.y > 0.5 and -winterNoon.sunDirection.y < 0.6).toBe(true)
+    const summerMorning = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: summer, timeOfDay: 0.23}))
+    const winterMorning = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: winter, timeOfDay: 0.23}))
+    expect(summerMorning.sunDirection.y < 0).toBe(true)
+    expect(winterMorning.sunDirection.y > 0).toBe(true)
+    expectBoundedFrame(summerNoon)
+    expectBoundedFrame(winterNoon)
+
+test "rain and snow dim daylight, thicken fog, and keep distinct weather color":
+    const rainSample = WorldEnvironmentSample.from(clearSample(), {
+        cloudiness: 0.9,
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 0.8,
+        windX: 8,
+    })
+    const snowSample = WorldEnvironmentSample.from(rainSample, {precipitation: WorldPrecipitationKind.snow})
+    const clear = environmentFrame(clearSample())
+    const rain = environmentFrame(rainSample)
+    const snow = environmentFrame(snowSample)
+    expect(rain.precipitation).toBe(WorldPrecipitationKind.rain)
+    expect(rain.precipitationIntensity).toBe(0.8)
+    expect(rain.windX).toBe(8)
+    expect(rain.sunIntensity < clear.sunIntensity).toBe(true)
+    expect(rain.skyIntensity < clear.skyIntensity).toBe(true)
+    expect(rain.fogDensityFactor > clear.fogDensityFactor).toBe(true)
+    expect(rain.cloudOpacity > 0.9).toBe(true)
+    expect(snow.fog.red > rain.fog.red).toBe(true)
+    expect(snow.fog.green > rain.fog.green).toBe(true)
+    expectBoundedFrame(rain)
+    expectBoundedFrame(snow)
+
+test "star texture visibility squares daylight and precipitation transmittance once":
+    const midnight = WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0})
+    const clear = environmentFrame(midnight)
+    const cloudy = environmentFrame(WorldEnvironmentSample.from(midnight, {cloudiness: 0.9, moonPhase: 4}))
+    const rain = environmentFrame(WorldEnvironmentSample.from(midnight, {
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 0.5,
+    }))
+    const storm = environmentFrame(WorldEnvironmentSample.from(midnight, {
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 1,
+    }))
+    expect(clear.starIntensity).toBe(1)
+    expect(cloudy.starIntensity).toBe(1)
+    expect(rain.starIntensity).toBe(0.25)
+    expect(storm.starIntensity).toBe(0)
+    expect(environmentFrame(clearSample()).starIntensity).toBe(0)
+
+test "cloud texture brightness follows quadratic daylight and precipitation darkness":
+    const midnight = WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0})
+    const noon = environmentFrame(clearSample())
+    const night = environmentFrame(midnight)
+    const rainyNoon = environmentFrame(WorldEnvironmentSample.from(clearSample(), {
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 1,
+    }))
+    const rainyNight = environmentFrame(WorldEnvironmentSample.from(midnight, {
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 1,
+    }))
+    expect(noon.cloudBrightness).toBe(1)
+    expect(night.cloudBrightness).toBe(0.03)
+    expect((rainyNoon.cloudBrightness - 0.2).abs() < 0.000001).toBe(true)
+    expect((rainyNight.cloudBrightness - 0.006).abs() < 0.000001).toBe(true)
+
+    const dawn = environmentFrame(WorldEnvironmentSample.from(clearSample(), {worldMilliseconds: 0, timeOfDay: 0.25}))
+    const expected = 0.03 + 0.97 * dawn.daylightIntensity * dawn.daylightIntensity
+    expect((dawn.cloudBrightness - expected).abs() < 0.000001).toBe(true)
+
+test "lightning flash age follows world time instead of renderer updates":
+    const occurredAt = 100_000
+    const storm = WorldEnvironmentSample.from(clearSample(), {
+        worldMilliseconds: occurredAt,
+        cloudiness: 1,
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 1,
+        lightning: {sequence: 42, position: {x: 12, y: 90, z: -8}, intensity: 0.9, occurredAtWorldMilliseconds: occurredAt},
+    })
+    const immediate = environmentFrame(storm)
+    const fading = environmentFrame(WorldEnvironmentSample.from(storm, {worldMilliseconds: occurredAt + 250}))
+    const expired = environmentFrame(WorldEnvironmentSample.from(storm, {worldMilliseconds: occurredAt + 10_000}))
+    expect(immediate.lightningFlash).toBe(0.9)
+    expect(immediate.lightning).toBe(storm.lightning)
+    expect(fading.lightningFlash < immediate.lightningFlash).toBe(true)
+    expect(expired.lightningFlash < 0.001).toBe(true)
+    expect(immediate.skyIntensity > fading.skyIntensity).toBe(true)
+    expect((immediate.cloudBrightness - 0.47).abs() < 0.000001).toBe(true)
+    expect(immediate.cloudBrightness > fading.cloudBrightness).toBe(true)
+    expectBoundedFrame(immediate)
+    expectBoundedFrame(fading)
+    expectBoundedFrame(expired)
+
+test "clear weather produces no overlays":
+    const frame = environmentFrame(clearSample())
+    expect(frame.cloudOpacity).toBe(0)
+    expect(frame.weatherDimming).toBe(1)
+    expect(frame.lightningFlash).toBe(0)

@@ -15,8 +15,9 @@ def view(position: readonly ChunkPosition, base: number) -> ClientChunkBlockView
 
 test "Chunk neighborhood copies the center and six adjacent faces without reading diagonal Chunks":
     const center: ChunkPosition = {x: 4, y: 5, z: 6}
+    const current = view(center, 100)
     const chunks: Map<string, readonly ClientChunkBlockView> = Map()
-    chunks.set(chunkKey(center), view(center, 100))
+    chunks.set(chunkKey(center), current)
     chunks.set(chunkKey({x: 3, y: 5, z: 6}), view({x: 3, y: 5, z: 6}, 200))
     chunks.set(chunkKey({x: 5, y: 5, z: 6}), view({x: 5, y: 5, z: 6}, 300))
     chunks.set(chunkKey({x: 4, y: 4, z: 6}), view({x: 4, y: 4, z: 6}, 400))
@@ -24,7 +25,7 @@ test "Chunk neighborhood copies the center and six adjacent faces without readin
     chunks.set(chunkKey({x: 4, y: 5, z: 5}), view({x: 4, y: 5, z: 5}, 600))
     chunks.set(chunkKey({x: 4, y: 5, z: 7}), view({x: 4, y: 5, z: 7}, 700))
 
-    const snapshot = snapshotChunkNeighborhood(center, edge, position => chunks.get(chunkKey(position)), 9)
+    const snapshot = snapshotChunkNeighborhood(current, position => chunks.get(chunkKey(position)), 9)
     expect(snapshot[paddedIndex(1, 1, 1)]).toBe(100 + blockIndex(0, 0, 0))
     expect(snapshot[paddedIndex(2, 2, 2)]).toBe(100 + blockIndex(1, 1, 1))
     expect(snapshot[paddedIndex(0, 1, 1)]).toBe(200 + blockIndex(edge - 1, 0, 0))
@@ -38,11 +39,11 @@ test "Chunk neighborhood copies the center and six adjacent faces without readin
 test "missing neighbor faces keep the requested runtime id":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}
     const current = view(center, 50)
-    const snapshot = snapshotChunkNeighborhood(center, edge, position => chunkKey(position) == chunkKey(center) ? current : null, 17)
+    const snapshot = snapshotChunkNeighborhood(current, _position => null, 17)
     expect(snapshot[paddedIndex(0, 1, 1)]).toBe(17)
     expect(snapshot[paddedIndex(1, 1, 1)]).toBe(50)
 
-test "snapshot resolves seven Chunks once and reads only the required volume and faces":
+test "snapshot reuses the captured center and resolves only six neighbors":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}
     let resolutions = 0
     let reads = 0
@@ -53,6 +54,10 @@ test "snapshot resolves seven Chunks once and reads only the required volume and
             return 1
         return {position, edge, blockAtIndex}
 
-    snapshotChunkNeighborhood(center, edge, resolve)
-    expect(resolutions).toBe(7)
+    def countedCenterBlockAtIndex(_index: number) -> number:
+        reads += 1
+        return 1
+
+    snapshotChunkNeighborhood({position: center, edge, blockAtIndex: countedCenterBlockAtIndex}, resolve)
+    expect(resolutions).toBe(6)
     expect(reads).toBe(edge * edge * edge + 6 * edge * edge)

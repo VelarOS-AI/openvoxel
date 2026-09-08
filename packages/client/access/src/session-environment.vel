@@ -1,0 +1,97 @@
+import {RealtimeBlockChange} from "@openvoxel/protocol"
+import {ChunkPosition, Coordinate3, WorldEnvironmentSample, chunkKey, validateWorldEnvironmentSample, worldEcologyEpoch, worldEnvironmentAt} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
+import {ClientWorldState} from "./world-state.vel"
+
+export type SessionEnvironment:
+    install: (anchor: readonly WorldEnvironmentSample) -> null
+    sample: (position?: readonly Coordinate3) -> readonly WorldEnvironmentSample
+    changed: (changes: readonly List<readonly RealtimeBlockChange>) -> null
+    forget: (positions: readonly List<readonly ChunkPosition>) -> null
+    refresh: (cancellation?: Cancellation) -> Promise<bool>
+    close: () -> null
+
+/// 权威环境锚点和公平、有界的生态队列；不拥有传输连接或浏览器调度器。
+export def sessionEnvironment(
+    seed: string,
+    state: ClientWorldState,
+    clock: () -> number,
+    synchronize: (positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation?) -> Promise<null>,
+    available: () -> bool,
+) -> SessionEnvironment:
+    let anchor: readonly WorldEnvironmentSample? = null
+    let observedAt = 0
+    let epoch = -1
+    let refreshing = false
+    let closed = false
+    let generation = 0
+    const pending: Map<string, readonly ChunkPosition> = Map()
+    const dirtyColumns: Set<string> = Set()
+
+    def install(value: readonly WorldEnvironmentSample):
+        const validated = validateWorldEnvironmentSample(value)
+        const now = clock()
+        anchor = validated
+        observedAt = now
+        epoch = worldEcologyEpoch(validated.worldMilliseconds)
+        generation += 1
+        pending.clear()
+        dirtyColumns.clear()
+
+    def sample(position: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
+        assert not closed else "Client world session is closed"
+        const value = anchor
+        assert value != null else "Client world environment is not ready"
+        return worldEnvironmentAt(seed, value.worldMilliseconds + Math.max(0, clock() - observedAt), position ?? value.samplePosition)
+
+    def changed(changes: readonly List<readonly RealtimeBlockChange>):
+        const trackedColumns = Set(state.trackedPositions().map(position => f"{position.x}:{position.z}"))
+        for key in dirtyColumns.values():
+            if key not in trackedColumns: dirtyColumns.remove(key)
+        for change in changes:
+            const key = f"{change.chunk.x}:{change.chunk.z}"
+            if key in trackedColumns: dirtyColumns.add(key)
+
+    def forget(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: pending.remove(chunkKey(position))
+        changed([])
+
+    async def refresh(cancellation: Cancellation? = null) -> bool:
+        if closed or refreshing or not available(): return false
+        const value = anchor
+        if value == null: return false
+        const currentEpoch = worldEcologyEpoch(value.worldMilliseconds + Math.max(0, clock() - observedAt))
+        if currentEpoch != epoch:
+            epoch = currentEpoch
+            // set 保留已有项顺序，跨时间槽时队尾仍能得到处理。
+            for position in state.trackedPositions(): pending.set(chunkKey(position), position)
+        else if dirtyColumns.size > 0:
+            for position in state.trackedPositions():
+                if f"{position.x}:{position.z}" in dirtyColumns: pending.set(chunkKey(position), position)
+        dirtyColumns.clear()
+        const batch: List<readonly ChunkPosition> = []
+        for key, position in pending:
+            pending.remove(key)
+            if state.chunk(position) != null: batch.append(position)
+            if batch.size >= 4: break
+        if batch.size == 0: return false
+        const ticket = generation
+        refreshing = true
+        try:
+            await synchronize(batch, cancellation)
+            return not closed and generation == ticket
+        catch error:
+            if not closed and generation == ticket:
+                for position in batch:
+                    if state.chunk(position) != null: pending.set(chunkKey(position), position)
+            throw error
+        finally: refreshing = false
+
+    def close():
+        closed = true
+        generation += 1
+        anchor = null
+        pending.clear()
+        dirtyColumns.clear()
+
+    return {install, sample, changed, forget, refresh, close}

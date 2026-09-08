@@ -18,6 +18,7 @@ export async def verifyWorldBackend(backend: WorldBackend, command: readonly Cre
     assert created.id == command.id else "WorldBackend create returned a different world id"
     assert created.name == command.name else "WorldBackend create returned a different world name"
     assert created.seed == command.seed else "WorldBackend create returned a different world seed"
+    assert created.mode == command.mode else "WorldBackend create returned a different world mode"
 
     const found = await backend.findWorld(created.id)
     assert Json.stableStringify(found) == Json.stableStringify(created) else "WorldBackend find did not return the created manifest"

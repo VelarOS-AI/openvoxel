@@ -1,14 +1,16 @@
 import {TerrainSample} from "@openvoxel/world-generation"
 import {ContentCatalog} from "@openvoxel/content"
-import {BlockPosition, Chunk, ChunkPosition, Coordinate2, WorldManifest} from "@openvoxel/world"
+import {BlockPosition, Chunk, ChunkPosition, Coordinate2, Coordinate3, WorldEnvironmentSample, WorldManifest, worldEnvironmentAt} from "@openvoxel/world"
 import {BlockChangeBatch, BlockEdit, worldBlockCommands} from "./block-commands.vel"
 import {worldChunkQueries} from "./chunk-queries.vel"
-import {ChunkDelta, WorldStore} from "./contracts.vel"
+import {WorldStore} from "./contracts.vel"
+import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
 import {CreateWorld} from "./world-creation.vel"
 import {WorldAlreadyExistsError} from "./world-errors.vel"
 import {worldSessionCache} from "./world-sessions.vel"
 import {WorldContentSnapshot} from "./world-content.vel"
 import {Cancellation} from "velar/task"
+import {now} from "velar/time"
 import {all, field, integer, validator} from "velar/validation"
 
 /// WorldRuntime 是世界应用层的唯一公开门面。
@@ -21,10 +23,11 @@ export type WorldRuntime:
     findWorld: (worldId: string) -> Promise<WorldManifest?>
     requireWorld: (worldId: string) -> Promise<WorldManifest>
     worldContent: (worldId: string) -> Promise<readonly WorldContentSnapshot>
+    environment: (worldId: string, worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> Promise<readonly WorldEnvironmentSample>
     chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
     chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ChunkDelta>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly WorldChunkSnapshot>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
     editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
     /// 为长连接保留世界上下文；关闭租约后世界才重新具备自动淘汰资格。
@@ -40,7 +43,11 @@ export type WorldRuntimeSubscription:
 export type WorldRuntimeLease:
     manifest: readonly WorldManifest
     sequence: () -> number
+    environment: (worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> readonly WorldEnvironmentSample
     close: () -> Promise<null>
+
+/// 宿主为世界运行时提供权威 Unix 墙钟；确定性环境采样策略本身属于 world/model。
+export type WorldEnvironmentClock = () -> number
 
 export type WorldRuntimeOptions:
     /// 同时保留的完整世界上下文数量；忙碌世界在租约释放前不会被淘汰。
@@ -69,6 +76,7 @@ export def worldRuntime(
     store: WorldStore,
     content: ContentCatalog? = null,
     options: readonly WorldRuntimeOptions = defaultWorldRuntimeOptions,
+    environmentClock: WorldEnvironmentClock = now,
 ) -> WorldRuntime:
     const validatedOptions = validateWorldRuntimeOptions(options)
     const sessions = (
@@ -76,7 +84,7 @@ export def worldRuntime(
             ? worldSessionCache(store, activeWorldCapacity=validatedOptions.activeWorldCapacity, activeChunkCapacity=validatedOptions.activeChunkCapacity, activeOverrideCapacity=validatedOptions.activeOverrideCapacity)
             : worldSessionCache(store, content, validatedOptions.activeWorldCapacity, validatedOptions.activeChunkCapacity, validatedOptions.activeOverrideCapacity)
     )
-    const queries = worldChunkQueries(sessions)
+    const queries = worldChunkQueries(sessions, currentWorldMilliseconds)
     const listeners: Map<number, (batch: readonly BlockChangeBatch) -> null> = Map()
     let nextListenerId = 1
 
@@ -88,11 +96,16 @@ export def worldRuntime(
             try: listener(batch)
             catch _error: pass
 
-    const commands = worldBlockCommands(sessions, publishBlockChanges)
+    const commands = worldBlockCommands(sessions, publishBlockChanges, currentWorldMilliseconds)
     const creations: Map<string, Promise<WorldManifest>> = Map()
 
+    def currentWorldMilliseconds(manifest: readonly WorldManifest) -> number:
+        const worldMilliseconds = environmentClock() - manifest.worldTimeOriginMilliseconds
+        assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 else "World environment clock precedes the persisted world time origin"
+        return worldMilliseconds
+
     async def persistWorld(command: CreateWorld) -> WorldManifest:
-        const world = sessions.prepareNew(command)
+        const world = sessions.prepareNew(command, environmentClock())
         let remembered = false
         try:
             const existing = await store.manifests.find(world.manifest.id)
@@ -139,9 +152,19 @@ export def worldRuntime(
         try: return lease.world.contentSnapshot
         finally: await lease.close()
 
+    async def environment(worldId: string, worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
+        const lease = await sessions.require(worldId)
+        try:
+            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn)
+        finally: await lease.close()
+
     async def retainWorld(worldId: string) -> WorldRuntimeLease:
         const lease = await sessions.require(worldId)
-        return {manifest: lease.world.manifest, sequence: () => lease.world.sequence, close: lease.close}
+
+        def environment(worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
+            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn)
+
+        return {manifest: lease.world.manifest, sequence: () => lease.world.sequence, environment, close: lease.close}
 
     async def unloadWorld(worldId: string):
         await commands.drain(worldId)
@@ -174,6 +197,7 @@ export def worldRuntime(
         findWorld,
         requireWorld,
         worldContent,
+        environment,
         chunk: queries.chunk,
         chunks: queries.chunks,
         terrainChunks: queries.terrainChunks,

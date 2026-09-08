@@ -1,0 +1,178 @@
+import {ChunkPosition, chunkKey, requireChunkPosition} from "@openvoxel/world"
+
+/// `@openvoxel/renderer.ChunkPortalSummary` 在可见性策略内的纯数据投影。
+/// 保持本地结构类型可让单元测试不加载 Babylon 所属的 Web 运行时入口。
+export type PortalVisibilitySummary:
+    readonly empty: bool
+    readonly fullyOccluding: bool
+    readonly openFaces: number
+    readonly connectedFaces: number
+
+type PortalDirection:
+    readonly face: number
+    readonly opposite: number
+    readonly dx: number
+    readonly dy: number
+    readonly dz: number
+
+export type PortalVisibilityWorkspace:
+    rebuild: (candidates: readonly List<readonly ChunkPosition>, center: readonly ChunkPosition) -> null
+    visibleChunkKeys: (summaries: readonly Map<string, readonly PortalVisibilitySummary>) -> Set<string>
+
+const portalFaceCount = 6
+const portalDirections: readonly List<readonly PortalDirection> = [
+    {face: 0, opposite: 1, dx: -1, dy: 0, dz: 0},
+    {face: 1, opposite: 0, dx: 1, dy: 0, dz: 0},
+    {face: 2, opposite: 3, dx: 0, dy: -1, dz: 0},
+    {face: 3, opposite: 2, dx: 0, dy: 1, dz: 0},
+    {face: 4, opposite: 5, dx: 0, dy: 0, dz: -1},
+    {face: 5, opposite: 4, dx: 0, dy: 0, dz: 1},
+]
+
+const allPortalFaces = Math.pow(2, portalFaceCount) - 1
+
+def containsBit(mask: number, bit: number) -> bool: return ((mask / Math.pow(2, bit)).floor() % 2) == 1
+
+def connectedFaceMask(summary: readonly PortalVisibilitySummary, incomingFace: number) -> number:
+    let mask = 0
+    for direction in portalDirections:
+        if containsBit(summary.openFaces, direction.face) and containsBit(
+            summary.connectedFaces,
+            incomingFace * portalFaceCount + direction.face,
+        ): mask += Math.pow(2, direction.face)
+    return mask
+
+/// 候选 key、六邻接和几何连通只在视区或驻留拓扑改变时重建。摘要更新使用
+/// 整数邻接表、复用队列和代次缓冲重跑 reachability，不再为每次 Worker 提交
+/// 重建 Map、位置对象或访问集合。返回 Set 在下一次调用前有效。
+export def portalVisibilityWorkspace() -> PortalVisibilityWorkspace:
+    const candidateIndices: Map<string, number> = Map()
+    let candidateKeys: List<string> = []
+    let neighborIndices: List<number> = []
+    let centerIndex: number? = null
+    let topologyGeneration = 0
+    let reachabilityGeneration = 0
+    const geometryGenerations: List<number> = []
+    const emittedGenerations: List<number> = []
+    const emittedFaceMasks: List<number> = []
+    const visibleGenerations: List<number> = []
+    const geometryQueue: List<number> = []
+    const reachabilityQueue: List<number> = []
+    const visibleKeys: Set<string> = Set()
+
+    def ensureBuffers(size: number):
+        while geometryGenerations.size < size:
+            geometryGenerations.append(0)
+            emittedGenerations.append(0)
+            emittedFaceMasks.append(0)
+            visibleGenerations.append(0)
+
+    def rebuild(candidates: readonly List<readonly ChunkPosition>, center: readonly ChunkPosition):
+        requireChunkPosition(center)
+        candidateIndices.clear()
+        candidateKeys = []
+        const positions: List<readonly ChunkPosition> = []
+        for position in candidates:
+            requireChunkPosition(position)
+            const key = chunkKey(position)
+            if key in candidateIndices: continue
+            candidateIndices.set(key, positions.size)
+            candidateKeys.append(key)
+            positions.append(position)
+
+        ensureBuffers(positions.size)
+        neighborIndices = []
+        for position in positions:
+            for direction in portalDirections:
+                const neighborKey = chunkKey({
+                    x: position.x + direction.dx,
+                    y: position.y + direction.dy,
+                    z: position.z + direction.dz,
+                })
+                neighborIndices.append(candidateIndices.get(neighborKey) ?? -1)
+
+        topologyGeneration += 1
+        centerIndex = candidateIndices.get(chunkKey(center))
+        const start = centerIndex
+        if start == null: return
+        geometryGenerations[start] = topologyGeneration
+        let queueSize = 1
+        if geometryQueue.size == 0: geometryQueue.append(start)
+        else: geometryQueue[0] = start
+        let cursor = 0
+        while cursor < queueSize:
+            const index = geometryQueue[cursor]
+            cursor += 1
+            for face in range(portalFaceCount):
+                const neighborIndex = neighborIndices[index * portalFaceCount + face]
+                if neighborIndex < 0 or geometryGenerations[neighborIndex] == topologyGeneration: continue
+                geometryGenerations[neighborIndex] = topologyGeneration
+                if queueSize == geometryQueue.size: geometryQueue.append(neighborIndex)
+                else: geometryQueue[queueSize] = neighborIndex
+                queueSize += 1
+
+    def visibleChunkKeys(summaries: readonly Map<string, readonly PortalVisibilitySummary>) -> Set<string>:
+        visibleKeys.clear()
+        const start = centerIndex
+        if start == null:
+            for key in candidateKeys: visibleKeys.add(key)
+            return visibleKeys
+
+        reachabilityGeneration += 1
+        let queueSize = 0
+
+        def markVisible(index: number): visibleGenerations[index] = reachabilityGeneration
+
+        def emit(index: number, faces: number):
+            let emitted = emittedGenerations[index] == reachabilityGeneration ? emittedFaceMasks[index] : 0
+            for face in range(portalFaceCount):
+                const bit = Math.pow(2, face)
+                if not containsBit(faces, face) or containsBit(emitted, face): continue
+                const step = index * portalFaceCount + face
+                if queueSize == reachabilityQueue.size: reachabilityQueue.append(step)
+                else: reachabilityQueue[queueSize] = step
+                queueSize += 1
+                emitted += bit
+            emittedGenerations[index] = reachabilityGeneration
+            emittedFaceMasks[index] = emitted
+
+        markVisible(start)
+        const centerSummary = summaries.get(candidateKeys[start])
+        if centerSummary == null: emit(start, allPortalFaces)
+        else if not centerSummary.fullyOccluding: emit(start, centerSummary.openFaces)
+
+        let cursor = 0
+        while cursor < queueSize:
+            const step = reachabilityQueue[cursor]
+            cursor += 1
+            const neighborIndex = neighborIndices[step]
+            if neighborIndex < 0: continue
+            markVisible(neighborIndex)
+
+            const summary = summaries.get(candidateKeys[neighborIndex])
+            if summary == null:
+                emit(neighborIndex, allPortalFaces)
+                continue
+            const face = step % portalFaceCount
+            const incomingFace = portalDirections[face].opposite
+            if summary.fullyOccluding or not containsBit(summary.openFaces, incomingFace): continue
+            emit(neighborIndex, connectedFaceMask(summary, incomingFace))
+
+        for index in range(candidateKeys.size):
+            if geometryGenerations[index] != topologyGeneration: markVisible(index)
+            if visibleGenerations[index] == reachabilityGeneration: visibleKeys.add(candidateKeys[index])
+        return visibleKeys
+
+    return {rebuild, visibleChunkKeys}
+
+/// 在候选 Chunk 集内做保守的六面 Portal 洪泛。摘要尚未生成的 Chunk 按完全
+/// 连通处理，避免异步构网阶段出现错误空洞；已知实心 Chunk 自身可见但会终止
+/// 传播。调用方负责把碰撞安全邻域与结果并集，本策略不拥有驻留半径。
+export def portalVisibleChunkKeys(
+    candidates: readonly List<readonly ChunkPosition>,
+    summaries: readonly Map<string, readonly PortalVisibilitySummary>,
+    center: readonly ChunkPosition,
+) -> Set<string>:
+    const workspace = portalVisibilityWorkspace()
+    workspace.rebuild(candidates, center)
+    return workspace.visibleChunkKeys(summaries)

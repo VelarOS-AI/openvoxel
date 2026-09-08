@@ -1,18 +1,24 @@
 import {localBackend} from "@openvoxel/client"
 import {CreateWorldRequest} from "@openvoxel/protocol"
+import {WorldGameMode} from "@openvoxel/world"
 import {Head, navigate} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
-import {advancedButtonLook, advancedFieldsLook, appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, createIntroLook, createLayoutLook, displayTitleLook, errorLook, fieldLook, formActionsLook, formPanelLook, labelLook, presetGridLook, presetImageLook, presetLabelLook, presetLook, primaryButtonLook, secondaryButtonLook, segmentLook, segmentButtonLook, selectedPresetLook, selectedSegmentButtonLook, subtitleLook, topBarLook, worldInfoLook} from "../look.vel"
-import {SavedWorld, SavedWorldMode, WorldPreset, worldIdFromName} from "../worlds/saved-world.vel"
+import {asyncPageLifetime, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+import {displayTitleLook, errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
+import {advancedButtonLook, advancedFieldsLook, createIntroLook, createLayoutLook, formPanelLook, presetGridLook, presetImageLook, presetLabelLook, presetLook, segmentLook, segmentButtonLook, selectedPresetLook, selectedSegmentButtonLook} from "../styles/create-world.vel"
+import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
+import {SavedWorld, WorldPreset, worldIdFromName} from "../worlds/saved-world.vel"
 import {rememberWorld} from "../worlds/world-library.vel"
 import {presetName, worldCover} from "../worlds/world-presentation.vel"
+import {worldRoute} from "../worlds/world-route.vel"
 
 export component CreateWorldPage:
     const backend = localBackend()
+    const lifetime = asyncPageLifetime()
     state name = "New World"
     state seed = ""
-    state mode: SavedWorldMode = SavedWorldMode.survival
+    state mode: WorldGameMode = WorldGameMode.survival
     state preset: WorldPreset = WorldPreset.meadow
     state advancedOpen = false
     state worldId = ""
@@ -20,15 +26,16 @@ export component CreateWorldPage:
 
     def selectPreset(value: WorldPreset): preset = value
 
-    def selectSurvival(): mode = SavedWorldMode.survival
+    def selectSurvival(): mode = WorldGameMode.survival
 
-    def selectCreative(): mode = SavedWorldMode.creative
+    def selectCreative(): mode = WorldGameMode.creative
 
     def toggleAdvanced(): advancedOpen = not advancedOpen
 
     def cancel(): navigate("/")
 
     action createWorld():
+        const generation = lifetime.begin()
         failure = ""
         try:
             const cleanName = name.trim()
@@ -36,17 +43,21 @@ export component CreateWorldPage:
             const requestedId = worldId.trim()
             const id = requestedId.isBlank() ? worldIdFromName(cleanName) : requestedId
             const cleanSeed = seed.trim().isBlank() ? id : seed.trim()
-            const command: CreateWorldRequest = {id, name: cleanName, seed: cleanSeed}
+            const command: CreateWorldRequest = {id, name: cleanName, seed: cleanSeed, mode}
             const created = await backend.createWorld(command)
+            if not lifetime.owns(generation): return
             rememberWorld(SavedWorld.from(created, {
-                mode,
+                mode: created.mode,
                 preset,
                 lastPlayed: "Created just now",
             }))
-            navigate(f"/world/{created.id}")
-        catch error: failure = error.message
+            navigate(worldRoute(created.id))
+        catch error:
+            if lifetime.owns(generation): failure = error.message
 
-    @cleanup: detach backend.close()
+    @cleanup:
+        lifetime.dispose()
+        detach closeBestEffort([backend])
 
     def presetButton(value: WorldPreset, icon: IconName) -> WebNode:
         return <button
@@ -101,11 +112,11 @@ export component CreateWorldPage:
                     />
                 </label>
                 <div look={segmentLook} aria-label="Game mode">
-                    <button type="button" look={mode == SavedWorldMode.survival ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={mode == SavedWorldMode.survival} data-mode="survival">
+                    <button type="button" look={mode == WorldGameMode.survival ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={mode == WorldGameMode.survival} data-mode="survival">
                         <Icon name={IconName.shieldHalved} />
                         Survival
                     </button>
-                    <button type="button" look={mode == SavedWorldMode.creative ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={mode == SavedWorldMode.creative} data-mode="creative">
+                    <button type="button" look={mode == WorldGameMode.creative ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={mode == WorldGameMode.creative} data-mode="creative">
                         <Icon name={IconName.wandMagicSparkles} />
                         Creative
                     </button>

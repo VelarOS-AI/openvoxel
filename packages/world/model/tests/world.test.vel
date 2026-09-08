@@ -2,8 +2,9 @@ import {expect} from "velar/test"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, blockIndex, chunkBlock, chunkPaletteTemplate, emptyChunk, emptyPaletteChunk, setChunkBlock} from "../src/chunk/chunk.vel"
+import {maximumWorldEnvironmentMilliseconds} from "../src/environment/environment.vel"
 import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/spatial/coordinates.vel"
-import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
+import {WorldGameMode, WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
 import {checkWorldCoordinates} from "./support/property-check.vel"
 
 const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
@@ -18,6 +19,8 @@ def manifest() -> WorldManifest:
         id: "world-model",
         name: "World Model",
         seed: "openvoxel",
+        mode: WorldGameMode.survival,
+        worldTimeOriginMilliseconds: 1_000_000,
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: builtinIdentities.generators.survival,
@@ -62,8 +65,16 @@ test "three dimensional lookup crosses chunk boundaries":
 
 test "world manifests carry their complete runtime registry":
     const world = manifest()
+    expect(world.formatVersion).toBe(5)
+    expect(world.worldTimeOriginMilliseconds).toBe(1_000_000)
     expect(world.blockRegistry.states.size).toBe(183)
     expect(world.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
+
+test "world manifests reject invalid world time origins":
+    const world = manifest()
+    expect(() => validateWorldManifest(WorldManifest.from(world, {worldTimeOriginMilliseconds: -1}))).toThrow()
+    expect(() => validateWorldManifest(WorldManifest.from(world, {worldTimeOriginMilliseconds: 1.5}))).toThrow()
+    expect(() => validateWorldManifest(WorldManifest.from(world, {worldTimeOriginMilliseconds: maximumWorldEnvironmentMilliseconds + 1}))).toThrow()
 
 test "chunk palettes store UInt32 runtime ids behind UInt16 local indices":
     const chunk: Chunk = emptyChunk({x: 0, y: 0, z: 0}, 16, airBlock)

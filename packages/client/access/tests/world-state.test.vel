@@ -1,13 +1,15 @@
 import {expect} from "velar/test"
-import {RealtimeBlockChange, RealtimeBlockOverride, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldReadyEvent, protocolVersion} from "@openvoxel/protocol"
-import {BlockPosition, ChunkPosition, LocalPosition, blockIndex} from "@openvoxel/world"
+import {BlockEditsAppliedEvent, RealtimeBlockChange, RealtimeBlockOverride, RealtimeChunkDelta, WorldBlocksChangedEvent, WorldReadyEvent, protocolVersion} from "@openvoxel/protocol"
+import {BlockPosition, ChunkPosition, LocalPosition, WorldEnvironmentSample, WorldPrecipitationKind, blockIndex} from "@openvoxel/world"
+import {uint16Buffer} from "velar/binary"
+import {ClientTerrainBatchSnapshot, ClientTerrainChunkSnapshot} from "../src/terrain-snapshot.vel"
 import {clientWorldState} from "../src/world-state.vel"
 
 const worldId = "client-state"
 const chunkPosition: ChunkPosition = {x: 0, y: 1, z: 0}
 
-def terrain(position: readonly ChunkPosition = chunkPosition) -> TerrainChunkResponse:
-    const indices = range(64).map(_index => 0)
+def terrain(position: readonly ChunkPosition = chunkPosition) -> ClientTerrainChunkSnapshot:
+    const indices = uint16Buffer(64)
     indices[0] = 1
     return {
         position,
@@ -16,7 +18,21 @@ def terrain(position: readonly ChunkPosition = chunkPosition) -> TerrainChunkRes
         indices,
     }
 
-def ready(sequence: number = 0) -> WorldReadyEvent: return {event: "world.ready", worldId, protocolVersion, sequence}
+const environment: readonly WorldEnvironmentSample = {
+    worldMilliseconds: 120000,
+    samplePosition: {x: 0, y: 64, z: 0},
+    timeOfDay: 0.1,
+    moonPhase: 0,
+    cloudiness: 0,
+    precipitation: WorldPrecipitationKind.clear,
+    precipitationIntensity: 0,
+    windX: 0,
+    windZ: 0,
+    lightning: null,
+}
+
+def ready(sequence: number = 0) -> WorldReadyEvent:
+    return {event: "world.ready", worldId, protocolVersion, sequence, environment}
 
 def delta(revision: number, overrides: readonly List<readonly RealtimeBlockOverride>) -> RealtimeChunkDelta:
     return {position: chunkPosition, revision, overrides}
@@ -28,7 +44,20 @@ def change(
     local: readonly LocalPosition,
     runtimeId: number,
 ) -> WorldBlocksChangedEvent:
-    const item: RealtimeBlockChange = {
+    return {
+        event: "blocks.changed",
+        worldId,
+        sequence,
+        changes: [blockChange(revision, position, local, runtimeId)],
+    }
+
+def blockChange(
+    revision: number,
+    position: readonly BlockPosition,
+    local: readonly LocalPosition,
+    runtimeId: number,
+) -> RealtimeBlockChange:
+    return {
         position,
         chunk: chunkPosition,
         local,
@@ -36,12 +65,11 @@ def change(
         blockStateRuntimeId: runtimeId,
         revision,
     }
-    return {event: "blocks.changed", worldId, sequence, changes: [item]}
 
 test "client world state composes fixed terrain with complete deltas and ordered changes":
     const state = clientWorldState(worldId, 4)
     state.beginConnection(ready())
-    const response: TerrainChunkBatchResponse = {worldId, chunks: [terrain()]}
+    const response: ClientTerrainBatchSnapshot = {worldId, chunks: [terrain()]}
     const chunk = state.rememberTerrain(response)[0]
     expect(chunk.blockAtIndex(0)).toBe(20)
     expect(chunk.blockAtIndex(1)).toBe(10)
@@ -59,6 +87,135 @@ test "client world state composes fixed terrain with complete deltas and ordered
     expect(state.sequence()).toBe(1)
     expect(chunk.revision()).toBe(2)
     expect(state.block({x: 2, y: 4, z: 0})).toBe(40)
+    expect(state.requiresResync()).toBe(false)
+
+test "a newly loaded Chunk publishes its first complete synchronization even when the delta is unchanged":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(f"{event.kind}:{event.positions.size}"))
+    state.beginConnection(ready())
+    state.rememberTerrain({worldId, chunks: [terrain()]})
+
+    const unchanged = {
+        event: "chunks.synced",
+        requestId: "sync-initial-empty",
+        worldId,
+        chunks: [delta(0, [])],
+    }
+    state.replaceDeltas(unchanged)
+    state.replaceDeltas(unchanged)
+
+    expect(events).toEqual(["terrain_loaded:1", "chunks_synchronized:1"])
+    subscription.close()
+
+test "an acknowledgement cannot replay the broadcast for the same sequence":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(str(event.kind)))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    const broadcast = change(1, 1, {x: 1, y: 4, z: 0}, {x: 1, y: 0, z: 0}, 30)
+    state.applyChanges(broadcast)
+    const acknowledgement = BlockEditsAppliedEvent.from(broadcast, {
+        event: "blocks.applied",
+        requestId: "apply-1",
+        worldId,
+    })
+    state.applyAcknowledgement(acknowledgement)
+
+    expect(state.sequence()).toBe(1)
+    expect(chunk.revision()).toBe(1)
+    expect(events).toEqual(["terrain_loaded", "blocks_changed"])
+    subscription.close()
+
+test "a broadcast cannot replay an acknowledgement for the same sequence":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(str(event.kind)))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    const broadcast = change(1, 1, {x: 1, y: 4, z: 0}, {x: 1, y: 0, z: 0}, 30)
+    const acknowledgement = BlockEditsAppliedEvent.from(broadcast, {
+        event: "blocks.applied",
+        requestId: "apply-1",
+        worldId,
+    })
+    state.applyAcknowledgement(acknowledgement)
+    state.applyChanges(broadcast)
+
+    expect(state.sequence()).toBe(1)
+    expect(chunk.revision()).toBe(1)
+    expect(events).toEqual(["terrain_loaded", "blocks_changed"])
+    subscription.close()
+
+test "one sequence applies every change in its complete batch before becoming idempotent":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(f"{event.kind}:{event.changes.size}"))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    const event: WorldBlocksChangedEvent = {
+        event: "blocks.changed",
+        worldId,
+        sequence: 1,
+        changes: [
+            blockChange(1, {x: 1, y: 4, z: 0}, {x: 1, y: 0, z: 0}, 30),
+            blockChange(1, {x: 2, y: 4, z: 0}, {x: 2, y: 0, z: 0}, 40),
+        ],
+    }
+    state.applyChanges(event)
+    state.applyChanges(event)
+
+    expect(state.sequence()).toBe(1)
+    expect(chunk.revision()).toBe(1)
+    expect(state.block({x: 1, y: 4, z: 0})).toBe(30)
+    expect(state.block({x: 2, y: 4, z: 0})).toBe(40)
+    expect(events).toEqual(["terrain_loaded:0", "blocks_changed:2"])
+    subscription.close()
+
+test "a delayed older synchronization cannot roll back a newer Chunk revision":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(str(event.kind)))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-newer",
+        worldId,
+        chunks: [delta(2, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 40}])],
+    })
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-delayed-older",
+        worldId,
+        chunks: [delta(1, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}])],
+    })
+
+    expect(chunk.revision()).toBe(2)
+    expect(chunk.blockAtIndex(blockIndex({x: 1, y: 0, z: 0}, 4))).toBe(40)
+    expect(events).toEqual(["terrain_loaded", "chunks_synchronized"])
+    subscription.close()
+
+test "seasonal synchronization rejects older epochs and emits only changed block snapshots":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    state.subscribeChanges(event => events.append(str(event.kind)))
+    state.beginConnection(ready())
+    const chunk = state.rememberTerrain({worldId, chunks: [terrain()]})[0]
+    const icy = RealtimeChunkDelta.from(delta(0, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 40}]), {ecologyEpoch: 20})
+    state.replaceDeltas({event: "chunks.synced", requestId: "winter", worldId, chunks: [icy]})
+    state.replaceDeltas({event: "chunks.synced", requestId: "same-surface", worldId, chunks: [RealtimeChunkDelta.from(icy, {ecologyEpoch: 21})]})
+    state.replaceDeltas({event: "chunks.synced", requestId: "old-season", worldId, chunks: [RealtimeChunkDelta.from(delta(0, []), {ecologyEpoch: 19})]})
+    expect(chunk.blockAtIndex(1)).toBe(40)
+    expect(events).toEqual(["terrain_loaded", "chunks_synchronized"])
+    state.replaceDeltas({event: "chunks.synced", requestId: "spring", worldId, chunks: [RealtimeChunkDelta.from(delta(0, []), {ecologyEpoch: 22})]})
+    expect(chunk.blockAtIndex(1)).toBe(10)
+    expect(events).toEqual(["terrain_loaded", "chunks_synchronized", "chunks_synchronized"])
+    state.beginConnection(ready())
+    state.replaceDeltas({event: "chunks.synced", requestId: "stale-reconnect", worldId, chunks: [RealtimeChunkDelta.from(delta(0, []), {ecologyEpoch: 19})]})
+    expect(state.requiresResync()).toBe(true)
+    state.replaceDeltas({event: "chunks.synced", requestId: "fresh-reconnect", worldId, chunks: [RealtimeChunkDelta.from(delta(0, []), {ecologyEpoch: 22})]})
     expect(state.requiresResync()).toBe(false)
 
 test "client world state detects gaps and completes a multi-batch reconnect sync":
@@ -90,6 +247,39 @@ test "client world state detects gaps and completes a multi-batch reconnect sync
     expect(state.sequence()).toBe(7)
     expect(state.requiresResync()).toBe(true)
 
+test "a new connection marks tracked chunks unsafe until each synchronization completes":
+    const state = clientWorldState(worldId, 4)
+    const events: List<string> = []
+    const subscription = state.subscribeChanges(event => events.append(f"{event.kind}:{event.positions.size}"))
+    state.beginConnection(ready())
+    state.rememberTerrain({worldId, chunks: [terrain()]})
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-initial",
+        worldId,
+        chunks: [delta(2, [])],
+    })
+
+    state.beginConnection(ready(7))
+    expect(state.requiresResync()).toBe(true)
+    expect(events[2]).toBe("synchronization_started:1")
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-reconnect",
+        worldId,
+        chunks: [delta(1, [])],
+    })
+    expect(state.requiresResync()).toBe(true)
+    state.replaceDeltas({
+        event: "chunks.synced",
+        requestId: "sync-current-reconnect",
+        worldId,
+        chunks: [delta(2, [])],
+    })
+    expect(state.requiresResync()).toBe(false)
+    expect(events[3]).toBe("chunks_synchronized:1")
+    subscription.close()
+
 test "client world state snapshots composed blocks and publishes committed invalidations":
     const state = clientWorldState(worldId, 4)
     const events: List<string> = []
@@ -107,6 +297,8 @@ test "client world state snapshots composed blocks and publishes committed inval
     expect(snapshot[0]).toBe(20)
     expect(snapshot[blockIndex({x: 1, y: 0, z: 0}, 4)]).toBe(30)
     expect(snapshot[blockIndex({x: 2, y: 0, z: 0}, 4)]).toBe(40)
+    snapshot[0] = 99
+    expect(chunk.blockAtIndex(0)).toBe(20)
     expect(events.size).toBe(3)
     expect(events[0]).toBe("terrain_loaded")
     expect(events[1]).toBe("chunks_synchronized")

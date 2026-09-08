@@ -41,7 +41,7 @@ export def compileModBlockCatalog(owner: string, catalogVersion: string, sourceB
         reservedRuntimeIds: [],
         states: mappings,
     }
-    return assembleBlockCatalog(3, catalogVersion, sourceBlocks, stateMap)
+    return assembleBlockCatalog(4, catalogVersion, sourceBlocks, stateMap)
 
 /// 生成世界内容目录可直接消费的 Mod contribution。
 export def compileModBlockCatalogContribution(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>) -> BlockCatalogContribution:

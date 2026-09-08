@@ -1,7 +1,7 @@
 import {WorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
 import {TerrainSample} from "@openvoxel/world-generation"
-import {Chunk, ChunkPosition, Coordinate2, chunkKey, maximumWorldCoordinate, setChunkBlock} from "@openvoxel/world"
-import {ChunkDelta} from "./contracts.vel"
+import {Chunk, ChunkPosition, Coordinate2, WorldManifest, chunkKey, maximumWorldCoordinate, setChunkBlock} from "@openvoxel/world"
+import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
 import {maximumChunkBatchSize} from "./runtime-limits.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
@@ -15,20 +15,20 @@ export type WorldChunkQueries:
     /// 只返回由世界种子和生成器决定的固定地形，不叠加玩家覆盖。
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
     /// 返回与固定地形分离的当前热状态；缺少覆盖的坐标也会返回 revision 0。
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ChunkDelta>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly WorldChunkSnapshot>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
 
 /// 把一个持久化增量覆盖到刚生成的基础 Chunk 上。
 /// 每个 runtimeId 都先经过当前世界注册表验证，损坏或不属于该世界的数据会在
 /// 存储边界附近立即失败，不会悄悄进入后续渲染或网络响应。
-def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: readonly ChunkDelta):
+def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: readonly WorldChunkSnapshot):
     assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
     for entry in delta.overrides:
         requireWorldBlockStateRuntimeId(blocks.index, entry.blockStateRuntimeId)
         setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
     chunk.revision = delta.revision
 
-export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
+export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (manifest: readonly WorldManifest) -> number) -> WorldChunkQueries:
     async def checkpoint(cancellation: Cancellation?):
         if cancellation != null: await cancellation.checkpoint()
 
@@ -68,12 +68,12 @@ export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> readonly List<readonly ChunkDelta>:
+    ) -> readonly List<readonly WorldChunkSnapshot>:
         await checkpoint(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)
         try:
-            const deltas = await lease.world.state.deltas(positions)
+            const deltas = await lease.world.ecology.deltas(positions, worldMilliseconds(lease.world.manifest))
             await checkpoint(cancellation)
             return deltas
         finally: await lease.close()
@@ -86,7 +86,7 @@ export def worldChunkQueries(sessions: WorldSessionCache) -> WorldChunkQueries:
         const lease = await sessions.require(worldId)
         try:
             const world = lease.world
-            const stored = await world.state.deltas(positions)
+            const stored = await world.ecology.deltas(positions, worldMilliseconds(world.manifest))
             assert stored.size == positions.size else "Active world state returned an incomplete Chunk batch"
 
             const output: List<Chunk> = []

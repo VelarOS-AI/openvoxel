@@ -4,7 +4,7 @@
 
 import {monotonic} from "velar/time"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {WorldGameMode, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
 import {defaultGenerator, defaultGeneratorHash, worldGenerator} from "../src/index.vel"
 
 type BenchmarkRun:
@@ -16,6 +16,8 @@ type BenchmarkRun:
         id: "benchmark",
         name: "Benchmark",
         seed: "openvoxel-benchmark",
+        mode: WorldGameMode.survival,
+        worldTimeOriginMilliseconds: 0,
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,

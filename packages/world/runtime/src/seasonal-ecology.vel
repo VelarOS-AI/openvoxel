@@ -1,0 +1,79 @@
+import {BlockRegistry, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {SeasonalSurfaceKind, WorldGenerator} from "@openvoxel/world-generation"
+import {ChunkPosition, blockIndex, chunkKey, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds} from "@openvoxel/world"
+import {ActiveWorldState} from "./active-world-state.vel"
+import {BlockOverride, StoredChunkDelta} from "./contracts.vel"
+import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
+
+export type WorldSeasonalEcology:
+    deltas: (positions: readonly List<readonly ChunkPosition>, worldMilliseconds: number) -> Promise<readonly List<readonly WorldChunkSnapshot>>
+
+/// 生态层是确定性地形和持久化玩家覆盖之间的可重建状态。只有查询时间槽发生
+/// 变化才会改变自然冰雪；玩家覆盖最后应用，玩家放置的冰与雪不参与融化。
+export def worldSeasonalEcology(
+    seed: string,
+    edge: number,
+    minimumWorldY: number,
+    maximumWorldY: number,
+    generator: WorldGenerator,
+    registry: readonly BlockRegistry,
+    state: ActiveWorldState,
+) -> WorldSeasonalEcology:
+    const shelterBlocks: Set<number> = Set()
+    for block in registry.states():
+        if resolveBlockShapeBoxes(block.physics.collision, block.properties).size > 0:
+            shelterBlocks.add(block.runtimeId)
+
+    async def deltas(positions: readonly List<readonly ChunkPosition>, worldMilliseconds: number) -> readonly List<readonly WorldChunkSnapshot>:
+        const epoch = worldEcologyEpoch(worldMilliseconds)
+        const candidates = positions.map(position => generator.seasonalSurfaces(position))
+        const required: Map<string, readonly ChunkPosition> = Map()
+        for position in positions: required.set(chunkKey(position), position)
+        for position, index in positions:
+            if candidates[index].size == 0: continue
+            // 同一水平列的全部持久化修改一次批量读取；玩家屋顶即使不在客户端
+            // 驻留窗口内，也会阻挡屋内积雪。缓存命中不会重复访问存储。
+            const minimumChunkY = Math.max((minimumWorldY / edge).floor(), position.y - 1)
+            const maximumChunkY = (maximumWorldY / edge).floor()
+            for y in range(minimumChunkY, maximumChunkY + 1):
+                const upper = {x: position.x, y, z: position.z}
+                required.set(chunkKey(upper), upper)
+        const stored = await state.deltas(required.values())
+        const byChunk: Map<string, readonly StoredChunkDelta> = Map()
+        const topShelter: Map<string, number> = Map()
+        const allOverrides: Map<string, number> = Map()
+        for delta in stored:
+            byChunk.set(chunkKey(delta.position), delta)
+            for entry in delta.overrides:
+                const x = delta.position.x * edge + entry.position.x
+                const y = delta.position.y * edge + entry.position.y
+                const z = delta.position.z * edge + entry.position.z
+                allOverrides.set(f"{x}:{y}:{z}", entry.blockStateRuntimeId)
+                if entry.blockStateRuntimeId in shelterBlocks:
+                    const key = f"{x}:{z}"
+                    topShelter.set(key, Math.max(topShelter.get(key) ?? -Math.infinity, y))
+        const output: List<readonly WorldChunkSnapshot> = []
+        for position, index in positions:
+            const delta = byChunk.get(chunkKey(position))
+            assert delta != null else "Seasonal ecology lost the requested player delta"
+            if candidates[index].size == 0:
+                output.append(WorldChunkSnapshot.from(delta, {ecologyEpoch: epoch}))
+                continue
+            const combined: Map<number, readonly BlockOverride> = Map()
+            for candidate in candidates[index]:
+                const x = position.x * edge + candidate.position.x
+                const y = position.y * edge + candidate.position.y
+                const z = position.z * edge + candidate.position.z
+                const climate = worldClimateAt(seed, epoch * worldEcologyEpochMilliseconds, {x, y, z})
+                const supportOverride = allOverrides.get(f"{x}:{y - 1}:{z}")
+                const supportPresent = candidate.kind == SeasonalSurfaceKind.water or supportOverride == null or supportOverride in shelterBlocks
+                const exposed = candidate.exposed and (topShelter.get(f"{x}:{z}") ?? -Math.infinity) < y and supportPresent
+                const cold = exposed and (candidate.kind == SeasonalSurfaceKind.water ? climate.frozenWater : climate.snowCover >= 0.2)
+                const runtimeId = cold ? candidate.coldBlockStateRuntimeId : candidate.warmBlockStateRuntimeId
+                if runtimeId != candidate.baselineBlockStateRuntimeId:
+                    combined.set(blockIndex(candidate.position, edge), {position: candidate.position, blockStateRuntimeId: runtimeId})
+            for entry in delta.overrides: combined.set(blockIndex(entry.position, edge), entry)
+            output.append({position, revision: delta.revision, ecologyEpoch: epoch, overrides: combined.values().sorted(by=entry => blockIndex(entry.position, edge))})
+        return output
+
+    return {deltas}

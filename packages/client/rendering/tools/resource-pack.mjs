@@ -27,6 +27,7 @@ const bankRoles = ["opaque", "cutout", "translucent", "fluid"];
 const textureChannels = ["albedo", "normal", "material", "emissive"];
 const maximumTextureBankChannelBytes = 16 * 1024 * 1024;
 const maximumClientTextureResidentBytes = 128 * 1024 * 1024;
+const maximumEnvironmentImageSize = 2048;
 
 function requiredResources(blockCatalog) {
   const resources = {
@@ -58,15 +59,18 @@ function textureKeys(render) {
   ].filter((key) => key != null))];
 }
 
-function bankRole(render) {
-  if (render.model === "openvoxel:model/block/fluid") return "fluid";
+function bankRole(render, modelByKey) {
+  const model = modelByKey.get(render.model);
+  if (model == null) throw new Error(`Rendered component profile references unknown model ${render.model}`);
+  if (model.kind === "fluid") return "fluid";
   if (bankRoles.includes(render.layer)) return render.layer;
   throw new Error(`Rendered component profile has unsupported layer ${render.layer}`);
 }
 
-function textureBankPlan(blockCatalog, animations, materials) {
+export function planTextureBanks(blockCatalog, animations, materials, models) {
   const animationByKey = new Map(animations.map((animation) => [animation.key, animation]));
   const materialByKey = new Map(materials.map((material) => [material.key, material]));
+  const modelByKey = new Map(models.map((model) => [model.key, model]));
   const assignments = new Map();
   const textureAlphaCutoffs = new Map();
   const assign = (key, role, alphaCutoff) => {
@@ -85,7 +89,7 @@ function textureBankPlan(blockCatalog, animations, materials) {
   for (const profile of blockCatalog.catalog.componentProfiles) {
     const render = profile.render;
     if (render.model == null) continue;
-    const role = bankRole(render);
+    const role = bankRole(render, modelByKey);
     let alphaCutoff = null;
     if (role === "cutout") {
       const material = materialByKey.get(render.material);
@@ -124,6 +128,101 @@ function worldContentHash(blockCatalog, generatorCatalog) {
 
 function dataUrl(type, bytes) {
   return `data:${type};base64,${bytes.toString("base64")}`;
+}
+
+async function loadEnvironmentImage(root, file, label, shape) {
+  const bytes = await readFile(resolveInside(root, file, label));
+  const metadata = await sharp(bytes).metadata();
+  if (metadata.format !== "webp" || metadata.width == null || metadata.height == null) {
+    throw new Error(`${label} must be a WebP image`);
+  }
+  if (metadata.width > maximumEnvironmentImageSize || metadata.height > maximumEnvironmentImageSize) {
+    throw new RangeError(`${label} must not exceed ${maximumEnvironmentImageSize} pixels on either axis`);
+  }
+  if (shape === "square" && metadata.width !== metadata.height) {
+    throw new RangeError(`${label} must be square`);
+  }
+  if (shape === "portrait" && metadata.height < metadata.width) {
+    throw new RangeError(`${label} height must be at least its width`);
+  }
+  return {path: file, bytes, width: metadata.width, height: metadata.height};
+}
+
+function environmentTextureMemory(sourceImages) {
+  const decodedRgbaBytes = sourceImages.reduce(
+    (total, image) => total + image.width * image.height * 4,
+    0,
+  );
+  const encodedHeapBytes = sourceImages.reduce(
+    (total, image) => total + Math.floor((image.bytes.byteLength + 2) / 3) * 4 * 2,
+    0,
+  );
+  return {
+    imageCount: sourceImages.length,
+    decodedRgbaBytes,
+    gpuBytes: decodedRgbaBytes,
+    encodedHeapBytes,
+    residentBytes: decodedRgbaBytes + encodedHeapBytes,
+  };
+}
+
+export function requireClientTextureMemoryBudget(bankMemories, environmentMemory) {
+  const bankGpuBytes = bankMemories.reduce((total, memory) => total + memory.gpuBytes, 0);
+  const bankResidentBytes = bankMemories.reduce((total, memory) => total + memory.residentBytes, 0);
+  const gpuBytes = bankGpuBytes + environmentMemory.gpuBytes;
+  const estimatedResidentBytes = bankResidentBytes + environmentMemory.residentBytes;
+  if (estimatedResidentBytes > maximumClientTextureResidentBytes) {
+    throw new RangeError(`Client resource pack needs an estimated ${estimatedResidentBytes} resident texture bytes; the limit is ${maximumClientTextureResidentBytes}`);
+  }
+  return {
+    maximumResidentBytes: maximumClientTextureResidentBytes,
+    gpuBytes,
+    estimatedResidentBytes,
+  };
+}
+
+export async function loadEnvironmentResources(root, environment) {
+  const moonKeys = environment.sky.moons.map((_file, index) => `moon-${index}`);
+  const definitions = [
+    {key: "sun", file: environment.sky.sun, label: "Environment sky sun", shape: "square"},
+    {key: "glow", file: environment.sky.glow, label: "Environment sky glow", shape: "square"},
+    {key: "star", file: environment.sky.star, label: "Environment sky star", shape: "square"},
+    ...environment.sky.moons.map((file, index) => ({
+      key: moonKeys[index],
+      file,
+      label: `Environment sky moon ${index + 1}`,
+      shape: "square",
+    })),
+    {key: "clouds", file: environment.clouds.texture, label: "Environment clouds texture", shape: "square"},
+    {key: "rain", file: environment.precipitation.rain, label: "Environment precipitation rain", shape: "portrait"},
+    {key: "rain-splash", file: environment.precipitation.rainSplash, label: "Environment precipitation rain splash", shape: "square"},
+    {key: "snow", file: environment.precipitation.snow, label: "Environment precipitation snow", shape: "square"},
+  ];
+  const sourceImages = await Promise.all(definitions.map(async ({file, label, shape}) => (
+    loadEnvironmentImage(root, file, label, shape)
+  )));
+  const memory = environmentTextureMemory(sourceImages);
+  requireClientTextureMemoryBudget([], memory);
+  const imageByKey = new Map(definitions.map(({key}, index) => [key, sourceImages[index]]));
+  const imageUrl = (key) => dataUrl("image/webp", imageByKey.get(key).bytes);
+  return {
+    artifact: {
+      sky: {
+        sunDataUrl: imageUrl("sun"),
+        glowDataUrl: imageUrl("glow"),
+        starDataUrl: imageUrl("star"),
+        moonDataUrls: moonKeys.map(imageUrl),
+      },
+      clouds: {textureDataUrl: imageUrl("clouds")},
+      precipitation: {
+        rainDataUrl: imageUrl("rain"),
+        rainSplashDataUrl: imageUrl("rain-splash"),
+        snowDataUrl: imageUrl("snow"),
+      },
+    },
+    sourceImages,
+    memory,
+  };
 }
 
 function base64(bytes) {
@@ -167,12 +266,20 @@ function textureArrayMemory(levels, layerCount) {
 
 /**
  * Builds the content identity for an authored resource pack and its generated outputs.
- * YAML object key order and source-file or mapping enumeration order do not affect the
- * result; authored list order remains significant because it can change layout or animation.
+ * YAML object key order and unordered catalog/source enumeration do not affect the result;
+ * semantically ordered variant, layer, and animation lists remain significant.
  */
 export function computeResourceHash({manifest, catalogs, sourceImages, bankAssignments, payload, bankChannels}) {
+  const normalizedManifest = manifest.textureCatalogs == null
+    ? manifest
+    : {...manifest, textureCatalogs: [...manifest.textureCatalogs].sort(compareText)};
   const normalizedCatalogs = catalogs
-    .map(({file, document}) => ({file, document}))
+    .map(({file, document}) => ({
+      file,
+      document: document.textures == null
+        ? document
+        : {...document, textures: [...document.textures].sort((left, right) => compareText(left.key, right.key))},
+    }))
     .sort((left, right) => compareText(left.file, right.file));
   const normalizedSourceImages = sourceImages
     .map(({path, bytes}) => ({path, sha256: sha256([bytes])}))
@@ -189,7 +296,7 @@ export function computeResourceHash({manifest, catalogs, sourceImages, bankAssig
   return sha256([stableJson({
     identityVersion: 2,
     source: {
-      manifest,
+      manifest: normalizedManifest,
       catalogs: normalizedCatalogs,
       images: normalizedSourceImages,
     },
@@ -207,7 +314,7 @@ export async function buildResourcePack() {
     readFile(blockCatalogPath, "utf8"),
     readFile(generatorCatalogPath, "utf8"),
   ]);
-  const {manifest, owner} = source;
+  const {manifest, owner, environment} = source;
   const blockCatalog = JSON.parse(blockText);
   const generatorCatalog = JSON.parse(generatorText);
   const required = requiredResources(blockCatalog);
@@ -226,6 +333,7 @@ export async function buildResourcePack() {
     const entry = requireRecord(raw, "material entry");
     return {
       key: entry.key,
+      precipitationSurface: entry.precipitationSurface,
       alpha: requireNumber(entry.alpha, 0, 1, `material ${entry.key} alpha`),
       alphaCutoff: requireNumber(entry.alphaCutoff, 0, 1, `material ${entry.key} alphaCutoff`),
       doubleSided: requireBoolean(entry.doubleSided, `material ${entry.key} doubleSided`),
@@ -238,8 +346,13 @@ export async function buildResourcePack() {
   });
   const tints = requireList(manifest.tints, "tints").map((raw) => {
     const entry = requireRecord(raw, "tint entry");
+    if (!["none", "grass", "foliage", "water"].includes(entry.climate)) throw new Error(`Tint ${entry.key} has an invalid climate policy`);
+    if (!["all", "grass_cap"].includes(entry.coverage)) throw new Error(`Tint ${entry.key} has an invalid coverage policy`);
+    if (entry.coverage === "grass_cap" && entry.climate !== "grass") throw new Error(`Tint ${entry.key} grass-cap coverage requires grass climate`);
     return {
       key: entry.key,
+      climate: entry.climate,
+      coverage: entry.coverage,
       red: requireNumber(entry.red, 0, 1, `tint ${entry.key} red`),
       green: requireNumber(entry.green, 0, 1, `tint ${entry.key} green`),
       blue: requireNumber(entry.blue, 0, 1, `tint ${entry.key} blue`),
@@ -277,28 +390,19 @@ export async function buildResourcePack() {
   requireNoOrphans(required.tints, declaredTints, "tint");
   requireNoOrphans(required.animations, declaredAnimations, "animation");
 
-  const environmentSource = requireRecord(manifest.environment, "environment");
-  const cloudsFile = requireText(environmentSource.clouds, "environment clouds");
-  const cloudsBytes = await readFile(resolveInside(dataRoot, cloudsFile, "environment clouds"));
-  const cloudsMetadata = await sharp(cloudsBytes).metadata();
-  if (cloudsMetadata.format !== "webp" || cloudsMetadata.width == null || cloudsMetadata.height == null
-    || cloudsMetadata.width > 2048 || cloudsMetadata.height > 2048) {
-    throw new Error("Environment clouds must be a WebP image no larger than 2048x2048");
-  }
+  const environmentResources = await loadEnvironmentResources(dataRoot, environment);
 
-  const {assignments, textureAlphaCutoffs} = textureBankPlan(blockCatalog, animations, materials);
+  const {assignments, textureAlphaCutoffs} = planTextureBanks(blockCatalog, animations, materials, models);
   const plannedLevels = textureArrayLevelDimensions(source.packing.tileSize, source.packing.mipmaps);
-  const plannedMemory = bankRoles.reduce((total, role) => {
+  const plannedBankMemories = bankRoles.map((role) => {
     const sources = source.textures.filter((texture) => assignments.get(texture.key) === role);
     const memory = textureArrayMemory(plannedLevels, textureVariantCount(sources));
     if (memory.channelBytes > maximumTextureBankChannelBytes) {
       throw new RangeError(`Texture bank ${role} needs ${memory.channelBytes} bytes per channel; the limit is ${maximumTextureBankChannelBytes}`);
     }
-    return total + memory.residentBytes;
-  }, 0);
-  if (plannedMemory > maximumClientTextureResidentBytes) {
-    throw new RangeError(`Client resource pack needs an estimated ${plannedMemory} resident texture bytes; the limit is ${maximumClientTextureResidentBytes}`);
-  }
+    return memory;
+  });
+  requireClientTextureMemoryBudget(plannedBankMemories, environmentResources.memory);
   const bankArtifacts = [];
   const bankChannels = [];
   const textures = [];
@@ -340,18 +444,21 @@ export async function buildResourcePack() {
   if (textures.length !== source.textures.length) throw new Error("Some client textures were not assigned to a render bank");
   textures.sort((left, right) => compareText(left.key, right.key));
 
-  const sourceImageEntries = await Promise.all(source.referencedImageFiles.map(async (file) => ({
-    path: file,
-    bytes: await readFile(resolveInside(dataRoot, file, `resource image ${file}`)),
-  })));
+  const environmentSourceImages = new Map(environmentResources.sourceImages.map((entry) => [entry.path, entry]));
+  const sourceImageEntries = await Promise.all(source.referencedImageFiles.map(async (file) => (
+    environmentSourceImages.get(file) ?? {
+      path: file,
+      bytes: await readFile(resolveInside(dataRoot, file, `resource image ${file}`)),
+    }
+  )));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
-    artifactVersion: 5,
-    formatVersion: 5,
+    artifactVersion: 8,
+    formatVersion: 8,
     owner,
     targetContentHash,
     textureBanks: bankArtifacts,
-    environment: {cloudsDataUrl: dataUrl("image/webp", cloudsBytes)},
+    environment: environmentResources.artifact,
     models,
     materials,
     textures,
@@ -367,13 +474,18 @@ export async function buildResourcePack() {
     bankChannels,
   });
   const artifact = {...payload, resourceHash};
-  const sourceImages = await Promise.all(sourceImageEntries.map(async ({path, bytes}) => {
+  const sourceImages = await Promise.all(sourceImageEntries.map(async ({path, bytes, width, height}) => {
+    if (width != null && height != null) return {path, width, height, sha256: sha256([bytes])};
     const metadata = await sharp(bytes).metadata();
     return {path, width: metadata.width, height: metadata.height, sha256: sha256([bytes])};
   }));
   const categories = Object.fromEntries(source.catalogs.map(({category, textures: entries}) => [category, entries.length]));
+  const memory = requireClientTextureMemoryBudget(
+    bankAudits.map((bank) => bank.memory),
+    environmentResources.memory,
+  );
   const audit = {
-    formatVersion: 2,
+    formatVersion: 4,
     resourceHash,
     sourceImages,
     unusedFiles: source.unusedFiles,
@@ -381,8 +493,10 @@ export async function buildResourcePack() {
     variantCount: textures.reduce((total, texture) => total + texture.variants.length, 0),
     categories,
     banks: bankAudits,
-    gpuBytes: bankAudits.reduce((total, bank) => total + bank.memory.gpuBytes, 0),
-    estimatedResidentBytes: bankAudits.reduce((total, bank) => total + bank.memory.residentBytes, 0),
+    environment: environmentResources.memory,
+    maximumResidentBytes: memory.maximumResidentBytes,
+    gpuBytes: memory.gpuBytes,
+    estimatedResidentBytes: memory.estimatedResidentBytes,
   };
   return {
     artifact,

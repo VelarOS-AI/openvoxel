@@ -1,6 +1,6 @@
-import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition} from "@openvoxel/blocks"
+import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
-import {ClientBlockModelKind, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures} from "./contracts.vel"
+import {ClientBlockCollisionBox, ClientBlockModelKind, ClientClimateTint, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures, ClientTintCoverage} from "./contracts.vel"
 import {ClientAnimationResource, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
 export type ClientRenderCatalog:
@@ -23,6 +23,15 @@ def optionalString(value: BlockPropertyValue?) -> string?: return (value is stri
 def optionalNumber(value: BlockPropertyValue?) -> number?: return (value is number) ? value : null
 
 def optionalBool(value: BlockPropertyValue?) -> bool?: return (value is bool) ? value : null
+
+def resolvedCollisionBoxes(
+    profile: readonly BlockComponentProfile,
+    state: readonly PackedBlockStateDefinition,
+) -> readonly List<readonly ClientBlockCollisionBox>:
+    const resolved = resolveBlockShapeBoxes(profile.physics.collision, state.properties)
+    if profile.physics.collision.kind != BlockShapeKind.empty:
+        assert resolved.size > 0 else f"Colliding state {state.stateKey} does not declare resolvable shape boxes"
+    return resolved.map(box => ClientBlockCollisionBox.from(box))
 
 def requireCoverage(required: readonly List<string>, available: Set<string>, label: string):
     for key in required: assert key in available else f"Client resource pack does not provide {label} {key}"
@@ -150,6 +159,7 @@ export def createClientRenderCatalog(
                 if layer == BlockRenderLayer.cutout:
                     assert materialResource != null and frameTexture.alphaCutoff == materialResource.alphaCutoff else f"Animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
         const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
+        const layers = optionalNumber(propertyValue(state, "layers"))
 
         const resolved: ClientRenderState = {
             runtimeId: state.runtimeId,
@@ -161,6 +171,8 @@ export def createClientRenderCatalog(
             pipelineKey,
             textures: stateTextures,
             tintKey,
+            climateTint: tint?.climate ?? ClientClimateTint.neutral,
+            tintCoverage: tint?.coverage ?? ClientTintCoverage.all,
             tintRed: tint?.red ?? 1,
             tintGreen: tint?.green ?? 1,
             tintBlue: tint?.blue ?? 1,
@@ -168,10 +180,11 @@ export def createClientRenderCatalog(
             cullFaces: profile.render.cullFaces,
             occludes: profile.physics.occlusion.kind == BlockShapeKind.fullCube,
             emission: profile.light.emission,
+            collisionBoxes: resolvedCollisionBoxes(profile, state),
             axis: optionalString(propertyValue(state, "axis")),
             level: optionalNumber(propertyValue(state, "level")),
             falling: optionalBool(propertyValue(state, "falling")),
-            layers: optionalNumber(propertyValue(state, "layers")),
+            layers,
         }
         states.append(resolved)
         byRuntimeId.set(state.runtimeId, resolved)

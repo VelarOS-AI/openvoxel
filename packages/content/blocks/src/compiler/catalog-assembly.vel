@@ -6,7 +6,7 @@ import {BlockStatePrototype, enumerateBlockStates} from "./state-expansion.vel"
 
 /// 用调用方提供的稳定状态映射装配最终目录。该层只负责索引、ID 绑定和默认状态投影。
 export def assembleBlockCatalog(schemaVersion: number, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
-    assert schemaVersion == 3 else "Unsupported block catalog schema version"
+    assert schemaVersion == 4 else "Unsupported block catalog schema version"
     assert not catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert stateMap.formatVersion == 2 else "Unsupported block state map format version"
 

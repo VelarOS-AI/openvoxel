@@ -186,7 +186,14 @@ blocks:
     tags: [tags.plant, tags.damaging]
     properties: []
     defaultState: []
-    physics: {collision: {kind: custom, key: shapes.cactus}, selection: {kind: custom, key: shapes.cactus}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    physics:
+      collision: {kind: custom, key: shapes.cactus, boxes: [{minimumX: 0.0625, minimumY: 0, minimumZ: 0.0625, maximumX: 0.9375, maximumY: 1, maximumZ: 0.9375}]}
+      selection: {kind: custom, key: shapes.cactus, boxes: [{minimumX: 0.0625, minimumY: 0, minimumZ: 0.0625, maximumX: 0.9375, maximumY: 1, maximumZ: 0.9375}]}
+      occlusion: {kind: none}
+      replaceable: false
+      friction: 0.6
+      speedFactor: 1
+      jumpFactor: 1
     light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
     render: {model: models.block.cactus, layer: cutout, material: materials.model, textures: {all: textures.block.cactus}, cullFaces: false}
     interaction: {breakable: true, hardness: 0.4, blastResistance: 0.4, toolTag: tools.axe, drops: loot.block.cactus, sounds: sounds.wood}

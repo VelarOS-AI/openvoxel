@@ -1,0 +1,100 @@
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, RealtimeBlockEdit, WorldBlocksChangedEvent, protocolVersion} from "@openvoxel/protocol"
+import {ChunkPosition, worldEnvironmentAt} from "@openvoxel/world"
+import {Cancellation, channel} from "velar/task"
+import {expect} from "velar/test"
+import {WorldBackendConnection} from "../src/backend.vel"
+import {sessionConnection} from "../src/session-connection.vel"
+
+type Signal = bool
+
+def fixture(sequence: number, closed: List<number>) -> WorldBackendConnection:
+    async def syncChunks(requestId: string, _positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation? = null) -> ChunksSyncedEvent:
+        return {event: "chunks.synced", requestId, worldId: "connection", chunks: []}
+
+    async def applyBlocks(requestId: string, _edits: readonly List<readonly RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
+        return {event: "blocks.applied", requestId, worldId: "connection", sequence, changes: []}
+
+    async def close(): closed.append(sequence)
+
+    return {
+        ready: {event: "world.ready", worldId: "connection", protocolVersion, sequence, environment: worldEnvironmentAt("connection", sequence, {x: 0, y: 64, z: 0})},
+        syncChunks,
+        applyBlocks,
+        close,
+    }
+
+test "closing during connection opening retires and releases the late connection":
+    const gate = channel(Signal, capacity=1)
+    const closed: List<number> = []
+    const installed: List<number> = []
+
+    async def connect(_listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        await gate.next()
+        return fixture(1, closed)
+
+    const owner = sessionConnection(connect, event => installed.append(event.sequence), _event => null)
+    const opening = owner.open()
+    await owner.close()
+    expect(owner.connected()).toBe(false)
+    gate.trySend(true)
+    expect(await opening).toBe(false)
+    expect(installed).toEqual([])
+    expect(closed).toEqual([1])
+    expect(() => owner.current()).toThrow()
+    await owner.close()
+    expect(closed).toEqual([1])
+    gate.close()
+
+test "the newest concurrent connection owns readiness and broadcasts":
+    const gate = channel(Signal, capacity=1)
+    const closed: List<number> = []
+    const installed: List<number> = []
+    const received: List<number> = []
+    const listeners: List<(event: readonly WorldBlocksChangedEvent) -> null> = []
+    let next = 0
+
+    async def connect(listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        next += 1
+        const sequence = next
+        listeners.append(listener)
+        if sequence == 1: await gate.next()
+        return fixture(sequence, closed)
+
+    const owner = sessionConnection(connect, event => installed.append(event.sequence), event => received.append(event.sequence))
+    const first = owner.open()
+    expect(await owner.open()).toBe(true)
+    const current = owner.current()
+    expect(current.ready.sequence).toBe(2)
+    expect(owner.owns(current)).toBe(true)
+    gate.trySend(true)
+    expect(await first).toBe(false)
+    expect(installed).toEqual([2])
+    expect(closed).toEqual([1])
+    listeners[0]({event: "blocks.changed", worldId: "connection", sequence: 3, changes: []})
+    listeners[1]({event: "blocks.changed", worldId: "connection", sequence: 4, changes: []})
+    expect(received).toEqual([4])
+    await owner.close()
+    expect(owner.owns(current)).toBe(false)
+    listeners[1]({event: "blocks.changed", worldId: "connection", sequence: 5, changes: []})
+    expect(received).toEqual([4])
+    expect(closed).toEqual([1, 2])
+    gate.close()
+
+test "a rejected ready event releases its connection and permits a fresh attempt":
+    const closed: List<number> = []
+    let next = 0
+
+    async def connect(_listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        next += 1
+        return fixture(next, closed)
+
+    def ready(sequence: number): assert sequence != 1 else "Rejected anchor"
+
+    const owner = sessionConnection(connect, event => ready(event.sequence), _event => null)
+    await expect(owner.open()).toReject()
+    expect(closed).toEqual([1])
+    expect(owner.connected()).toBe(false)
+    expect(await owner.open()).toBe(true)
+    expect(owner.current().ready.sequence).toBe(2)
+    await owner.close()
+    expect(closed).toEqual([1, 2])

@@ -1,0 +1,276 @@
+import {maximumWorldCoordinate} from "@openvoxel/world"
+import {ClientBlockCollisionBox} from "../contracts.vel"
+
+export type SurvivalWalkState:
+    readonly x: number
+    readonly y: number
+    readonly z: number
+    readonly velocityX: number
+    readonly velocityY: number
+    readonly velocityZ: number
+    readonly grounded: bool
+
+export type SurvivalWalkIntent:
+    readonly forward: number
+    readonly sideways: number
+    readonly jumping: bool
+    readonly sprinting: bool
+
+export type SurvivalWalkBasis:
+    readonly forwardX: number
+    readonly forwardZ: number
+    readonly rightX: number
+    readonly rightZ: number
+
+export type SurvivalWalkBounds:
+    readonly minimumY: number
+    readonly maximumY: number
+
+export type SurvivalCollisionQuery = (x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>
+
+export const survivalPlayerRadius = 0.3
+export const survivalPlayerHeight = 1.8
+export const survivalEyeHeight = 1.62
+export const survivalWalkSpeed = 4.6
+export const survivalSprintSpeed = 6.8
+export const survivalJumpSpeed = 8.2
+export const survivalGravity = 24
+export const survivalTerminalVelocity = 32
+export const survivalMaximumFrameMilliseconds = 50
+
+const survivalWalkAcceleration = 30
+const survivalWalkBraking = 45
+const survivalStepHeight = 0.6
+const collisionStep = 0.1
+const collisionEpsilon = 0.000001
+
+type HorizontalVelocity:
+    readonly x: number
+    readonly z: number
+
+type HorizontalMovement:
+    readonly position: number
+    readonly y: number
+    readonly blocked: bool
+
+def requireFiniteState(state: readonly SurvivalWalkState):
+    assert state.x.isFinite() and state.y.isFinite() and state.z.isFinite() else "Survival player position must be finite"
+    assert state.velocityX.isFinite() and state.velocityY.isFinite() and state.velocityZ.isFinite() else "Survival player velocity must be finite"
+
+def requireBasis(basis: readonly SurvivalWalkBasis):
+    assert basis.forwardX.isFinite() and basis.forwardZ.isFinite() and basis.rightX.isFinite() and basis.rightZ.isFinite() else "Survival movement basis must be finite"
+    assert (Math.hypot(basis.forwardX, basis.forwardZ) - 1).abs() <= collisionEpsilon else "Survival forward basis must be normalized"
+    assert (Math.hypot(basis.rightX, basis.rightZ) - 1).abs() <= collisionEpsilon else "Survival right basis must be normalized"
+    assert (basis.forwardX * basis.rightX + basis.forwardZ * basis.rightZ).abs() <= collisionEpsilon else "Survival movement basis must be orthogonal"
+
+def moveHorizontalVelocityToward(
+    currentX: number,
+    currentZ: number,
+    targetX: number,
+    targetZ: number,
+    maximumDelta: number,
+) -> HorizontalVelocity:
+    const differenceX = targetX - currentX
+    const differenceZ = targetZ - currentZ
+    const distance = Math.hypot(differenceX, differenceZ)
+    if distance <= maximumDelta or distance == 0: return {x: targetX, z: targetZ}
+    const factor = maximumDelta / distance
+    return {x: currentX + differenceX * factor, z: currentZ + differenceZ * factor}
+
+def occupiesCollision(
+    x: number,
+    y: number,
+    z: number,
+    collisionAt: SurvivalCollisionQuery,
+) -> bool:
+    const minimumX = x - survivalPlayerRadius
+    const maximumX = x + survivalPlayerRadius
+    const minimumY = y - survivalEyeHeight
+    const maximumY = minimumY + survivalPlayerHeight
+    const minimumZ = z - survivalPlayerRadius
+    const maximumZ = z + survivalPlayerRadius
+    for blockY in range((minimumY + collisionEpsilon).floor(), (maximumY - collisionEpsilon).floor() + 1):
+        for blockZ in range((minimumZ + collisionEpsilon).floor(), (maximumZ - collisionEpsilon).floor() + 1):
+            for blockX in range((minimumX + collisionEpsilon).floor(), (maximumX - collisionEpsilon).floor() + 1):
+                for box in collisionAt(blockX, blockY, blockZ):
+                    const overlaps = maximumX > blockX + box.minimumX + collisionEpsilon
+                        and minimumX < blockX + box.maximumX - collisionEpsilon
+                        and maximumY > blockY + box.minimumY + collisionEpsilon
+                        and minimumY < blockY + box.maximumY - collisionEpsilon
+                        and maximumZ > blockZ + box.minimumZ + collisionEpsilon
+                        and minimumZ < blockZ + box.maximumZ - collisionEpsilon
+                    if overlaps: return true
+    return false
+
+def resolveX(x: number, y: number, z: number, delta: number, collisionAt: SurvivalCollisionQuery) -> number:
+    const target = x + delta
+    if not occupiesCollision(target, y, z, collisionAt): return target
+    let clearAmount = 0
+    let blockedAmount = 1
+    for iteration in range(12):
+        const amount = (clearAmount + blockedAmount) / 2
+        if occupiesCollision(x + delta * amount, y, z, collisionAt): blockedAmount = amount
+        else: clearAmount = amount
+    return x + delta * clearAmount
+
+def resolveY(x: number, y: number, z: number, delta: number, collisionAt: SurvivalCollisionQuery) -> number:
+    const target = y + delta
+    if not occupiesCollision(x, target, z, collisionAt): return target
+    let clearAmount = 0
+    let blockedAmount = 1
+    for iteration in range(12):
+        const amount = (clearAmount + blockedAmount) / 2
+        if occupiesCollision(x, y + delta * amount, z, collisionAt): blockedAmount = amount
+        else: clearAmount = amount
+    return y + delta * clearAmount
+
+def resolveZ(x: number, y: number, z: number, delta: number, collisionAt: SurvivalCollisionQuery) -> number:
+    const target = z + delta
+    if not occupiesCollision(x, y, target, collisionAt): return target
+    let clearAmount = 0
+    let blockedAmount = 1
+    for iteration in range(12):
+        const amount = (clearAmount + blockedAmount) / 2
+        if occupiesCollision(x, y, z + delta * amount, collisionAt): blockedAmount = amount
+        else: clearAmount = amount
+    return z + delta * clearAmount
+
+/// 仅在落地状态尝试跨过低于半格多一点的障碍。逐个 0.1 格检查上升路径，避免
+/// 为跨雪层而穿过低矮天花板；水平轴仍独立求解，因此撞角时可以沿未阻塞轴滑动。
+def resolveHorizontalX(
+    x: number,
+    y: number,
+    z: number,
+    delta: number,
+    grounded: bool,
+    maximumStepY: number,
+    collisionAt: SurvivalCollisionQuery,
+) -> HorizontalMovement:
+    const target = x + delta
+    if not occupiesCollision(target, y, z, collisionAt): return {position: target, y, blocked: false}
+    if grounded and delta != 0:
+        const liftSteps = (Math.max(0, maximumStepY - y) / collisionStep).ceil()
+        for liftIndex in range(1, liftSteps + 1):
+            const liftedY = Math.min(y + liftIndex * collisionStep, maximumStepY)
+            if occupiesCollision(x, liftedY, z, collisionAt): break
+            if not occupiesCollision(target, liftedY, z, collisionAt):
+                return {position: target, y: liftedY, blocked: false}
+    return {position: resolveX(x, y, z, delta, collisionAt), y, blocked: true}
+
+def resolveHorizontalZ(
+    x: number,
+    y: number,
+    z: number,
+    delta: number,
+    grounded: bool,
+    maximumStepY: number,
+    collisionAt: SurvivalCollisionQuery,
+) -> HorizontalMovement:
+    const target = z + delta
+    if not occupiesCollision(x, y, target, collisionAt): return {position: target, y, blocked: false}
+    if grounded and delta != 0:
+        const liftSteps = (Math.max(0, maximumStepY - y) / collisionStep).ceil()
+        for liftIndex in range(1, liftSteps + 1):
+            const liftedY = Math.min(y + liftIndex * collisionStep, maximumStepY)
+            if occupiesCollision(x, liftedY, z, collisionAt): break
+            if not occupiesCollision(x, liftedY, target, collisionAt):
+                return {position: target, y: liftedY, blocked: false}
+    return {position: resolveZ(x, y, z, delta, collisionAt), y, blocked: true}
+
+export def survivalWalkState(x: number, y: number, z: number) -> SurvivalWalkState:
+    const state: SurvivalWalkState = {x, y, z, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: false}
+    requireFiniteState(state)
+    return state
+
+/// 生存移动以客户端已同步方块状态为唯一碰撞事实。每个轴独立求解以允许沿墙
+/// 滑动；0.1 格子步长避免高速下穿过最薄的一层雪，自由飞行不经过这条策略。
+export def stepSurvivalWalk(
+    state: readonly SurvivalWalkState,
+    intent: readonly SurvivalWalkIntent,
+    basis: readonly SurvivalWalkBasis,
+    deltaMilliseconds: number,
+    bounds: readonly SurvivalWalkBounds,
+    collisionAt: SurvivalCollisionQuery,
+) -> SurvivalWalkState:
+    requireFiniteState(state)
+    requireBasis(basis)
+    assert deltaMilliseconds.isFinite() and deltaMilliseconds >= 0 else "Survival movement delta must be finite and non-negative"
+    assert bounds.minimumY.isFinite() and bounds.maximumY.isFinite() and bounds.minimumY < bounds.maximumY else "Survival movement bounds are invalid"
+    assert bounds.maximumY - bounds.minimumY + 1 >= survivalPlayerHeight else "Survival movement bounds cannot contain the player"
+    assert intent.forward.isFinite() and intent.forward >= -1 and intent.forward <= 1 else "Survival forward intent is outside -1 through 1"
+    assert intent.sideways.isFinite() and intent.sideways >= -1 and intent.sideways <= 1 else "Survival sideways intent is outside -1 through 1"
+
+    const deltaSeconds = Math.min(deltaMilliseconds, survivalMaximumFrameMilliseconds) / 1000
+    const intentLength = Math.hypot(intent.forward, intent.sideways)
+    const speed = intent.sprinting ? survivalSprintSpeed : survivalWalkSpeed
+    let targetVelocityX = 0
+    let targetVelocityZ = 0
+    if intentLength > 0:
+        const scale = speed / Math.max(1, intentLength)
+        targetVelocityX = (basis.forwardX * intent.forward + basis.rightX * intent.sideways) * scale
+        targetVelocityZ = (basis.forwardZ * intent.forward + basis.rightZ * intent.sideways) * scale
+    const acceleration = intentLength > 0 ? survivalWalkAcceleration : survivalWalkBraking
+    const horizontal = moveHorizontalVelocityToward(
+        state.velocityX,
+        state.velocityZ,
+        targetVelocityX,
+        targetVelocityZ,
+        acceleration * deltaSeconds,
+    )
+    let velocityX = horizontal.x
+    let velocityY = state.velocityY
+    let velocityZ = horizontal.z
+    let grounded = state.grounded
+    if intent.jumping and grounded:
+        velocityY = survivalJumpSpeed
+        grounded = false
+    velocityY = Math.max(-survivalTerminalVelocity, velocityY - survivalGravity * deltaSeconds)
+
+    let x = state.x
+    let y = state.y
+    let z = state.z
+    const maximumDelta = Math.max((velocityX * deltaSeconds).abs(), Math.max((velocityY * deltaSeconds).abs(), (velocityZ * deltaSeconds).abs()))
+    const steps = Math.max(1, (maximumDelta / collisionStep).ceil())
+    const stepX = velocityX * deltaSeconds / steps
+    const stepY = velocityY * deltaSeconds / steps
+    const stepZ = velocityZ * deltaSeconds / steps
+    for step in range(steps):
+        const maximumStepY = y + survivalStepHeight
+        const targetX = x + stepX
+        const movedX = resolveHorizontalX(x, y, z, stepX, grounded, maximumStepY, collisionAt)
+        if movedX.blocked and (movedX.position - targetX).abs() > collisionEpsilon: velocityX = 0
+        x = movedX.position
+        y = movedX.y
+
+        const targetZ = z + stepZ
+        const movedZ = resolveHorizontalZ(x, y, z, stepZ, grounded, maximumStepY, collisionAt)
+        if movedZ.blocked and (movedZ.position - targetZ).abs() > collisionEpsilon: velocityZ = 0
+        z = movedZ.position
+        y = movedZ.y
+
+        const targetY = y + stepY
+        const movedY = resolveY(x, y, z, stepY, collisionAt)
+        if (movedY - targetY).abs() > collisionEpsilon:
+            if stepY < 0: grounded = true
+            velocityY = 0
+        else if stepY != 0: grounded = false
+        y = movedY
+
+    const minimumHorizontal = -maximumWorldCoordinate + survivalPlayerRadius
+    const maximumHorizontal = maximumWorldCoordinate - survivalPlayerRadius
+    const minimumEyeY = bounds.minimumY + survivalEyeHeight
+    const maximumEyeY = bounds.maximumY + 1 - (survivalPlayerHeight - survivalEyeHeight)
+    x = Math.clamp(x, minimumHorizontal, maximumHorizontal)
+    y = Math.clamp(y, minimumEyeY, maximumEyeY)
+    z = Math.clamp(z, minimumHorizontal, maximumHorizontal)
+    if x == minimumHorizontal or x == maximumHorizontal: velocityX = 0
+    if z == minimumHorizontal or z == maximumHorizontal: velocityZ = 0
+    if y == minimumEyeY:
+        velocityY = 0
+        grounded = true
+    else if y == maximumEyeY:
+        velocityY = 0
+        grounded = false
+    const next: SurvivalWalkState = {x, y, z, velocityX, velocityY, velocityZ, grounded}
+    requireFiniteState(next)
+    return next

@@ -169,8 +169,14 @@ blocks:
     properties: [{name: layers, kind: integer, minimum: 1, maximum: 8}]
     defaultState: [{name: layers, value: 1}]
     physics:
-      collision: {kind: custom, key: shapes.snowLayer}
-      selection: {kind: custom, key: shapes.snowLayer}
+      collision:
+        kind: custom
+        key: shapes.snowLayer
+        boxes: [{minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1, maximumYProperty: layers, maximumYScale: 0.125}]
+      selection:
+        kind: custom
+        key: shapes.snowLayer
+        boxes: [{minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1, maximumYProperty: layers, maximumYScale: 0.125}]
       occlusion: {kind: none}
       replaceable: true
       friction: 0.6

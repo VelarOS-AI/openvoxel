@@ -4,7 +4,7 @@ import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sql
 import {expect} from "velar/test"
 import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {chunkBlock} from "@openvoxel/world"
+import {WorldGameMode, chunkBlock} from "@openvoxel/world"
 import {BlockEdit, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore, validateSqliteWorldStoreOptions} from "../src/adapters/sqlite-world-store.vel"
 
@@ -30,6 +30,7 @@ def testDatabase(path: string) -> SqliteWorldStoreOptions:
     }
 
 test "SQLite adapter owns its connection limits":
+    expect(sqliteSchemaVersion).toBe(7)
     const invalid = SqliteWorldStoreOptions.from(testDatabase("unused.sqlite"), {queueCapacity: 0})
     expect(() => validateSqliteWorldStoreOptions(invalid)).toThrow()
 
@@ -116,8 +117,10 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
         const firstRuntime = worldRuntime(firstStore)
         let baseBlockStateRuntimeId = 0
         let replacementBlockStateRuntimeId = 0
+        let createdWorldTimeOriginMilliseconds = 0
         try:
-            await firstRuntime.createWorld({id: "persistent", name: "Persistent", seed: "sqlite-seed"})
+            const created = await firstRuntime.createWorld({id: "persistent", name: "Persistent", seed: "sqlite-seed", mode: WorldGameMode.creative})
+            createdWorldTimeOriginMilliseconds = created.worldTimeOriginMilliseconds
             const before = await firstRuntime.chunk("persistent", {x: -1, y: 1, z: 2})
             baseBlockStateRuntimeId = chunkBlock(before, {x: 15, y: 14, z: 0})
             replacementBlockStateRuntimeId = baseBlockStateRuntimeId == stoneBlock ? dirtBlock : stoneBlock
@@ -144,6 +147,8 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
             const manifest = await reopenedRuntime.requireWorld("persistent")
             const restored = await reopenedRuntime.chunk("persistent", {x: -1, y: 1, z: 2})
             expect(manifest.seed).toBe("sqlite-seed")
+            expect(manifest.mode).toBe(WorldGameMode.creative)
+            expect(manifest.worldTimeOriginMilliseconds).toBe(createdWorldTimeOriginMilliseconds)
             expect(restored.revision).toBe(1)
             expect(chunkBlock(restored, {x: 15, y: 14, z: 0})).toBe(replacementBlockStateRuntimeId)
 

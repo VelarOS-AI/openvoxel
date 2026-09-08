@@ -1,52 +1,16 @@
 import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { allowedOpenVoxelDependencies, extensionEnvironments, installedToolchainViolation, labsRegistryPrefix, labsScope, npmToolchainPackages, packageHomes, supportedTargets, toolchainPinViolations } from "./architecture/policy.mjs";
+import { inspectSourceBoundaries } from "./architecture/module-boundaries.mjs";
 
-const projectRoot = new URL("../", import.meta.url).pathname;
+const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const rootManifest = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
+const toolchainVersion = rootManifest.devDependencies?.["@velarscript/cli"];
+if (typeof toolchainVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(toolchainVersion)) {
+  throw new Error("Root @velarscript/cli must pin one exact release version");
+}
 const ignoredDirectories = new Set([".git", ".velar", "dist", "node_modules"]);
-const npmToolchainPackages = new Set([
-  "@velarscript/cli",
-  "@velarscript/compiler",
-  "@velarscript/core",
-  "@velarscript/desktop",
-  "@velarscript/node",
-  "@velarscript/server",
-  "@velarscript/web",
-]);
-const labsScope = "@velarscript-labs/";
-const labsRegistryPrefix = "https://registry.npmjs.org/@velarscript-labs/";
-const supportedTargets = new Set(["core", "node", "web", "desktop"]);
-const extensionEnvironments = new Map([
-  ["@velarscript/node", { target: "node", capabilities: ["node"] }],
-  ["@velarscript/server", { target: "node", capabilities: ["node"] }],
-  ["@velarscript/web", { target: "web", capabilities: ["web"] }],
-  ["@velarscript/desktop", { target: "desktop", capabilities: ["desktop", "node", "web"] }],
-]);
-const allowedOpenVoxelDependencies = new Map([
-  ["@openvoxel/identities", new Set()],
-  ["@openvoxel/blocks", new Set(["@openvoxel/identities"])],
-  ["@openvoxel/world", new Set(["@openvoxel/blocks"])],
-  ["@openvoxel/world-generation", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world"])],
-  ["@openvoxel/content", new Set(["@openvoxel/blocks", "@openvoxel/identities", "@openvoxel/world", "@openvoxel/world-generation"])],
-  ["@openvoxel/protocol", new Set(["@openvoxel/blocks", "@openvoxel/world"])],
-  ["@openvoxel/client", new Set(["@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-runtime"])],
-  ["@openvoxel/renderer", new Set(["@openvoxel/blocks", "@openvoxel/protocol", "@openvoxel/world"])],
-  ["@openvoxel/world-runtime", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/world", "@openvoxel/world-generation"])],
-  ["@openvoxel/server", new Set(["@openvoxel/blocks", "@openvoxel/content", "@openvoxel/protocol", "@openvoxel/world", "@openvoxel/world-generation", "@openvoxel/world-runtime"])],
-  ["@openvoxel/web", new Set(["@openvoxel/client", "@openvoxel/renderer", "@openvoxel/protocol", "@openvoxel/world"])],
-]);
-const packageHomes = new Map([
-  ["@openvoxel/identities", "packages/content/identities"],
-  ["@openvoxel/blocks", "packages/content/blocks"],
-  ["@openvoxel/content", "packages/content/packs"],
-  ["@openvoxel/world", "packages/world/model"],
-  ["@openvoxel/world-generation", "packages/world/generation"],
-  ["@openvoxel/world-runtime", "packages/world/runtime"],
-  ["@openvoxel/client", "packages/client/access"],
-  ["@openvoxel/renderer", "packages/client/rendering"],
-  ["@openvoxel/protocol", "packages/protocol"],
-  ["@openvoxel/server", "apps/server"],
-  ["@openvoxel/web", "apps/web"],
-]);
 const violations = [];
 const projectPackages = new Map();
 
@@ -112,6 +76,7 @@ function inspectEnvironmentCompatibility(owner, consumer, dependencyName, depend
 }
 
 function inspectDependencyFields(owner, manifest) {
+  violations.push(...toolchainPinViolations(manifest, toolchainVersion).map((message) => owner + ": " + message));
   for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     for (const [name, specification] of Object.entries(manifest[field] ?? {})) {
       if (name.startsWith("@velarscript/") && !npmToolchainPackages.has(name)) {
@@ -145,6 +110,7 @@ async function inspect(directory) {
     }
     if (!entry.isFile()) continue;
     const projectPath = relative(projectRoot, path);
+    const portableProjectPath = projectPath.split(sep).join("/");
     const parts = projectPath.split(sep);
     if (entry.name.endsWith(".test.vel") && !parts.includes("tests")) {
       violations.push(`${projectPath}: VelarScript tests belong under tests/`);
@@ -152,9 +118,32 @@ async function inspect(directory) {
     if (parts.includes("generated") && entry.name.endsWith(".vel")) {
       violations.push(`${projectPath}: generated artifacts cannot be VelarScript source`);
     }
+    if (entry.name.endsWith(".vel") && !parts.includes("tests") && !parts.includes("benchmarks")) {
+      const source = await readFile(path, "utf8");
+      if (/^\s*extern\s+js\b/mu.test(source)) {
+        violations.push(`${projectPath}: production JavaScript belongs in a native module reached through extern module`);
+      }
+      if (portableProjectPath === "apps/web/src/main.vel") {
+        for (const [modulePath, exportName] of [
+          ["./pages/create-world-page.vel", "CreateWorldPage"],
+          ["./pages/open-world-page.vel", "OpenWorldPage"],
+          ["./pages/world-page.vel", "WorldPage"],
+        ]) {
+          if (!source.includes(`lazy(() => import("${modulePath}"), "${exportName}"`)) {
+            violations.push(`${projectPath}: ${exportName} must remain a lazy route boundary`);
+          }
+        }
+      }
+    }
+    if ((entry.name.endsWith(".js") || entry.name.endsWith(".mjs"))
+      && !parts.includes("tests") && !parts.includes("generated")) {
+      const source = await readFile(path, "utf8");
+      if (/\b(?:from\s+|import\s*)["']@babylonjs\/core["']/u.test(source)) {
+        violations.push(`${projectPath}: Babylon adapters must import concrete responsibility modules`);
+      }
+    }
     if (entry.name === "package.json") {
       const manifest = JSON.parse(await readFile(path, "utf8"));
-      const portableProjectPath = projectPath.split(sep).join("/");
       inspectDependencyFields(projectPath, manifest);
       inspectOpenVoxelBoundary(projectPath, manifest);
       if (typeof manifest.name === "string" && manifest.name.startsWith("@openvoxel/")) {
@@ -210,6 +199,7 @@ async function inspectDocumentPaths(target) {
   }
 }
 
+inspectDependencyFields("package.json", rootManifest);
 await inspect(join(projectRoot, "apps"));
 await inspect(join(projectRoot, "packages"));
 await inspectDocumentPaths(join(projectRoot, "README.md"));
@@ -220,6 +210,8 @@ for (const [packageName, home] of packageHomes) {
     violations.push(`${home}/package.json: missing registered OpenVoxel package ${packageName}`);
   }
 }
+
+violations.push(...await inspectSourceBoundaries(projectRoot, projectPackages));
 
 const labsEnvironments = new Map();
 for (const { owner, manifest, environment } of projectPackages.values()) {
@@ -256,6 +248,8 @@ for (const [path, metadata] of Object.entries(lock.packages ?? {})) {
   const owner = `package-lock.json:${path === "" ? "<root>" : path}`;
   const installedName = metadata.name ?? /node_modules\/(?:.*\/node_modules\/)?(@[^/]+\/[^/]+|[^/]+)$/u.exec(path)?.[1];
   inspectDependencyFields(owner, metadata);
+  const versionViolation = installedToolchainViolation(installedName, metadata, toolchainVersion);
+  if (versionViolation !== null) violations.push(owner + ": " + versionViolation);
   if (typeof installedName === "string"
     && installedName.startsWith("@velarscript/")
     && !npmToolchainPackages.has(installedName)) {

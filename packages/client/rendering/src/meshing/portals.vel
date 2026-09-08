@@ -1,0 +1,68 @@
+import {ChunkPortalSummary, ClientRenderState, chunkPortalFaceCount, chunkPortalFaceIndices} from "../contracts.vel"
+
+def enqueueOpenNeighbor(
+    queue: List<number>,
+    visited: Set<number>,
+    openCells: readonly List<bool>,
+    index: number,
+):
+    if not openCells[index] or index in visited: return
+    visited.add(index)
+    queue.append(index)
+
+def maskForBits(bits: readonly Set<number>) -> number: return bits.values().map(bit => Math.pow(2, bit)).sum()
+
+/// 只对中心 Chunk 的非遮挡格做六邻接洪泛。`occludes` 是这里唯一的阻断
+/// 语义，所以 air、叶片、水、玻璃以及其他非遮挡模型都能组成同一条视线通路。
+export def summarizeChunkPortals(
+    edge: number,
+    states: readonly List<readonly ClientRenderState>,
+) -> ChunkPortalSummary:
+    const empty = states.every(state => state.model == null)
+    const fullyOccluding = states.every(state => state.occludes)
+    if fullyOccluding: return {empty, fullyOccluding, openFaces: 0, connectedFaces: 0}
+    if states.every(state => not state.occludes):
+        return {
+            empty,
+            fullyOccluding,
+            openFaces: Math.pow(2, chunkPortalFaceCount) - 1,
+            connectedFaces: Math.pow(2, chunkPortalFaceCount * chunkPortalFaceCount) - 1,
+        }
+    const openCells = states.map(state => not state.occludes)
+    const visited: Set<number> = Set()
+    const openFaceBits: Set<number> = Set()
+    const connectedFaceBits: Set<number> = Set()
+    for start in range(openCells.size):
+        if not openCells[start] or start in visited: continue
+        const queue: List<number> = [start]
+        const componentFaces: Set<number> = Set()
+        visited.add(start)
+        let cursor = 0
+        while cursor < queue.size:
+            const index = queue[cursor]
+            cursor += 1
+            const x = index % edge
+            const z = (index / edge).floor() % edge
+            const y = (index / (edge * edge)).floor()
+            if x == 0: componentFaces.add(chunkPortalFaceIndices.west)
+            if x + 1 == edge: componentFaces.add(chunkPortalFaceIndices.east)
+            if y == 0: componentFaces.add(chunkPortalFaceIndices.bottom)
+            if y + 1 == edge: componentFaces.add(chunkPortalFaceIndices.top)
+            if z == 0: componentFaces.add(chunkPortalFaceIndices.north)
+            if z + 1 == edge: componentFaces.add(chunkPortalFaceIndices.south)
+            if x > 0: enqueueOpenNeighbor(queue, visited, openCells, index - 1)
+            if x + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + 1)
+            if z > 0: enqueueOpenNeighbor(queue, visited, openCells, index - edge)
+            if z + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + edge)
+            if y > 0: enqueueOpenNeighbor(queue, visited, openCells, index - edge * edge)
+            if y + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + edge * edge)
+        const faces = componentFaces.values()
+        for source in faces:
+            openFaceBits.add(source)
+            for target in faces: connectedFaceBits.add(source * chunkPortalFaceCount + target)
+    return {
+        empty,
+        fullyOccluding,
+        openFaces: maskForBits(openFaceBits),
+        connectedFaces: maskForBits(connectedFaceBits),
+    }

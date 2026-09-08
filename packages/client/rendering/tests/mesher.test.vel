@@ -2,7 +2,7 @@ import {BlockRenderLayer} from "@openvoxel/blocks"
 import {expect} from "velar/test"
 import {UInt32Buffer, uint32Buffer} from "velar/binary"
 import {meshChunk} from "../src/mesher.vel"
-import {ClientBlockModelKind, ClientRenderState, ClientRenderTexture, ClientTextureVariant} from "../src/contracts.vel"
+import {ClientBlockModelKind, ClientClimateTint, ClientRenderState, ClientRenderTexture, ClientTextureVariant, ClientTintCoverage, chunkPortalFaceCount, chunkPortalFaceIndices} from "../src/contracts.vel"
 
 const edge = 4
 const paddedEdge = edge + 2
@@ -35,6 +35,8 @@ def state(
         pipelineKey: model == null ? null : f"{layer}|{texture.bankKey}|test:material|-",
         textures: model == null ? null : {top: texture, bottom: texture, side: texture},
         tintKey: null,
+        climateTint: ClientClimateTint.neutral,
+        tintCoverage: ClientTintCoverage.all,
         tintRed: 1,
         tintGreen: 1,
         tintBlue: 1,
@@ -42,6 +44,7 @@ def state(
         cullFaces: model == ClientBlockModelKind.cube,
         occludes,
         emission: 0,
+        collisionBoxes: model == null ? [] : [{minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1}],
         axis: null,
         level: model == ClientBlockModelKind.fluid ? 0 : null,
         falling: model == ClientBlockModelKind.fluid ? false : null,
@@ -60,6 +63,74 @@ const oakLeaves = state(12, ClientBlockModelKind.cube, false, BlockRenderLayer.c
 const birchLeaves = state(13, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
 const cactus = state(14, ClientBlockModelKind.cactus, false, BlockRenderLayer.cutout)
 const snowLayer = state(15, ClientBlockModelKind.snowLayer, false, BlockRenderLayer.cutout)
+const glass = state(17, ClientBlockModelKind.cube, false, BlockRenderLayer.translucent)
+
+def faceBit(face: number) -> number: return Math.pow(2, face)
+
+def connectedFaceBit(source: number, target: number) -> number:
+    return Math.pow(2, source * chunkPortalFaceCount + target)
+
+def filledChunk(runtimeId: number) -> UInt32Buffer:
+    const volume = blocks()
+    for y in range(edge):
+        for z in range(edge):
+            for x in range(edge): volume[index(x + 1, y + 1, z + 1)] = runtimeId
+    return volume
+
+test "empty Chunk exposes and connects all six portal faces":
+    const summary = meshChunk({x: 0, y: 0, z: 0}, edge, blocks(), [air], 20).portalSummary
+    expect(summary.empty).toBe(true)
+    expect(summary.fullyOccluding).toBe(false)
+    expect(summary.openFaces).toBe(Math.pow(2, chunkPortalFaceCount) - 1)
+    expect(summary.connectedFaces).toBe(Math.pow(2, chunkPortalFaceCount * chunkPortalFaceCount) - 1)
+
+test "fully occluding Chunk has no open portal face":
+    const summary = meshChunk({x: 0, y: 0, z: 0}, edge, filledChunk(stone.runtimeId), [air, stone], 21).portalSummary
+    expect(summary.empty).toBe(false)
+    expect(summary.fullyOccluding).toBe(true)
+    expect(summary.openFaces).toBe(0)
+    expect(summary.connectedFaces).toBe(0)
+
+test "non-occluding leaf, water, glass, and air states form a portal tunnel":
+    const volume = filledChunk(stone.runtimeId)
+    const passage = [oakLeaves.runtimeId, water.runtimeId, glass.runtimeId, air.runtimeId]
+    for runtimeId, x in passage: volume[index(x + 1, 2, 2)] = runtimeId
+    const summary = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, stone, oakLeaves, water, glass], 22).portalSummary
+    const west = chunkPortalFaceIndices.west
+    const east = chunkPortalFaceIndices.east
+    expect(summary.empty).toBe(false)
+    expect(summary.fullyOccluding).toBe(false)
+    expect(summary.openFaces).toBe(faceBit(west) + faceBit(east))
+    expect(summary.connectedFaces).toBe(
+        connectedFaceBit(west, west)
+        + connectedFaceBit(west, east)
+        + connectedFaceBit(east, west)
+        + connectedFaceBit(east, east),
+    )
+
+test "sealed interior air cavity does not open a Chunk portal":
+    const volume = filledChunk(stone.runtimeId)
+    volume[index(2, 2, 2)] = air.runtimeId
+    const summary = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, stone], 23).portalSummary
+    expect(summary.empty).toBe(false)
+    expect(summary.fullyOccluding).toBe(false)
+    expect(summary.openFaces).toBe(0)
+    expect(summary.connectedFaces).toBe(0)
+
+test "disconnected boundary pockets do not claim cross-Chunk visibility":
+    const volume = filledChunk(stone.runtimeId)
+    volume[index(1, 2, 2)] = air.runtimeId
+    volume[index(edge, 2, 2)] = air.runtimeId
+    const summary = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, stone], 24).portalSummary
+    const west = chunkPortalFaceIndices.west
+    const east = chunkPortalFaceIndices.east
+    expect(summary.openFaces).toBe(faceBit(west) + faceBit(east))
+    expect(summary.connectedFaces).toBe(connectedFaceBit(west, west) + connectedFaceBit(east, east))
+
+test "portal summary preserves unknown runtimeId rejection":
+    const volume = blocks()
+    volume[index(2, 2, 2)] = 0xffffffff
+    expect(() => meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air], 25)).toThrow()
 
 test "visible-face meshing emits six quads for one cube and ten for two adjacent cubes":
     const one = blocks()
@@ -68,7 +139,7 @@ test "visible-face meshing emits six quads for one cube and ten for two adjacent
     expect(oneMesh.visibleBlocks).toBe(1)
     expect(oneMesh.quadCount).toBe(6)
     expect(oneMesh.batches[0].textureLayers.size).toBe(oneMesh.batches[0].positions.size / 3)
-    expect(oneMesh.byteSize).toBe(1392)
+    expect(oneMesh.byteSize).toBe(1488)
 
     const two = one.copy()
     two[index(3, 2, 2)] = stone.runtimeId
@@ -143,16 +214,59 @@ test "adjacent leaf cubes share internal faces across state and Chunk boundaries
     seam[index(edge + 1, 2, 2)] = birchLeaves.runtimeId
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, seam, [air, oakLeaves, birchLeaves], 9).quadCount).toBe(5)
 
-test "solid neighbors hide boundary faces of inset and partial box models":
+test "resource climate policy colors grass caps while preserving soil and PBR geometry":
+    const grass = ClientRenderState.from(stone, {
+        climateTint: ClientClimateTint.grass,
+        tintCoverage: ClientTintCoverage.grassCap,
+    })
+    const volume = blocks()
+    volume[index(2, 2, 2)] = grass.runtimeId
+    const batch = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, grass], 30).batches[0]
+    for vertex in range(batch.tintRoles.size):
+        const verticalNormal = batch.normals[vertex * 3 + 1]
+        const expected = verticalNormal > 0 ? 1 : verticalNormal < 0 ? 0 : 4
+        expect(batch.tintRoles[vertex]).toBe(expected)
+    expect(batch.quadCount).toBe(6)
+    expect(batch.textureLayers.size).toBe(batch.tintRoles.size)
+
+test "foliage and water climate roles do not depend on resource key spelling":
+    const leaves = ClientRenderState.from(oakLeaves, {tintKey: "test:any-name", climateTint: ClientClimateTint.foliage})
+    const stream = ClientRenderState.from(water, {tintKey: "test:another-name", climateTint: ClientClimateTint.water})
+    const volume = blocks()
+    volume[index(2, 2, 2)] = leaves.runtimeId
+    volume[index(3, 2, 2)] = stream.runtimeId
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, leaves, stream], 31)
+    for batch in mesh.batches:
+        const expected = batch.layer == BlockRenderLayer.cutout ? 2 : 3
+        for role in batch.tintRoles: expect(role).toBe(expected)
+
+test "box culling follows the model boundary instead of the occupied cell":
     const cactusSeam = blocks()
     cactusSeam[index(edge, 2, 2)] = cactus.runtimeId
     cactusSeam[index(edge + 1, 2, 2)] = stone.runtimeId
-    expect(meshChunk({x: 0, y: 0, z: 0}, edge, cactusSeam, [air, stone, cactus], 10).quadCount).toBe(5)
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, cactusSeam, [air, stone, cactus], 10).quadCount).toBe(6)
 
     const snowFloor = blocks()
     snowFloor[index(2, 1, 2)] = snowLayer.runtimeId
     snowFloor[index(2, 0, 2)] = stone.runtimeId
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, snowFloor, [air, stone, snowLayer], 11).quadCount).toBe(5)
+
+    const snowCeiling = blocks()
+    snowCeiling[index(2, edge, 2)] = snowLayer.runtimeId
+    snowCeiling[index(2, edge + 1, 2)] = stone.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, snowCeiling, [air, stone, snowLayer], 12).quadCount).toBe(6)
+
+test "adjacent snow layers cull or clip only their shared height":
+    const equalLayers = blocks()
+    equalLayers[index(2, 2, 2)] = snowLayer.runtimeId
+    equalLayers[index(3, 2, 2)] = snowLayer.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, equalLayers, [air, snowLayer], 13).quadCount).toBe(10)
+
+    const deepSnow = ClientRenderState.from(snowLayer, {runtimeId: 16, layers: 4})
+    const steppedLayers = blocks()
+    steppedLayers[index(2, 2, 2)] = snowLayer.runtimeId
+    steppedLayers[index(3, 2, 2)] = deepSnow.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, steppedLayers, [air, snowLayer, deepSnow], 14).quadCount).toBe(11)
 
 test "weighted texture variants are deterministic and distributed by world position":
     const mixedTexture = renderTexture(

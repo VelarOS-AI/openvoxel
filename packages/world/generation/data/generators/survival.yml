@@ -13,7 +13,9 @@ sampling:
   horizontalStep: 4
   verticalStep: 8
   halo: 1
-  columnCacheCapacity: 64
+  # 半径五的客户端窗口含 81 个水平列；额外容量留给装饰 halo，使同一列的
+  # 垂直 Chunk 在连续探索期间复用完整地形规划。
+  columnCacheCapacity: 128
 
 terrain:
   continentalness:

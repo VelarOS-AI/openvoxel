@@ -1,0 +1,45 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {ClientWorldState} from "./world-state.vel"
+
+export type ChunkLoadOwnership:
+    claim: (positions: readonly List<readonly ChunkPosition>) -> null
+    release: (positions: readonly List<readonly ChunkPosition>, succeeded: bool) -> null
+    synchronized: (positions: readonly List<readonly ChunkPosition>) -> null
+
+/// 重叠加载共享所有权组；只有所有请求都失败才回滚该组引入的冷状态。
+export def chunkLoadOwnership(state: ClientWorldState) -> ChunkLoadOwnership:
+    const owners: Map<string, number> = Map()
+    const introduced: Set<string> = Set()
+    const successful: Set<string> = Set()
+
+    def claim(positions: readonly List<readonly ChunkPosition>):
+        for position in positions:
+            const key = chunkKey(position)
+            const count = owners.get(key) ?? 0
+            if count == 0:
+                successful.remove(key)
+                if state.chunk(position) == null: introduced.add(key)
+                else: introduced.remove(key)
+            owners.set(key, count + 1)
+
+    def release(positions: readonly List<readonly ChunkPosition>, succeeded: bool):
+        const rollback: List<readonly ChunkPosition> = []
+        for position in positions:
+            const key = chunkKey(position)
+            const count = owners.get(key)
+            assert count != null and count > 0 else "Client Chunk load ownership is unbalanced"
+            if succeeded: successful.add(key)
+            if count == 1:
+                if (key in introduced) and (key not in successful): rollback.append(position)
+                owners.remove(key)
+                introduced.remove(key)
+                successful.remove(key)
+            else: owners.set(key, count - 1)
+        if rollback.size > 0: state.forgetChunks(rollback)
+
+    def synchronized(positions: readonly List<readonly ChunkPosition>):
+        for position in positions:
+            const key = chunkKey(position)
+            if owners.has(key): successful.add(key)
+
+    return {claim, release, synchronized}

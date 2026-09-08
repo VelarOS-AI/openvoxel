@@ -1,0 +1,19 @@
+import {all as validationRules, field, integer, nonBlank, validator} from "velar/validation"
+
+export type SqliteWorldStoreOptions:
+    path: string
+    busyTimeoutMilliseconds: number
+    queueCapacity: number
+    maxRows: number
+    maxResultBytes: number
+
+const SqliteWorldStoreOptionsValidator = validator(SqliteWorldStoreOptions, validationRules([
+    field("path", (options: SqliteWorldStoreOptions) => options.path, nonBlank()),
+    field("busyTimeoutMilliseconds", (options: SqliteWorldStoreOptions) => options.busyTimeoutMilliseconds, integer(minimum=1, maximum=60000)),
+    field("queueCapacity", (options: SqliteWorldStoreOptions) => options.queueCapacity, integer(minimum=1, maximum=1024)),
+    field("maxRows", (options: SqliteWorldStoreOptions) => options.maxRows, integer(minimum=1, maximum=1000000)),
+    field("maxResultBytes", (options: SqliteWorldStoreOptions) => options.maxResultBytes, integer(minimum=1, maximum=134217728)),
+]))
+
+export def validateSqliteWorldStoreOptions(options: SqliteWorldStoreOptions) -> SqliteWorldStoreOptions:
+    return SqliteWorldStoreOptionsValidator.validate(options)

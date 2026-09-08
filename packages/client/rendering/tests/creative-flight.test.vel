@@ -1,0 +1,47 @@
+import {expect} from "velar/test"
+import {creativeFlightBoostSpeed, creativeFlightChunk, creativeFlightMaximumFrameMilliseconds, creativeFlightSpeed, creativeFlightState, stepCreativeFlight} from "../src/navigation/creative-flight.vel"
+
+const basis = {forwardX: 0, forwardZ: 1, rightX: 1, rightZ: 0}
+const bounds = {minimumY: 0.25, maximumY: 255.75}
+
+test "creative flight accelerates without granting diagonal speed":
+    let state = creativeFlightState(0, 64, 0)
+    for frame in range(60):
+        state = stepCreativeFlight(state, {forward: 1, sideways: 1, vertical: 1, boosted: false}, basis, 1000 / 60, bounds)
+    expect(Math.sqrt(state.velocityX * state.velocityX + state.velocityY * state.velocityY + state.velocityZ * state.velocityZ) <= creativeFlightSpeed + 0.000001).toBe(true)
+    expect(state.x > 0 and state.y > 64 and state.z > 0).toBe(true)
+
+test "boost has a larger bounded target speed and idle input brakes to rest":
+    let state = creativeFlightState(0, 64, 0)
+    for frame in range(120):
+        state = stepCreativeFlight(state, {forward: 1, sideways: 0, vertical: 0, boosted: true}, basis, 1000 / 60, bounds)
+    expect(Math.sqrt(state.velocityX * state.velocityX + state.velocityY * state.velocityY + state.velocityZ * state.velocityZ) <= creativeFlightBoostSpeed + 0.000001).toBe(true)
+    expect(state.velocityZ > creativeFlightSpeed).toBe(true)
+    for frame in range(60):
+        state = stepCreativeFlight(state, {forward: 0, sideways: 0, vertical: 0, boosted: false}, basis, 1000 / 60, bounds)
+    expect(state.velocityX).toBe(0)
+    expect(state.velocityY).toBe(0)
+    expect(state.velocityZ).toBe(0)
+
+test "ascending and descending intents move vertically and respect world bounds":
+    const start = creativeFlightState(10, 255.7, -10)
+    const raised = stepCreativeFlight(start, {forward: 0, sideways: 0, vertical: 1, boosted: false}, basis, 50, bounds)
+    expect(raised.y).toBe(bounds.maximumY)
+    expect(raised.velocityY).toBe(0)
+    const lowered = stepCreativeFlight(raised, {forward: 0, sideways: 0, vertical: -1, boosted: false}, basis, 50, bounds)
+    expect(lowered.y < raised.y).toBe(true)
+
+test "large suspended-frame deltas are capped before integration":
+    const start = creativeFlightState(0, 64, 0)
+    const capped = stepCreativeFlight(start, {forward: 1, sideways: 0, vertical: 0, boosted: false}, basis, creativeFlightMaximumFrameMilliseconds, bounds)
+    const suspended = stepCreativeFlight(start, {forward: 1, sideways: 0, vertical: 0, boosted: false}, basis, 10_000, bounds)
+    expect(suspended).toEqual(capped)
+
+test "flight Chunk projection floors negative fractional coordinates":
+    expect(creativeFlightChunk(creativeFlightState(-0.01, 31.99, -16), 16)).toEqual({x: -1, y: 1, z: -1})
+
+test "flight policy rejects malformed host input at its boundary":
+    const state = creativeFlightState(0, 64, 0)
+    expect(() => stepCreativeFlight(state, {forward: 2, sideways: 0, vertical: 0, boosted: false}, basis, 16, bounds)).toThrow()
+    expect(() => stepCreativeFlight(state, {forward: 0, sideways: 0, vertical: 0, boosted: false}, basis, -1, bounds)).toThrow()
+    expect(() => stepCreativeFlight(state, {forward: 0, sideways: 0, vertical: 0, boosted: false}, {forwardX: 2, forwardZ: 0, rightX: 0, rightZ: 1}, 16, bounds)).toThrow()

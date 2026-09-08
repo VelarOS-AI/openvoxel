@@ -129,8 +129,8 @@ function transformPixelSequence(source, size, transforms) {
 
 /**
  * Applies the same clockwise rotation, horizontal flip, and vertical flip as
- * the authoring image transform. X points right and Y points down in image
- * space; Z points out of the surface.
+ * the authoring image transform. Tangent X points right, tangent Y points up,
+ * and Z points out of the surface.
  */
 export function transformTangentNormal(value, definition = {}) {
   const normal = requireRecord(value, "Tangent normal");
@@ -156,7 +156,7 @@ function applyNormalTransform({x, y, z}, transform) {
   let transformedX = x;
   let transformedY = y;
   for (let angle = 0; angle < transform.rotate; angle += 90) {
-    [transformedX, transformedY] = [-transformedY, transformedX];
+    [transformedX, transformedY] = [transformedY, -transformedX];
   }
   if (transform.flipX) transformedX = -transformedX;
   if (transform.flipY) transformedY = -transformedY;
@@ -205,7 +205,7 @@ function normalsFromHeight(source, albedo, profile, size, linear) {
       const inverseLength = 1 / Math.hypot(normalX, normalY, 1);
       output[offset] = Math.round((normalX * inverseLength * 0.5 + 0.5) * 255);
       output[offset + 1] = Math.round((normalY * inverseLength * 0.5 + 0.5) * 255);
-      output[offset + 2] = Math.round(inverseLength * 255);
+      output[offset + 2] = Math.round((inverseLength * 0.5 + 0.5) * 255);
       output[offset + 3] = alpha;
     }
   }
@@ -335,18 +335,26 @@ function requireChannelEncoding(metadata, channel, label) {
   }
 }
 
-async function loadChannel(dataRoot, file, tileSize, channel, label) {
+async function loadChannel(dataRoot, file, tileSize, channel, label, sourceCache) {
   if (!file.toLowerCase().endsWith(".png")) throw new Error(`${label} must be a PNG`);
   const path = resolveInside(dataRoot, file, label);
+  const cacheKey = `${path}:${tileSize}:${channel}`;
+  const cached = sourceCache.get(cacheKey);
+  if (cached != null) return Buffer.from(cached);
   const image = sharp(await readFile(path));
   const metadata = await image.metadata();
   if (metadata.format !== "png" || metadata.width !== tileSize || metadata.height !== tileSize) {
     throw new Error(`${label} must be a ${tileSize}x${tileSize} PNG`);
   }
   requireChannelEncoding(metadata, channel, label);
-  if (channel === "emissive") return image.toColourspace("srgb").ensureAlpha().raw().toBuffer();
-  const {data, info} = await image.raw().toBuffer({resolveWithObject: true});
-  return rgbaPixels(data, info.channels);
+  let pixels;
+  if (channel === "emissive") pixels = await image.toColourspace("srgb").ensureAlpha().raw().toBuffer();
+  else {
+    const {data, info} = await image.raw().toBuffer({resolveWithObject: true});
+    pixels = rgbaPixels(data, info.channels);
+  }
+  sourceCache.set(cacheKey, pixels);
+  return Buffer.from(pixels);
 }
 
 /**
@@ -363,6 +371,7 @@ export async function resolveTextureChannels({
   profile: rawProfile,
   sourceFiles: rawSourceFiles = {},
   transforms: rawTransforms = [],
+  sourceCache: rawSourceCache = new Map(),
   label: rawLabel = "texture",
 }) {
   const label = requireText(rawLabel, "Texture channel label");
@@ -371,9 +380,10 @@ export async function resolveTextureChannels({
   const profile = surfaceProfile(rawProfile, `${label} surface profile`);
   const sourceFiles = channelFiles(rawSourceFiles, `${label} source files`);
   const transforms = spatialTransforms(rawTransforms, size, `${label} channel transforms`);
+  if (!(rawSourceCache instanceof Map)) throw new TypeError(`${label} source cache must be a Map`);
   const loaded = new Map();
   for (const [channel, file] of Object.entries(sourceFiles)) {
-    loaded.set(channel, await loadChannel(dataRoot, file, size, channel, `${label} ${channel} channel`));
+    loaded.set(channel, await loadChannel(dataRoot, file, size, channel, `${label} ${channel} channel`, rawSourceCache));
   }
 
   let normal;

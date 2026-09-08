@@ -45,7 +45,7 @@ test "unified Mod compiler builds block content from one owner and identity sour
         variants: [],
     })
     const blockManifest: BlockCatalogManifest = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         catalogVersion: "farming:catalog-v1",
         sources: ["blocks/crops.yml"],
     }

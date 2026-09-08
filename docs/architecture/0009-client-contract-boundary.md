@@ -29,11 +29,22 @@ HTTP 的地形 Chunk 只由种子、生成器定义和世界方块注册表决�
 
 WebSocket 路径把连接绑定到一个世界。客户端通过 `chunks.sync` 读取 revision 与稀疏覆盖，通过 `blocks.apply` 原子提交批量修改。请求方收到 `blocks.applied` 确认；同世界订阅者收到不含玩家 requestId 的 `blocks.changed` 有序事实。流体 Tick、玩家移动、物品和战斗等后续热系统也沿这条世界会话边界扩展。
 
+连接建立时的 `world.ready` 同时携带权威 `WorldEnvironmentSample`。环境时间线由
+`@openvoxel/world` 根据世界 seed、世界时间与采样位置随机访问计算，服务端、Local
+Worker 与客户端会话共用相同纯函数；客户端只以 `monotonic()` 推进最近锚点。
+因此昼夜、月相、云量、雨雪、风和闪电不会因宿主、断线或渲染帧率产生分叉，
+Babylon 只消费结果。`WorldManifest.worldTimeOriginMilliseconds` 持久化世界时间零点，
+新世界从正午开始且重启后继续按真实时间前进；天气仍由 seed、世界时间和位置即时计算，
+不进入方块热事件 sequence，也不保存可漂移的天气快照。
+
 `@openvoxel/client` 拥有客户端世界接入职责。它把固定地形压入 `UInt16Buffer`，
-用稀疏覆盖组合当前 Chunk，校验协议、内容与生成器身份，并统一拥有 requestId、
+并为驻留 Chunk 一次展开由稀疏覆盖增量维护的 `UInt32Buffer` 组合视图，校验协议、内容与生成器身份，并统一拥有 requestId、
 连接代际、sequence、revision、多批次同步和重连期间的广播暂存。浏览器在线适配器
 和 Worker 本地适配器与会话实现同处一个职责包，都实现同一个 `WorldBackend`，不复制
-冷热合并状态机。
+冷热合并状态机。会话在写入状态前必须把 `chunks.synced` 的 requestId、worldId、
+数量与坐标顺序完整关联回原请求；重叠 Chunk 加载共享按坐标计数的所有权，单个请求
+失败不能回滚另一个成功请求引入的状态。并发响应中较晚到达的旧 revision 直接忽略，
+不会覆盖较新的热状态或触发无效网格重建。
 这个端口同时包含创建、按 id 查找、启动事实、内容目录、固定地形和实时连接；
 它返回的 `WorldBackendContract` 只描述会话真正依赖的协议代际与 Chunk 编码，不要求
 本地模式声明 HTTP 或 WebSocket capability。`packages/client/access/src/backend-conformance.vel`
@@ -51,6 +62,9 @@ LocalBackend 的主线程通过类型化 Worker 信封调用同一组后端操�
 `@openvoxel/renderer` 单独拥有呈现职责。资源包身份、逻辑渲染目录、Chunk 邻域
 快照、网格生成与 Babylon 表面都由它维护；公开边界使用 OpenVoxel 数据类型，不把
 Scene、Mesh 或 GPU 资源泄露给世界模型和协议包。
+世界游戏模式由 `WorldManifest.mode` 定义并随世界持久化；Renderer 只消费这个事实，
+把 Creative 映射为第一人称自由飞行，把 Survival 映射为带重力与碰撞的第一人称行走。客户端缓存和路由入口都
+不能覆盖模式，也不能单独启用玩家控制。
 主入口提供目录、快照与 GPU 表面，`@openvoxel/renderer/meshing-worker` 是独立的精确
 包入口，只闭包构网协议和 CPU 网格代码。Web 应用保留 Worker 宿主启动壳，但必须从
 该精确入口装配，不能通过渲染器主入口把 Babylon/PBR 或生成资源带入 Worker。
@@ -79,11 +93,13 @@ WebSocket 错误使用 MessagePack `error` 事件，并在能够读取时回显 
 
 方块 YAML 只保存逻辑资源 key。`GET /api/worlds/{worldId}/content` 从该世界权威目录确定性聚合并排序 materials、textures、models、tints 和 animations。
 
-客户端资源包完整覆盖这些逻辑 key；具体 key 到作者 PNG、texture bank、着色器和模型实现的映射属于客户端资源包。作者格式 v6 是闭合 schema，manifest、catalog、texture、variant、layer 与 transform 各自拒绝未知字段，图片使用清单只从这些已验证结构推导。每个逻辑 texture 以一张独立的 32×32 albedo PNG 为根，可以按需附加切线空间 normal 或线性 height、ORM material 与 emissive 单图，也可以声明带权重的多个确定性表面变体。normal、height 与 material 使用无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 是经过 sRGB 归一化的 8-bit 颜色 PNG；构建器不会对数据通道执行颜色管理或位深量化。缺失的 PBR 通道由 surface profile 确定性生成，最终四通道 alpha 始终跟随 albedo。变体允许旋转、翻转、平移和颜色变换；空间变换同步作用于作者通道并重映射法线方向，颜色变换只作用于 albedo。带作者通道的 texture 不允许再叠加 albedo layer，避免生成期静默错位。
+客户端资源包完整覆盖这些逻辑 key；具体 key 到作者 PNG、texture bank、着色器和模型实现的映射属于客户端资源包。作者格式 v9 是闭合 schema，manifest、catalog、texture、variant、layer、image reference、transform 与环境资源各自拒绝未知字段，图片使用清单只从这些已验证结构推导。每个逻辑 texture 以一张独立的 32×32 albedo PNG 为根，可以按需附加切线空间 normal 或线性 height、ORM material 与 emissive 单图，也可以声明带权重的多个确定性表面变体。normal、height、material 与 mask 使用无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 是经过 sRGB 归一化的 8-bit 颜色 PNG；构建器不会对数据通道执行颜色管理或位深量化。缺失的 PBR 通道由 surface profile 确定性生成，最终四通道 alpha 始终跟随 albedo。
+
+一个 variant 可以依次叠加至多四个完整 material layer。每层显式拥有 `albedo: {file}`，并可独立提供 normal 或 height、ORM material、emissive、灰度乘 alpha 的 mask、局部 transform、opacity 与 albedo blend。构建器先把 base 和每个 layer 分别解析成完整四通道 surface，再以 albedo alpha × mask × opacity 得到统一覆盖率：albedo 的 normal、multiply、overlay 在线性光空间执行；切线法线使用 whiteout detail blend 后重新归一化；AO 乘法叠加，roughness 与 metallic 按覆盖率线性插值；emissive 在线性光空间相加并钳制。layer 顺序是配方语义，variant transform 在全部 layer 合成后作为全局变换执行，颜色操作只改变 albedo，空间操作同步移动所有通道并重映射法线方向。
 
 作者资源按 terrain、vegetation、fluid 分类，environment 单独维护。GPU bank 不从作者目录、material 名称或 model 名称猜测，而是遍历世界内容中的最终 component profile：普通纹理按 opaque、cutout、translucent 层归组，fluid model 优先进入 fluid bank，动画帧继承使用它的 bank。一个逻辑 texture 若被多个 bank 使用必须以不同逻辑 key 明确拆分，构建器不会产生含糊的运行时映射。
 
-生成 artifact v5 的 `textureBanks` 使用 `storage: texture_2d_array`。每个 bank 按呈现职责保存层数和一条直到 1×1 的完整 mip 链；每一级都包含 layer-major 的 albedo、normal、material、emissive 四块 RGBA8 数据，四个通道共享完全相同的尺寸与 layer 顺序，并按 GPU 自下而上的行序保存，其中 material 使用 R=AO、G=roughness、B=metallic。生成器在线性光空间过滤 albedo 与 emissive，重归一化切线空间 normal，线性平均 ORM，并按每个 cutout 纹理实际使用的材质 `alphaCutoff` 保持最接近当前分辨率可表达的覆盖率；同一逻辑纹理若被不同阈值使用必须拆成不同资源 key。纹理资源把该生成阈值带入 artifact，RenderCatalog 与 GPU 提交边界再次核对材质阈值。运行时不再让驱动从 base level 猜测这些通道的 mip，而是以 `UNPACK_FLIP_Y_WEBGL=false` 逐级提交 `texImage3D`；数组采样保留像素化的层内 nearest，并在相邻 mip 之间线性过渡。
+生成 artifact v8 的 `textureBanks` 使用 `storage: texture_2d_array`，并携带日月星、八个月相、云、雨滴、溅射和雪花的已验证 WebP 环境资源。每个 bank 按呈现职责保存层数和一条直到 1×1 的完整 mip 链；每一级都包含 layer-major 的 albedo、normal、material、emissive 四块 RGBA8 数据，四个通道共享完全相同的尺寸与 layer 顺序，并按 GPU 自下而上的行序保存，其中 material 使用 R=AO、G=roughness、B=metallic。生成器在线性光空间过滤 albedo 与 emissive，重归一化切线空间 normal，线性平均 ORM，并按每个 cutout 纹理实际使用的材质 `alphaCutoff` 保持最接近当前分辨率可表达的覆盖率；同一逻辑纹理若被不同阈值使用必须拆成不同资源 key。纹理资源把该生成阈值带入 artifact，RenderCatalog 与 GPU 提交边界再次核对材质阈值。运行时不再让驱动从 base level 猜测这些通道的 mip，而是以 `UNPACK_FLIP_Y_WEBGL=false` 逐级提交 `texImage3D`；数组采样保留像素化的层内 nearest，并在相邻 mip 之间线性过渡。
 
 每个 bank 的单通道完整 mip 链最多 16 MiB，完整资源包的估算常驻预算最多 128 MiB。常驻估算同时计入四通道 GPU mip、上下文恢复用 CPU 字节以及 JSON 中 UTF-16 base64 的保守堆占用；生成器、artifact validator 与 GPU 适配器执行同一边界。每个逻辑 texture 只保存 bank key 与带权重的稳定 layer 变体，运行时依据绝对世界坐标、runtimeId 和方块面确定性选择 layer，因此 Chunk 边界、Worker 顺序和重连不会改变既有表面。
 

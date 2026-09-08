@@ -1,0 +1,127 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
+import {expect} from "velar/test"
+import {chunkStreamer} from "../src/rendering/chunk-streamer.vel"
+import {ChunkWindowView, streamedChunkPositions} from "../src/rendering/render-window.vel"
+
+def view(x: number, forwardZ: number = -1) -> ChunkWindowView:
+    return {center: {x, y: 0, z: 0}, forwardX: 0, forwardY: 0, forwardZ}
+
+test "stream owner defers startup and preserves the latest complete camera view":
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    const failures: List<string> = []
+    let ready = false
+    let loads = 0
+    let maximumBatch = 0
+    async def load(positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation):
+        loads += 1
+        maximumBatch = Math.max(maximumBatch, positions.size)
+        for position in positions: resident.set(chunkKey(position), position)
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: resident.remove(chunkKey(position))
+    const streamer = chunkStreamer(
+        {trackedPositions: () => resident.values(), load, unload},
+        0, 0, () => ready, () => null, message => failures.append(message),
+    )
+    try:
+        streamer.request(view(0))
+        streamer.request(view(8, 1))
+        await Promise.sleep(0ms)
+        expect(loads).toBe(0)
+        ready = true
+        streamer.resume()
+        while loads == 0 or streamer.pending() > 0: await Promise.sleep(0ms)
+        expect(Set(resident.keys())).toEqual(Set(streamedChunkPositions(view(8, 1), 0, 0).map(position => chunkKey(position))))
+        expect(maximumBatch).toBe(4)
+        expect(failures).toEqual([])
+    finally: await streamer.close()
+
+test "stream owner finishes one bounded batch before converging on a superseding view":
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    for position in streamedChunkPositions(view(0), 0, 0): resident.set(chunkKey(position), position)
+    let releaseFirst = false
+    let loads = 0
+    let active = 0
+    let maximumActive = 0
+    let peak = resident.size
+    const failures: List<string> = []
+    async def load(positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation):
+        loads += 1
+        active += 1
+        maximumActive = Math.max(maximumActive, active)
+        if loads == 1:
+            while not releaseFirst: await Promise.sleep(0ms)
+        for position in positions: resident.set(chunkKey(position), position)
+        peak = Math.max(peak, resident.size)
+        active -= 1
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: resident.remove(chunkKey(position))
+    const streamer = chunkStreamer(
+        {trackedPositions: () => resident.values(), load, unload},
+        0, 0, () => true, () => null, message => failures.append(message),
+    )
+    try:
+        streamer.request(view(3))
+        while loads == 0: await Promise.sleep(0ms)
+        streamer.request(view(6, 1))
+        releaseFirst = true
+        while loads < 2 or streamer.pending() > 0: await Promise.sleep(0ms)
+        const desired = streamedChunkPositions(view(6, 1), 0, 0, resident.values())
+        expect(Set(resident.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
+        expect(maximumActive).toBe(1)
+        expect(peak <= desired.size + 4).toBe(true)
+        expect(failures).toEqual([])
+    finally:
+        releaseFirst = true
+        await streamer.close()
+
+test "a failed first stream load preserves the old residency and clears pending work":
+    const old: ChunkPosition = {x: 0, y: 0, z: 0}
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    resident.set(chunkKey(old), old)
+    const failures: List<string> = []
+    async def load(_positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation):
+        throw Error("terrain unavailable")
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: resident.remove(chunkKey(position))
+    const streamer = chunkStreamer(
+        {trackedPositions: () => resident.values(), load, unload},
+        0, 0, () => true, () => null, message => failures.append(message),
+    )
+    try:
+        streamer.request(view(10))
+        while failures.size == 0: await Promise.sleep(0ms)
+        expect(resident.values()).toEqual([old])
+        expect(streamer.pending()).toBe(0)
+        expect(failures).toEqual(["terrain unavailable"])
+    finally: await streamer.close()
+
+test "stream close seals future requests but still retires a completed paired batch":
+    const old: ChunkPosition = {x: 0, y: 0, z: 0}
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    resident.set(chunkKey(old), old)
+    const calls: List<string> = []
+    let release = false
+    async def load(positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation):
+        calls.append("load")
+        while not release: await Promise.sleep(0ms)
+        for position in positions: resident.set(chunkKey(position), position)
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        calls.append("unload")
+        for position in positions: resident.remove(chunkKey(position))
+    const streamer = chunkStreamer(
+        {trackedPositions: () => resident.values(), load, unload},
+        0, 0, () => true, () => null, message => calls.append(message),
+    )
+    streamer.request(view(10))
+    while calls.size == 0: await Promise.sleep(0ms)
+    const closing = streamer.close()
+    release = true
+    await closing
+    streamer.request(view(20))
+    streamer.resume()
+    await Promise.sleep(0ms)
+    expect(calls).toEqual(["load", "unload"])
+    expect(resident.has(chunkKey(old))).toBe(false)
+    expect(resident.size).toBe(4)
+    expect(streamer.pending()).toBe(0)

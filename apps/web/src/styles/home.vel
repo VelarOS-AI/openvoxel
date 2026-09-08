@@ -1,0 +1,168 @@
+import {Look, alpha, blur, border, shadow, transition} from "velar/look"
+import {brightBlue, ink, muted, panel, white} from "./theme.vel"
+
+const carouselArrowLook: Look = look:
+    position = "absolute"
+    top = 50%
+    zIndex = 6
+    display = "grid"
+    placeItems = "center"
+    width = 62px
+    height = 82px
+    color = white
+    backgroundColor = alpha(panel, 0.38)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 18px
+    boxShadow = shadow(0px, 14px, 34px, alpha(ink, 0.3))
+    backdropFilter = blur(18px)
+    fontSize = 1.65rem
+    cursor = "pointer"
+    translate = 0px - 50%
+    transition = transition("background-color", 160ms, "ease-out")
+
+    if @hover:
+        backgroundColor = alpha(panel, 0.68)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 3px
+    if @disabled:
+        opacity = 0.34
+        cursor = "default"
+
+    if viewport.width <= 640px:
+        width = 48px
+        height = 64px
+        borderRadius = 14px
+
+export const previousArrowLook: Look = look:
+    ...carouselArrowLook
+    left = 36px
+
+    if viewport.width <= 640px:
+        left = 16px
+
+export const nextArrowLook: Look = look:
+    ...carouselArrowLook
+    right = 36px
+
+    if viewport.width <= 640px:
+        right = 16px
+
+export const homeContentLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 5.4vw
+    right = 5.4vw
+    bottom = 5.6vh
+    display = "grid"
+    gap = 18px
+    maxWidth = 920px
+
+    if viewport.width <= 720px:
+        left = 24px
+        right = 24px
+        bottom = 28px
+        gap = 14px
+
+export const metadataLook: Look = look:
+    display = "flex"
+    flexWrap = "wrap"
+    gap = 18px
+    color = muted
+
+export const metadataItemLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    gap = 8px
+    fontSize = 0.92rem
+
+export const actionRowLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "space-between"
+    gap = 28px
+    width = 100%
+    paddingTop = 18px
+    borderTop = border(1px, alpha(white, 0.18))
+
+export const actionGroupLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 14px
+
+export const emptyActionsLook: Look = look:
+    ...actionGroupLook
+
+    if viewport.width <= 520px:
+        alignItems = "stretch"
+        flexDirection = "column"
+        maxWidth = 230px
+
+export const dotsLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "flex-end"
+    gap = 12px
+    minWidth = 120px
+
+export const dotLook: Look = look:
+    width = 11px
+    height = 11px
+    padding = 0px
+    backgroundColor = alpha(white, 0.46)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 999px
+    cursor = "pointer"
+    transition = transition("background-color", 120ms, "ease-out")
+
+    if @hover:
+        backgroundColor = alpha(white, 0.82)
+    if @focus:
+        outline = border(2px, white)
+        outlineOffset = 3px
+
+export const activeDotLook: Look = look:
+    ...dotLook
+    backgroundColor = brightBlue
+    borderColor = alpha(white, 0.56)
+    boxShadow = shadow(0px, 0px, 16px, alpha(brightBlue, 0.68))
+
+export const emptyContentLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 5.4vw
+    bottom = 10vh
+    display = "grid"
+    gap = 18px
+    maxWidth = 650px
+
+    if viewport.width <= 720px:
+        left = 24px
+        right = 24px
+        bottom = 42px
+
+export const settingsPanelLook: Look = look:
+    position = "absolute"
+    zIndex = 8
+    right = 5.4vw
+    bottom = 12vh
+    display = "grid"
+    gap = 14px
+    minWidth = 320px
+    padding = 22px
+    backgroundColor = alpha(panel, 0.86)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 18px
+    boxShadow = shadow(0px, 24px, 64px, alpha(ink, 0.52))
+    backdropFilter = blur(24px)
+
+export const settingsRowLook: Look = look:
+    display = "grid"
+    gap = 4px
+    paddingBottom = 10px
+    borderBottom = border(1px, alpha(white, 0.12))
+
+export const settingsValueLook: Look = look:
+    color = alpha(white, 0.68)
+    fontSize = 0.86rem
+    overflowWrap = "anywhere"

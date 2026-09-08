@@ -1,4 +1,4 @@
-import {ClientBlockModelKind, ClientTextureVariant} from "./contracts.vel"
+import {ClientBlockModelKind, ClientClimateTint, ClientTextureVariant, ClientTintCoverage} from "./contracts.vel"
 
 /// 客户端资源包把世界内容中的逻辑资源身份解析成有界的呈现配方。
 /// 这个格式没有 runtimeId 字段；数字状态只通过 WorldContentResponse 的状态目录
@@ -12,6 +12,12 @@ export enum ClientTextureBankRole:
 
 export enum ClientTextureBankStorage:
     texture2dArray = "texture_2d_array"
+
+/// 降水碰到这个呈现表面时采用的反馈；独立于方块运行时身份、染色和透明层。
+export enum ClientPrecipitationSurface:
+    permeable = "none"
+    solid
+    water
 
 const maximumTextureBankChannelBytes = 16 * 1024 * 1024
 const maximumClientTextureResidentBytes = 128 * 1024 * 1024
@@ -33,8 +39,24 @@ export type ClientTextureBank:
     /// 行序保存；材质层按 R=AO、G=roughness、B=metallic 编码。
     readonly levels: readonly List<readonly ClientTextureBankLevel>
 
+export type ClientSkyEnvironmentResources:
+    readonly sunDataUrl: string
+    readonly glowDataUrl: string
+    readonly starDataUrl: string
+    readonly moonDataUrls: readonly List<string>
+
+export type ClientCloudEnvironmentResources:
+    readonly textureDataUrl: string
+
+export type ClientPrecipitationEnvironmentResources:
+    readonly rainDataUrl: string
+    readonly rainSplashDataUrl: string
+    readonly snowDataUrl: string
+
 export type ClientResourceEnvironment:
-    readonly cloudsDataUrl: string
+    readonly sky: readonly ClientSkyEnvironmentResources
+    readonly clouds: readonly ClientCloudEnvironmentResources
+    readonly precipitation: readonly ClientPrecipitationEnvironmentResources
 
 export type ClientModelResource:
     readonly key: string
@@ -42,6 +64,7 @@ export type ClientModelResource:
 
 export type ClientMaterialResource:
     readonly key: string
+    readonly precipitationSurface: ClientPrecipitationSurface
     readonly alpha: number
     readonly alphaCutoff: number
     readonly doubleSided: bool
@@ -62,6 +85,8 @@ export type ClientTextureResource:
 
 export type ClientTintResource:
     readonly key: string
+    readonly climate: ClientClimateTint
+    readonly coverage: ClientTintCoverage
     readonly red: number
     readonly green: number
     readonly blue: number
@@ -109,15 +134,26 @@ def requireTextureData(value: string, expectedBytes: number, label: string):
     else: hasCanonicalPadding = Text.matches(value, r"^[A-Za-z0-9+/]+=$")
     assert hasCanonicalPadding else f"{label} must be complete RGBA8 base64 data"
 
+def requireEmbeddedWebp(value: string, label: string):
+    assert value.startsWith("data:image/webp;base64,") else f"{label} must be an embedded WebP image"
+
 /// 包内 JSON 已由生成阶段计算 resourceHash；运行时再次验证结构、范围、命名空间
 /// 和交叉引用，避免损坏的静态资源走到图形引擎边界。
 export def validateClientResourcePack(artifact: readonly ClientResourcePackArtifact) -> readonly ClientResourcePackArtifact:
-    assert artifact.artifactVersion == 5 else "Unsupported client resource pack artifact version"
-    assert artifact.formatVersion == 5 else "Unsupported client resource pack format version"
+    assert artifact.artifactVersion == 8 else "Unsupported client resource pack artifact version"
+    assert artifact.formatVersion == 8 else "Unsupported client resource pack format version"
     assert Text.matches(artifact.owner, r"^[a-z][a-z0-9_.-]*$") else "Client resource pack owner is invalid"
     requireHash(artifact.targetContentHash, "Client resource target content hash")
     requireHash(artifact.resourceHash, "Client resource hash")
-    assert artifact.environment.cloudsDataUrl.startsWith("data:image/webp;base64,") else "Client resource clouds must be an embedded WebP image"
+    requireEmbeddedWebp(artifact.environment.sky.sunDataUrl, "Client resource sun")
+    requireEmbeddedWebp(artifact.environment.sky.glowDataUrl, "Client resource sky glow")
+    requireEmbeddedWebp(artifact.environment.sky.starDataUrl, "Client resource star")
+    assert artifact.environment.sky.moonDataUrls.size == 8 else "Client resources need exactly eight moon phase images"
+    for dataUrl in artifact.environment.sky.moonDataUrls: requireEmbeddedWebp(dataUrl, "Client resource moon phase")
+    requireEmbeddedWebp(artifact.environment.clouds.textureDataUrl, "Client resource clouds")
+    requireEmbeddedWebp(artifact.environment.precipitation.rainDataUrl, "Client resource rain")
+    requireEmbeddedWebp(artifact.environment.precipitation.rainSplashDataUrl, "Client resource rain splash")
+    requireEmbeddedWebp(artifact.environment.precipitation.snowDataUrl, "Client resource snow")
 
     const textureBankKeys: Set<string> = Set()
     const textureBankLayers: Map<string, number> = Map()
@@ -202,6 +238,7 @@ export def validateClientResourcePack(artifact: readonly ClientResourcePackArtif
         for layer in range(bank.layerCount):
             assert f"{bank.key}:{layer}" in referencedLayers else f"Texture bank {bank.key} has orphan layer {layer}"
     for tint in artifact.tints:
+        assert tint.coverage != ClientTintCoverage.grassCap or tint.climate == ClientClimateTint.grass else "Grass-cap tint coverage requires the grass climate policy"
         requireUnit(tint.red, f"Tint {tint.key} red")
         requireUnit(tint.green, f"Tint {tint.key} green")
         requireUnit(tint.blue, f"Tint {tint.key} blue")

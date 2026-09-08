@@ -10,6 +10,26 @@ export enum ClientBlockModelKind:
     snowLayer = "snow_layer"
     fluid
 
+export enum ClientClimateTint:
+    neutral = "none"
+    grass
+    foliage
+    water
+
+export enum ClientTintCoverage:
+    all
+    grassCap = "grass_cap"
+
+/// 客户端玩家碰撞只消费规范化后的局部 AABB，不读取模型网格或材质层。
+/// 坐标均位于一个方块的 [0, 1] 局部空间内。
+export type ClientBlockCollisionBox:
+    readonly minimumX: number
+    readonly minimumY: number
+    readonly minimumZ: number
+    readonly maximumX: number
+    readonly maximumY: number
+    readonly maximumZ: number
+
 export type ClientTextureVariant:
     readonly layer: number
     readonly weight: number
@@ -37,6 +57,8 @@ export type ClientRenderState:
     readonly pipelineKey: string?
     readonly textures: readonly ClientResolvedBlockTextures?
     readonly tintKey: string?
+    readonly climateTint: ClientClimateTint
+    readonly tintCoverage: ClientTintCoverage
     readonly tintRed: number
     readonly tintGreen: number
     readonly tintBlue: number
@@ -44,10 +66,44 @@ export type ClientRenderState:
     readonly cullFaces: bool
     readonly occludes: bool
     readonly emission: number
+    readonly collisionBoxes: readonly List<readonly ClientBlockCollisionBox>
     readonly axis: string?
     readonly level: number?
     readonly falling: bool?
     readonly layers: number?
+
+/// Portal 面索引同时定义两个摘要掩码的稳定线上布局。`openFaces` 的位是
+/// `2 ^ face`；`connectedFaces` 的位是
+/// `2 ^ (source * chunkPortalFaceCount + target)`。
+/// 36 位矩阵仍是 JavaScript 可精确表达的安全整数，不得改用 32 位位运算。
+export type ChunkPortalFaceIndices:
+    readonly west: number
+    readonly east: number
+    readonly bottom: number
+    readonly top: number
+    readonly north: number
+    readonly south: number
+
+export const chunkPortalFaceCount = 6
+
+export const chunkPortalFaceIndices: readonly ChunkPortalFaceIndices = {
+    west: 0,
+    east: 1,
+    bottom: 2,
+    top: 3,
+    north: 4,
+    south: 5,
+}
+
+export type ChunkPortalSummary:
+    /// 中心 Chunk 没有任何带模型的状态；非遮挡的水、玻璃和叶片并不算空。
+    readonly empty: bool
+    /// 中心 Chunk 的每一个格都使用会遮挡视线的状态。
+    readonly fullyOccluding: bool
+    /// 至少有一个非遮挡分量触及对应的 Chunk 面。
+    readonly openFaces: number
+    /// 同一个非遮挡分量所连通的有向面组合；对角位也会记录。
+    readonly connectedFaces: number
 
 export type ChunkMeshBatch:
     readonly pipelineKey: string
@@ -59,6 +115,7 @@ export type ChunkMeshBatch:
     readonly normals: Float32Buffer
     readonly uvs: Float32Buffer
     readonly textureLayers: Float32Buffer
+    readonly tintRoles: Float32Buffer
     readonly colors: Float32Buffer
     readonly indices: UInt32Buffer
     readonly quadCount: number
@@ -66,6 +123,7 @@ export type ChunkMeshBatch:
 export type ChunkMesh:
     readonly position: readonly ChunkPosition
     readonly ticket: number
+    readonly portalSummary: readonly ChunkPortalSummary
     readonly batches: readonly List<readonly ChunkMeshBatch>
     readonly visibleBlocks: number
     readonly quadCount: number

@@ -1,4 +1,4 @@
-import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShape, BlockShapeKind, BlockStateProperty, BlockTypeSource} from "../definition/block.vel"
+import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShape, BlockShapeBox, BlockShapeKind, BlockStateProperty, BlockTypeSource} from "../definition/block.vel"
 import {BuiltinBlockIdentities} from "@openvoxel/identities"
 
 /// 该模块集中执行单个方块及其组件的语义验证。
@@ -20,18 +20,48 @@ def requireUnitInterval(value: number, label: string):
 export def requireUInt32(value: number, label: string):
     assert value.isInteger() and value >= 0 and value <= 0xffffffff else f"{label} must be an integer from 0 through 4294967295"
 
-/// custom 形状需要资源 key；内建 empty/fullCube 形状由 kind 本身完整表达。
-def requireShape(shape: BlockShape, label: string):
+def requireShapeBox(box: BlockShapeBox, label: string, properties: readonly List<readonly BlockPropertyDefinition>):
+    for bound in [box.minimumX, box.minimumY, box.minimumZ, box.maximumX, box.maximumY, box.maximumZ]:
+        requireUnitInterval(bound, f"{label} bound")
+    assert box.minimumX < box.maximumX and box.minimumY < box.maximumY and box.minimumZ < box.maximumZ else f"{label} must have positive volume"
+    const propertyName = box.maximumYProperty
+    if propertyName == null:
+        assert box.maximumYScale == null else f"{label} cannot scale maximum Y without a property"
+        return
+    requirePropertyName(propertyName, f"{label} maximum Y property")
+    const property = properties.find(candidate => candidate.name == propertyName)
+    assert property != null else f"{label} references unknown property {propertyName}"
+    assert property.kind == BlockPropertyKind.integer else f"{label} maximum Y property must be an integer"
+    const scale = box.maximumYScale
+    assert scale != null and scale.isFinite() and scale > 0 else f"{label} maximum Y scale must be positive"
+    assert property.minimum * scale > box.minimumY and property.maximum * scale <= box.maximumY else f"{label} scaled maximum Y must stay inside its declared bounds"
+
+/// custom 形状需要资源 key；碰撞形状还必须声明可由通用物理系统消费的 AABB。
+/// 内建 empty/fullCube 形状由 kind 本身完整表达。
+def requireShape(
+    shape: BlockShape,
+    label: string,
+    properties: readonly List<readonly BlockPropertyDefinition>,
+    requiresBox: bool,
+):
     match shape.kind:
         case BlockShapeKind.custom:
             assert shape.key != null else f"{label} custom shape requires a key"
             requireNamespacedKey(shape.key, f"{label} shape key")
-        case _: assert shape.key == null else f"{label} built-in shape cannot carry a custom key"
+            if requiresBox:
+                assert shape.boxes != null and shape.boxes.size > 0 else f"{label} custom shape requires collision boxes"
+            if shape.boxes != null:
+                assert shape.boxes.size > 0 else f"{label} custom shape boxes cannot be empty"
+                assert shape.boxes.size <= 16 else f"{label} custom shape cannot exceed 16 boxes"
+                for box in shape.boxes: requireShapeBox(box, f"{label} box", properties)
+        case _:
+            assert shape.key == null else f"{label} built-in shape cannot carry a custom key"
+            assert shape.boxes == null else f"{label} built-in shape cannot carry custom boxes"
 
-def requirePhysics(physics: BlockPhysics, blockKey: string):
-    requireShape(physics.collision, f"Block {blockKey} collision")
-    requireShape(physics.selection, f"Block {blockKey} selection")
-    requireShape(physics.occlusion, f"Block {blockKey} occlusion")
+def requirePhysics(physics: BlockPhysics, blockKey: string, properties: readonly List<readonly BlockPropertyDefinition>):
+    requireShape(physics.collision, f"Block {blockKey} collision", properties, true)
+    requireShape(physics.selection, f"Block {blockKey} selection", properties, false)
+    requireShape(physics.occlusion, f"Block {blockKey} occlusion", properties, false)
     assert physics.friction.isFinite() and physics.friction >= 0 else f"Block {blockKey} friction must be non-negative"
     assert physics.speedFactor.isFinite() and physics.speedFactor >= 0 else f"Block {blockKey} speed factor must be non-negative"
     assert physics.jumpFactor.isFinite() and physics.jumpFactor >= 0 else f"Block {blockKey} jump factor must be non-negative"
@@ -171,7 +201,7 @@ export def validateBlockType(block: BlockTypeSource):
         assert not (property.name in propertyNames) else f"Block {block.key} contains duplicate property {property.name}"
         propertyNames.add(property.name)
     requireStateProperties(block.key, block.properties, block.defaultState, true)
-    requirePhysics(block.physics, block.key)
+    requirePhysics(block.physics, block.key, block.properties)
     requireLight(block.light, block.key)
     requireRender(block.render, block.key)
     requireInteraction(block.interaction, block.key)
@@ -179,7 +209,7 @@ export def validateBlockType(block: BlockTypeSource):
     for variant in block.variants:
         assert variant.when.size > 0 else f"Block {block.key} variant requires at least one state condition"
         requireStateProperties(block.key, block.properties, variant.when, false)
-        if variant.physics != null: requirePhysics(variant.physics, block.key)
+        if variant.physics != null: requirePhysics(variant.physics, block.key, block.properties)
         if variant.light != null: requireLight(variant.light, block.key)
         if variant.render != null: requireRender(variant.render, block.key)
         if variant.interaction != null: requireInteraction(variant.interaction, block.key)

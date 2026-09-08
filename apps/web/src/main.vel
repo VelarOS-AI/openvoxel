@@ -1,8 +1,12 @@
-import {Router, route} from "velar/web"
-import {CreateWorldPage} from "./pages/create-world-page.vel"
-import {OpenWorldPage} from "./pages/open-world-page.vel"
+import {Router, lazy, route} from "velar/web"
 import {WorldHomePage} from "./pages/world-home-page.vel"
-import {WorldPage} from "./pages/world-page.vel"
+
+component RouteLoadingPage:
+    return <main aria-busy="true" data-route-module-loading>Loading…</main>
+
+const CreateWorldPage = lazy(() => import("./pages/create-world-page.vel"), "CreateWorldPage", RouteLoadingPage)
+const OpenWorldPage = lazy(() => import("./pages/open-world-page.vel"), "OpenWorldPage", RouteLoadingPage)
+const WorldPage = lazy(() => import("./pages/world-page.vel"), "WorldPage", RouteLoadingPage)
 
 const routes = [
     route("/", WorldHomePage),

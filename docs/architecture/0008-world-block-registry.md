@@ -34,7 +34,7 @@ Chunk 调色板存放世界运行时 ID，体素使用 UInt16 局部索引。一
 
 ## 存储与协议
 
-SQLite schema 5 将内容身份保存到 `worlds.content_json`，世界快照保存到 `worlds.block_registry_json`，覆盖保存到 `block_overrides.block_state_runtime_id`。世界 bootstrap 返回完整注册表；Chunk 响应返回 `palette` 与 `indices`；方块修改命令传递 `blockStateRuntimeId`。
+SQLite schema 7 将内容身份保存到 `worlds.content_json`，世界快照保存到 `worlds.block_registry_json`，覆盖保存到 `block_overrides.block_state_runtime_id`。世界 bootstrap 返回完整注册表；Chunk 响应返回 `palette` 与 `indices`；方块修改命令传递 `blockStateRuntimeId`。
 
 ## 强制验证
 

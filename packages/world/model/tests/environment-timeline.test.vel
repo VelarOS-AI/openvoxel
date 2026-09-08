@@ -1,0 +1,92 @@
+import {expect} from "velar/test"
+import {Coordinate3} from "../src/spatial/coordinates.vel"
+import {WorldLightningEvent, WorldPrecipitationKind, worldDayMilliseconds} from "../src/environment/environment.vel"
+import {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldWeatherWindowMilliseconds} from "../src/environment/timeline.vel"
+
+def firstLightning(seed: string, samplePosition: readonly Coordinate3) -> readonly WorldLightningEvent:
+    for worldMilliseconds in range(0, worldDayMilliseconds * 4, 500):
+        const event = worldEnvironmentAt(seed, worldMilliseconds, samplePosition).lightning
+        if event != null: return event
+    throw Error("Expected the fixed environment seed to produce lightning")
+
+test "environment timeline is deterministic and seed-owned":
+    const position = {x: 1234, y: 91, z: -5678}
+    const first = worldEnvironmentAt("environment-alpha", 456_789, position)
+    const replayed = worldEnvironmentAt("environment-alpha", 456_789, position)
+    const otherSeed = worldEnvironmentAt("environment-beta", 456_789, position)
+    expect(first).toEqual(replayed)
+    expect(first.samplePosition).toEqual(position)
+    expect(first.cloudiness != otherSeed.cloudiness or first.windX != otherSeed.windX or first.windZ != otherSeed.windZ).toBe(true)
+
+test "world time advances the full celestial cycle and eight moon phases":
+    expect(worldEnvironmentAt("cycle", 0).timeOfDay).toBe(0.25)
+    expect(worldEnvironmentAt("cycle", worldDayMilliseconds * 0.25).timeOfDay).toBe(0.5)
+    expect(worldEnvironmentAt("cycle", worldDayMilliseconds * 0.5).timeOfDay).toBe(0.75)
+    expect(worldEnvironmentAt("cycle", worldDayMilliseconds * 0.75).timeOfDay).toBe(0)
+    expect(worldEnvironmentAt("cycle", worldDayMilliseconds).moonPhase).toBe(1)
+    expect(worldEnvironmentAt("cycle", worldDayMilliseconds * 8).moonPhase).toBe(0)
+
+test "cloud and wind interpolation meet continuously at weather window boundaries":
+    const before = worldEnvironmentAt("continuous-weather", worldWeatherWindowMilliseconds - 1)
+    const after = worldEnvironmentAt("continuous-weather", worldWeatherWindowMilliseconds + 1)
+    expect((before.cloudiness - after.cloudiness).abs() < 0.001).toBe(true)
+    expect((before.windX - after.windX).abs() < 0.001).toBe(true)
+    expect((before.windZ - after.windZ).abs() < 0.001).toBe(true)
+    expect(before.precipitation).toBe(WorldPrecipitationKind.clear)
+    expect(after.precipitation).toBe(WorldPrecipitationKind.clear)
+
+test "trace precipitation is normalized to the clear-weather invariant":
+    const sample = worldEnvironmentAt("benchmark-world", 123_472_789, {x: 12_345, y: 80, z: -9_876})
+    expect(sample.precipitation).toBe(WorldPrecipitationKind.clear)
+    expect(sample.precipitationIntensity).toBe(0)
+
+test "weather fields remain continuous across adjacent spatial cells and differ in far regions":
+    const beforeBoundary = worldEnvironmentAt("continuous-space", 90_000, {x: 511, y: 72, z: 180})
+    const afterBoundary = worldEnvironmentAt("continuous-space", 90_000, {x: 512, y: 72, z: 180})
+    expect((beforeBoundary.cloudiness - afterBoundary.cloudiness).abs() < 0.001).toBe(true)
+    expect((beforeBoundary.precipitationIntensity - afterBoundary.precipitationIntensity).abs() < 0.001).toBe(true)
+    expect((beforeBoundary.windX - afterBoundary.windX).abs() < 0.001).toBe(true)
+    expect((beforeBoundary.windZ - afterBoundary.windZ).abs() < 0.001).toBe(true)
+
+    const distant = worldEnvironmentAt("continuous-space", 90_000, {x: 8_192, y: 72, z: -8_192})
+    expect(
+        (beforeBoundary.cloudiness - distant.cloudiness).abs() > 0.01
+        or (beforeBoundary.precipitationIntensity - distant.precipitationIntensity).abs() > 0.01
+        or (beforeBoundary.windX - distant.windX).abs() > 0.01
+        or (beforeBoundary.windZ - distant.windZ).abs() > 0.01,
+    ).toBe(true)
+
+test "spatial temperature and altitude choose rain or snow":
+    let foundRainAndSnow = false
+    for windowIndex in range(0, 64):
+        const worldMilliseconds = windowIndex * worldWeatherWindowMilliseconds + worldWeatherWindowMilliseconds / 2
+        const lowland = worldEnvironmentAt("elevation-precipitation", worldMilliseconds, {x: 240, y: -256, z: 240})
+        const highland = worldEnvironmentAt("elevation-precipitation", worldMilliseconds, {x: 240, y: 384, z: 240})
+        if lowland.precipitation == WorldPrecipitationKind.rain and highland.precipitation == WorldPrecipitationKind.snow:
+            foundRainAndSnow = true
+            break
+    expect(foundRainAndSnow).toBe(true)
+
+test "clear weather can expose a genuinely open sky":
+    let foundOpenSky = false
+    for windowIndex in range(0, 64):
+        const sample = worldEnvironmentAt("clear-sky-coverage", windowIndex * worldWeatherWindowMilliseconds)
+        if sample.precipitation == WorldPrecipitationKind.clear and sample.cloudiness < 0.5:
+            foundOpenSky = true
+            break
+    expect(foundOpenSky).toBe(true)
+
+test "lightning has a stable cell identity and does not drift with its observer":
+    const samplePosition = {x: 0, y: -200, z: 0}
+    const event = firstLightning("deterministic-lightning", samplePosition)
+    const atOccurrence = worldEnvironmentAt("deterministic-lightning", event.occurredAtWorldMilliseconds, samplePosition)
+    const replayed = worldEnvironmentAt("deterministic-lightning", event.occurredAtWorldMilliseconds, samplePosition)
+    const movedInsideCell = worldEnvironmentAt("deterministic-lightning", event.occurredAtWorldMilliseconds, {x: 200, y: -180, z: 200})
+    expect(atOccurrence.lightning).toEqual(event)
+    expect(replayed.lightning).toEqual(event)
+    expect(movedInsideCell.lightning).toEqual(event)
+    expect(worldEnvironmentAt("deterministic-lightning", event.occurredAtWorldMilliseconds - 1, samplePosition).lightning).toBe(null)
+    expect(worldEnvironmentAt("deterministic-lightning", event.occurredAtWorldMilliseconds + worldLightningLifetimeMilliseconds + 1, samplePosition).lightning).toBe(null)
+    expect(event.position.x >= 0 and event.position.x < 256).toBe(true)
+    expect(event.position.y).toBe(-192)
+    expect(event.position.z >= 0 and event.position.z < 256).toBe(true)

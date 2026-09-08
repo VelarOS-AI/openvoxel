@@ -1,7 +1,8 @@
 import {Cancellation} from "velar/task"
 import {serveWorker} from "velar/worker"
 import {ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations} from "./contracts.vel"
-import {indexRenderStates, meshChunkWithIndex} from "./mesher.vel"
+import {meshChunkWithIndex} from "./mesher.vel"
+import {indexRenderStates} from "./meshing/catalog.vel"
 
 let activeStates: Map<number, readonly ClientRenderState>? = null
 

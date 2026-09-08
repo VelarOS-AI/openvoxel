@@ -1,0 +1,31 @@
+import {expect} from "velar/test"
+import {AsyncCloseable, asyncPageLifetime, closeBestEffort} from "../src/lifecycle/async-page-lifetime.vel"
+
+def closeable(name: string, calls: List<string>, fails: bool = false) -> AsyncCloseable:
+    async def close():
+        calls.append(name)
+        if fails: throw Error(f"{name} close failed")
+    return {close}
+
+test "page lifetime invalidates superseded and disposed async continuations":
+    const lifetime = asyncPageLifetime()
+    const first = lifetime.begin()
+    expect(lifetime.owns(first)).toBe(true)
+
+    const second = lifetime.begin()
+    expect(lifetime.owns(first)).toBe(false)
+    expect(lifetime.owns(second)).toBe(true)
+
+    lifetime.dispose()
+    expect(lifetime.owns(second)).toBe(false)
+    expect(() => lifetime.begin()).toThrow()
+
+test "best effort cleanup closes every resource even when earlier resources fail":
+    const calls: List<string> = []
+    const renderer = closeable("renderer", calls, true)
+    const session = closeable("session", calls, true)
+    const backend = closeable("backend", calls)
+
+    await closeBestEffort([renderer, session, backend])
+
+    expect(calls).toEqual(["renderer", "session", "backend"])

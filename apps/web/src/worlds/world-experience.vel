@@ -1,0 +1,63 @@
+import {WorldManifest} from "@openvoxel/world"
+import {AsyncCloseable, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+
+export type WorldExperienceSession:
+    readonly manifest: readonly WorldManifest
+    prepare: () -> Promise<null>
+    render: () -> Promise<AsyncCloseable>
+    close: () -> Promise<null>
+
+export type WorldExperience:
+    enter: () -> Promise<readonly WorldManifest?>
+    close: () -> Promise<null>
+
+/// 进入世界是一次资源获取事务：会话、首屏数据、渲染器依次取得所有权。
+/// 关闭先同步撤销所有后续阶段，迟到的获取结果由同一个所有者立即释放。
+export def worldExperience(
+    openSession: () -> Promise<WorldExperienceSession>,
+    closeBackend: () -> Promise<null>,
+) -> WorldExperience:
+    let session: WorldExperienceSession? = null
+    let renderer: AsyncCloseable? = null
+    let entering: Promise<readonly WorldManifest?>? = null
+    let closing: Promise<null>? = null
+    let closed = false
+
+    async def releaseResources():
+        const ownedRenderer = renderer
+        const ownedSession = session
+        renderer = null
+        session = null
+        await closeBestEffort([ownedRenderer, ownedSession])
+
+    async def shutdown():
+        closed = true
+        await releaseResources()
+        await closeBestEffort([{close: closeBackend}])
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    async def open() -> readonly WorldManifest?:
+        try:
+            const opened = await openSession()
+            session = opened
+            if closed: return null
+            await opened.prepare()
+            if closed: return null
+            renderer = await opened.render()
+            if closed: return null
+            return opened.manifest
+        catch error:
+            await close()
+            throw error
+        finally:
+            if closed: await releaseResources()
+
+    def enter() -> Promise<readonly WorldManifest?>:
+        assert not closed else "World experience is closed"
+        if entering == null: entering = open()
+        return entering!
+
+    return {enter, close}

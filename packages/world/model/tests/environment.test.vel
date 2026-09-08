@@ -1,0 +1,64 @@
+import {expect} from "velar/test"
+import {WorldEnvironmentSample, WorldEnvironmentState, WorldPrecipitationKind, sampleWorldEnvironment, validateWorldEnvironmentSample, validateWorldEnvironmentState, validateWorldLightningEvent, worldDayMilliseconds} from "../src/environment/environment.vel"
+
+def clearSample() -> WorldEnvironmentSample:
+    return {
+        worldMilliseconds: 120_000,
+        samplePosition: {x: 12, y: 72, z: -8},
+        timeOfDay: 0.25,
+        moonPhase: 2,
+        cloudiness: 0.2,
+        precipitation: WorldPrecipitationKind.clear,
+        precipitationIntensity: 0,
+        windX: 3,
+        windZ: -2,
+        lightning: null,
+    }
+
+test "environment state validates canonical world facts":
+    const sample = clearSample()
+    expect(validateWorldEnvironmentState(sample)).toBe(sample)
+    expect(validateWorldEnvironmentSample(sample)).toBe(sample)
+
+test "anchor sampling advances day and moon phase without resetting weather or lightning":
+    const lightning = {
+        sequence: 7,
+        position: {x: 12, y: 96, z: -8},
+        intensity: 0.85,
+        occurredAtWorldMilliseconds: 119_500,
+    }
+    const anchor = WorldEnvironmentSample.from(clearSample(), {
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 0.7,
+        lightning,
+    })
+    const advanced = sampleWorldEnvironment(anchor, worldDayMilliseconds * 2.5)
+    expect(advanced.worldMilliseconds).toBe(anchor.worldMilliseconds + worldDayMilliseconds * 2.5)
+    expect(advanced.timeOfDay).toBe(0.75)
+    expect(advanced.moonPhase).toBe(4)
+    expect(advanced.precipitation).toBe(WorldPrecipitationKind.rain)
+    expect(advanced.precipitationIntensity).toBe(0.7)
+    expect(advanced.lightning).toBe(lightning)
+    expect(advanced.samplePosition).toEqual(anchor.samplePosition)
+
+test "the canonical time seam advances without producing timeOfDay one":
+    const anchor = WorldEnvironmentSample.from(clearSample(), {timeOfDay: 0.999, moonPhase: 7})
+    const advanced = sampleWorldEnvironment(anchor, worldDayMilliseconds * 0.002)
+    expect(advanced.timeOfDay > 0 and advanced.timeOfDay < 0.002).toBe(true)
+    expect(advanced.moonPhase).toBe(0)
+    expect(validateWorldEnvironmentSample(advanced)).toBe(advanced)
+
+test "environment validation rejects impossible state and future lightning":
+    expect(() => validateWorldEnvironmentState(WorldEnvironmentState.from(clearSample(), {timeOfDay: 1}))).toThrow()
+    expect(() => validateWorldEnvironmentState(WorldEnvironmentState.from(clearSample(), {moonPhase: 8}))).toThrow()
+    expect(() => validateWorldEnvironmentState(WorldEnvironmentState.from(clearSample(), {precipitationIntensity: 0.1}))).toThrow()
+    expect(() => validateWorldEnvironmentState(WorldEnvironmentState.from(clearSample(), {windX: 64, windZ: 1}))).toThrow()
+    expect(() => validateWorldEnvironmentState(WorldEnvironmentState.from(clearSample(), {cloudiness: 0 / 0}))).toThrow()
+    expect(() => validateWorldLightningEvent({sequence: 1, position: {x: 0.5, y: 80, z: 0}, intensity: 1, occurredAtWorldMilliseconds: 0})).toThrow()
+    expect(() => validateWorldEnvironmentSample(WorldEnvironmentSample.from(clearSample(), {
+        lightning: {sequence: 2, position: {x: 0, y: 90, z: 0}, intensity: 1, occurredAtWorldMilliseconds: 120_001},
+    }))).toThrow()
+    expect(() => validateWorldEnvironmentSample(WorldEnvironmentSample.from(clearSample(), {
+        samplePosition: {x: 0.5, y: 64, z: 0},
+    }))).toThrow()
+    expect(() => sampleWorldEnvironment(clearSample(), -1)).toThrow()

@@ -4,22 +4,10 @@ export type BlockOverride:
     readonly position: readonly LocalPosition
     readonly blockStateRuntimeId: number
 
-export type ChunkDelta:
+export type StoredChunkDelta:
     readonly position: readonly ChunkPosition
     readonly revision: number
     readonly overrides: readonly List<readonly BlockOverride>
-
-export type BlockOverrideCommit:
-    readonly previousOverrideBlockStateRuntimeId: number?
-    readonly revision: number
-    readonly changed: bool
-
-/// 运行时已经完成世界坐标换算和生成器基线比较后的单项持久化写入。
-/// null 表示目标状态等于固定地形，应删除稀疏覆盖而不是保存冗余方块。
-export type BlockOverrideWrite:
-    readonly chunk: readonly ChunkPosition
-    readonly local: readonly LocalPosition
-    readonly blockStateRuntimeId: number?
 
 /// ActiveWorldState 在内存中完成比较后，交给持久化适配器的单项变更。
 /// null 表示删除稀疏覆盖，使该位置重新继承固定地形。
@@ -43,7 +31,7 @@ export type WorldManifestStore:
     find: (worldId: string) -> Promise<WorldManifest?>
 
 export type WorldDeltaStore:
-    findChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<ChunkDelta>>
+    findChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<StoredChunkDelta>>
     /// 在一个存储事务中提交完整 Chunk 批次。任意 Chunk 版本不匹配时拒绝整个
     /// 批次；适配器不得部分写入，也不得自行吞掉冲突后继续覆盖新数据。
     commitChunks: (worldId: string, commits: readonly List<readonly ChunkDeltaCommit>) -> Promise<null>

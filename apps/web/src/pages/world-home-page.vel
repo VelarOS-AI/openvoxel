@@ -1,25 +1,23 @@
 import {Head, navigate} from "velar/web"
 import {Brand, Navigation} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
-import {actionGroupLook, actionRowLook, activeDotLook, appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, displayTitleLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, primaryButtonLook, secondaryButtonLook, settingsPanelLook, settingsRowLook, settingsValueLook, subtitleLook, topBarLook, worldInfoLook} from "../look.vel"
+import {displayTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
+import {actionGroupLook, actionRowLook, activeDotLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, settingsPanelLook, settingsRowLook, settingsValueLook} from "../styles/home.vel"
+import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
 import {WorldPreset} from "../worlds/saved-world.vel"
 import {loadSavedWorlds, touchWorld} from "../worlds/world-library.vel"
-import {presetName, worldCover} from "../worlds/world-presentation.vel"
+import {presetName, worldCover, worldGameModeName} from "../worlds/world-presentation.vel"
+import {worldRoute} from "../worlds/world-route.vel"
 
-extern js`
-    let lastWheelAt = 0
+type CarouselWheelInput = (event: Event, worldCount: number) -> number
 
-    export function wheelDirection(event) {
-        const now = performance.now()
-        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
-        if (!Number.isFinite(delta) || Math.abs(delta) < 4 || now - lastWheelAt < 320) return 0
-        lastWheelAt = now
-        return delta > 0 ? 1 : -1
-    }
-`:
-    export def wheelDirection(event: Event) -> number
+extern module "#openvoxel/web/carousel-input":
+    export def createCarouselWheelInput() -> CarouselWheelInput
+
+import js {createCarouselWheelInput} from "#openvoxel/web/carousel-input"
 
 export component WorldHomePage:
+    const carouselWheelInput = createCarouselWheelInput()
     state worlds = loadSavedWorlds()
     state selectedIndex = worlds.size > 0 ? worlds.size - 1 : 0
     state settingsOpen = false
@@ -28,6 +26,7 @@ export component WorldHomePage:
 
     def selectWorld(index: number):
         if index < 0 or index >= worlds.size: return
+        if index == selectedIndex: return
         selectedIndex = index
         settingsOpen = false
 
@@ -41,7 +40,7 @@ export component WorldHomePage:
     def nextWorld(): moveSelection(1)
 
     def switchByWheel(event: Event):
-        const direction = wheelDirection(event)
+        const direction = carouselWheelInput(event, worlds.size)
         if direction != 0: moveSelection(direction)
 
     def toggleWorldSettings(): settingsOpen = not settingsOpen
@@ -50,7 +49,7 @@ export component WorldHomePage:
         const selected = activeWorld
         if selected == null: return
         touchWorld(selected)
-        navigate(f"/world/{selected.id}")
+        navigate(worldRoute(selected.id))
 
     def createFirstWorld(): navigate("/worlds/new")
 
@@ -72,7 +71,7 @@ export component WorldHomePage:
                     <div look={metadataLook}>
                         <span look={metadataItemLook}>
                             <Icon name={IconName.earthAmericas} />
-                            {selected.mode}
+                            {worldGameModeName(selected.mode)}
                         </span>
                         <span look={metadataItemLook}>
                             <Icon name={IconName.clock} />
@@ -95,7 +94,7 @@ export component WorldHomePage:
                         {worlds.map((world, index) => <button
                             type="button"
                             look={index == selectedIndex ? activeDotLook : dotLook}
-                            on:pointerenter={() => selectWorld(index)}
+                            on:pointermove={() => selectWorld(index)}
                             on:click={() => selectWorld(index)}
                             aria-label={f"Show {world.name}"}
                             aria-current={str(index == selectedIndex)}
@@ -139,7 +138,7 @@ export component WorldHomePage:
             </div>
         </section>
 
-    return <div look={appShellLook} on:wheel.prevent={switchByWheel} data-app data-screen="world-home">
+    return <div look={appShellLook} on:wheel={switchByWheel} data-app data-screen="world-home">
         <Head
             title="OpenVoxel"
             description="Create, manage, and enter your OpenVoxel worlds"

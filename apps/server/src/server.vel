@@ -18,7 +18,7 @@ server openVoxelRoutes:
     @notFound(request: Request):
         throw HttpProblem({
             status: 404,
-            code: "route.not_found",
+            reason: "route.not_found",
             title: "Route not found",
             detail: f"No route accepts {request.method} {request.path}",
         })

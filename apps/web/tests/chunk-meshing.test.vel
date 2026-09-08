@@ -1,0 +1,228 @@
+import {ClientWorldChangeKind, ClientWorldState, clientWorldState} from "@openvoxel/client"
+import {ChunkMesh} from "@openvoxel/renderer"
+import {ChunkPosition} from "@openvoxel/world"
+import {uint16Buffer} from "velar/binary"
+import {Cancellation} from "velar/task"
+import {expect} from "velar/test"
+import {chunkMeshing} from "../src/rendering/chunk-meshing.vel"
+
+const position: ChunkPosition = {x: 0, y: 0, z: 0}
+const view = {center: position, forwardX: 0, forwardY: 0, forwardZ: -1}
+
+def chunkState() -> ClientWorldState:
+    const state = clientWorldState("mesh-owner", 16)
+    state.rememberTerrain({
+        worldId: "mesh-owner",
+        chunks: [{position, edge: 16, palette: [0], indices: uint16Buffer(4096)}],
+    })
+    return state
+
+def mesh(ticket: number) -> ChunkMesh:
+    return {
+        position, ticket,
+        portalSummary: {empty: true, fullyOccluding: false, openFaces: 63, connectedFaces: 0},
+        batches: [], visibleBlocks: 0, quadCount: 0, byteSize: 0,
+    }
+
+test "mesh initialization failure still closes its Worker exactly once":
+    const state = chunkState()
+    let workerClosed = 0
+    async def closeWorker(): workerClosed += 1
+    async def initialize(): throw Error("worker initialization failed")
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        return mesh(ticket)
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize, build, close: closeWorker,
+    }, {
+        enqueueChunkMesh: async _mesh => true,
+        removeChunk: (_x, _y, _z) => null,
+    }, () => view, () => null, _message => null, () => null)
+    let message = ""
+    try: await owner.initialize()
+    catch error: message = error.message
+    finally: await owner.close()
+    await owner.close()
+    expect(message).toBe("worker initialization failed")
+    expect(workerClosed).toBe(1)
+    expect(owner.stats().active).toBe(0)
+
+test "a newly streamed Chunk with an unchanged complete delta still enters meshing":
+    const state = clientWorldState("mesh-owner", 16)
+    let builds = 0
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        builds += 1
+        return mesh(ticket)
+    const owner = chunkMeshing(state, 16, [], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: async _mesh => true,
+        removeChunk: (_x, _y, _z) => null,
+    }, () => view, () => null, _message => null, () => null)
+    const subscription = state.subscribeChanges(owner.invalidate)
+    try:
+        await owner.initialize()
+        owner.start()
+        state.rememberTerrain({
+            worldId: "mesh-owner",
+            chunks: [{position, edge: 16, palette: [0], indices: uint16Buffer(4096)}],
+        })
+        expect(builds).toBe(0)
+        state.replaceDeltas({
+            event: "chunks.synced",
+            requestId: "initial-empty",
+            worldId: "mesh-owner",
+            chunks: [{position, revision: 0, overrides: []}],
+        })
+        for _attempt in range(100):
+            if builds > 0 and owner.stats().active == 0: break
+            await Promise.sleep(0ms)
+        expect(builds).toBe(1)
+    finally:
+        subscription.close()
+        await owner.close()
+
+test "superseded GPU commit remains owned and rebuilds with a strictly newer ticket":
+    const state = chunkState()
+    const uploads: List<number> = []
+    const failures: List<string> = []
+    let releaseFirst = false
+    let ready = 0
+    def becameReady(): ready += 1
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        return mesh(ticket)
+    async def enqueue(value: readonly ChunkMesh) -> bool:
+        uploads.append(value.ticket)
+        if uploads.size == 1:
+            while not releaseFirst: await Promise.sleep(0ms)
+        return true
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: enqueue, removeChunk: (_x, _y, _z) => null,
+    }, () => view, () => null, message => failures.append(message), becameReady)
+    try:
+        await owner.initialize()
+        owner.start()
+        while uploads.size == 0: await Promise.sleep(0ms)
+        owner.invalidate({kind: ClientWorldChangeKind.chunksSynchronized, generation: 0, sequence: 0, positions: [position], changes: []})
+        expect(owner.stats().startupPending).toBe(1)
+        releaseFirst = true
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(uploads.size).toBe(2)
+        expect(uploads[1] > uploads[0]).toBe(true)
+        expect(ready).toBe(1)
+        expect(owner.stats().startupPending).toBe(0)
+        expect(failures).toEqual([])
+    finally:
+        releaseFirst = true
+        await owner.close()
+
+test "a late GPU commit for an evicted Chunk is removed after its physical installation":
+    const state = chunkState()
+    let uploading = false
+    let release = false
+    let installed = false
+    let removed = 0
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        return mesh(ticket)
+    async def enqueue(_mesh: readonly ChunkMesh) -> bool:
+        uploading = true
+        while not release: await Promise.sleep(0ms)
+        installed = true
+        return true
+    def remove(_x: number, _y: number, _z: number):
+        installed = false
+        removed += 1
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {enqueueChunkMesh: enqueue, removeChunk: remove}, () => view, () => null, _message => null, () => null)
+    const subscription = state.subscribeChanges(owner.invalidate)
+    try:
+        await owner.initialize()
+        owner.start()
+        while not uploading: await Promise.sleep(0ms)
+        state.forgetChunks([position])
+        release = true
+        while owner.stats().active > 0: await Promise.sleep(0ms)
+        expect(installed).toBe(false)
+        expect(removed).toBe(2)
+    finally:
+        release = true
+        subscription.close()
+        await owner.close()
+
+test "mesh close rejects late worker work without touching the released Surface":
+    const state = chunkState()
+    let building = false
+    let release = false
+    let uploads = 0
+    let changes = 0
+    let workerClosed = 0
+    const failures: List<string> = []
+    async def closeWorker(): workerClosed += 1
+    def changed(): changes += 1
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        building = true
+        while not release: await Promise.sleep(0ms)
+        return mesh(ticket)
+    async def enqueue(_mesh: readonly ChunkMesh) -> bool:
+        uploads += 1
+        return true
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: closeWorker,
+    }, {
+        enqueueChunkMesh: enqueue, removeChunk: (_x, _y, _z) => null,
+    }, () => view, changed, message => failures.append(message), () => null)
+    await owner.initialize()
+    owner.start()
+    while not building: await Promise.sleep(0ms)
+    const closing = owner.close()
+    release = true
+    await closing
+    owner.reconcile()
+    owner.start()
+    expect(uploads).toBe(0)
+    expect(changes).toBe(0)
+    expect(workerClosed).toBe(1)
+    expect(failures).toEqual([])
+
+test "meshing owns resident topology without repeated world-state snapshots":
+    const source = chunkState()
+    let trackedPositionReads = 0
+    def trackedPositions() -> List<readonly ChunkPosition>:
+        trackedPositionReads += 1
+        return source.trackedPositions()
+    const state = ClientWorldState.from(source, {trackedPositions})
+    let builds = 0
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+        builds += 1
+        return mesh(ticket)
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: async _mesh => true,
+        removeChunk: (_x, _y, _z) => null,
+    }, () => view, () => null, _message => null, () => null)
+    const subscription = state.subscribeChanges(owner.invalidate)
+    const added: ChunkPosition = {x: 1, y: 0, z: 0}
+    try:
+        await owner.initialize()
+        owner.start()
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        owner.reconcile()
+        owner.reconcile()
+        expect(builds).toBe(1)
+        expect(owner.stats().resident).toBe(1)
+        expect(trackedPositionReads).toBe(0)
+
+        state.rememberTerrain({
+            worldId: "mesh-owner",
+            chunks: [{position: added, edge: 16, palette: [0], indices: uint16Buffer(4096)}],
+        })
+        expect(owner.stats().resident).toBe(2)
+        state.forgetChunks([added])
+        expect(owner.stats().resident).toBe(1)
+        expect(trackedPositionReads).toBe(0)
+    finally:
+        subscription.close()
+        await owner.close()

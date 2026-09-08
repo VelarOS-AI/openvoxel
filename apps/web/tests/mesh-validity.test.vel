@@ -1,0 +1,54 @@
+import {expect} from "velar/test"
+import {chunkMeshValidity, meshTicketSequence} from "../src/rendering/mesh-validity.vel"
+
+test "an invalidated installed mesh remains stale after its queued rebuild is dropped":
+    const validity = chunkMeshValidity()
+    const key = "4:5:6"
+
+    expect(validity.requiresBuild(key)).toBe(true)
+    validity.markInstalled(key)
+    expect(validity.hasInstalled(key)).toBe(true)
+    expect(validity.requiresBuild(key)).toBe(false)
+
+    validity.markDirty(key)
+    // Dropping an offscreen queue entry deliberately has no validity action.
+    expect(validity.hasInstalled(key)).toBe(true)
+    expect(validity.requiresBuild(key)).toBe(true)
+
+    validity.markInstalled(key)
+    expect(validity.requiresBuild(key)).toBe(false)
+
+test "unloading removes both installed ownership and stale state":
+    const validity = chunkMeshValidity()
+    const key = "-1:2:3"
+    validity.markInstalled(key)
+    validity.markDirty(key)
+    validity.remove(key)
+
+    expect(validity.hasInstalled(key)).toBe(false)
+    expect(validity.requiresBuild(key)).toBe(true)
+
+    validity.markDirty(key)
+    expect(validity.requiresBuild(key)).toBe(true)
+
+test "a stale GPU commit remains physically installed but requires the latest build":
+    const validity = chunkMeshValidity()
+    const key = "7:8:9"
+
+    // enqueueChunkMesh 已经提交，但调用方随后发现它的 ticket 落后。两个事实
+    // 必须依次记录，协调器才能选择重建或显式移除这个物理网格。
+    validity.markInstalled(key)
+    validity.markDirty(key)
+
+    expect(validity.hasInstalled(key)).toBe(true)
+    expect(validity.requiresBuild(key)).toBe(true)
+
+test "mesh tickets never reuse an identity after expected ownership is dropped":
+    const sequence = meshTicketSequence()
+    const active = sequence.issue()
+    const droppedReplacement = sequence.issue()
+    const demandedAgain = sequence.issue()
+
+    expect(active).toBe(1)
+    expect(droppedReplacement).toBe(2)
+    expect(demandedAgain).toBe(3)

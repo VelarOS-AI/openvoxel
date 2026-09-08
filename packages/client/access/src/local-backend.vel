@@ -1,9 +1,10 @@
 import {Worker, worker} from "velar/worker"
 import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "./backend.vel"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
 import {Cancellation} from "velar/task"
+import {ClientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
 def request(operation: string) -> LocalWorkerRequest: return {operation}
 
@@ -78,7 +79,7 @@ export def localBackend(
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> readonly TerrainChunkBatchResponse:
+    ) -> readonly ClientTerrainBatchSnapshot:
         const response = await call({operation: localWorkerOperations.terrainChunks, worldId, positions}, cancellation)
         assert response.terrain != null else "LocalBackend Worker omitted terrain Chunks"
         return response.terrain

@@ -1,0 +1,210 @@
+import {maximumWorldCoordinate} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {ClientBlockCollisionBox} from "../src/contracts.vel"
+import {SurvivalWalkState, stepSurvivalWalk, survivalEyeHeight, survivalPlayerHeight, survivalPlayerRadius, survivalWalkSpeed, survivalWalkState} from "../src/navigation/survival-walk.vel"
+
+const fullBlock: ClientBlockCollisionBox = {
+    minimumX: 0,
+    minimumY: 0,
+    minimumZ: 0,
+    maximumX: 1,
+    maximumY: 1,
+    maximumZ: 1,
+}
+const snowLayer: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {maximumY: 0.125})
+const halfBlock: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {maximumY: 0.5})
+const leftPost: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {maximumX: 0.15})
+const rightPost: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {minimumX: 0.85})
+const basis = {forwardX: 0, forwardZ: 1, rightX: 1, rightZ: 0}
+const bounds = {minimumY: 0, maximumY: 255}
+const idle = {forward: 0, sideways: 0, jumping: false, sprinting: false}
+const standingEyeY = 1 + survivalEyeHeight
+
+def flatGround(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    return []
+
+def wallAlongZ(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if x == 1 and (y == 1 or y == 2): return [fullBlock]
+    return []
+
+def wallAcrossZ(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if z == 1 and (y == 1 or y == 2): return [fullBlock]
+    return []
+
+def snowStep(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if x == 1 and y == 1 and z == 0: return [snowLayer]
+    return []
+
+def splitGate(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if z == 1 and (y == 1 or y == 2): return [leftPost, rightPost]
+    return []
+
+def diagonalDoubleStep(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if x == 1 and y == 1 and z == 0: return [halfBlock]
+    if x == 1 and y == 1 and z == 1: return [fullBlock]
+    return []
+
+def groundedState(x: number, z: number) -> SurvivalWalkState:
+    return {x, y: standingEyeY, z, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: true}
+
+test "survival gravity lands on the synchronized block surface":
+    let state = survivalWalkState(0.5, 8, 0.5)
+    for frame in range(180): state = stepSurvivalWalk(state, idle, basis, 1000 / 60, bounds, flatGround)
+    expect((state.y - standingEyeY).abs() < 0.001).toBe(true)
+    expect(state.velocityY).toBe(0)
+    expect(state.grounded).toBe(true)
+
+test "a grounded player jumps and returns to the same surface":
+    const launched = stepSurvivalWalk(
+        groundedState(0.5, 0.5),
+        {forward: 0, sideways: 0, jumping: true, sprinting: false},
+        basis,
+        1000 / 60,
+        bounds,
+        flatGround,
+    )
+    expect(launched.y > standingEyeY).toBe(true)
+    expect(launched.velocityY > 0).toBe(true)
+    expect(launched.grounded).toBe(false)
+    let landed = launched
+    for frame in range(180): landed = stepSurvivalWalk(landed, idle, basis, 1000 / 60, bounds, flatGround)
+    expect((landed.y - standingEyeY).abs() < 0.001).toBe(true)
+    expect(landed.grounded).toBe(true)
+
+test "independent horizontal axes block a wall while preserving tangential sliding":
+    let state = groundedState(0.5, 0.5)
+    const diagonal = {forward: 1, sideways: 1, jumping: false, sprinting: false}
+    for frame in range(90): state = stepSurvivalWalk(state, diagonal, basis, 1000 / 60, bounds, wallAlongZ)
+    expect(state.x <= 1 - survivalPlayerRadius + 0.001).toBe(true)
+    expect(state.z > 3).toBe(true)
+    expect(state.velocityX).toBe(0)
+    expect(state.velocityZ > 0).toBe(true)
+
+test "null collision shapes remain traversable":
+    let state = groundedState(0.5, 0.5)
+    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false}
+    for frame in range(30): state = stepSurvivalWalk(state, forward, basis, 1000 / 60, bounds, flatGround)
+    expect(state.z > 1.5).toBe(true)
+    expect(state.grounded).toBe(true)
+
+test "analog intent preserves its magnitude below the diagonal clamp":
+    let half = groundedState(0.5, 0.5)
+    let full = groundedState(0.5, 0.5)
+    for frame in range(60):
+        half = stepSurvivalWalk(half, {forward: 0.5, sideways: 0, jumping: false, sprinting: false}, basis, 1000 / 60, bounds, flatGround)
+        full = stepSurvivalWalk(full, {forward: 1, sideways: 0, jumping: false, sprinting: false}, basis, 1000 / 60, bounds, flatGround)
+    expect((half.velocityZ - survivalWalkSpeed / 2).abs() < 0.000001).toBe(true)
+    expect((full.velocityZ - survivalWalkSpeed).abs() < 0.000001).toBe(true)
+    expect(half.z < full.z).toBe(true)
+
+test "substeps prevent a large frame from tunneling through a wall":
+    const fast: SurvivalWalkState = {
+        x: 0.5,
+        y: standingEyeY,
+        z: 0.5,
+        velocityX: 0,
+        velocityY: 0,
+        velocityZ: 32,
+        grounded: true,
+    }
+    const stopped = stepSurvivalWalk(
+        fast,
+        {forward: 1, sideways: 0, jumping: false, sprinting: true},
+        basis,
+        1000,
+        bounds,
+        wallAcrossZ,
+    )
+    expect(stopped.z <= 1 - survivalPlayerRadius + 0.001).toBe(true)
+    expect(stopped.velocityZ).toBe(0)
+
+test "world borders contain the whole player and cancel outward velocity":
+    const maximumHorizontal = maximumWorldCoordinate - survivalPlayerRadius
+    const outward: SurvivalWalkState = {
+        x: maximumHorizontal - 0.01,
+        y: standingEyeY,
+        z: 0,
+        velocityX: 40,
+        velocityY: 0,
+        velocityZ: 0,
+        grounded: true,
+    }
+    const horizontal = stepSurvivalWalk(
+        outward,
+        {forward: 0, sideways: 1, jumping: false, sprinting: true},
+        basis,
+        50,
+        bounds,
+        flatGround,
+    )
+    expect(horizontal.x).toBe(maximumHorizontal)
+    expect(horizontal.velocityX).toBe(0)
+
+    const falling: SurvivalWalkState = {
+        x: 0,
+        y: bounds.minimumY + survivalEyeHeight + 0.01,
+        z: 0,
+        velocityX: 0,
+        velocityY: -32,
+        velocityZ: 0,
+        grounded: false,
+    }
+    const lower = stepSurvivalWalk(falling, idle, basis, 50, bounds, (x, y, z) => [])
+    expect(lower.y).toBe(bounds.minimumY + survivalEyeHeight)
+    expect(lower.velocityY).toBe(0)
+    expect(lower.grounded).toBe(true)
+
+    const headClearance = survivalPlayerHeight - survivalEyeHeight
+    const rising: SurvivalWalkState = SurvivalWalkState.from(falling, {
+        y: bounds.maximumY + 1 - headClearance - 0.01,
+        velocityY: 32,
+    })
+    const upper = stepSurvivalWalk(rising, idle, basis, 50, bounds, (x, y, z) => [])
+    expect(upper.y).toBe(bounds.maximumY + 1 - headClearance)
+    expect(upper.velocityY).toBe(0)
+    expect(upper.grounded).toBe(false)
+
+test "a grounded player automatically crosses a snow-layer step":
+    let state = groundedState(0.5, 0.5)
+    const right = {forward: 0, sideways: 1, jumping: false, sprinting: false}
+    for frame in range(14): state = stepSurvivalWalk(state, right, basis, 1000 / 60, bounds, snowStep)
+    expect(state.x > 0.8).toBe(true)
+    expect(state.y > standingEyeY + 0.1).toBe(true)
+    expect(state.y < standingEyeY + 0.14).toBe(true)
+    expect(state.grounded).toBe(true)
+
+test "multiple boxes block their occupied regions while preserving the gap":
+    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false}
+    let center = groundedState(0.5, 0.5)
+    for frame in range(30): center = stepSurvivalWalk(center, forward, basis, 1000 / 60, bounds, splitGate)
+    expect(center.z > 1.5).toBe(true)
+
+    let side = groundedState(0.2, 0.5)
+    for frame in range(30): side = stepSurvivalWalk(side, forward, basis, 1000 / 60, bounds, splitGate)
+    expect(side.z <= 1 - survivalPlayerRadius + 0.001).toBe(true)
+
+test "diagonal axis resolution cannot stack two step-ups in one substep":
+    const state: SurvivalWalkState = {
+        x: 0.69,
+        y: standingEyeY,
+        z: 0.69,
+        velocityX: 5,
+        velocityY: 0,
+        velocityZ: 5,
+        grounded: true,
+    }
+    const moved = stepSurvivalWalk(
+        state,
+        {forward: 1, sideways: 1, jumping: false, sprinting: true},
+        basis,
+        20,
+        bounds,
+        diagonalDoubleStep,
+    )
+    expect(moved.y <= standingEyeY + 0.6).toBe(true)

@@ -2,9 +2,11 @@
 
 OpenVoxel 是一个使用 VelarScript 从零构建体素世界的开源教学项目。它先完成没有前端也能独立验收的世界后端，再让浏览器单机模式和 Node 联机模式共享同一套世界模型、生成器和应用运行时。
 
-当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。联机服务使用 VelarScript 0.29.2 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
+当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。世界模型还以种子、世界时间和当前采样位置确定性驱动昼夜、月相、空间连续的云/风/雨雪与稳定雷暴，单机 Worker 与联机服务向客户端提供同一种环境锚点。联机服务使用 VelarScript 0.33.1 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
 
 ## 开始使用
+
+客户端光照包含太阳/月亮方向光、局部 PCF 阴影和动态天空 IBL。世界一年包含四季、每季八个世界日；草地与树叶按当地温度、湿度和季节染色，自然露天地表会结冰、积雪并在回暖后融化。冰雪由世界运行时提供，碰撞与显示保持一致；玩家放置的冰雪作为持久化修改保留。地形流送采用碰撞安全邻域、三维视区与保守 Portal 连通裁剪，驻留和任务队列具有固定上限。具体边界见 [客户端大世界呈现](docs/architecture/0013-client-world-rendering.md)。
 
 需要 Node.js 24 或更高版本。项目不使用 Bun。
 
@@ -14,13 +16,21 @@ npm run validate
 npm start
 ```
 
+`validate` 是完整本地门禁；`validate:static` 只运行生成一致性、结构、格式、编译、Node 测试与构建，`validate:browser` 运行需要 Chromium 的 GPU 和 Web UI 验收。CI 会先通过静态门禁，再安装 Playwright Chromium 并运行浏览器门禁。
+
 另开一个终端运行 Web 客户端：
 
 ```sh
 npm run dev:web
 ```
 
-访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
+访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。Creative 世界中点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Space` 上升，`Ctrl` 或 `C` 下降，`Shift` 加速，`Esc` 释放指针。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
+
+渲染器的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/rendering/generated/gpu-render-probe`：
+
+```sh
+npm run test:gpu
+```
 
 服务默认监听 `http://127.0.0.1:3000`，SQLite 文件默认位于服务应用目录下的 `apps/server/openvoxel.sqlite`。项目显式激活 `@velarscript/server`，监听地址、浏览器允许来源、协议限额和 SQLite 连接限额统一由 [`apps/server/application.yml`](apps/server/application.yml) 管理；它的位置由 [`apps/server/velar.json`](apps/server/velar.json) 的 `server.configuration` 明确声明，开发、检查和生产构建使用同一入口。数据库与 Content Pack 的相对路径以服务应用目录解析；从其他目录直接运行构建物时，用绝对的 `OPENVOXEL_ROOT` 明确指定该运行时数据根。可以用 `OPENVOXEL_HOST`、`OPENVOXEL_PORT`、`OPENVOXEL_LOGGER`、`OPENVOXEL_DB` 覆盖部署相关值；密码、令牌等机密只能从部署环境注入，不进入应用配置。
 
@@ -31,7 +41,7 @@ curl http://127.0.0.1:3000/api
 
 curl -X POST http://127.0.0.1:3000/api/worlds \
   -H 'content-type: application/json' \
-  -d '{"id":"lesson-one","name":"Lesson One","seed":"openvoxel"}'
+  -d '{"id":"lesson-one","name":"Lesson One","seed":"openvoxel","mode":"creative"}'
 
 curl http://127.0.0.1:3000/api/worlds/lesson-one/bootstrap
 
@@ -57,6 +67,8 @@ npm run compile:mod --workspace @openvoxel/content
 ```
 
 ## 架构
+
+包内模块的具体所有者、异步回收规则与后续扩展点见 [职责模块与异步所有权](docs/architecture/0014-module-ownership.md)。源码边界由编译器模块 metadata 驱动的 `structure:check` 验证，`test:structure` 覆盖依赖越界和工具链版本一致性。
 
 ```mermaid
 flowchart LR
@@ -89,7 +101,7 @@ flowchart LR
 - `packages/world/model`：坐标、Chunk 调色板和世界清单等稳定世界模型；只维护数据结构与不变量，不选择生成算法或编排存储。
 - `packages/world/generation`：生成器注册入口与确定性生存生成算法；地形、洞穴、地下流体、矿物和植被按阶段分离，不负责后续 Tick 模拟。
 - `packages/world/runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
-- `packages/client/access`：拥有客户端世界接入职责；世界会话、OnlineBackend、Worker/IndexedDB LocalBackend 共用一个 `WorldBackend` 端口和冷热 Chunk 合并状态机，包清单明确声明 Web/Desktop 与 `web` 能力。
+- `packages/client/access`：拥有客户端世界接入职责；世界会话、OnlineBackend、Worker/IndexedDB LocalBackend 共用一个 `WorldBackend` 端口和冷热 Chunk 合并状态机。网络地形 DTO 在 OnlineBackend 边界一次压缩成本地 `UInt16Buffer` 快照，Local Worker 直接转移相同紧凑形状；驻留状态一次展开由热增量维护的 `UInt32Buffer` 组合视图，供碰撞与构网共享；包清单明确声明 Web/Desktop 与 `web` 能力。
 - `packages/client/rendering`：拥有客户端呈现职责；资源包身份、运行时渲染目录、Chunk 邻域快照、网格生成和 Babylon 表面在一个包内，包清单明确声明 Web/Desktop 与 `web` 能力。
 - `packages/protocol`：只拥有 HTTP 和 MessagePack WebSocket 的线上数据类型、协议版本与客户端接入事实；实际 HTTP 路由由服务端注解和 OpenAPI 共同描述。
 - `apps/server`：system、world、chunk、block、realtime 模块，负责把领域值投影成协议响应；同时拥有当前表结构、世界注册表 JSON、稀疏世界规则的 SQLite 适配器与组合根。
@@ -122,5 +134,7 @@ npm run benchmark:caves
 ## 当前边界
 
 世界后端、客户端会话、OnlineBackend 和 LocalBackend 已形成完整闭环：服务端提供最多 64 个固定地形 Chunk 的批量读取、每世界内容目录、地形诊断、按世界隔离的热增量同步与最多 1024 项的原子方块编辑；浏览器端用真实 HTTP、WebSocket、MessagePack、Worker 与 IndexedDB 证明两种模式的共享语义。客户端资源包和最小体素呈现也已接入：少量已同步 Chunk 会生成可更新网格，显示资源只通过内容目录中的逻辑 material、texture、model 与 tint key 解析；一个逻辑 texture 可以在资源包构建期组合多层贴图并生成带权重的稳定表面变体，世界运行时 ID 始终不承担纹理或模型身份。
+
+Canvas 世界视图已接入完整环境呈现：动态天空与 IBL、太阳和八相月亮、星空、连续云层、天气雾、雨雪与溅射粒子、闪电以及随光照变化的 PBR 方块材质共享同一权威世界时间。环境资源与方块纹理一样由独立源文件维护并进入资源哈希；GPU 探针会独立验收六种环境状态、透明深度、四通道材质和上下文恢复。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。

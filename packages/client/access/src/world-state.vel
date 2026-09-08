@@ -1,8 +1,10 @@
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, RealtimeBlockChange, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldReadyEvent, protocolVersion} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, RealtimeBlockChange, WorldBlocksChangedEvent, WorldReadyEvent, protocolVersion} from "@openvoxel/protocol"
 import {BlockPosition, ChunkPosition, chunkKey, locateBlock} from "@openvoxel/world"
-import {ClientChunkState, clientChunkState} from "./chunk-state.vel"
+import {ClientChunkDeltaResult, ClientChunkState, clientChunkState} from "./chunk-state.vel"
+import {ClientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
 export enum ClientWorldChangeKind:
+    synchronizationStarted = "synchronization_started"
     terrainLoaded = "terrain_loaded"
     terrainUnloaded = "terrain_unloaded"
     chunksSynchronized = "chunks_synchronized"
@@ -30,7 +32,7 @@ export type ClientWorldChangeListener = (event: readonly ClientWorldChange) -> n
 /// 跟踪 Chunk 做完整增量同步即可恢复。
 export type ClientWorldState:
     beginConnection: (event: readonly WorldReadyEvent) -> null
-    rememberTerrain: (response: readonly TerrainChunkBatchResponse) -> readonly List<readonly ClientChunkState>
+    rememberTerrain: (response: readonly ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>
     forgetChunks: (positions: readonly List<readonly ChunkPosition>) -> null
     replaceDeltas: (event: readonly ChunksSyncedEvent) -> null
     applyChanges: (event: readonly WorldBlocksChangedEvent) -> null
@@ -46,6 +48,7 @@ export type ClientWorldState:
 export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
     assert not worldId.isBlank() else "Client world id cannot be blank"
     const chunks: Map<string, ClientChunkState> = Map()
+    const pendingInitialSyncChunks: Set<string> = Set()
     const pendingResyncChunks: Set<string> = Set()
     let currentSequence = 0
     let currentGeneration = 0
@@ -92,8 +95,9 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
         pendingResyncChunks.clear()
         if resyncRequired:
             for key in chunks: pendingResyncChunks.add(key)
+            publish(ClientWorldChangeKind.synchronizationStarted, trackedPositions())
 
-    def rememberTerrain(response: readonly TerrainChunkBatchResponse) -> readonly List<readonly ClientChunkState>:
+    def rememberTerrain(response: readonly ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>:
         assert response.worldId == worldId else "Client terrain response belongs to a different world"
         const output: List<ClientChunkState> = []
         for terrain in response.chunks:
@@ -103,6 +107,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
             if state == null:
                 state = clientChunkState(terrain)
                 chunks.set(key, state)
+                pendingInitialSyncChunks.add(key)
             if resyncRequired: pendingResyncChunks.add(key)
             output.append(state!)
         publish(ClientWorldChangeKind.terrainLoaded, response.chunks.map(chunk => chunk.position))
@@ -117,6 +122,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
             seen.add(key)
             if chunks.has(key):
                 chunks.remove(key)
+                pendingInitialSyncChunks.remove(key)
                 pendingResyncChunks.remove(key)
                 forgotten.append(position)
         if resyncRequired and pendingResyncChunks.size == 0: resyncRequired = false
@@ -126,16 +132,22 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
         assert event.event == "chunks.synced" else "Client expected a chunks.synced event"
         assert event.worldId == worldId else "Client Chunk deltas belong to a different world"
         const synchronized: Set<string> = Set()
+        const changed: List<readonly ChunkPosition> = []
         for delta in event.chunks:
             const key = chunkKey(delta.position)
             assert key not in synchronized else "Client Chunk synchronization repeats one Chunk"
             synchronized.add(key)
             const state = chunks.get(key)
             if state != null:
-                state.replaceDelta(delta)
+                const wasInitial = key in pendingInitialSyncChunks
+                const wasPending = key in pendingResyncChunks
+                const result = state.replaceDelta(delta)
+                if result == ClientChunkDeltaResult.stale: continue
+                if result == ClientChunkDeltaResult.changed or wasInitial or wasPending: changed.append(delta.position)
+                pendingInitialSyncChunks.remove(key)
                 pendingResyncChunks.remove(key)
         if resyncRequired and pendingResyncChunks.size == 0: resyncRequired = false
-        publish(ClientWorldChangeKind.chunksSynchronized, event.chunks.map(chunk => chunk.position))
+        publish(ClientWorldChangeKind.chunksSynchronized, changed)
 
     def requireResync():
         if resyncRequired: return
@@ -145,7 +157,9 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
 
     def applyBatch(sequence: number, changes: readonly List<readonly RealtimeBlockChange>):
         assert sequence.isInteger() and sequence >= 0 else "Client world sequence must be a non-negative integer"
-        if sequence < currentSequence: return
+        // 广播与请求确认会携带同一批次的 sequence；先到的一方已经提交状态，
+        // 后到的一方必须幂等丢弃，不能重复发布失效并触发第二次构网。
+        if sequence <= currentSequence: return
         if sequence > currentSequence + 1: requireResync()
         for change in changes:
             const state = chunks.get(chunkKey(change.chunk))

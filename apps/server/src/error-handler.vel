@@ -21,13 +21,13 @@ export def publicApplicationError(error: Error) -> PublicApplicationError:
 def applicationHttpProblem(error: Error) -> HttpProblem?:
     const publicError = publicApplicationError(error)
     if error is WorldNotFoundError:
-        return HttpProblem({status: 404, code: publicError.code, title: "World not found", detail: publicError.message})
+        return HttpProblem({status: 404, reason: publicError.code, title: "World not found", detail: publicError.message})
     if error is WorldAlreadyExistsError:
-        return HttpProblem({status: 409, code: publicError.code, title: "World already exists", detail: publicError.message})
+        return HttpProblem({status: 409, reason: publicError.code, title: "World already exists", detail: publicError.message})
     if error is WorldRequestError:
-        return HttpProblem({status: 422, code: publicError.code, title: "Invalid request", detail: publicError.message})
+        return HttpProblem({status: 422, reason: publicError.code, title: "Invalid request", detail: publicError.message})
     if (error is InvalidBlockStateRuntimeIdError) or (error is UnknownBlockStateRuntimeIdError) or (error is ReservedBlockStateRuntimeIdError) or (error is UnknownWorldBlockStateRuntimeIdError):
-        return HttpProblem({status: 422, code: publicError.code, title: "Invalid block state", detail: publicError.message})
+        return HttpProblem({status: 422, reason: publicError.code, title: "Invalid block state", detail: publicError.message})
     return null
 
 /// 在框架之外抛出的领域错误通过这个很窄的边界变成 HttpProblem。成功值仍由路由

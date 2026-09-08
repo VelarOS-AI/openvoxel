@@ -41,7 +41,7 @@ export def packBlockCatalog(source: BlockCatalogSource) -> PackedBlockCatalogSou
 /// 运行时把紧凑目录恢复为完整状态快照。所有档案引用在模块装配阶段验证一次，
 /// 后面的方块查询和模拟代码不需要知道压缩格式的存在。
 export def unpackBlockCatalog(source: PackedBlockCatalogSource) -> BlockCatalogSource:
-    assert source.schemaVersion == 3 else "Unsupported packed block catalog schema version"
+    assert source.schemaVersion == 4 else "Unsupported packed block catalog schema version"
     assert not source.catalogVersion.isBlank() else "Packed block catalog version cannot be blank"
     assert source.componentProfiles.size > 0 else "Packed block catalog requires component profiles"
     const profileById: Map<number, BlockComponentProfile> = Map()

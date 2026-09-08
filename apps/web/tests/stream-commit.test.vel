@@ -1,0 +1,85 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {commitStreamBatch} from "../src/rendering/stream-commit.vel"
+import {ChunkWindowView, batchChunkWindowTransition, planChunkWindow, streamedChunkPositions} from "../src/rendering/render-window.vel"
+
+test "a superseded stream target still retires the batch paired with its completed load":
+    const oldPosition: ChunkPosition = {x: 0, y: 0, z: 0}
+    const newPosition: ChunkPosition = {x: 1, y: 0, z: 0}
+    const resident: Set<string> = Set([chunkKey(oldPosition)])
+    const calls: List<string> = []
+    let loadEntered = false
+    let releaseLoad = false
+    let current = true
+
+    async def load(positions: readonly List<readonly ChunkPosition>):
+        calls.append("load:start")
+        loadEntered = true
+        while not releaseLoad: await Promise.sleep(0ms)
+        for position in positions: resident.add(chunkKey(position))
+        calls.append("load:end")
+
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        calls.append("unload")
+        for position in positions: resident.remove(chunkKey(position))
+
+    const committed = commitStreamBatch(
+        {load: [newPosition], unload: [oldPosition]},
+        load,
+        unload,
+        () => current,
+    )
+    while not loadEntered: await Promise.sleep(0ms)
+    current = false
+    releaseLoad = true
+
+    expect(await committed).toBe(false)
+    expect(calls).toEqual(["load:start", "load:end", "unload"])
+    expect(resident).toEqual(Set([chunkKey(newPosition)]))
+    expect(resident.size).toBe(1)
+
+test "an already superseded batch never starts another load":
+    let loaded = false
+    async def load(_positions: readonly List<readonly ChunkPosition>): loaded = true
+    def unload(_positions: readonly List<readonly ChunkPosition>): pass
+
+    expect(await commitStreamBatch(
+        {load: [{x: 1, y: 0, z: 0}], unload: [{x: 0, y: 0, z: 0}]},
+        load,
+        unload,
+        () => false,
+    )).toBe(false)
+    expect(loaded).toBe(false)
+
+test "repeated movement during batch completion keeps residence bounded and converges after stopping":
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    let current = true
+    let interruptAfterLoad = true
+    let peak = 0
+
+    async def load(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: resident.set(chunkKey(position), position)
+        peak = Math.max(peak, resident.size)
+        if interruptAfterLoad: current = false
+
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: resident.remove(chunkKey(position))
+
+    for step in range(257):
+        const view: ChunkWindowView = {
+            center: {x: step, y: 0, z: -step},
+            forwardX: 0,
+            forwardY: 0,
+            forwardZ: -1,
+        }
+        const desired = streamedChunkPositions(view, -6, 6, resident.values())
+        const transition = batchChunkWindowTransition(planChunkWindow(desired, resident.values()), 4)
+        unload(transition.surplus)
+        current = true
+        interruptAfterLoad = step != 256
+        for batch in transition.batches:
+            if not await commitStreamBatch(batch, load, unload, () => current): break
+        expect(resident.size <= 524).toBe(true)
+        if step == 256: expect(Set(resident.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
+
+    expect(peak <= 528).toBe(true)

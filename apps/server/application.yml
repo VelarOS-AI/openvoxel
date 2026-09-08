@@ -6,8 +6,6 @@ server:
     allowedOrigins:
       - http://127.0.0.1:7173
       - http://localhost:7173
-      - http://127.0.0.1:4173
-      - http://localhost:4173
   limits:
     bodyBytes: 65536
     messageBytes: 65536

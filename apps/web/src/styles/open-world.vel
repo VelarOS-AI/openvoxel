@@ -1,0 +1,26 @@
+import {Look, alpha, blur, border, shadow} from "velar/look"
+import {ink, panel, white} from "./theme.vel"
+
+export const openPanelLook: Look = look:
+    position = "absolute"
+    zIndex = 5
+    left = 50%
+    top = 50%
+    width = 420px
+    maxWidth = 88vw
+    translate = -50% - 50%
+    display = "grid"
+    gap = 18px
+    padding = 30px
+    backgroundColor = alpha(panel, 0.82)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 22px
+    boxShadow = shadow(0px, 30px, 80px, alpha(ink, 0.5))
+    backdropFilter = blur(26px)
+
+export const panelTitleLook: Look = look:
+    margin = 0
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 2.2rem
+    fontWeight = 700
+    lineHeight = 1

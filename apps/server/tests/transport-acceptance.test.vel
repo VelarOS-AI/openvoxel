@@ -1,3 +1,4 @@
+import {worldEnvironmentAt} from "@openvoxel/world"
 import {Bytes} from "velar/binary"
 import {TestResponse, client} from "velar/server-test"
 import {Provider} from "velar/serve"
@@ -11,7 +12,7 @@ import {OpenVoxelApplication, OpenVoxelServerOptions, openVoxelApplication, open
 import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {defaultGenerator} from "@openvoxel/world-generation"
-import {ChunkPosition, WorldManifest, chunkBlock} from "@openvoxel/world"
+import {ChunkPosition, WorldGameMode, WorldManifest, chunkBlock} from "@openvoxel/world"
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, GenerationSampleResponse, SocketErrorEvent, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, clientContractVersion, protocolVersion} from "@openvoxel/protocol"
 import {memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 
@@ -129,10 +130,13 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
             id: "transport",
             name: "Transport",
             seed: "transport-seed",
+            mode: "creative",
         }})
         expect(worldResponse.status).toBe(201)
         const world = WorldManifest.parse(await worldResponse.json())
         expect(world.chunkEdge).toBe(16)
+        expect(world.mode).toBe(WorldGameMode.creative)
+        expect(world.worldTimeOriginMilliseconds > 0).toBe(true)
         expect(world.generator).toBe(defaultGenerator)
         expect(world.blockRegistry.states.size).toBe(183)
         expect(worldResponse.headers.get("location")).toBe("/api/worlds/transport")
@@ -144,6 +148,7 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
             id: "transport",
             name: "Transport",
             seed: "transport-seed",
+            mode: "creative",
         }})
         expect(duplicateResponse.status).toBe(409)
         expect((await problem(duplicateResponse)).code).toBe("world.already_exists")
@@ -152,6 +157,7 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
             id: "unknown-generator",
             name: "Unknown Generator",
             seed: "transport-seed",
+            mode: "survival",
             generator: "openvoxel:missing",
         }})
         expect(unknownGeneratorResponse.status).toBe(422)
@@ -159,7 +165,7 @@ test "native HTTP exposes fixed terrain as REST resources and OpenAPI as route t
 
         const catalogResponse = await api.get(f"/api/worlds/{world.id}/content")
         const catalog = WorldContentResponse.parse(await catalogResponse.json())
-        expect(catalog.schemaVersion).toBe(3)
+        expect(catalog.schemaVersion).toBe(4)
         expect(catalog.content.contentHash).toBe(world.content.contentHash)
         expect(catalog.blocks.size).toBe(38)
         expect(catalog.componentProfiles.size).toBe(38)
@@ -308,6 +314,9 @@ test "world-scoped WebSocket synchronizes hot deltas and applies atomic batches"
         expect(senderReady.sequence).toBe(0)
         expect(observerReady.sequence).toBe(0)
         expect(isolatedReady.sequence).toBe(0)
+        expect(senderReady.environment).toEqual(worldEnvironmentAt(world.seed, senderReady.environment.worldMilliseconds, world.spawn))
+        expect(observerReady.environment).toEqual(worldEnvironmentAt(world.seed, observerReady.environment.worldMilliseconds, world.spawn))
+        expect(isolatedReady.environment).toEqual(worldEnvironmentAt(otherWorld.seed, isolatedReady.environment.worldMilliseconds, otherWorld.spawn))
 
         await sender.send(encode({operation: "delete-world", requestId: "unsupported"}))
         const unsupported = parse(await nextBinary(sender), SocketErrorEvent)
@@ -372,6 +381,7 @@ test "world-scoped WebSocket synchronizes hot deltas and applies atomic batches"
         const reconnectedReady = parse(await nextBinary(reconnected), WorldReadyEvent)
         expect(reconnectedReady.worldId).toBe(world.id)
         expect(reconnectedReady.sequence).toBe(1)
+        expect(reconnectedReady.environment).toEqual(worldEnvironmentAt(world.seed, reconnectedReady.environment.worldMilliseconds, world.spawn))
 
         // 另一个世界没有收到上面的广播；它的下一条消息只能是自己的同步响应。
         await isolated.send(encode({

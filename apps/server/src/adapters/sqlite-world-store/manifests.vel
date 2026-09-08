@@ -1,0 +1,76 @@
+import {DatabaseCommand, DatabaseExecutor, DatabaseQuery, execute, one} from "@velarscript-labs/database"
+import {insertCommand, selectQuery, sqlColumnEqual, sqlNamedField, sqlTable} from "@velarscript-labs/sql"
+import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
+import {WorldContentIdentity, WorldGameMode, WorldManifest, validateWorldManifest} from "@openvoxel/world"
+import {WorldManifestStore} from "@openvoxel/world-runtime"
+
+type WorldRow:
+    id: string
+    name: string
+    seed: string
+    mode: string
+    worldTimeOriginMilliseconds: number
+    formatVersion: number
+    chunkEdge: number
+    generator: string
+    generatorHash: string
+    spawnX: number
+    spawnY: number
+    spawnZ: number
+    contentJson: string
+    blockRegistryJson: string
+
+const worldsTable = sqlTable("worlds")
+
+def insertWorldOperation(world: WorldManifest) -> DatabaseCommand:
+    return insertCommand(
+        worldsTable,
+        ["id", "name", "seed", "mode", "world_time_origin_milliseconds", "format_version", "chunk_edge", "generator", "generator_hash", "spawn_x", "spawn_y", "spawn_z", "content_json", "block_registry_json"],
+        [[world.id, world.name, world.seed, world.mode, world.worldTimeOriginMilliseconds, world.formatVersion, world.chunkEdge, world.generator, world.generatorHash, world.spawn.x, world.spawn.y, world.spawn.z, Json.stableStringify(world.content), Json.stableStringify(world.blockRegistry)]],
+        minimumAffected=1,
+        maximumAffected=1,
+    )
+
+def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
+    return selectQuery(
+        worldsTable,
+        [
+            sqlNamedField("id"),
+            sqlNamedField("name"),
+            sqlNamedField("seed"),
+            sqlNamedField("mode"),
+            sqlNamedField("world_time_origin_milliseconds", alias="worldTimeOriginMilliseconds"),
+            sqlNamedField("format_version", alias="formatVersion"),
+            sqlNamedField("chunk_edge", alias="chunkEdge"),
+            sqlNamedField("generator"),
+            sqlNamedField("generator_hash", alias="generatorHash"),
+            sqlNamedField("spawn_x", alias="spawnX"),
+            sqlNamedField("spawn_y", alias="spawnY"),
+            sqlNamedField("spawn_z", alias="spawnZ"),
+            sqlNamedField("content_json", alias="contentJson"),
+            sqlNamedField("block_registry_json", alias="blockRegistryJson"),
+        ],
+        WorldRow,
+        where=sqlColumnEqual("id", worldId),
+        limit=1,
+        maximumRows=1,
+    )
+
+export def sqliteWorldManifests(databaseExecutor: DatabaseExecutor) -> WorldManifestStore:
+    async def saveManifest(manifest: WorldManifest):
+        const world = validateWorldManifest(manifest)
+        await execute(databaseExecutor, insertWorldOperation(world))
+
+    async def findManifest(worldId: string) -> WorldManifest?:
+        const row = await one(databaseExecutor, findWorldOperation(worldId))
+        if row == null: return null
+        const blockRegistry = WorldBlockRegistrySnapshot.parse(Json.parse(row.blockRegistryJson))
+        const content = WorldContentIdentity.parse(Json.parse(row.contentJson))
+        return validateWorldManifest(WorldManifest.from(row, {
+            mode: WorldGameMode.parse(row.mode),
+            spawn: {x: row.spawnX, y: row.spawnY, z: row.spawnZ},
+            content,
+            blockRegistry,
+        }))
+
+    return {save: saveManifest, find: findManifest}

@@ -1,6 +1,12 @@
-import {UInt32Buffer, uint16Buffer, uint32Buffer} from "velar/binary"
-import {RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkResponse} from "@openvoxel/protocol"
-import {ChunkPosition, LocalPosition, blockIndex, chunkKey, chunkVolume, requireChunkEdge} from "@openvoxel/world"
+import {UInt32Buffer, uint32Buffer} from "velar/binary"
+import {RealtimeBlockChange, RealtimeChunkDelta} from "@openvoxel/protocol"
+import {ChunkPosition, LocalPosition, blockIndex, chunkKey} from "@openvoxel/world"
+import {ClientTerrainChunkSnapshot} from "./terrain-snapshot.vel"
+
+export enum ClientChunkDeltaResult:
+    stale
+    unchanged
+    changed
 
 /// 客户端中的一个组合 Chunk。固定地形始终保持只读，玩家和系统形成的热变化只
 /// 进入 overrides；重连同步时整体替换 overrides，不会在旧增量上继续打补丁。
@@ -11,7 +17,8 @@ export type ClientChunkState:
     blockAtIndex: (index: number) -> number
     block: (position: readonly LocalPosition) -> number
     snapshotBlocks: () -> UInt32Buffer
-    replaceDelta: (delta: readonly RealtimeChunkDelta) -> null
+    /// 区分旧快照、同值快照和真实变化，重同步只接受后两者。
+    replaceDelta: (delta: readonly RealtimeChunkDelta) -> ClientChunkDeltaResult
     applyChange: (change: readonly RealtimeBlockChange) -> bool
 
 def sameChunk(left: readonly ChunkPosition, right: readonly ChunkPosition) -> bool:
@@ -20,23 +27,17 @@ def sameChunk(left: readonly ChunkPosition, right: readonly ChunkPosition) -> bo
 def requireRuntimeId(value: number):
     assert value.isInteger() and value >= 0 and value <= 0xffffffff else "Client Chunk runtime ids must be UInt32 values"
 
-/// 从不可信线上地形创建客户端 Chunk。这里完整验证一次调色板和局部索引；后续
-/// 热事件只验证自己携带的坐标、runtimeId 和 revision，不再重复扫描 4096 项。
-export def clientChunkState(terrain: readonly TerrainChunkResponse) -> ClientChunkState:
-    requireChunkEdge(terrain.edge)
-    assert terrain.palette.size >= 1 and terrain.palette.size <= 0x10000 else "Client Chunk palette size is invalid"
-    const palette = terrain.palette.copy()
-    for runtimeId in palette: requireRuntimeId(runtimeId)
-    assert terrain.indices.size == chunkVolume(terrain.edge) else "Client Chunk indices have the wrong size"
-    // JSON/MessagePack 边界使用普通 List；完成一次不可信输入验证后立即压进定长
-    // UInt16Buffer。16³ Chunk 的基础索引由 4096 个 number 槽位降为 8192 字节，
-    // 后续方块查询和重连都复用这份紧凑冷数据。
-    const indices = uint16Buffer(terrain.indices.size)
-    for index, offset in terrain.indices:
-        assert index.isInteger() and index >= 0 and index < palette.size else "Client Chunk contains an invalid palette index"
-        indices[offset] = index
+/// 从已经在 backend 边界规范化的紧凑地形创建客户端 Chunk。冷索引继续保留为
+/// UInt16Buffer；组合视图只展开一次，随后由热 overrides 增量维护。高频构网和
+/// 碰撞读取因此不再为每个方块重复查询 Map 与 palette。
+export def clientChunkState(terrain: readonly ClientTerrainChunkSnapshot) -> ClientChunkState:
+    const palette = terrain.palette
+    const indices = terrain.indices
+    const blocks = uint32Buffer(indices.size)
+    for index in range(indices.size): blocks[index] = palette[indices[index]]
 
     let currentRevision = 0
+    let currentEcologyEpoch = 0
     const overrides: Map<number, number> = Map()
 
     def requireIndex(index: number):
@@ -44,29 +45,36 @@ export def clientChunkState(terrain: readonly TerrainChunkResponse) -> ClientChu
 
     def blockAtIndex(index: number) -> number:
         requireIndex(index)
-        return overrides.get(index) ?? palette[indices[index]]
+        return blocks[index]
 
     def block(position: readonly LocalPosition) -> number: return blockAtIndex(blockIndex(position, terrain.edge))
 
-    /// 为派生视图生成当前组合状态的独立紧凑快照。Worker 得到这份 UInt32Buffer
-    /// 后不再读取可变 ClientChunkState；后续热变化通过新的失效事件启动下一次任务。
-    def snapshotBlocks() -> UInt32Buffer:
-        const snapshot = uint32Buffer(indices.size)
-        for index in range(indices.size): snapshot[index] = blockAtIndex(index)
-        return snapshot
+    /// Worker 得到独立快照后不再读取可变 ClientChunkState；后续热变化通过新的
+    /// 失效事件启动下一次任务。
+    def snapshotBlocks() -> UInt32Buffer: return blocks.copy()
 
-    def replaceDelta(delta: readonly RealtimeChunkDelta):
+    def replaceDelta(delta: readonly RealtimeChunkDelta) -> ClientChunkDeltaResult:
         assert sameChunk(delta.position, terrain.position) else "Client Chunk delta targets a different Chunk"
         assert delta.revision.isInteger() and delta.revision >= 0 else "Client Chunk revision must be a non-negative integer"
+        const epoch = delta.ecologyEpoch ?? 0
+        assert epoch.isInteger() and epoch >= 0 else "Client Chunk ecology epoch must be a non-negative integer"
+        if delta.revision < currentRevision or epoch < currentEcologyEpoch: return ClientChunkDeltaResult.stale
         const replacement: Map<number, number> = Map()
         for entry in delta.overrides:
             requireRuntimeId(entry.blockStateRuntimeId)
             const index = blockIndex(entry.position, terrain.edge)
             assert not replacement.has(index) else "Client Chunk delta repeats one local position"
             replacement.set(index, entry.blockStateRuntimeId)
-        overrides.clear()
-        for index, runtimeId in replacement: overrides.set(index, runtimeId)
+        const changed = delta.revision != currentRevision or replacement.size != overrides.size or replacement.entries().some(entry => overrides.get(entry.key) != entry.value)
+        if changed:
+            for index in overrides.keys(): blocks[index] = palette[indices[index]]
+            overrides.clear()
+            for index, runtimeId in replacement:
+                overrides.set(index, runtimeId)
+                blocks[index] = runtimeId
         currentRevision = delta.revision
+        currentEcologyEpoch = epoch
+        return changed ? ClientChunkDeltaResult.changed : ClientChunkDeltaResult.unchanged
 
     /// 返回 false 表示 revision 跨过了至少一个未见版本。当前变化仍会应用，方便
     /// 画面尽快接近服务端；世界状态同时进入 requiresResync，随后用完整增量覆盖。
@@ -76,7 +84,9 @@ export def clientChunkState(terrain: readonly TerrainChunkResponse) -> ClientChu
         assert change.revision.isInteger() and change.revision >= 0 else "Client block change revision must be a non-negative integer"
         if change.revision < currentRevision: return true
         const contiguous = change.revision <= currentRevision + 1
-        overrides.set(blockIndex(change.local, terrain.edge), change.blockStateRuntimeId)
+        const index = blockIndex(change.local, terrain.edge)
+        overrides.set(index, change.blockStateRuntimeId)
+        blocks[index] = change.blockStateRuntimeId
         if change.revision > currentRevision: currentRevision = change.revision
         return contiguous
 

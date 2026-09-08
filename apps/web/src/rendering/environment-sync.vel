@@ -1,0 +1,61 @@
+import {Coordinate3, WorldEnvironmentSample} from "@openvoxel/world"
+import {Cancellation, task} from "velar/task"
+
+export type WorldEnvironmentSource:
+    environment: (position: readonly Coordinate3) -> readonly WorldEnvironmentSample
+    refreshEcology: (cancellation?: Cancellation) -> Promise<bool>
+
+export type EnvironmentSync:
+    sampleAt: (position: readonly Coordinate3) -> null
+    close: () -> Promise<null>
+
+/// 天空采样和有界生态同步分别拥有任务；较慢的生态请求不能拖住视觉时间。
+/// 世界规则、时间锚点和生态队列仍由会话负责，这里只拥有呈现所需的节拍。
+export def environmentSync(
+    source: readonly WorldEnvironmentSource,
+    initialPosition: readonly Coordinate3,
+    apply: (sample: readonly WorldEnvironmentSample) -> null,
+    failed: (message: string) -> null,
+) -> EnvironmentSync:
+    let samplePosition = initialPosition
+    let closed = false
+    let closing: Promise<null>? = null
+
+    async def updateEnvironment(cancellation: Cancellation):
+        try:
+            while not closed:
+                await cancellation.checkpoint()
+                if closed: return
+                apply(source.environment(samplePosition))
+                await Promise.sleep(100ms)
+        catch error:
+            if not closed: failed(error.message)
+
+    async def updateEcology(cancellation: Cancellation):
+        try:
+            while not closed:
+                await cancellation.checkpoint()
+                if closed: return
+                // close 会 join 当前任务，因此取消必须进入正在等待的后端请求，
+                // 不能只在两次同步之间检查，再依赖稍后关闭 Session 来唤醒它。
+                await source.refreshEcology(cancellation)
+                await Promise.sleep(100ms)
+        catch error:
+            if not closed: failed(error.message)
+
+    const environment = task(updateEnvironment)
+    const ecology = task(updateEcology)
+
+    def sampleAt(position: readonly Coordinate3):
+        if not closed: samplePosition = position
+
+    async def shutdown():
+        closed = true
+        try: await environment.cancel("World environment synchronization closed")
+        finally: await ecology.cancel("World ecology synchronization closed")
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    return {sampleAt, close}

@@ -1,0 +1,154 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
+import {Float32Builder, UInt32Builder, float32Builder, uint32Builder} from "velar/binary"
+import {ChunkMeshBatch, ClientRenderState, ClientTextureVariant} from "../contracts.vel"
+import {MeshFace, climateTintRole, faceShade} from "./faces.vel"
+
+const maximumChunkMeshBytes = 8 * 1024 * 1024
+
+export type MutableMeshBatch:
+    pipelineKey: string
+    layer: BlockRenderLayer
+    bankKey: string
+    materialKey: string
+    animationKey: string?
+    positions: Float32Builder
+    normals: Float32Builder
+    uvs: Float32Builder
+    textureLayers: Float32Builder
+    tintRoles: Float32Builder
+    colors: Float32Builder
+    indices: UInt32Builder
+    vertexCount: number
+    quadCount: number
+
+export def batchFor(
+    batches: Map<string, MutableMeshBatch>,
+    state: readonly ClientRenderState,
+    maximumFaces: number,
+) -> MutableMeshBatch:
+    const materialKey = state.materialKey
+    const layer = state.layer
+    const bankKey = state.bankKey
+    const pipelineKey = state.pipelineKey
+    assert materialKey != null and layer != null and bankKey != null and pipelineKey != null else f"Rendered state {state.runtimeId} has no material pipeline"
+    const existing = batches.get(pipelineKey)
+    if existing != null: return existing
+    const created: MutableMeshBatch = {
+        pipelineKey,
+        layer,
+        bankKey,
+        materialKey,
+        animationKey: state.animationKey,
+        positions: float32Builder(maximumFaces * 12),
+        normals: float32Builder(maximumFaces * 12),
+        uvs: float32Builder(maximumFaces * 8),
+        textureLayers: float32Builder(maximumFaces * 4),
+        tintRoles: float32Builder(maximumFaces * 4),
+        colors: float32Builder(maximumFaces * 16),
+        indices: uint32Builder(maximumFaces * 6),
+        vertexCount: 0,
+        quadCount: 0,
+    }
+    batches.set(pipelineKey, created)
+    return created
+
+def pushVertex(
+    batch: MutableMeshBatch,
+    state: readonly ClientRenderState,
+    shade: number,
+    x: number,
+    y: number,
+    z: number,
+    nx: number,
+    ny: number,
+    nz: number,
+    u: number,
+    v: number,
+    textureLayer: number,
+    tintRole: number,
+):
+    batch.positions.push(x)
+    batch.positions.push(y)
+    batch.positions.push(z)
+    batch.normals.push(nx)
+    batch.normals.push(ny)
+    batch.normals.push(nz)
+    batch.uvs.push(u)
+    batch.uvs.push(v)
+    batch.textureLayers.push(textureLayer)
+    batch.tintRoles.push(tintRole)
+    batch.colors.push(state.tintRed * shade)
+    batch.colors.push(state.tintGreen * shade)
+    batch.colors.push(state.tintBlue * shade)
+    batch.colors.push(1)
+
+export def emitQuad(
+    batch: MutableMeshBatch,
+    state: readonly ClientRenderState,
+    face: MeshFace,
+    texture: readonly ClientTextureVariant,
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    nx: number,
+    ny: number,
+    nz: number,
+):
+    const first = batch.vertexCount
+    const shade = faceShade(face, state.emission)
+    const tintRole = climateTintRole(state, face)
+    pushVertex(batch, state, shade, ax, ay, az, nx, ny, nz, 0, 0, texture.layer, tintRole)
+    pushVertex(batch, state, shade, bx, by, bz, nx, ny, nz, 1, 0, texture.layer, tintRole)
+    pushVertex(batch, state, shade, cx, cy, cz, nx, ny, nz, 1, 1, texture.layer, tintRole)
+    pushVertex(batch, state, shade, dx, dy, dz, nx, ny, nz, 0, 1, texture.layer, tintRole)
+    batch.indices.push(first)
+    batch.indices.push(first + 1)
+    batch.indices.push(first + 2)
+    batch.indices.push(first)
+    batch.indices.push(first + 2)
+    batch.indices.push(first + 3)
+    batch.vertexCount += 4
+    batch.quadCount += 1
+
+export type FinishedMeshBatches:
+    batches: List<ChunkMeshBatch>
+    quadCount: number
+    byteSize: number
+
+/// Finalize each pipeline once in stable order and enforce the complete upload bound.
+export def finishMeshBatches(batches: Map<string, MutableMeshBatch>) -> FinishedMeshBatches:
+    const finished: List<ChunkMeshBatch> = []
+    let quadCount = 0
+    let byteSize = 0
+    for key in batches.keys().sorted():
+        const batch = batches.get(key)!
+        if batch.quadCount == 0: continue
+        const output: ChunkMeshBatch = {
+            pipelineKey: batch.pipelineKey,
+            layer: batch.layer,
+            bankKey: batch.bankKey,
+            materialKey: batch.materialKey,
+            animationKey: batch.animationKey,
+            positions: batch.positions.finish(),
+            normals: batch.normals.finish(),
+            uvs: batch.uvs.finish(),
+            textureLayers: batch.textureLayers.finish(),
+            tintRoles: batch.tintRoles.finish(),
+            colors: batch.colors.finish(),
+            indices: batch.indices.finish(),
+            quadCount: batch.quadCount,
+        }
+        quadCount += output.quadCount
+        byteSize += (output.positions.size + output.normals.size + output.uvs.size + output.textureLayers.size + output.tintRoles.size + output.colors.size + output.indices.size) * 4
+        assert byteSize <= maximumChunkMeshBytes else "Chunk mesh exceeds the 8 MiB output bound"
+        finished.append(output)
+    return {batches: finished, quadCount, byteSize}

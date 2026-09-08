@@ -1,11 +1,11 @@
 import {BlockComponentProfile, BlockDefinition, BlockRenderResources, PackedBlockStateDefinition} from "@openvoxel/blocks"
-import {ChunkPosition, Coordinate2, WorldContentIdentity, WorldManifest} from "@openvoxel/world"
+import {ChunkPosition, Coordinate2, WorldContentIdentity, WorldGameMode, WorldManifest} from "@openvoxel/world"
 
 /// HTTP 与实时消息共同遵循的当前线上语义代际。
 ///
 /// 路由不是协议包里的字符串常量。HTTP 路由由服务端注解直接声明，并由框架生成
 /// OpenAPI；这个包只拥有可以在网络上传输的数据形状和稳定版本事实。
-export const protocolVersion = 8
+export const protocolVersion = 13
 export const clientContractVersion = 8
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
 export const protocolServiceName = "openvoxel"
@@ -68,6 +68,7 @@ export type CreateWorldRequest:
     readonly id: string
     readonly name: string
     readonly seed: string
+    readonly mode: WorldGameMode
     readonly generator: string?
     readonly contentPacks: readonly List<string>?
 
@@ -155,6 +156,7 @@ export const clientCapabilities: readonly List<string> = [
     "openapi-3.1",
     "world-content-etag",
     "block-component-profiles",
+    "block-collision-boxes",
     "world-block-registry",
     "world-generator-hash",
     "terrain-chunk-batches",
@@ -162,6 +164,7 @@ export const clientCapabilities: readonly List<string> = [
     "atomic-block-edit-batches",
     "chunk-delta-sync",
     "realtime-sequence-cursor",
+    "world-environment-snapshots",
 ]
 
 export const realtimeCommandNames: readonly List<string> = ["chunks.sync", "blocks.apply"]

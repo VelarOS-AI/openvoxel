@@ -1,0 +1,35 @@
+import {command, execute, query, requireOne, sqlConcat, trustedSql} from "@velarscript-labs/database"
+import {SqliteConnection, SqliteTransaction, sqliteLiteral} from "@velarscript-labs/sqlite"
+
+type DatabaseVersionRow:
+    user_version: number
+
+export const sqliteSchemaVersion = 7
+const readSchemaVersion = query(trustedSql("PRAGMA user_version"), DatabaseVersionRow, maximumRows=1)
+
+export async def initializeWorldSchema(database: SqliteConnection):
+    /// 三张表和 user_version 必须处于同一个事务。进程在初始化中途退出时，
+    /// SQLite 会回滚到真正的空库，不会留下“版本已写入但表不完整”的半成品。
+    async def initializeTransaction(transaction: SqliteTransaction):
+        const executor = transaction.executor()
+        const versionRow = await requireOne(executor, readSchemaVersion, message="SQLite did not return its schema version")
+        if versionRow.user_version == sqliteSchemaVersion: return null
+        assert versionRow.user_version == 0 else f"SQLite schema version {versionRow.user_version} does not match required version {sqliteSchemaVersion}"
+        // 新格式直接建表；user_version 为 0 但已有同名表时会明确失败，不猜测、
+        // 覆盖或迁移旧结构。
+        await execute(executor, command(
+            trustedSql("CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('survival', 'creative')), world_time_origin_milliseconds INTEGER NOT NULL CHECK (world_time_origin_milliseconds >= 0 AND world_time_origin_milliseconds <= 9007199254740991), format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, generator_hash TEXT NOT NULL, spawn_x INTEGER NOT NULL, spawn_y INTEGER NOT NULL, spawn_z INTEGER NOT NULL, content_json TEXT NOT NULL, block_registry_json TEXT NOT NULL)"),
+        ))
+        await execute(executor, command(
+            trustedSql("CREATE TABLE chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z), FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE)"),
+        ))
+        await execute(executor, command(
+            trustedSql("CREATE TABLE block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_state_runtime_id INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z), FOREIGN KEY (world_id, chunk_x, chunk_y, chunk_z) REFERENCES chunk_states(world_id, chunk_x, chunk_y, chunk_z) ON DELETE CASCADE)"),
+        ))
+        await execute(executor, command(sqlConcat([
+            trustedSql("PRAGMA user_version = "),
+            sqliteLiteral(sqliteSchemaVersion),
+        ])))
+        return null
+
+    await database.transaction(initializeTransaction)

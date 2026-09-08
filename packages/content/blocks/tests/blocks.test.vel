@@ -1,6 +1,6 @@
 import {expect} from "velar/test"
 import {builtinIdentities} from "@openvoxel/identities"
-import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPropertyKind, BlockRenderLayer, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
+import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPhysics, BlockPropertyKind, BlockRenderLayer, BlockShapeKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, resolveBlockShapeBoxes, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
 
 const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 const grassBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
@@ -22,9 +22,9 @@ def contribution(owner: string, blockKey: string) -> BlockCatalogContribution:
     return compileModBlockCatalogContribution(owner, f"{blockKey}:v1", [contributionSource(blockKey)])
 
 test "generated runtime catalog expands finite states with UInt32 identities":
-    expect(blockCatalogSchemaVersion).toBe(3)
+    expect(blockCatalogSchemaVersion).toBe(4)
     expect(blockCatalogVersion).toBe(baseBlockCatalogSource.catalogVersion)
-    expect(blockCatalogHash).toBe("c7d6748bf9de3cf264f8ac6b1a6a17ad591ed8af7e07f2f53ff47bcd891e0bb2")
+    expect(blockCatalogHash).toBe("8c1ed3fdbcf4803bf42377ba8b5f729dc747fd02b476c560319ad83a62bb0153")
     expect(blockStateMapHash).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
     expect(blockCatalog().size).toBe(38)
     expect(blockStateCatalog().size).toBe(183)
@@ -38,6 +38,59 @@ test "generated runtime catalog expands finite states with UInt32 identities":
     expect(blockTypeDefinition(builtinIdentities.blocks.air).interaction.breakable).toBe(false)
     expect(isFluidBlock(waterBlockState)).toBe(true)
     expect(isNaturalRock(stoneBlockState)).toBe(true)
+
+test "block shape geometry resolves fixed and state-scaled collision boxes":
+    const cactus = blockStateDefinition(defaultBlockStateRuntimeId(builtinIdentities.blocks.cactus))
+    const cactusBoxes = resolveBlockShapeBoxes(cactus.physics.collision, cactus.properties)
+    expect(cactusBoxes.size).toBe(1)
+    expect(cactusBoxes[0].minimumX).toBe(0.0625)
+    expect(cactusBoxes[0].maximumX).toBe(0.9375)
+
+    const snow = blockStateDefinition(blockStateRuntimeId(builtinIdentities.blocks.snow, [{name: "layers", value: 4}]))
+    const snowBoxes = resolveBlockShapeBoxes(snow.physics.collision, snow.properties)
+    expect(snowBoxes.size).toBe(1)
+    expect(snowBoxes[0].minimumY).toBe(0)
+    expect(snowBoxes[0].maximumY).toBe(0.5)
+
+    const air = blockStateDefinition(airBlockState)
+    expect(resolveBlockShapeBoxes(air.physics.collision, air.properties)).toEqual([])
+    const stone = blockStateDefinition(stoneBlockState)
+    expect(resolveBlockShapeBoxes(stone.physics.collision, stone.properties)[0].maximumY).toBe(1)
+
+test "Mod collision shapes compile and preserve multiple declared boxes":
+    const source = contributionSource("farming:trellis")
+    const trellis = BlockTypeSource.from(source, {
+        physics: BlockPhysics.from(source.physics, {collision: {
+            kind: BlockShapeKind.custom,
+            key: "farming:shape/trellis",
+            boxes: [
+                {minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 0.125, maximumY: 1, maximumZ: 1},
+                {minimumX: 0.875, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1},
+            ],
+        }}),
+    })
+    const compiled = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [trellis])
+    const state = compiled.catalog.states[0]
+    const boxes = resolveBlockShapeBoxes(state.physics.collision, state.properties)
+    expect(boxes.size).toBe(2)
+    expect(boxes[0].maximumX).toBe(0.125)
+    expect(boxes[1].minimumX).toBe(0.875)
+
+test "Mod collision shapes reject missing geometry and invalid state scaling":
+    const source = contributionSource("farming:invalid_shape")
+    const missing = BlockTypeSource.from(source, {
+        physics: BlockPhysics.from(source.physics, {collision: {kind: BlockShapeKind.custom, key: "farming:shape/missing"}}),
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [missing])).toThrow()
+
+    const scaled = BlockTypeSource.from(source, {
+        physics: BlockPhysics.from(source.physics, {collision: {
+            kind: BlockShapeKind.custom,
+            key: "farming:shape/scaled",
+            boxes: [{minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1, maximumYProperty: "missing", maximumYScale: 0.5}],
+        }}),
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [scaled])).toThrow()
 
 test "state registry resolves properties through explicit runtime ids":
     const oakLog = defaultBlockStateRuntimeId(builtinIdentities.blocks.oakLog)

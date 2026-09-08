@@ -1,0 +1,68 @@
+import {WorldBlocksChangedEvent, WorldReadyEvent} from "@openvoxel/protocol"
+import {WorldBackendConnection} from "./backend.vel"
+
+/// 连接代际拥有者。迟到的连接自行回收，只有当前连接可以交付广播和请求结果。
+export type SessionConnection:
+    open: () -> Promise<bool>
+    current: () -> WorldBackendConnection
+    owns: (connection: WorldBackendConnection) -> bool
+    connected: () -> bool
+    closed: () -> bool
+    close: () -> Promise<null>
+
+export def sessionConnection(
+    connect: (listener: (event: readonly WorldBlocksChangedEvent) -> null) -> Promise<WorldBackendConnection>,
+    ready: (event: readonly WorldReadyEvent) -> null,
+    receive: (event: readonly WorldBlocksChangedEvent) -> null,
+) -> SessionConnection:
+    let active: WorldBackendConnection? = null
+    let generation = 0
+    let closed = false
+    let closing: Promise<null>? = null
+
+    def current() -> WorldBackendConnection:
+        const connection = active
+        assert not closed and connection != null else "Client world session is not connected"
+        return connection
+
+    def owns(connection: WorldBackendConnection) -> bool: return not closed and active == connection
+
+    async def open() -> bool:
+        if closed: return false
+        generation += 1
+        const ticket = generation
+        const previous = active
+        active = null
+        if previous != null: await previous.close()
+        if closed or generation != ticket: return false
+
+        def receiveCurrent(event: readonly WorldBlocksChangedEvent):
+            if not closed and generation == ticket and active != null: receive(event)
+
+        const opened = await connect(receiveCurrent)
+        if closed or generation != ticket:
+            await opened.close()
+            return false
+        try: ready(opened.ready)
+        catch error:
+            await opened.close()
+            throw error
+        // ready 可以同步通知订阅者；订阅者关闭或重连后不能再安装这个连接。
+        if closed or generation != ticket:
+            await opened.close()
+            return false
+        active = opened
+        return true
+
+    async def shutdown():
+        closed = true
+        generation += 1
+        const previous = active
+        active = null
+        if previous != null: await previous.close()
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    return {open, current, owns, connected: () => not closed and active != null, closed: () => closed, close}

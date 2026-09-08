@@ -1,4 +1,4 @@
-formatVersion: 6
+formatVersion: 9
 owner: openvoxel
 
 textureCatalogs:
@@ -12,7 +12,25 @@ texturePipeline:
   mipmaps: true
 
 environment:
-  clouds: environment/clouds.webp
+  sky:
+    sun: environment/sky/sun.webp
+    glow: environment/sky/sky-glow.webp
+    star: environment/sky/star.webp
+    moons:
+      - environment/sky/moon-01.webp
+      - environment/sky/moon-02.webp
+      - environment/sky/moon-03.webp
+      - environment/sky/moon-04.webp
+      - environment/sky/moon-05.webp
+      - environment/sky/moon-06.webp
+      - environment/sky/moon-07.webp
+      - environment/sky/moon-08.webp
+  clouds:
+    texture: environment/sky/clouds.webp
+  precipitation:
+    rain: environment/weather/rain.webp
+    rainSplash: environment/weather/rain-splash.webp
+    snow: environment/weather/snow.webp
 
 surfaceProfiles:
   - {key: rock, normalStrength: 1.35, occlusionStrength: 0.28, roughness: 0.88, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
@@ -37,20 +55,20 @@ models:
   - {key: openvoxel:model/block/fluid, kind: fluid}
 
 materials:
-  - {key: openvoxel:material/terrain, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 0.9, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/metal, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 1.15, clearCoat: 0.08, clearCoatRoughness: 0.2, unlit: false}
-  - {key: openvoxel:material/leaves, alpha: 1, alphaCutoff: 0.45, doubleSided: false, castsShadows: true, environmentIntensity: 0.75, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/cross, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, environmentIntensity: 0.72, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/model, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: true, environmentIntensity: 0.85, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/water, alpha: 0.68, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 1.35, clearCoat: 0.72, clearCoatRoughness: 0.06, unlit: false}
-  - {key: openvoxel:material/magma, alpha: 0.92, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 0.35, clearCoat: 0.04, clearCoatRoughness: 0.35, unlit: false}
-  - {key: openvoxel:material/ice, alpha: 0.72, alphaCutoff: 0, doubleSided: false, castsShadows: false, environmentIntensity: 1.25, clearCoat: 0.42, clearCoatRoughness: 0.08, unlit: false}
+  - {key: openvoxel:material/terrain, precipitationSurface: solid, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 0.9, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/metal, precipitationSurface: solid, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 1.15, clearCoat: 0.08, clearCoatRoughness: 0.2, unlit: false}
+  - {key: openvoxel:material/leaves, precipitationSurface: solid, alpha: 1, alphaCutoff: 0.45, doubleSided: false, castsShadows: true, environmentIntensity: 0.75, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/cross, precipitationSurface: none, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, environmentIntensity: 0.72, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/model, precipitationSurface: solid, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: true, environmentIntensity: 0.85, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/water, precipitationSurface: water, alpha: 0.68, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 1.35, clearCoat: 0.72, clearCoatRoughness: 0.06, unlit: false}
+  - {key: openvoxel:material/magma, precipitationSurface: solid, alpha: 0.92, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 0.35, clearCoat: 0.04, clearCoatRoughness: 0.35, unlit: false}
+  - {key: openvoxel:material/ice, precipitationSurface: solid, alpha: 0.72, alphaCutoff: 0, doubleSided: false, castsShadows: false, environmentIntensity: 1.25, clearCoat: 0.42, clearCoatRoughness: 0.08, unlit: false}
 
 tints:
-  - {key: openvoxel:tint/biome_foliage, red: 0.48, green: 0.9, blue: 0.34}
-  - {key: openvoxel:tint/biome_grass, red: 0.5, green: 0.92, blue: 0.34}
-  - {key: openvoxel:tint/biome_grass_top, red: 0.54, green: 0.96, blue: 0.38}
-  - {key: openvoxel:tint/biome_water, red: 0.62, green: 0.82, blue: 1}
+  - {key: openvoxel:tint/biome_foliage, climate: foliage, coverage: all, red: 1, green: 1, blue: 1}
+  - {key: openvoxel:tint/biome_grass, climate: grass, coverage: all, red: 1, green: 1, blue: 1}
+  - {key: openvoxel:tint/biome_grass_top, climate: grass, coverage: grass_cap, red: 1, green: 1, blue: 1}
+  - {key: openvoxel:tint/biome_water, climate: water, coverage: all, red: 1, green: 1, blue: 1}
 
 animations:
   - {key: openvoxel:animation/water, frameDurationMs: 240, frames: [openvoxel:texture/block/water, openvoxel:texture/block/water_flow]}

@@ -1,0 +1,75 @@
+import {ClientEnvironmentFrame, ClientEnvironmentVector3} from "./frame.vel"
+import {ClientPrecipitationSurface, ClientResourceEnvironment} from "../resource-pack.vel"
+
+/// 只暴露给体素表面的环境诊断，Babylon 资源与对象身份始终留在环境适配器内。
+export type VoxelEnvironmentStats:
+    readonly environmentTextureReady: bool
+    readonly environmentTextureUpdates: number
+    readonly precipitation: string
+    readonly precipitationIntensity: number
+    readonly cloudiness: number
+    readonly activeRainParticles: number
+    readonly activeSnowParticles: number
+    readonly activeRainSplashes: number
+    readonly activeSnowSplashes: number
+    /// 成功创建的真实碰地粒子累计数，生命周期结束前单调递增。
+    readonly rainSplashContacts: number
+    readonly snowSplashContacts: number
+    readonly rainSplashGrounded: bool
+    readonly rainSplashGroundY: number?
+    readonly shadowCasters: number
+    readonly activeShadowCasters: number
+    readonly sunVisible: bool
+    readonly moonVisible: bool
+    readonly starVisibility: number
+    readonly lightningSequence: number?
+
+/// 地形采样返回实际受降水命中的表面；可穿透装饰已经由地形查询跳过。
+export type VoxelPrecipitationGround:
+    readonly groundY: number
+    readonly skyVisible: bool
+    readonly surface: ClientPrecipitationSurface
+
+export type VoxelPrecipitationGroundQuery = (x: number, z: number) -> VoxelPrecipitationGround?
+
+/// Surface 只依赖这组资源无关操作；具体 Babylon 类、灯光、粒子和贴图不跨模块。
+export type BabylonVoxelEnvironmentHandle:
+    update: (
+        deltaMilliseconds: number,
+        viewPosition: readonly ClientEnvironmentVector3,
+        groundPosition: readonly ClientEnvironmentVector3?,
+        groundAt: VoxelPrecipitationGroundQuery?,
+    ) -> null
+    applyFrame: (frame: readonly ClientEnvironmentFrame) -> null
+    restore: () -> null
+    addShadowCaster: (mesh: unknown) -> null
+    removeShadowCaster: (mesh: unknown) -> null
+    stats: () -> VoxelEnvironmentStats
+    dispose: () -> null
+
+extern module "#openvoxel/renderer/babylon-environment":
+    export async def createEnvironmentAdapter(
+        scene: unknown,
+        edge: number,
+        renderDistance: number,
+        resources: readonly ClientResourceEnvironment,
+        frame: readonly ClientEnvironmentFrame,
+    ) -> BabylonVoxelEnvironmentHandle
+
+import js {createEnvironmentAdapter} from "#openvoxel/renderer/babylon-environment"
+
+export async def createBabylonVoxelEnvironment(
+    scene: unknown,
+    edge: number,
+    renderDistance: number,
+    resources: readonly ClientResourceEnvironment,
+    frame: readonly ClientEnvironmentFrame,
+) -> BabylonVoxelEnvironmentHandle: return await createEnvironmentAdapter(scene, edge, renderDistance, resources, frame)
+
+export type BabylonVoxelEnvironmentFactory = (
+    scene: unknown,
+    edge: number,
+    renderDistance: number,
+    resources: readonly ClientResourceEnvironment,
+    frame: readonly ClientEnvironmentFrame,
+) -> Promise<BabylonVoxelEnvironmentHandle>

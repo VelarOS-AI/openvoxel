@@ -1,0 +1,178 @@
+import {Coordinate3, maximumWorldCoordinate, requireCoordinate3} from "../spatial/coordinates.vel"
+import {WorldEnvironmentSample, WorldLightningEvent, WorldPrecipitationKind, maximumWorldEnvironmentMilliseconds, validateWorldEnvironmentSample, worldDayMilliseconds} from "./environment.vel"
+import {random} from "velar/random"
+import {worldClimateAt} from "./climate.vel"
+
+/// 天气与闪电是世界模型中的确定性时空场，不属于某一种服务器运行时。
+/// 服务端、Local Worker 与客户端预测都必须从这一个纯函数策略取样。
+export const worldWeatherWindowMilliseconds = 180_000
+export const worldLightningSlotMilliseconds = 12_000
+export const worldLightningLifetimeMilliseconds = 1_500
+
+const worldWeatherCellSize = 512
+const worldLightningHorizontalCellSize = 256
+const worldLightningVerticalCellSize = 128
+const minimumPrecipitationIntensity = 0.000001
+
+type WorldWeatherTarget:
+    precipitationPotential: number
+    cloudiness: number
+    windX: number
+    windZ: number
+    temperatureAnomaly: number
+
+type WorldWeatherSample:
+    precipitation: WorldPrecipitationKind
+    precipitationIntensity: number
+    cloudiness: number
+    windX: number
+    windZ: number
+
+def saturate(value: number) -> number: return Math.clamp(value, 0, 1)
+
+def smoothstep(minimum: number, maximum: number, value: number) -> number:
+    const amount = saturate((value - minimum) / (maximum - minimum))
+    return amount * amount * (3 - 2 * amount)
+
+def interpolate(left: number, right: number, amount: number) -> number: return left + (right - left) * amount
+
+def bilinear(lowerLeft: number, lowerRight: number, upperLeft: number, upperRight: number, amountX: number, amountZ: number) -> number:
+    return interpolate(interpolate(lowerLeft, lowerRight, amountX), interpolate(upperLeft, upperRight, amountX), amountZ)
+
+def cellCoordinate(value: number, size: number) -> number: return (value / size).floor()
+
+def cellAmount(value: number, coordinate: number, size: number) -> number:
+    return smoothstep(0, 1, (value - coordinate * size) / size)
+
+/// 每个天气窗口的格点使用独立命名子流。格点之间双线性插值，因此移动观察点
+/// 不会在粗粒度 cell 边界制造云量、风或降水强度阶跃。
+def weatherTarget(seed: string, windowIndex: number, cellX: number, cellZ: number) -> WorldWeatherTarget:
+    const stream = random(seed).fork(f"environment:weather:{windowIndex}:{cellX}:{cellZ}")
+    const windSpeed = 1 + 17 * Math.pow(stream.fork("wind-speed").number(), 0.78)
+    const windAngle = stream.fork("wind-direction").number() * Math.tau
+    return {
+        precipitationPotential: Math.pow(stream.fork("precipitation-potential").number(), 0.82),
+        cloudiness: Math.pow(stream.fork("cloudiness").number(), 0.82),
+        windX: Math.cos(windAngle) * windSpeed,
+        windZ: Math.sin(windAngle) * windSpeed,
+        temperatureAnomaly: (stream.fork("temperature-anomaly").number() - 0.5) * 0.3,
+    }
+
+def spatialWeatherTarget(seed: string, windowIndex: number, position: readonly Coordinate3) -> WorldWeatherTarget:
+    const cellX = cellCoordinate(position.x, worldWeatherCellSize)
+    const cellZ = cellCoordinate(position.z, worldWeatherCellSize)
+    const amountX = cellAmount(position.x, cellX, worldWeatherCellSize)
+    const amountZ = cellAmount(position.z, cellZ, worldWeatherCellSize)
+    const lowerLeft = weatherTarget(seed, windowIndex, cellX, cellZ)
+    const lowerRight = weatherTarget(seed, windowIndex, cellX + 1, cellZ)
+    const upperLeft = weatherTarget(seed, windowIndex, cellX, cellZ + 1)
+    const upperRight = weatherTarget(seed, windowIndex, cellX + 1, cellZ + 1)
+    return {
+        precipitationPotential: bilinear(lowerLeft.precipitationPotential, lowerRight.precipitationPotential, upperLeft.precipitationPotential, upperRight.precipitationPotential, amountX, amountZ),
+        cloudiness: bilinear(lowerLeft.cloudiness, lowerRight.cloudiness, upperLeft.cloudiness, upperRight.cloudiness, amountX, amountZ),
+        windX: bilinear(lowerLeft.windX, lowerRight.windX, upperLeft.windX, upperRight.windX, amountX, amountZ),
+        windZ: bilinear(lowerLeft.windZ, lowerRight.windZ, upperLeft.windZ, upperRight.windZ, amountX, amountZ),
+        temperatureAnomaly: bilinear(lowerLeft.temperatureAnomaly, lowerRight.temperatureAnomaly, upperLeft.temperatureAnomaly, upperRight.temperatureAnomaly, amountX, amountZ),
+    }
+
+/// 云量、风和短期温度在窗口锚点间连续插值。降水在窗口边界、湿度阈值和冰点
+/// 附近都平滑归零，再改变有无降水或雨雪种类。
+def weatherAt(seed: string, worldMilliseconds: number, position: readonly Coordinate3) -> WorldWeatherSample:
+    const windowIndex = (worldMilliseconds / worldWeatherWindowMilliseconds).floor()
+    const windowPhase = (worldMilliseconds - windowIndex * worldWeatherWindowMilliseconds) / worldWeatherWindowMilliseconds
+    const current = spatialWeatherTarget(seed, windowIndex, position)
+    const following = spatialWeatherTarget(seed, windowIndex + 1, position)
+    const blend = smoothstep(0, 1, windowPhase)
+    const envelope = smoothstep(0.04, 0.22, windowPhase) * (1 - smoothstep(0.78, 0.96, windowPhase))
+    const temperature = worldClimateAt(seed, worldMilliseconds, position).temperatureCelsius / 30 + interpolate(current.temperatureAnomaly, following.temperatureAnomaly, blend)
+    const moisture = smoothstep(0.38, 0.76, current.precipitationPotential)
+    const freezingTransition = smoothstep(0.015, 0.09, temperature.abs())
+    const candidatePrecipitationIntensity = moisture * envelope * freezingTransition
+    const precipitationIntensity = candidatePrecipitationIntensity > minimumPrecipitationIntensity ? candidatePrecipitationIntensity : 0
+    const precipitation = (
+        precipitationIntensity == 0
+        ? WorldPrecipitationKind.clear
+        : temperature < 0 ? WorldPrecipitationKind.snow : WorldPrecipitationKind.rain
+    )
+    const interpolatedCloudiness = interpolate(current.cloudiness, following.cloudiness, blend)
+    const precipitationCloudFloor = precipitation == WorldPrecipitationKind.clear ? 0 : precipitationIntensity * 0.36 + 0.58
+    return {
+        precipitation,
+        precipitationIntensity,
+        cloudiness: Math.max(interpolatedCloudiness, precipitationCloudFloor),
+        windX: interpolate(current.windX, following.windX, blend),
+        windZ: interpolate(current.windZ, following.windZ, blend),
+    }
+
+def lightningCellPosition(position: readonly Coordinate3) -> Coordinate3:
+    const cellX = cellCoordinate(position.x, worldLightningHorizontalCellSize)
+    const cellY = cellCoordinate(position.y, worldLightningVerticalCellSize)
+    const cellZ = cellCoordinate(position.z, worldLightningHorizontalCellSize)
+    return {
+        x: Math.clamp(cellX * worldLightningHorizontalCellSize + worldLightningHorizontalCellSize / 2, -maximumWorldCoordinate, maximumWorldCoordinate),
+        y: Math.clamp(cellY * worldLightningVerticalCellSize + worldLightningVerticalCellSize / 2, -maximumWorldCoordinate, maximumWorldCoordinate),
+        z: Math.clamp(cellZ * worldLightningHorizontalCellSize + worldLightningHorizontalCellSize / 2, -maximumWorldCoordinate, maximumWorldCoordinate),
+    }
+
+def lightningForSlot(seed: string, slotIndex: number, samplePosition: readonly Coordinate3) -> WorldLightningEvent?:
+    if slotIndex < 0: return null
+    const cell = lightningCellPosition(samplePosition)
+    const cellX = cellCoordinate(samplePosition.x, worldLightningHorizontalCellSize)
+    const cellY = cellCoordinate(samplePosition.y, worldLightningVerticalCellSize)
+    const cellZ = cellCoordinate(samplePosition.z, worldLightningHorizontalCellSize)
+    const stream = random(seed).fork(f"environment:lightning:{slotIndex}:{cellX}:{cellY}:{cellZ}")
+    const occurredAtWorldMilliseconds = slotIndex * worldLightningSlotMilliseconds + (stream.fork("offset").number() * (worldLightningSlotMilliseconds - 1)).floor()
+    const weather = weatherAt(seed, occurredAtWorldMilliseconds, cell)
+    if weather.precipitation != WorldPrecipitationKind.rain or weather.precipitationIntensity < 0.52: return null
+    const chance = 0.2 + (weather.precipitationIntensity - 0.52) * 0.75
+    if stream.fork("occurrence").number() >= chance: return null
+    const minimumX = cellX * worldLightningHorizontalCellSize
+    const minimumZ = cellZ * worldLightningHorizontalCellSize
+    return {
+        sequence: 1 + (stream.fork("sequence").number() * (maximumWorldEnvironmentMilliseconds - 1)).floor(),
+        position: {
+            x: Math.clamp(minimumX + (stream.fork("position-x").number() * worldLightningHorizontalCellSize).floor(), -maximumWorldCoordinate, maximumWorldCoordinate),
+            y: cell.y,
+            z: Math.clamp(minimumZ + (stream.fork("position-z").number() * worldLightningHorizontalCellSize).floor(), -maximumWorldCoordinate, maximumWorldCoordinate),
+        },
+        intensity: 0.68 + stream.fork("intensity").number() * 0.32,
+        occurredAtWorldMilliseconds,
+    }
+
+def activeLightning(seed: string, worldMilliseconds: number, samplePosition: readonly Coordinate3) -> WorldLightningEvent?:
+    const slotIndex = (worldMilliseconds / worldLightningSlotMilliseconds).floor()
+    const current = lightningForSlot(seed, slotIndex, samplePosition)
+    if current != null and current.occurredAtWorldMilliseconds <= worldMilliseconds and worldMilliseconds - current.occurredAtWorldMilliseconds <= worldLightningLifetimeMilliseconds:
+        return current
+    const previous = lightningForSlot(seed, slotIndex - 1, samplePosition)
+    if previous != null and previous.occurredAtWorldMilliseconds <= worldMilliseconds and worldMilliseconds - previous.occurredAtWorldMilliseconds <= worldLightningLifetimeMilliseconds:
+        return previous
+    return null
+
+/// 世界环境的随机访问入口：相同 seed、世界时间与采样位置始终返回相同样本，
+/// 不依赖运行时进程、调用次数、网络边界或前一帧状态。
+export def worldEnvironmentAt(
+    seed: string,
+    worldMilliseconds: number,
+    samplePosition: readonly Coordinate3 = {x: 0, y: 64, z: 0},
+) -> WorldEnvironmentSample:
+    assert not seed.isBlank() and seed.size <= 128 else "Environment seed must contain from 1 through 128 characters"
+    assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Environment world milliseconds are outside the supported range"
+    requireCoordinate3(samplePosition, "Environment sample")
+    const dayIndex = (worldMilliseconds / worldDayMilliseconds).floor()
+    const timeOfDay = (0.25 + (worldMilliseconds - dayIndex * worldDayMilliseconds) / worldDayMilliseconds) % 1
+    const weather = weatherAt(seed, worldMilliseconds, samplePosition)
+    const sample: WorldEnvironmentSample = {
+        worldMilliseconds,
+        samplePosition,
+        timeOfDay,
+        moonPhase: dayIndex % 8,
+        cloudiness: saturate(weather.cloudiness),
+        precipitation: weather.precipitation,
+        precipitationIntensity: saturate(weather.precipitationIntensity),
+        windX: weather.windX,
+        windZ: weather.windZ,
+        lightning: activeLightning(seed, worldMilliseconds, samplePosition),
+    }
+    validateWorldEnvironmentSample(sample)
+    return sample

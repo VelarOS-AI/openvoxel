@@ -1,0 +1,84 @@
+import {CreativeFlightBasis, CreativeFlightBounds, CreativeFlightIntent, CreativeFlightState} from "./creative-flight.vel"
+import {SurvivalCollisionQuery, SurvivalWalkBasis, SurvivalWalkBounds, SurvivalWalkIntent, SurvivalWalkState} from "./survival-walk.vel"
+
+export enum VoxelNavigationMode:
+    orbit
+    firstPerson = "first-person"
+
+export enum VoxelMovementMode:
+    creativeFlight = "creative-flight"
+    survivalWalk = "survival-walk"
+
+export type VoxelNavigationPosition:
+    readonly x: number
+    readonly y: number
+    readonly z: number
+
+export type VoxelNavigationStats:
+    readonly navigationMode: VoxelNavigationMode
+    readonly movementMode: VoxelMovementMode
+    readonly viewX: number
+    readonly viewY: number
+    readonly viewZ: number
+    readonly viewChunkX: number
+    readonly viewChunkY: number
+    readonly viewChunkZ: number
+    readonly forwardX: number
+    readonly forwardY: number
+    readonly forwardZ: number
+    readonly pointerLocked: bool
+
+export type CreativeFlightStep = (
+    state: readonly CreativeFlightState,
+    intent: readonly CreativeFlightIntent,
+    basis: readonly CreativeFlightBasis,
+    deltaMilliseconds: number,
+    bounds: readonly CreativeFlightBounds,
+) -> CreativeFlightState
+
+export type SurvivalWalkStep = (
+    state: readonly SurvivalWalkState,
+    intent: readonly SurvivalWalkIntent,
+    basis: readonly SurvivalWalkBasis,
+    deltaMilliseconds: number,
+    bounds: readonly SurvivalWalkBounds,
+    collisionAt: SurvivalCollisionQuery,
+) -> SurvivalWalkState
+
+/// Babylon/DOM 适配器只经这些强类型闭包读写相机。Scene、Camera 和原生事件
+/// 不进入 VelarScript 领域；移动积分仍由纯 CreativeFlightStep 拥有。
+export type BabylonVoxelNavigationOptions:
+    readonly canvas: CanvasElement
+    readonly mode: VoxelNavigationMode
+    readonly movementMode: VoxelMovementMode
+    readonly edge: number
+    readonly bounds: readonly CreativeFlightBounds
+    readonly initialState: readonly CreativeFlightState
+    readonly initialSurvivalState: readonly SurvivalWalkState
+    readonly stepCreativeFlight: CreativeFlightStep
+    readonly stepSurvivalWalk: SurvivalWalkStep
+    readonly collisionAt: SurvivalCollisionQuery
+    readonly readViewPosition: () -> VoxelNavigationPosition
+    readonly readViewForward: () -> VoxelNavigationPosition
+    readonly readHorizontalBasis: () -> CreativeFlightBasis
+    readonly applyFlightState: (state: readonly CreativeFlightState) -> null
+    readonly applySurvivalState: (state: readonly SurvivalWalkState) -> null
+    readonly rotateView: (horizontalRadians: number, verticalRadians: number) -> null
+    readonly releaseView: () -> null
+    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+
+export type BabylonVoxelNavigationHandle:
+    update: (deltaMilliseconds: number) -> null
+    viewPosition: () -> VoxelNavigationPosition
+    stats: () -> VoxelNavigationStats
+    release: () -> null
+
+export type BabylonVoxelNavigationFactory = (options: readonly BabylonVoxelNavigationOptions) -> BabylonVoxelNavigationHandle
+
+extern module "#openvoxel/renderer/babylon-navigation":
+    export def createNavigationAdapter(options: readonly BabylonVoxelNavigationOptions) -> BabylonVoxelNavigationHandle
+
+import js {createNavigationAdapter} from "#openvoxel/renderer/babylon-navigation"
+
+export def createBabylonVoxelNavigation(options: readonly BabylonVoxelNavigationOptions) -> BabylonVoxelNavigationHandle:
+    return createNavigationAdapter(options)

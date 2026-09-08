@@ -1,10 +1,11 @@
 import {Cancellation} from "velar/task"
 import {serveWorker} from "velar/worker"
 import {WorldBackendContract} from "./backend.vel"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeChunkDelta, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeChunkDelta, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {Chunk, WorldManifest} from "@openvoxel/world"
 import {BlockChangeBatch, CreateWorld, WorldContentSnapshot, WorldRuntime, WorldRuntimeLease, WorldRuntimeSubscription, maximumChunkBatchSize, worldRuntime} from "@openvoxel/world-runtime"
 import {indexedDbWorldStore} from "./indexeddb-world-store.vel"
+import {ClientTerrainBatchSnapshot, ClientTerrainChunkSnapshot} from "./terrain-snapshot.vel"
 import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
 
 type WorkerConnection:
@@ -53,8 +54,9 @@ def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResp
         states: snapshot.catalog.states,
     })
 
-def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
-    return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
+/// 生成器已经建立并验证了 Chunk 的紧凑存储。这里仅投影客户端字段；0.30 Worker
+/// runtime 会对响应所有权做快照并直接 transfer 完整 UInt16Buffer，不展开数字 List。
+def terrainSnapshot(chunk: readonly Chunk) -> ClientTerrainChunkSnapshot: return ClientTerrainChunkSnapshot.from(chunk)
 
 def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
     return batch.changes
@@ -115,7 +117,9 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const databaseName = required(request.databaseName, "databaseName")
         activeRuntime = worldRuntime(indexedDbWorldStore(databaseName), options={
             activeWorldCapacity: 8,
-            activeChunkCapacity: 256,
+            // 客户端的正常驻留窗口为 515 个 Chunk。热增量缓存必须覆盖完整窗口
+            // 及一次流送余量，否则往返探索会让仍可见 Chunk 反复读取 IndexedDB。
+            activeChunkCapacity: 1024,
             activeOverrideCapacity: 32768,
         })
         activeSubscription = runtime().subscribeBlockChanges(publish)
@@ -152,11 +156,12 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const positions = request.positions
         assert positions != null else "LocalBackend terrain-chunks requires positions"
         const generated = await runtime().terrainChunks(worldId, positions, cancellation)
-        const chunks: List<TerrainChunkResponse> = []
+        const chunks: List<readonly ClientTerrainChunkSnapshot> = []
         for chunk in generated:
             await cancellation.checkpoint()
-            chunks.append(terrainResponse(chunk))
-        return {operation: request.operation, terrain: {worldId, chunks}}
+            chunks.append(terrainSnapshot(chunk))
+        const terrain: ClientTerrainBatchSnapshot = {worldId, chunks}
+        return {operation: request.operation, terrain}
 
     if request.operation == localWorkerOperations.openConnection:
         const worldId = required(request.worldId, "worldId")
@@ -170,6 +175,7 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
             worldId,
             protocolVersion,
             sequence: lease.sequence(),
+            environment: lease.environment(),
         }
         return {operation: request.operation, ready}
 

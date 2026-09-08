@@ -1,5 +1,17 @@
 import {ChunkPosition, LocalPosition, chunkKey} from "@openvoxel/world"
-import {BlockOverride, BlockOverrideCommit, BlockOverrideMutation, BlockOverrideWrite, ChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "./contracts.vel"
+import {BlockOverride, BlockOverrideMutation, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "./contracts.vel"
+
+export type BlockOverrideCommit:
+    readonly previousOverrideBlockStateRuntimeId: number?
+    readonly revision: number
+    readonly changed: bool
+
+/// 运行时已经完成世界坐标换算和生成器基线比较后的单项持久化写入。
+/// null 表示目标状态等于固定地形，应删除稀疏覆盖而不是保存冗余方块。
+export type BlockOverrideWrite:
+    readonly chunk: readonly ChunkPosition
+    readonly local: readonly LocalPosition
+    readonly blockStateRuntimeId: number?
 
 /// 单个活动世界的可变热状态。
 ///
@@ -7,7 +19,7 @@ import {BlockOverride, BlockOverrideCommit, BlockOverrideMutation, BlockOverride
 /// 查询先命中有界 LRU，首次缺失才批量读取存储。同一 Chunk 的并发首次读取会
 /// 共享一条 Promise，防止请求洪峰把同一行从数据库重复加载很多次。
 export type ActiveWorldState:
-    deltas: (positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly ChunkDelta>>
+    deltas: (positions: readonly List<readonly ChunkPosition>) -> Promise<readonly List<readonly StoredChunkDelta>>
     commitBlocks: (writes: readonly List<readonly BlockOverrideWrite>) -> Promise<List<BlockOverrideCommit>>
     cachedChunkCount: () -> number
     cachedOverrideCount: () -> number
@@ -19,21 +31,22 @@ type MutableChunkDelta:
     revision: number
     overrides: Map<string, readonly BlockOverride>
 
-type LoadedChunkDeltas = Map<string, readonly ChunkDelta>
+type LoadedChunkDeltas = Map<string, readonly StoredChunkDelta>
 
 def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
 
 def localOrder(entry: readonly BlockOverride) -> number:
     return entry.position.x + 1024 * entry.position.z + 1048576 * entry.position.y
 
-def emptyDelta(position: readonly ChunkPosition) -> readonly ChunkDelta: return {position, revision: 0, overrides: []}
+def emptyDelta(position: readonly ChunkPosition) -> readonly StoredChunkDelta:
+    return {position, revision: 0, overrides: []}
 
-def mutableDelta(delta: readonly ChunkDelta) -> MutableChunkDelta:
+def mutableDelta(delta: readonly StoredChunkDelta) -> MutableChunkDelta:
     const overrides: Map<string, readonly BlockOverride> = Map()
     for entry in delta.overrides: overrides.set(localKey(entry.position), entry)
     return MutableChunkDelta.from(delta, {overrides})
 
-def materializeDelta(delta: MutableChunkDelta) -> readonly ChunkDelta:
+def materializeDelta(delta: MutableChunkDelta) -> readonly StoredChunkDelta:
     return {
         position: delta.position,
         revision: delta.revision,
@@ -57,12 +70,12 @@ export def activeWorldState(
 ) -> ActiveWorldState:
     assert capacity.isInteger() and capacity > 0 else "Active world Chunk cache capacity must be a positive integer"
     assert overrideCapacity.isInteger() and overrideCapacity > 0 else "Active world override cache capacity must be a positive integer"
-    const cache: Map<string, readonly ChunkDelta> = Map()
+    const cache: Map<string, readonly StoredChunkDelta> = Map()
     const loading: Map<string, Promise<LoadedChunkDeltas>> = Map()
     let loadCount = 0
     let overrideCount = 0
 
-    def remember(key: string, delta: readonly ChunkDelta):
+    def remember(key: string, delta: readonly StoredChunkDelta):
         // Map 的插入顺序就是 LRU 顺序；命中后 remove + set 把条目移到末尾。
         const previous = cache.get(key)
         if previous != null: overrideCount -= previous.overrides.size
@@ -76,7 +89,7 @@ export def activeWorldState(
             if removed != null: overrideCount -= removed.overrides.size
             cache.remove(oldest)
 
-    def cached(key: string) -> readonly ChunkDelta?:
+    def cached(key: string) -> readonly StoredChunkDelta?:
         const value = cache.get(key)
         if value == null: return null
         remember(key, value)
@@ -87,7 +100,7 @@ export def activeWorldState(
     async def fetchAndRemember(positions: List<readonly ChunkPosition>) -> LoadedChunkDeltas:
         loadCount += 1
         const stored = await store.findChunks(worldId, positions)
-        const byKey: Map<string, ChunkDelta> = Map()
+        const byKey: Map<string, StoredChunkDelta> = Map()
         for delta in stored:
             const key = chunkKey(delta.position)
             assert byKey.get(key) == null else f"World delta store returned duplicate Chunk {key}"
@@ -96,7 +109,7 @@ export def activeWorldState(
         for position in positions:
             const key = chunkKey(position)
             const candidate = byKey.get(key)
-            const delta = candidate == null ? emptyDelta(position) : ChunkDelta.parse(candidate)
+            const delta = candidate == null ? emptyDelta(position) : StoredChunkDelta.parse(candidate)
             assert chunkKey(delta.position) == key else f"World delta store returned the wrong Chunk for {key}"
             assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
             for entry in delta.overrides: validateBlockStateRuntimeId(entry.blockStateRuntimeId)
@@ -111,12 +124,20 @@ export def activeWorldState(
 
     /// 单次存储读取可以包含多个新 Chunk；每个 key 都指向同一条批量 Promise，
     /// 因而与这批数据局部重叠的其他请求也能等待现有工作，而不会重复打数据库。
-    async def loadMissing(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ChunkDelta>:
+    async def loadMissing(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly StoredChunkDelta>:
         const unresolved: List<readonly ChunkPosition> = []
+        // 请求开始时已命中的 readonly 快照必须由本次请求持有。批量中
+        // 更早的缺失项在等待存储时可能填满 LRU 并淘汰后面的命中项；
+        // 如果只记录“当时在 cache 中”，解析到该位置时就会既无缓存也无
+        // in-flight Promise。
+        const ready: Map<string, readonly StoredChunkDelta> = Map()
         const waits: Map<string, Promise<LoadedChunkDeltas>> = Map()
         for position in positions:
             const key = chunkKey(position)
-            if cache.has(key): continue
+            const existing = cached(key)
+            if existing != null:
+                ready.set(key, existing)
+                continue
             const pending = loading.get(key)
             if pending != null:
                 waits.set(key, pending)
@@ -130,12 +151,14 @@ export def activeWorldState(
                 loading.set(key, batch)
                 waits.set(key, batch)
 
-        def requireLoaded(loaded: readonly LoadedChunkDeltas, key: string) -> readonly ChunkDelta:
+        def requireLoaded(loaded: readonly LoadedChunkDeltas, key: string) -> readonly StoredChunkDelta:
             const value = loaded.get(key)
             if value == null: throw Error("Active world Chunk load completed without a value")
             return value
 
-        async def resolve(key: string) -> readonly ChunkDelta:
+        async def resolve(key: string) -> readonly StoredChunkDelta:
+            const snapshot = ready.get(key)
+            if snapshot != null: return snapshot
             const existing = cached(key)
             if existing != null: return existing
             const pending = waits.get(key)
@@ -144,13 +167,13 @@ export def activeWorldState(
             remember(key, value)
             return value
 
-        const output: List<readonly ChunkDelta> = []
+        const output: List<readonly StoredChunkDelta> = []
         for position in positions:
             const key = chunkKey(position)
             output.append(await resolve(key))
         return output
 
-    async def deltas(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly ChunkDelta>:
+    async def deltas(positions: readonly List<readonly ChunkPosition>) -> readonly List<readonly StoredChunkDelta>:
         if positions.size == 0: return []
         return await loadMissing(positions)
 

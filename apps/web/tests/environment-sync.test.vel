@@ -1,0 +1,55 @@
+import {Coordinate3, WorldEnvironmentSample, worldEnvironmentAt} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
+import {expect} from "velar/test"
+import {environmentSync} from "../src/rendering/environment-sync.vel"
+
+test "slow ecology synchronization cannot block the sky sampler or its new position":
+    const sampled: List<number> = []
+    const failures: List<string> = []
+    let ecologyEntered = false
+    let ecologyFinished = false
+    def environment(position: readonly Coordinate3) -> readonly WorldEnvironmentSample:
+        return worldEnvironmentAt("environment-owner", 300000, position)
+    async def refreshEcology(cancellation: Cancellation? = null) -> bool:
+        assert cancellation != null else "Environment owner must forward its cancellation token"
+        ecologyEntered = true
+        try:
+            while ecologyEntered:
+                await cancellation.checkpoint()
+                await Promise.sleep(0ms)
+            return true
+        finally: ecologyFinished = true
+    const owner = environmentSync(
+        {environment, refreshEcology}, {x: 0, y: 64, z: 0},
+        sample => sampled.append(sample.samplePosition.x), message => failures.append(message),
+    )
+    while sampled.size == 0 or not ecologyEntered: await Promise.sleep(0ms)
+    owner.sampleAt({x: 32, y: 64, z: 0})
+    while sampled.size < 2: await Promise.sleep(0ms)
+    await owner.close()
+    expect(ecologyFinished).toBe(true)
+    expect(sampled.slice(0, 2)).toEqual([0, 32])
+    const stoppedCount = sampled.size
+    owner.sampleAt({x: 64, y: 64, z: 0})
+    await Promise.sleep(110ms)
+    expect(sampled.size).toBe(stoppedCount)
+    expect(failures).toEqual([])
+
+test "environment ownership reports sampling failure and still closes both tasks":
+    const failures: List<string> = []
+    let ecologyCalls = 0
+    def environment(_position: readonly Coordinate3) -> readonly WorldEnvironmentSample:
+        throw Error("bad environment anchor")
+    async def refreshEcology(_cancellation: Cancellation? = null) -> bool:
+        ecologyCalls += 1
+        return false
+    const owner = environmentSync(
+        {environment, refreshEcology}, {x: 0, y: 64, z: 0},
+        _sample => null, message => failures.append(message),
+    )
+    while failures.size == 0: await Promise.sleep(0ms)
+    await Promise.all([owner.close(), owner.close()])
+    const stoppedCount = ecologyCalls
+    await Promise.sleep(110ms)
+    expect(ecologyCalls).toBe(stoppedCount)
+    expect(failures).toEqual(["bad environment anchor"])

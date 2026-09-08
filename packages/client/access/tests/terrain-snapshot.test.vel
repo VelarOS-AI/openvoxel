@@ -1,0 +1,59 @@
+import {TerrainChunkBatchResponse} from "@openvoxel/protocol"
+import {ChunkPosition} from "@openvoxel/world"
+import {UInt16Buffer} from "velar/binary"
+import {expect} from "velar/test"
+import {clientTerrainBatchSnapshot} from "../src/terrain-snapshot.vel"
+
+const worldId = "terrain-snapshot"
+const position: ChunkPosition = {x: 2, y: -1, z: 3}
+
+def terrainBatch(
+    indices: readonly List<number>,
+    palette: readonly List<number> = [10, 20],
+    responseWorldId: string = worldId,
+    responsePosition: readonly ChunkPosition = position,
+) -> TerrainChunkBatchResponse:
+    return {
+        worldId: responseWorldId,
+        chunks: [{
+            position: responsePosition,
+            edge: 4,
+            palette,
+            indices,
+        }],
+    }
+
+test "HTTP terrain normalization validates once and creates an owned compact snapshot":
+    const indices = range(64).map(_index => 0)
+    indices[0] = 1
+    const palette: List<number> = [10, 20]
+    const sourcePosition: ChunkPosition = {x: 2, y: -1, z: 3}
+    const snapshot = clientTerrainBatchSnapshot(
+        terrainBatch(indices, palette, responsePosition=sourcePosition),
+        worldId,
+        [position],
+    )
+
+    expect(UInt16Buffer.is(snapshot.chunks[0].indices)).toBe(true)
+    expect(snapshot.chunks[0].indices.size).toBe(64)
+    expect(snapshot.chunks[0].indices[0]).toBe(1)
+    expect(snapshot.chunks[0].indices[1]).toBe(0)
+
+    indices[0] = 0
+    palette[1] = 99
+    sourcePosition.x = 9
+    expect(snapshot.chunks[0].indices[0]).toBe(1)
+    expect(snapshot.chunks[0].palette[1]).toBe(20)
+    expect(snapshot.chunks[0].position.x).toBe(2)
+
+test "HTTP terrain normalization rejects transport-semantic drift at the adapter boundary":
+    const valid = range(64).map(_index => 0)
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(valid, responseWorldId="other"), worldId, [position])).toThrow()
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(valid), worldId, [])).toThrow()
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(valid), worldId, [{x: 3, y: -1, z: 3}])).toThrow()
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(valid, [10, 10]), worldId, [position])).toThrow()
+
+    const invalidIndex = valid.copy()
+    invalidIndex[5] = 2
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(invalidIndex), worldId, [position])).toThrow()
+    expect(() => clientTerrainBatchSnapshot(terrainBatch(valid.slice(0, 63)), worldId, [position])).toThrow()

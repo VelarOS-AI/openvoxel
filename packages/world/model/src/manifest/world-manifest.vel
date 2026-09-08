@@ -1,8 +1,15 @@
 import {WorldBlockRegistrySnapshot, validateWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
+import {maximumWorldEnvironmentMilliseconds} from "../environment/environment.vel"
 import {requireChunkEdge} from "../spatial/coordinates.vel"
 
-export const worldFormatVersion = 3
+export const worldFormatVersion = 5
 export const initialChunkEdge = 16
+
+/// 游戏模式是世界规则的一部分，必须和生成器、内容身份一起持久化。客户端展示
+/// 可以缓存它，但权限与交互分支始终以 WorldManifest 为准。
+export enum WorldGameMode:
+    survival
+    creative
 
 /// 一个内容包在世界清单中的不可变身份。owner 用于选择已安装产物，contentHash
 /// 用于证明选择到的是创建或配置这个世界时的确切内容，而不是同名的另一份构建。
@@ -22,6 +29,10 @@ export type WorldManifest:
     readonly id: string
     readonly name: string
     readonly seed: string
+    readonly mode: WorldGameMode
+    /// Unix 墙钟中本世界 worldMilliseconds 为 0 的时刻。运行时用它恢复独立于
+    /// 进程与连接生命周期的世界时间线，新世界的初始相位仍由创建策略决定。
+    readonly worldTimeOriginMilliseconds: number
     readonly formatVersion: number
     readonly chunkEdge: number
     readonly generator: string
@@ -59,6 +70,8 @@ export def validateWorldManifest(manifest: WorldManifest) -> WorldManifest:
     requireBoundedText(manifest.id, "World id", 64)
     requireBoundedText(manifest.name, "World name", 80)
     requireBoundedText(manifest.seed, "World seed", 128)
+    assert manifest.mode == WorldGameMode.survival or manifest.mode == WorldGameMode.creative else "World game mode is invalid"
+    assert manifest.worldTimeOriginMilliseconds.isInteger() and manifest.worldTimeOriginMilliseconds >= 0 and manifest.worldTimeOriginMilliseconds <= maximumWorldEnvironmentMilliseconds else "World time origin must be a supported non-negative integer"
     assert manifest.formatVersion == worldFormatVersion else "Unsupported world format version"
     requireChunkEdge(manifest.chunkEdge)
     assert manifest.chunkEdge == initialChunkEdge else "World requires a chunk edge of 16"

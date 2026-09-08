@@ -1,0 +1,31 @@
+import {ClientWorldState} from "@openvoxel/client"
+import {ChunkMesh, ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations, snapshotChunkNeighborhood} from "@openvoxel/renderer"
+import {ChunkPosition} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
+import {workerPool} from "velar/worker"
+import {ChunkMeshWorker, meshingWorkerCount} from "./chunk-meshing.vel"
+
+/// Worker 边界只接收构网时捕获的邻域快照。调度队列本身不保存过早的快照，
+/// 所以尚未开始的邻居无需因新地形到达而反复重发 ticket。
+export def chunkMeshWorker(
+    states: readonly List<readonly ClientRenderState>,
+    state: readonly ClientWorldState,
+    edge: number,
+) -> ChunkMeshWorker:
+    const pool = workerPool("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerCount, 32)
+
+    async def initialize(): await pool.broadcast({operation: meshingWorkerOperations.initialize, states}, null, 10s)
+
+    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> readonly ChunkMesh:
+        const center = state.chunk(position)
+        assert center != null else "Cannot mesh an untracked client Chunk"
+        const paddedBlocks = snapshotChunkNeighborhood(center, candidate => state.chunk(candidate))
+        const response = await pool.call({operation: meshingWorkerOperations.mesh, position, edge, paddedBlocks, ticket}, cancellation, 15s)
+        assert response.operation == meshingWorkerOperations.mesh else "Meshing Worker returned a mismatched operation"
+        const mesh = response.mesh
+        assert mesh != null else "Meshing Worker returned no Chunk mesh"
+        assert mesh.ticket == ticket else "Meshing Worker returned a mismatched Chunk ticket"
+        assert mesh.position.x == position.x and mesh.position.y == position.y and mesh.position.z == position.z else "Meshing Worker returned a mismatched Chunk position"
+        return mesh
+
+    return {initialize, build, close: () => pool.close()}

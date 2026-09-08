@@ -1,0 +1,33 @@
+import {localBackend, openClientWorld} from "@openvoxel/client"
+import {WorldManifest} from "@openvoxel/world"
+import {initialRenderChunkPositions} from "../rendering/render-window.vel"
+import {WorldRendererStats, openWorldRenderer} from "../rendering/world-renderer.vel"
+import {WorldExperience, WorldExperienceSession, worldExperience} from "./world-experience.vel"
+
+/// 本地页面在这里组合真实会话和渲染器；页面只消费世界清单与统计事实。
+/// 阶段端口让生命周期测试能控制每次异步恢复，而无需启动 Worker 或 GPU。
+export def localWorldExperience(
+    worldId: string,
+    canvas: () -> CanvasElement,
+    changed: (stats: readonly WorldRendererStats) -> null,
+    failed: (message: string) -> null,
+) -> WorldExperience:
+    const backend = localBackend()
+
+    async def openSession() -> WorldExperienceSession:
+        assert not worldId.isBlank() else "World identifier is missing"
+        const session = await openClientWorld(backend, worldId)
+        const manifest = WorldManifest.from(session.bootstrap)
+
+        async def prepare():
+            const positions = initialRenderChunkPositions(manifest, session.content.minimumWorldY, session.content.maximumWorldY)
+            await session.loadChunks(positions)
+
+        return {
+            manifest,
+            prepare,
+            render: () => openWorldRenderer(canvas(), session, manifest, changed, failed),
+            close: () => session.close(),
+        }
+
+    return worldExperience(openSession, () => backend.close())

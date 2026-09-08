@@ -1,0 +1,40 @@
+import {worldDayMilliseconds, worldEnvironmentAt} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldRuntime} from "../src/index.vel"
+
+test "new worlds begin at noon and preserve their timeline across runtime reconstruction":
+    let clockMilliseconds = 1_000_000
+    def environmentClock() -> number: return clockMilliseconds
+
+    const store = memoryWorldStore()
+    const runtime = worldRuntime(store, environmentClock=environmentClock)
+    let originMilliseconds = 0
+    try:
+        const manifest = await runtime.createWorld({id: "environment-runtime", name: "Environment Runtime", seed: "runtime-environment"})
+        const noonMilliseconds = worldDayMilliseconds / 4
+        originMilliseconds = clockMilliseconds - noonMilliseconds
+        expect(manifest.worldTimeOriginMilliseconds).toBe(originMilliseconds)
+        expect((await runtime.environment(manifest.id)).timeOfDay).toBe(0.5)
+        expect(await runtime.environment(manifest.id)).toEqual(worldEnvironmentAt(manifest.seed, noonMilliseconds, manifest.spawn))
+        expect(await runtime.environment(manifest.id, 900_000)).toEqual(worldEnvironmentAt(manifest.seed, 900_000, manifest.spawn))
+        const distantPosition = {x: 4_096, y: 128, z: -2_048}
+        expect(await runtime.environment(manifest.id, 900_000, distantPosition)).toEqual(worldEnvironmentAt(manifest.seed, 900_000, distantPosition))
+
+        const lease = await runtime.retainWorld(manifest.id)
+        try:
+            expect(lease.environment()).toEqual(worldEnvironmentAt(manifest.seed, noonMilliseconds, manifest.spawn))
+            clockMilliseconds = 1_300_000
+            expect(lease.environment()).toEqual(worldEnvironmentAt(manifest.seed, noonMilliseconds + 300_000, manifest.spawn))
+            expect(lease.environment(0)).toEqual(worldEnvironmentAt(manifest.seed, 0, manifest.spawn))
+            expect(lease.environment(0, distantPosition)).toEqual(worldEnvironmentAt(manifest.seed, 0, distantPosition))
+        finally: await lease.close()
+    finally: await runtime.close()
+
+    clockMilliseconds = 1_600_000
+    const restarted = worldRuntime(store, environmentClock=environmentClock)
+    try:
+        const manifest = await restarted.requireWorld("environment-runtime")
+        expect(manifest.worldTimeOriginMilliseconds).toBe(originMilliseconds)
+        expect(await restarted.environment(manifest.id)).toEqual(worldEnvironmentAt(manifest.seed, clockMilliseconds - originMilliseconds, manifest.spawn))
+    finally: await restarted.close()

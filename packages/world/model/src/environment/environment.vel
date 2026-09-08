@@ -1,0 +1,121 @@
+import {Coordinate3, requireCoordinate3} from "../spatial/coordinates.vel"
+import {all, field, finite, integer, refine, validator} from "velar/validation"
+
+/// 一个完整世界日持续二十个现实分钟。时间线算法和客户端锚点推进必须共享此常量，
+/// 否则昼夜相位会在下一次权威样本到达时跳变。
+export const worldDayMilliseconds = 1_200_000
+
+export enum WorldPrecipitationKind:
+    clear = "none"
+    rain
+    snow
+
+/// 闪电的发生时刻属于世界时间线，而不是接收方本地时钟。sequence 由确定性时间槽
+/// 与空间 cell 共同产生；同一世界、同一 cell 和同一时刻会得到相同事件身份。
+export type WorldLightningEvent:
+    readonly sequence: number
+    readonly position: readonly Coordinate3
+    readonly intensity: number
+    readonly occurredAtWorldMilliseconds: number
+
+/// 环境状态是某一世界时刻的权威事实。0/0.25/0.5/0.75 分别表示午夜、日出、
+/// 正午和日落；moonPhase 0 为满月、4 为新月。风速单位是方块每秒。
+export type WorldEnvironmentState:
+    readonly timeOfDay: number
+    readonly moonPhase: number
+    readonly cloudiness: number
+    readonly precipitation: WorldPrecipitationKind
+    readonly precipitationIntensity: number
+    readonly windX: number
+    readonly windZ: number
+    readonly lightning: readonly WorldLightningEvent?
+
+/// 样本把状态绑定到唯一世界时间与采样位置。服务端发送它作为锚点；能够取得 seed
+/// 的消费者使用同层的 worldEnvironmentAt 继续确定性时空场，否则只能推进样本中的
+/// 天体时钟。
+export type WorldEnvironmentSample extends WorldEnvironmentState:
+    readonly worldMilliseconds: number
+    readonly samplePosition: readonly Coordinate3
+
+export const maximumWorldEnvironmentMilliseconds = 9_007_199_254_740_991
+const maximumWindSpeed = 64
+
+const unitInterval = all([
+    finite(),
+    refine((value: number) => value >= 0 and value <= 1, "must be from 0 through 1"),
+])
+
+const canonicalTimeOfDay = all([
+    finite(),
+    refine((value: number) => value >= 0 and value < 1, "must be from 0 up to but excluding 1"),
+])
+
+const WorldLightningEventValidator = validator(WorldLightningEvent, all([
+    field("sequence", (event: WorldLightningEvent) => event.sequence, integer(minimum=0, maximum=maximumWorldEnvironmentMilliseconds)),
+    field("intensity", (event: WorldLightningEvent) => event.intensity, all([
+        finite(),
+        refine((value: number) => value > 0 and value <= 1, "must be greater than 0 and at most 1"),
+    ])),
+    field("occurredAtWorldMilliseconds", (event: WorldLightningEvent) => event.occurredAtWorldMilliseconds, integer(minimum=0, maximum=maximumWorldEnvironmentMilliseconds)),
+]))
+
+const WorldEnvironmentStateValidator = validator(WorldEnvironmentState, all([
+    field("timeOfDay", (state: WorldEnvironmentState) => state.timeOfDay, canonicalTimeOfDay),
+    field("moonPhase", (state: WorldEnvironmentState) => state.moonPhase, integer(minimum=0, maximum=7)),
+    field("cloudiness", (state: WorldEnvironmentState) => state.cloudiness, unitInterval),
+    field("precipitationIntensity", (state: WorldEnvironmentState) => state.precipitationIntensity, unitInterval),
+    field("windX", (state: WorldEnvironmentState) => state.windX, finite()),
+    field("windZ", (state: WorldEnvironmentState) => state.windZ, finite()),
+    refine(
+        (state: WorldEnvironmentState) => state.precipitation != WorldPrecipitationKind.clear or state.precipitationIntensity == 0,
+        "clear weather cannot have precipitation intensity",
+    ),
+    refine(
+        (state: WorldEnvironmentState) => state.windX * state.windX + state.windZ * state.windZ <= maximumWindSpeed * maximumWindSpeed,
+        "wind speed exceeds 64 blocks per second",
+    ),
+]))
+
+const WorldEnvironmentSampleValidator = validator(WorldEnvironmentSample, all([
+    field("worldMilliseconds", (sample: WorldEnvironmentSample) => sample.worldMilliseconds, all([
+        finite(),
+        refine((value: number) => value >= 0 and value <= maximumWorldEnvironmentMilliseconds, "must be a supported non-negative world time"),
+    ])),
+    refine(
+        (sample: WorldEnvironmentSample) => sample.lightning == null or sample.lightning.occurredAtWorldMilliseconds <= sample.worldMilliseconds,
+        "lightning cannot occur after its environment sample",
+    ),
+]))
+
+export def validateWorldLightningEvent(event: readonly WorldLightningEvent) -> readonly WorldLightningEvent:
+    WorldLightningEventValidator.validate(WorldLightningEvent.from(event))
+    requireCoordinate3(event.position, "World lightning")
+    return event
+
+export def validateWorldEnvironmentState(state: readonly WorldEnvironmentState) -> readonly WorldEnvironmentState:
+    WorldEnvironmentStateValidator.validate(WorldEnvironmentState.from(state))
+    const lightning = state.lightning
+    if lightning != null: validateWorldLightningEvent(lightning)
+    return state
+
+export def validateWorldEnvironmentSample(sample: readonly WorldEnvironmentSample) -> readonly WorldEnvironmentSample:
+    validateWorldEnvironmentState(sample)
+    WorldEnvironmentSampleValidator.validate(WorldEnvironmentSample.from(sample))
+    requireCoordinate3(sample.samplePosition, "World environment sample")
+    return sample
+
+/// 在没有 seed 的边界只推进权威锚点中的天体时间，保留原天气和同一闪电事件。
+/// 能取得世界 seed 的消费者应按新世界时间调用 worldEnvironmentAt，才能跨越
+/// 确定性天气窗口。
+export def sampleWorldEnvironment(anchor: readonly WorldEnvironmentSample, elapsedMilliseconds: number) -> WorldEnvironmentSample:
+    validateWorldEnvironmentSample(anchor)
+    assert elapsedMilliseconds.isFinite() and elapsedMilliseconds >= 0 else "Environment elapsed milliseconds must be finite and non-negative"
+    assert anchor.worldMilliseconds + elapsedMilliseconds <= maximumWorldEnvironmentMilliseconds else "Environment world time exceeds the supported range"
+    const elapsedDays = (anchor.timeOfDay + elapsedMilliseconds / worldDayMilliseconds).floor()
+    const timeOfDay = anchor.timeOfDay + elapsedMilliseconds / worldDayMilliseconds - elapsedDays
+    const moonPhase = (anchor.moonPhase + elapsedDays) % 8
+    return WorldEnvironmentSample.from(anchor, {
+        worldMilliseconds: anchor.worldMilliseconds + elapsedMilliseconds,
+        timeOfDay,
+        moonPhase,
+    })

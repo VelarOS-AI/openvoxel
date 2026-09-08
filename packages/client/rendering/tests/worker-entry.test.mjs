@@ -50,6 +50,9 @@ test("meshing Worker source closure excludes GPU and generated resource owners",
   const paths = [...closure.keys()].map((path) => relative(packageRoot, path).split("\\").join("/"));
   assert.ok(paths.includes(workerEntry));
   assert.ok(paths.includes("src/mesher.vel"));
+  for (const responsibility of ["catalog", "portals", "batch", "faces", "models"]) {
+    assert.ok(paths.includes(`src/meshing/${responsibility}.vel`));
+  }
   assert.equal(paths.includes("src/index.vel"), false);
   assert.equal(paths.includes("src/surface.vel"), false);
   assert.equal(paths.includes("src/builtin-resource-pack.vel"), false);

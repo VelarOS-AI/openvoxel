@@ -8,6 +8,7 @@ import {Cancellation, Channel, channel} from "velar/task"
 import {encode as encodeUrl, join as joinUrl, parse as parseUrl} from "velar/url"
 import {WebSocketClose} from "velar/websocket"
 import {decode, encode} from "@velarscript-labs/msgpack"
+import {clientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
 type OpenApiOperation:
     readonly operationId: string
@@ -163,7 +164,7 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
             {body: {positions}},
         ).parse(TerrainChunkBatchResponse)
         await checkpoint(cancellation)
-        return response
+        return clientTerrainBatchSnapshot(response, worldId, positions)
 
     async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null):
         const routes = await api()

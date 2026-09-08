@@ -1,5 +1,5 @@
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
-import {BlockOverride, ChunkDelta, ChunkDeltaCommit, WorldStore} from "./contracts.vel"
+import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "./contracts.vel"
 
 def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
 
@@ -8,7 +8,7 @@ def localOrder(entry: readonly BlockOverride) -> number:
 
 export def memoryWorldStore() -> WorldStore:
     const worlds: Map<string, WorldManifest> = Map()
-    const chunks: Map<string, ChunkDelta> = Map()
+    const chunks: Map<string, StoredChunkDelta> = Map()
 
     def deltaKey(worldId: string, position: readonly ChunkPosition) -> string: return f"{worldId}:{chunkKey(position)}"
 
@@ -16,8 +16,8 @@ export def memoryWorldStore() -> WorldStore:
 
     async def findManifest(worldId: string) -> WorldManifest?: return worlds.get(worldId)
 
-    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<ChunkDelta>:
-        const found: List<ChunkDelta> = []
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<StoredChunkDelta>:
+        const found: List<StoredChunkDelta> = []
         for position in positions:
             const delta = chunks.get(deltaKey(worldId, position))
             if delta != null: found.append(delta)
@@ -26,7 +26,7 @@ export def memoryWorldStore() -> WorldStore:
     async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
         // 先验证并构建所有 Chunk 的私有副本，最后才一次性发布。任何 revision
         // 冲突都会让整个批次保持原状，这与 SQLite 事务的可见性一致。
-        const pending: Map<string, ChunkDelta> = Map()
+        const pending: Map<string, StoredChunkDelta> = Map()
         for commit in commits:
             const key = deltaKey(worldId, commit.position)
             const current = chunks.get(key) ?? {position: commit.position, revision: 0, overrides: []}
@@ -39,7 +39,7 @@ export def memoryWorldStore() -> WorldStore:
                     byPosition.set(localKey(write.position), BlockOverride.from(write, {blockStateRuntimeId: write.blockStateRuntimeId}))
                 else: byPosition.remove(localKey(write.position))
             const overrides = byPosition.values().sorted(by=localOrder)
-            pending.set(key, ChunkDelta.from(commit, {overrides}))
+            pending.set(key, StoredChunkDelta.from(commit, {overrides}))
 
         for key in pending:
             const delta = pending.get(key)

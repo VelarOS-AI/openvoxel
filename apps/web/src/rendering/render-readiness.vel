@@ -1,0 +1,24 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+
+/// 首屏就绪只由打开渲染器时已驻留的 Chunk 决定。之后扩展出的远景窗口继续
+/// 流送，但不能重新把一个已经可交互的世界降级成“正在打开”。
+export def pendingStartupChunkMeshes(positions: readonly List<readonly ChunkPosition>) -> Set<string>:
+    return Set(positions.map(position => chunkKey(position)))
+
+/// 只有成功提交到渲染表面的网格才完成首屏项；空网格也是一次成功提交。
+/// 构网或 GPU 提交失败时保留该项，调用方因此不会误报 World ready。
+export def settleStartupChunkMesh(
+    pending: Set<string>,
+    position: readonly ChunkPosition,
+    installed: bool,
+) -> bool:
+    if installed: pending.remove(chunkKey(position))
+    return pending.size == 0
+
+/// 当前视向可以淘汰普通的未启动构网项，但首屏所有权必须持续到成功提交；
+/// 否则玩家在打开期间移动或转头会永久留下 pending，并阻塞后台流送。
+export def queuedChunkMeshMayBeDropped(
+    startupPending: readonly Set<string>,
+    position: readonly ChunkPosition,
+    demanded: bool,
+) -> bool: return not demanded and chunkKey(position) not in startupPending

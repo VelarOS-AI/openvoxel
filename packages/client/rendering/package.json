@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#openvoxel/renderer/babylon-environment": "./src/native/babylon/environment.mjs",
+    "#openvoxel/renderer/babylon-navigation": "./src/native/babylon/navigation.mjs",
+    "#openvoxel/renderer/babylon-surface": "./src/native/babylon/surface.mjs"
+  },
   "files": [
     "data",
     "generated",
@@ -41,6 +46,7 @@
     "format": "velar format",
     "format:check": "velar format --check",
     "test": "velar test && node --test tests/*.test.mjs",
+    "test:gpu": "velar build && node tests/gpu-render-probe.mjs",
     "build": "velar build"
   },
   "dependencies": {
@@ -51,8 +57,10 @@
   },
   "devDependencies": {
     "@openvoxel/world-generation": "0.2.0",
-    "@velarscript/cli": "0.29.2",
-    "@velarscript/web": "0.29.2",
+    "@velarscript/cli": "0.33.1",
+    "@velarscript/web": "0.33.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1",
     "sharp": "0.35.4",
     "yaml": "2.9.0"
   }

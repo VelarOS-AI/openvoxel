@@ -12,6 +12,8 @@
 
 `WorldRuntime` 同时依赖 `WorldManifestStore` 和 `WorldDeltaStore`。每个已加载世界拥有一个 `ActiveWorldState`：它用有界 LRU 缓存稀疏 Chunk 增量，共享同一 Chunk 的在途读取，并让查询复用当前 revision。固定地形不进入这个缓存。
 
+存储与热缓存的类型为 `StoredChunkDelta`，只包含玩家覆盖。查询层返回 `WorldChunkSnapshot`，带有明确的 `ecologyEpoch`，按固定地形、自然冰雪、玩家覆盖的顺序组合可见世界。快照可以共享缓存中的只读覆盖列表，生态时间槽由查询拥有。
+
 ## 写入规则
 
 设置方块前，运行时先确认目标 UInt32 ID 存在于当前激活注册表和世界注册表，再读取该位置的生成值并计算可空覆盖：
@@ -33,7 +35,7 @@ SQLite 适配器拥有一个长生命周期连接。批量 Chunk 查询使用一
 
 SQLite 与业务之间使用 `@velarscript-labs/database` 的参数化 command/query 层。世界表、注册表 JSON、动态 Chunk 坐标查询和 revision 事务属于 OpenVoxel 适配器。领域坐标始终作为对象传递，SQL 映射边界将其展开为列。
 
-当前数据库 schema 为 5，由 `PRAGMA user_version` 标识。空库的三张表与 `user_version` 在一个事务中创建；读取世界时验证内容身份和注册表快照，恢复覆盖时验证 UInt32 数字范围。
+当前数据库 schema 为 7，由 `PRAGMA user_version` 标识。空库的三张表与 `user_version` 在一个事务中创建；读取世界时验证游戏模式、世界时间原点、内容身份和注册表快照，恢复覆盖时验证 UInt32 数字范围。
 
 ## 取舍
 

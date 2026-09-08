@@ -1,6 +1,6 @@
 # OpenVoxel 当前协议
 
-HTTP 与 WebSocket 语义由 `protocolVersion = 8` 标识，机器可读客户端清单由 `clientContractVersion = 8` 标识。世界持久化格式由清单中的 `formatVersion = 3` 独立标识。
+HTTP 与 WebSocket 语义由 `protocolVersion = 13` 标识，机器可读客户端清单由 `clientContractVersion = 8` 标识。世界持久化格式由清单中的 `formatVersion = 5` 独立标识。
 
 ## 传输分工
 
@@ -31,6 +31,9 @@ HTTP 成功响应直接返回资源数据。错误使用 `application/problem+js
 
 返回编码、capability、公共错误码、MessagePack 命令与事件名、Chunk 编码、批量上限和部署传输限额。HTTP 路径以 `GET /api/openapi.json` 生成的 OpenAPI 3.1 文档为权威描述，客户端清单通过 `http.descriptionFormat = "openapi-3.1"` 指向它。
 
+`block-collision-boxes` 表示世界内容目录中的自定义方块碰撞由一个或多个规范化
+AABB 声明，客户端不需要认识基础方块或 Mod 的具体形状身份。
+
 Chunk 编码固定为：
 
 - `paletteEntries: "uint32-runtime-id"`：调色板项是该世界的 UInt32 方块状态运行时 ID。
@@ -44,10 +47,10 @@ Chunk 编码固定为：
 ### `POST /api/worlds`
 
 ```json
-{"id":"lesson-one","name":"Lesson One","seed":"openvoxel"}
+{"id":"lesson-one","name":"Lesson One","seed":"openvoxel","mode":"creative"}
 ```
 
-创建世界并返回 201、完整 `WorldManifest` 和 `Location` 响应头。命令可提供 `generator` 与 `contentPacks`；省略时分别选择默认生成器和服务器配置的默认 Content Pack 集合。清单保存精确内容构建哈希、生成器哈希、出生点和该世界的方块运行时 ID 快照。
+创建世界并返回 201、完整 `WorldManifest` 和 `Location` 响应头。命令必须显式提供 `mode`（`survival` 或 `creative`），并可提供 `generator` 与 `contentPacks`；后两者省略时分别选择默认生成器和服务器配置的默认 Content Pack 集合。清单保存权威游戏模式、精确内容构建哈希、生成器哈希、出生点、世界时间原点和该世界的方块运行时 ID 快照。新世界把创建瞬间映射为 `worldMilliseconds = 300000`，即正午；持久化的 `worldTimeOriginMilliseconds` 表示 `worldMilliseconds = 0` 对应的 Unix 毫秒时刻，因此服务器重启后昼夜与天气继续推进。
 
 ### `GET /api/worlds/{worldId}`
 
@@ -83,12 +86,37 @@ Chunk 编码固定为：
 连接地址为 `/api/worlds/{worldId}/realtime`。路径在握手时把连接绑定到一个世界，后续命令不再携带 `worldId`。服务端接受连接后首先发送：
 
 ```json
-{"event":"world.ready","worldId":"lesson-one","protocolVersion":8,"sequence":0}
+{
+  "event":"world.ready",
+  "worldId":"lesson-one",
+  "protocolVersion":13,
+  "sequence":0,
+  "environment":{
+    "worldMilliseconds":300000,
+    "samplePosition":{"x":16,"y":72,"z":-8},
+    "timeOfDay":0.5,
+    "moonPhase":0,
+    "cloudiness":0.61,
+    "precipitation":"rain",
+    "precipitationIntensity":0.37,
+    "windX":3.4,
+    "windZ":-1.2,
+    "lightning":null
+  }
+}
 ```
 
 `sequence` 是订阅建立瞬间这个世界已经发布到的最后一个热事件序号。客户端把它
 作为本次连接代际的起点，并对自己正在跟踪的全部 Chunk 执行 `chunks.sync`；随后
 到达的 `blocks.changed` 必须连续递增，出现缺口时重新执行完整增量同步。
+
+`environment` 是同一时刻、同一世界位置的权威环境锚点。`worldMilliseconds` 是当前 Unix 毫秒减去世界清单中的 `worldTimeOriginMilliseconds`，
+`samplePosition` 标明云、风、降水与闪电所对应的整数世界坐标；
+`timeOfDay` 的 0、0.25、0.5、0.75 分别表示午夜、清晨、正午和傍晚刻度，实际日出日落由年度相位与太阳轨道决定；
+`moonPhase` 为 0 到 7，降水为 `none`、`rain` 或 `snow`。闪电存在时还携带稳定
+`sequence`、世界坐标、强度和 `occurredAtWorldMilliseconds`。客户端用单调时钟
+从锚点推进，并以世界 seed、当前视点位置和当前世界时间运行同一确定性时空场；
+重连后采用新的锚点校正，不以本机墙钟或渲染随机数自行决定天气。
 
 以下示例用 JSON 展示字段，线上编码均为 MessagePack 二进制。
 

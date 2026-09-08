@@ -1,0 +1,23 @@
+import {expect} from "velar/test"
+import {baseContentCatalog} from "@openvoxel/content"
+import {worldContextFactory} from "../src/world-context.vel"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+
+test "new and restored context assembly agree without owning persistence":
+    const store = memoryWorldStore()
+    const factory = worldContextFactory(store, baseContentCatalog, 8, 1024)
+    const created = factory.prepareNew({id: "context", name: "Context", seed: "context-seed"}, 1_000_000)
+    try:
+        expect(await store.manifests.find(created.manifest.id)).toBe(null)
+        const restored = factory.prepare(created.manifest)
+        try:
+            expect(restored.manifest).toEqual(created.manifest)
+            expect(restored.blocks.snapshot).toEqual(created.blocks.snapshot)
+            expect(restored.contentSnapshot).toEqual(created.contentSnapshot)
+            expect(restored.content.identity).toEqual(created.manifest.content)
+            expect(restored.state == created.state).toBe(false)
+            expect(restored.sequence).toBe(0)
+        finally: await restored.state.close()
+    finally:
+        await created.state.close()
+        await store.close()

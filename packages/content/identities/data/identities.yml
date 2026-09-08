@@ -4,7 +4,7 @@ identities:
     base: openvoxel
 
   catalogs:
-    base: openvoxel:base-v1
+    base: openvoxel:base-v2
 
   generators:
     survival: openvoxel:survival-v2

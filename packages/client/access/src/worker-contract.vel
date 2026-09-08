@@ -1,6 +1,7 @@
 import {WorldBackendContract} from "./backend.vel"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, TerrainChunkBatchResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
+import {ClientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
 export const localWorkerOperations = {
     initialize: "initialize",
@@ -36,7 +37,7 @@ export type LocalWorkerResponse:
     readonly manifest: readonly WorldManifest?
     readonly bootstrap: readonly WorldBootstrapResponse?
     readonly content: readonly WorldContentResponse?
-    readonly terrain: readonly TerrainChunkBatchResponse?
+    readonly terrain: readonly ClientTerrainBatchSnapshot?
     readonly ready: readonly WorldReadyEvent?
     readonly changed: readonly WorldBlocksChangedEvent?
     readonly chunks: readonly ChunksSyncedEvent?

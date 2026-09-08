@@ -1,0 +1,255 @@
+import {ClientWorldChange, ClientWorldChangeKind, ClientWorldState} from "@openvoxel/client"
+import {ChunkMesh, ChunkPortalSummary} from "@openvoxel/renderer"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {Cancellation, Task, task} from "velar/task"
+import {ChunkMeshDemand, MeshPriorityView, chunkMeshDemand, chunkNeedsMesh, priorityPendingChunk} from "./mesh-priority.vel"
+import {chunkMeshValidity, meshTicketSequence} from "./mesh-validity.vel"
+import {pendingStartupChunkMeshes, queuedChunkMeshMayBeDropped, settleStartupChunkMesh} from "./render-readiness.vel"
+import {retainedNeighborsAfterEviction} from "./render-window.vel"
+
+export const meshingWorkerCount = 2
+
+export type ChunkMeshWorker:
+    initialize: () -> Promise<null>
+    build: (position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> Promise<readonly ChunkMesh>
+    close: () -> Promise<null>
+
+export type ChunkMeshSurface:
+    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    removeChunk: (x: number, y: number, z: number) -> null
+
+export type ChunkMeshingStats:
+    readonly active: number
+    readonly queued: number
+    readonly startupPending: number
+    readonly resident: number
+
+export type ChunkMeshing:
+    initialize: () -> Promise<null>
+    start: () -> null
+    invalidate: (event: readonly ClientWorldChange) -> null
+    reconcile: (topologyChanged?: bool) -> null
+    stats: () -> ChunkMeshingStats
+    close: () -> Promise<null>
+
+/// 构网拥有 ticket、任务、GPU 已安装状态与需求协调。世界状态拥有驻留数据，
+/// Surface 拥有 GPU 对象，两个事实通过提交结果连接，不能合成一个 valid 标记。
+export def chunkMeshing(
+    state: readonly ClientWorldState,
+    edge: number,
+    startupPositions: readonly List<readonly ChunkPosition>,
+    worker: readonly ChunkMeshWorker,
+    surface: readonly ChunkMeshSurface,
+    view: () -> readonly MeshPriorityView,
+    changed: () -> null,
+    failed: (message: string) -> null,
+    startupReady: () -> null,
+) -> ChunkMeshing:
+    const tickets: Map<string, number> = Map()
+    const tasks: Map<string, Task<null>> = Map()
+    const activeKeys: Set<string> = Set()
+    const validity = chunkMeshValidity()
+    const sequence = meshTicketSequence()
+    const portals: Map<string, readonly ChunkPortalSummary> = Map()
+    const residents: Map<string, readonly ChunkPosition> = Map()
+    for position in startupPositions: residents.set(chunkKey(position), position)
+    const demand: ChunkMeshDemand = chunkMeshDemand()
+    const queued: Map<string, readonly ChunkPosition> = Map()
+    const queuedTickets: Map<string, number> = Map()
+    const startupPending = pendingStartupChunkMeshes(startupPositions)
+    let active = 0
+    let demandTopologyDirty = true
+    let started = false
+    let closed = false
+    let closing: Promise<null>? = null
+
+    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation):
+        let shouldReconcile = false
+        try:
+            await cancellation.checkpoint()
+            if closed: return
+            const mesh = await worker.build(position, ticket, cancellation)
+            const key = chunkKey(position)
+            if closed or tickets.get(key) != ticket:
+                shouldReconcile = true
+                return
+            const committed = await surface.enqueueChunkMesh(mesh)
+            if not committed:
+                shouldReconcile = true
+                return
+            if closed: return
+            // 先记录物理提交，再复核内容身份；迟到 GPU 提交仍须被后续移除发现。
+            validity.markInstalled(key)
+            if state.chunk(position) == null:
+                surface.removeChunk(position.x, position.y, position.z)
+                validity.remove(key)
+                portals.remove(key)
+                shouldReconcile = true
+                return
+            if tickets.get(key) != ticket:
+                validity.markDirty(key)
+                shouldReconcile = true
+                return
+            portals.set(key, mesh.portalSummary)
+            shouldReconcile = true
+            if settleStartupChunkMesh(startupPending, position, true): startupReady()
+        catch error:
+            settleStartupChunkMesh(startupPending, position, false)
+            if not closed and tickets.get(chunkKey(position)) == ticket: failed(error.message)
+        finally:
+            const key = chunkKey(position)
+            tasks.remove(key)
+            activeKeys.remove(key)
+            active -= 1
+            if not closed:
+                if shouldReconcile: reconcile()
+                else:
+                    drain()
+                    changed()
+
+    def drain():
+        while started and not closed and active < meshingWorkerCount:
+            const position = priorityPendingChunk(queued.values(), activeKeys, view())
+            if position == null: return
+            const selected: readonly ChunkPosition = position
+            const key = chunkKey(selected)
+            const ticket = queuedTickets.get(key)!
+            queued.remove(key)
+            queuedTickets.remove(key)
+            activeKeys.add(key)
+            active += 1
+            async def run(cancellation: Cancellation): await build(selected, ticket, cancellation)
+            tasks.set(key, task(run))
+
+    def schedule(position: readonly ChunkPosition):
+        if closed or chunkKey(position) not in residents: return
+        const key = chunkKey(position)
+        validity.markDirty(key)
+        const ticket = sequence.issue()
+        tickets.set(key, ticket)
+        queued.set(key, position)
+        queuedTickets.set(key, ticket)
+        drain()
+
+    def reconcile(topologyChanged: bool = false):
+        if closed or not started: return
+        if topologyChanged: demandTopologyDirty = true
+        if demandTopologyDirty:
+            demand.rebuild(residents.values(), view())
+            demandTopologyDirty = false
+        const demanded = demand.demandedKeys(portals)
+        for key in startupPending: demanded.add(key)
+        for position in queued.values():
+            const key = chunkKey(position)
+            if not queuedChunkMeshMayBeDropped(startupPending, position, key in demanded): continue
+            queued.remove(key)
+            queuedTickets.remove(key)
+            tickets.remove(key)
+        for key, position in residents:
+            if key not in demanded:
+                if validity.hasInstalled(key):
+                    surface.removeChunk(position.x, position.y, position.z)
+                    validity.remove(key)
+                continue
+            if not validity.requiresBuild(key) or (key in activeKeys) or (key in queued): continue
+            schedule(position)
+        drain()
+        changed()
+
+    async def cancelEvicted(owner: Task<null>, key: string, ticket: number):
+        await owner.cancel("Chunk left the render window")
+        if tickets.get(key) == ticket: tickets.remove(key)
+
+    def builtOrActive(position: readonly ChunkPosition) -> bool:
+        const key = chunkKey(position)
+        return (key in residents) and (validity.hasInstalled(key) or (key in activeKeys))
+
+    def invalidate(event: readonly ClientWorldChange):
+        if closed: return
+        if event.kind == ClientWorldChangeKind.synchronizationStarted: return
+        if event.kind == ClientWorldChangeKind.terrainLoaded:
+            for position in event.positions:
+                const key = chunkKey(position)
+                if key not in residents: demandTopologyDirty = true
+                residents.set(key, position)
+            return
+        if event.kind == ClientWorldChangeKind.terrainUnloaded:
+            for position in event.positions:
+                const key = chunkKey(position)
+                if key in residents:
+                    residents.remove(key)
+                    demandTopologyDirty = true
+                validity.remove(key)
+                portals.remove(key)
+                const ticket = sequence.issue()
+                tickets.set(key, ticket)
+                queued.remove(key)
+                queuedTickets.remove(key)
+                const previous = tasks.get(key)
+                if previous == null: tickets.remove(key)
+                else: detach cancelEvicted(previous, key, ticket)
+                surface.removeChunk(position.x, position.y, position.z)
+            for position in retainedNeighborsAfterEviction(event.positions, builtOrActive): schedule(position)
+            reconcile()
+            return
+        const targets: Map<string, readonly ChunkPosition> = Map()
+
+        def add(position: readonly ChunkPosition):
+            const key = chunkKey(position)
+            if (key in queued) or key not in residents: return
+            if validity.hasInstalled(key) or (key in activeKeys) or chunkNeedsMesh(position, view()):
+                targets.set(key, position)
+
+        if event.kind == ClientWorldChangeKind.blocksChanged and event.changes.size > 0:
+            for change in event.changes:
+                portals.remove(chunkKey(change.chunk))
+                add(change.chunk)
+                const local = change.local
+                if local.x == 0: add({x: change.chunk.x - 1, y: change.chunk.y, z: change.chunk.z})
+                if local.x == edge - 1: add({x: change.chunk.x + 1, y: change.chunk.y, z: change.chunk.z})
+                if local.y == 0: add({x: change.chunk.x, y: change.chunk.y - 1, z: change.chunk.z})
+                if local.y == edge - 1: add({x: change.chunk.x, y: change.chunk.y + 1, z: change.chunk.z})
+                if local.z == 0: add({x: change.chunk.x, y: change.chunk.y, z: change.chunk.z - 1})
+                if local.z == edge - 1: add({x: change.chunk.x, y: change.chunk.y, z: change.chunk.z + 1})
+        else:
+            for position in event.positions:
+                portals.remove(chunkKey(position))
+                add(position)
+            for position in retainedNeighborsAfterEviction(event.positions, builtOrActive):
+                targets.set(chunkKey(position), position)
+        for position in targets.values(): schedule(position)
+        reconcile()
+
+    async def initialize():
+        assert not closed else "Chunk meshing is closed"
+        await worker.initialize()
+
+    def start():
+        if closed or started: return
+        started = true
+        for position in residents.values(): schedule(position)
+
+    async def shutdown():
+        closed = true
+        try:
+            for owner in tasks.values(): await owner.cancel("Chunk meshing closed")
+        finally:
+            tasks.clear()
+            activeKeys.clear()
+            validity.clear()
+            portals.clear()
+            residents.clear()
+            queued.clear()
+            queuedTickets.clear()
+            tickets.clear()
+            await worker.close()
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    return {
+        initialize, start, invalidate, reconcile,
+        stats: () => ({active, queued: queued.size, startupPending: startupPending.size, resident: residents.size}),
+        close,
+    }

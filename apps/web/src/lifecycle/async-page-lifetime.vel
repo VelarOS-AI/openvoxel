@@ -1,0 +1,39 @@
+/// 一次页面级异步工作所持有的生命周期令牌。
+///
+/// 每个异步入口先取得 generation，并在每次恢复后确认它仍属于当前页面。
+/// cleanup 会同步失效全部令牌，因此卸载后的 Promise 只能释放自己的局部资源，
+/// 不能再写组件状态、持久化页面结果或触发导航。
+export type AsyncPageLifetime:
+    begin: () -> number
+    owns: (generation: number) -> bool
+    dispose: () -> null
+
+/// 页面生命周期内可异步关闭的资源最小契约。
+export type AsyncCloseable:
+    close: () -> Promise<null>
+
+export def asyncPageLifetime() -> AsyncPageLifetime:
+    let generation = 0
+    let disposed = false
+
+    def begin() -> number:
+        assert not disposed else "Disposed page lifetime cannot begin new work"
+        generation += 1
+        return generation
+
+    def owns(expected: number) -> bool: return not disposed and generation == expected
+
+    def dispose():
+        if disposed: return
+        disposed = true
+        generation += 1
+
+    return {begin, owns, dispose}
+
+/// 按所有权的逆序关闭独立资源。每项失败都被隔离，确保后续资源仍会释放；
+/// 页面卸载后没有安全的状态或 DOM 可以承接清理错误。
+export async def closeBestEffort(resources: readonly List<AsyncCloseable?>):
+    for resource in resources:
+        if resource == null: continue
+        try: await resource.close()
+        catch error: pass

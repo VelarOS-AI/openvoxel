@@ -1,35 +1,9 @@
-import {WorldBlockRegistry, baseBlockCatalogSource, createWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
-import {ContentCatalog, WorldContentSet, baseContentCatalog} from "@openvoxel/content"
-import {WorldGenerator, WorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator, worldGenerator} from "@openvoxel/world-generation"
-import {WorldManifest, initialChunkEdge} from "@openvoxel/world"
+import {ContentCatalog, baseContentCatalog} from "@openvoxel/content"
+import {WorldManifest} from "@openvoxel/world"
 import {WorldStore} from "./contracts.vel"
-import {ActiveWorldState, activeWorldState} from "./active-world-state.vel"
-import {CreateWorld, assembleWorldManifest} from "./world-creation.vel"
+import {CreateWorld} from "./world-creation.vel"
 import {WorldNotFoundError, WorldRequestError} from "./world-errors.vel"
-import {WorldContentSnapshot, createWorldContentSnapshot} from "./world-content.vel"
-
-/// 已加载世界是 world-runtime 内部统一使用的世界上下文。
-///
-/// 过去清单、方块注册表和生成器分别存放在不同 Map 中，调用者必须自己保证
-/// 三者属于同一个世界。现在它们被放进同一份记录，任何区块查询或方块命令
-/// 只要取得 LoadedWorld，就得到了一次完整且相互匹配的运行时快照。
-export type LoadedWorld:
-    /// 持久化世界清单；其中包含这个世界的方块数字身份快照。
-    manifest: WorldManifest
-    /// 当前目录集合与持久化快照合成出的活动方块注册表。
-    blocks: WorldBlockRegistry
-    /// 根据清单中的生成器身份、种子和 Chunk 尺寸创建的确定性生成器。
-    generator: WorldGenerator
-    /// 当前世界合成后的生成器注册表。
-    generators: WorldGeneratorRegistry
-    /// 与 manifest.content 完全匹配的已解析内容集合。
-    content: readonly WorldContentSet
-    /// 已压缩并聚合完成的客户端内容目录；与世界会话同生命周期。
-    contentSnapshot: readonly WorldContentSnapshot
-    /// 玩家增量的世界私有热状态；查询、写入和生命周期都通过这里收口。
-    state: ActiveWorldState
-    /// 当前进程内这次世界会话已经发布的热事件序号；会话淘汰后从零开始。
-    sequence: number
+import {LoadedWorld, worldContextFactory} from "./world-context.vel"
 
 /// 一次正在使用世界上下文的所有权。调用方必须在 finally 中 close；缓存只会
 /// 淘汰引用数为零的世界，因此生成、查询和持久化期间不会关闭正在使用的热状态。
@@ -45,7 +19,7 @@ export type WorldSessionLease:
 /// 进行的载入结束后清空全部会话。
 export type WorldSessionCache:
     prepare: (manifest: WorldManifest) -> LoadedWorld
-    prepareNew: (command: CreateWorld) -> LoadedWorld
+    prepareNew: (command: CreateWorld, wallClockMilliseconds: number) -> LoadedWorld
     remember: (world: LoadedWorld) -> Promise<null>
     find: (worldId: string) -> Promise<WorldSessionLease?>
     require: (worldId: string) -> Promise<WorldSessionLease>
@@ -71,68 +45,7 @@ export def worldSessionCache(
     const references: Map<string, number> = Map()
     let trimming: Promise<null>? = null
     let closed = false
-
-    def activeState(worldId: string, blocks: readonly WorldBlockRegistry) -> ActiveWorldState:
-        def validateBlockStateRuntimeId(runtimeId: number): requireWorldBlockStateRuntimeId(blocks.index, runtimeId)
-
-        return activeWorldState(worldId, store.deltas, activeChunkCapacity, activeOverrideCapacity, validateBlockStateRuntimeId)
-
-    def requireContentSet(manifest: readonly WorldManifest) -> readonly WorldContentSet:
-        return contentCatalog.resolve(manifest.content)
-
-    /// 把世界清单与其锁定的 Content Pack 集合合成为一份原子上下文。目录哈希
-    /// 和状态集合必须与清单完全一致；生成器也在这里创建，确保它和 manifest
-    /// 永远成对出现。
-    def prepare(manifest: WorldManifest) -> LoadedWorld:
-        const active = requireContentSet(manifest)
-        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions, manifest.blockRegistry)
-        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
-        return {
-            manifest,
-            blocks,
-            generator: worldGenerator(manifest, blocks, generators),
-            generators,
-            content: active,
-            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
-            state: activeState(manifest.id, blocks),
-            sequence: 0,
-        }
-
-    /// 新世界先按 worldId 选择内容，再一次性建立两个注册表、生成器哈希和出生点。
-    /// 返回值尚未进入缓存，调用方只有在清单保存成功后才调用 remember。
-    def prepareNew(command: CreateWorld) -> LoadedWorld:
-        const worldId = command.id.trim()
-        const worldName = command.name.trim()
-        const worldSeed = command.seed.trim()
-        if worldId.isBlank() or worldId.size > 64:
-            throw WorldRequestError("World id must contain from 1 through 64 characters")
-        if worldName.isBlank() or worldName.size > 80:
-            throw WorldRequestError("World name must contain from 1 through 80 characters")
-        if worldSeed.isBlank() or worldSeed.size > 128:
-            throw WorldRequestError("World seed must contain from 1 through 128 characters")
-        const active = (
-            command.contentPacks == null
-                ? contentCatalog.defaultContent()
-                : contentCatalog.select(command.contentPacks)
-        )
-        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions)
-        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
-        const generatorKey = command.generator ?? defaultGenerator
-        if generatorKey.isBlank() or generatorKey.size > 128 or not generators.catalog.generators.some(definition => definition.key == generatorKey):
-            throw WorldRequestError(f"Unknown world generator {generatorKey}")
-        const generatorHash = generators.definitionHash(generatorKey)
-        const generator = instantiateWorldGenerator(generatorKey, command.seed.trim(), initialChunkEdge, blocks, generators)
-        const manifest = assembleWorldManifest(command, blocks.snapshot, active.identity, generatorHash, generator.findSpawn())
-        return {
-            manifest,
-            blocks,
-            generator,
-            generators,
-            content: active,
-            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
-            state: activeState(manifest.id, blocks),
-            sequence: 0,
-        }
+    const contexts = worldContextFactory(store, contentCatalog, activeChunkCapacity, activeOverrideCapacity)
 
     def touch(world: LoadedWorld):
         loaded.remove(world.manifest.id)
@@ -193,20 +106,7 @@ export def worldSessionCache(
         if foundManifest == null: return null
         const manifest: WorldManifest = foundManifest
 
-        const active = requireContentSet(manifest)
-
-        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions, manifest.blockRegistry)
-        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
-        const world: LoadedWorld = {
-            manifest,
-            blocks,
-            generator: worldGenerator(manifest, blocks, generators),
-            generators,
-            content: active,
-            contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
-            state: activeState(manifest.id, blocks),
-            sequence: 0,
-        }
+        const world = contexts.prepare(manifest)
         touch(world)
         return world
 
@@ -286,4 +186,4 @@ export def worldSessionCache(
         closing.clear()
         references.clear()
 
-    return {prepare, prepareNew, remember, find, require, unload, close}
+    return WorldSessionCache.from(contexts, {remember, find, require, unload, close})

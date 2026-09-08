@@ -1,0 +1,35 @@
+import {ChunkPosition} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {pendingStartupChunkMeshes, queuedChunkMeshMayBeDropped, settleStartupChunkMesh} from "../src/rendering/render-readiness.vel"
+
+test "startup readiness waits only for the chunks resident when rendering opens":
+    const startup: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 1, y: 0, z: 0},
+        {x: 0, y: 0, z: 0},
+    ]
+    const pending = pendingStartupChunkMeshes(startup)
+
+    expect(pending.size).toBe(2)
+    expect(settleStartupChunkMesh(pending, {x: 8, y: 0, z: 0}, true)).toBe(false)
+    expect(settleStartupChunkMesh(pending, startup[0], true)).toBe(false)
+    expect(settleStartupChunkMesh(pending, startup[1], true)).toBe(true)
+
+test "a failed startup mesh never reports the first frame ready":
+    const position: ChunkPosition = {x: 0, y: 0, z: 0}
+    const pending = pendingStartupChunkMeshes([position])
+
+    expect(settleStartupChunkMesh(pending, position, false)).toBe(false)
+    expect(pending.size).toBe(1)
+    expect(settleStartupChunkMesh(pending, position, true)).toBe(true)
+
+test "view reconciliation cannot drop queued startup meshes before first-frame commit":
+    const startup: ChunkPosition = {x: 0, y: 0, z: 0}
+    const background: ChunkPosition = {x: 8, y: 0, z: 0}
+    const pending = pendingStartupChunkMeshes([startup])
+
+    expect(queuedChunkMeshMayBeDropped(pending, startup, false)).toBe(false)
+    expect(queuedChunkMeshMayBeDropped(pending, background, false)).toBe(true)
+    expect(queuedChunkMeshMayBeDropped(pending, background, true)).toBe(false)
+    expect(settleStartupChunkMesh(pending, startup, true)).toBe(true)
+    expect(queuedChunkMeshMayBeDropped(pending, startup, false)).toBe(true)

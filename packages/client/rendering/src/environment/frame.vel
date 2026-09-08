@@ -1,0 +1,149 @@
+import {WorldEnvironmentSample, WorldPrecipitationKind, validateWorldEnvironmentSample, worldYearProgress} from "@openvoxel/world"
+
+export type ClientEnvironmentVector3:
+    readonly x: number
+    readonly y: number
+    readonly z: number
+
+export type ClientEnvironmentColor:
+    readonly red: number
+    readonly green: number
+    readonly blue: number
+
+/// 每帧只投影渲染器真正消费的有界数值。sunDirection 和 moonDirection 是光线传播方向，
+/// 可直接交给 Babylon DirectionalLight；天空中的天体位置使用其相反方向。
+export type ClientEnvironmentFrame extends WorldEnvironmentSample:
+    readonly sunDirection: readonly ClientEnvironmentVector3
+    readonly moonDirection: readonly ClientEnvironmentVector3
+    readonly daylightIntensity: number
+    readonly nightIntensity: number
+    readonly starIntensity: number
+    readonly sunIntensity: number
+    readonly moonIntensity: number
+    readonly skyIntensity: number
+    readonly skyTop: readonly ClientEnvironmentColor
+    readonly horizon: readonly ClientEnvironmentColor
+    readonly ground: readonly ClientEnvironmentColor
+    readonly fog: readonly ClientEnvironmentColor
+    readonly fogDensityFactor: number
+    readonly cloudOpacity: number
+    readonly cloudBrightness: number
+    readonly weatherDimming: number
+    readonly lightningFlash: number
+
+def saturate(value: number) -> number: return Math.clamp(value, 0, 1)
+
+def smoothstep(minimum: number, maximum: number, value: number) -> number:
+    const amount = saturate((value - minimum) / (maximum - minimum))
+    return amount * amount * (3 - 2 * amount)
+
+def color(red: number, green: number, blue: number) -> ClientEnvironmentColor:
+    return {red: saturate(red), green: saturate(green), blue: saturate(blue)}
+
+def mix(left: number, right: number, amount: number) -> number: return left + (right - left) * amount
+
+def mixColor(left: readonly ClientEnvironmentColor, right: readonly ClientEnvironmentColor, amount: number) -> ClientEnvironmentColor:
+    const bounded = saturate(amount)
+    return color(
+        mix(left.red, right.red, bounded),
+        mix(left.green, right.green, bounded),
+        mix(left.blue, right.blue, bounded),
+    )
+
+def scaleColor(value: readonly ClientEnvironmentColor, factor: number) -> ClientEnvironmentColor:
+    return color(value.red * factor, value.green * factor, value.blue * factor)
+
+def flashedColor(value: readonly ClientEnvironmentColor, flash: number) -> ClientEnvironmentColor:
+    // 闪电应瞬时抬高环境亮度，同时保留天空和地形的色彩层次；过强的白色混合
+    // 会让整帧在色调映射前饱和，反而看不见雷雨场景本身。
+    return mixColor(value, color(0.82, 0.88, 1), flash * 0.3)
+
+def weatherFogColor(kind: WorldPrecipitationKind) -> ClientEnvironmentColor:
+    match kind:
+        case WorldPrecipitationKind.rain: return color(0.25, 0.3, 0.36)
+        case WorldPrecipitationKind.snow: return color(0.72, 0.76, 0.8)
+        case WorldPrecipitationKind.clear: return color(0.62, 0.76, 0.9)
+
+def lightningFlash(sample: readonly WorldEnvironmentSample) -> number:
+    const lightning = sample.lightning
+    if lightning == null: return 0
+    const ageSeconds = (sample.worldMilliseconds - lightning.occurredAtWorldMilliseconds) / 1000
+    return saturate(lightning.intensity * Math.exp(-Math.min(ageSeconds, 60) * 8))
+
+/// 把权威世界环境样本投影为纯渲染参数。闪电年龄只由世界时间计算，重复应用同一
+/// 样本或网络重连都不会把已经衰减的闪光重置到零时刻。
+export def environmentFrame(sample: readonly WorldEnvironmentSample) -> ClientEnvironmentFrame:
+    const current = validateWorldEnvironmentSample(sample)
+
+    // 0 为午夜、0.5 为正午。35° 纬度下太阳沿季节升降，夏季日长、冬季日短；
+    // 正午仍保留真实的斜射角，树木和高低台阶可以在地面投下可见阴影。
+    const hourAngle = (current.timeOfDay - 0.5) * 2 * Math.pi
+    const latitude = 35 * Math.pi / 180
+    const declination = Math.sin((worldYearProgress(current.worldMilliseconds) - 0.125) * 2 * Math.pi) * 23.44 * Math.pi / 180
+    const celestialX = -Math.cos(declination) * Math.sin(hourAngle)
+    const celestialY = Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle)
+    const celestialZ = Math.cos(latitude) * Math.sin(declination) - Math.sin(latitude) * Math.cos(declination) * Math.cos(hourAngle)
+    const sunDirection: ClientEnvironmentVector3 = {x: -celestialX, y: -celestialY, z: -celestialZ}
+    const moonDirection: ClientEnvironmentVector3 = {x: celestialX, y: celestialY, z: celestialZ}
+
+    const daylightIntensity = smoothstep(-0.12, 0.22, celestialY)
+    const nightIntensity = 1 - smoothstep(-0.22, 0.06, celestialY)
+    const twilight = smoothstep(-0.24, -0.02, celestialY) * (1 - smoothstep(0.04, 0.42, celestialY))
+    const weatherDimming = Math.clamp(1 - current.cloudiness * 0.42 - current.precipitationIntensity * 0.36, 0.22, 1)
+    const flash = lightningFlash(current)
+    const phaseDistance = Math.min(current.moonPhase, 8 - current.moonPhase)
+    const moonPhaseVisibility = 1 - phaseDistance / 4
+    const sunIntensity = saturate(daylightIntensity * weatherDimming)
+    const moonIntensity = saturate(nightIntensity * (0.045 + 0.24 * moonPhaseVisibility) * weatherDimming)
+    // 星光按昼夜和降水共同的透光率平方衰减；云的遮挡由云层贴图覆盖承担。
+    const starIntensity = Math.pow((1 - daylightIntensity) * (1 - current.precipitationIntensity), 2)
+    const skyIntensity = saturate((0.09 + 0.91 * daylightIntensity + 0.58 * moonIntensity) * (0.55 + 0.45 * weatherDimming) + flash * 0.14)
+
+    const nightTop = color(0.026, 0.05, 0.115)
+    const dayTop = color(0.18, 0.47, 0.84)
+    const twilightTop = color(0.08, 0.18, 0.34)
+    const nightHorizon = color(0.07, 0.1, 0.19)
+    const dayHorizon = color(0.7, 0.84, 0.96)
+    const twilightHorizon = color(0.95, 0.43, 0.18)
+    const nightGround = color(0.025, 0.034, 0.065)
+    const dayGround = color(0.12, 0.17, 0.19)
+    const twilightGround = color(0.08, 0.065, 0.06)
+    const skyWeatherScale = 0.55 + 0.45 * weatherDimming
+    const weatherMix = current.precipitationIntensity * 0.18
+    const weatherFog = weatherFogColor(current.precipitation)
+
+    let skyTop = mixColor(mixColor(nightTop, dayTop, daylightIntensity), twilightTop, twilight * 0.72)
+    let horizon = mixColor(mixColor(nightHorizon, dayHorizon, daylightIntensity), twilightHorizon, twilight * 0.82)
+    let ground = mixColor(mixColor(nightGround, dayGround, daylightIntensity), twilightGround, twilight * 0.58)
+    skyTop = mixColor(scaleColor(skyTop, skyWeatherScale), weatherFog, weatherMix)
+    horizon = mixColor(scaleColor(horizon, skyWeatherScale), weatherFog, weatherMix)
+    ground = mixColor(scaleColor(ground, 0.68 + 0.32 * weatherDimming), weatherFog, weatherMix * 0.45)
+    skyTop = flashedColor(skyTop, flash)
+    horizon = flashedColor(horizon, flash)
+    ground = flashedColor(ground, flash)
+
+    const fogWeatherMix = saturate(current.cloudiness * 0.16 + current.precipitationIntensity * 0.68)
+    const fog = flashedColor(mixColor(horizon, weatherFog, fogWeatherMix), flash)
+    const fogDensityFactor = Math.clamp(1 + current.cloudiness * 0.9 + current.precipitationIntensity * 2.5, 1, 4.4)
+    const cloudOpacity = saturate(current.cloudiness * 0.9 + current.precipitationIntensity * 0.2)
+    const cloudBrightness = saturate(mix(0.03, 1, daylightIntensity * daylightIntensity) * mix(1, 0.2, current.precipitationIntensity) + flash * 0.3)
+
+    return ClientEnvironmentFrame.from(current, {
+        sunDirection,
+        moonDirection,
+        daylightIntensity,
+        nightIntensity,
+        starIntensity,
+        sunIntensity,
+        moonIntensity,
+        skyIntensity,
+        skyTop,
+        horizon,
+        ground,
+        fog,
+        fogDensityFactor,
+        cloudOpacity,
+        cloudBrightness,
+        weatherDimming,
+        lightningFlash: flash,
+    })

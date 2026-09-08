@@ -1,5 +1,5 @@
-import {WorldBlockRegistry, baseWorldBlockRegistry} from "@openvoxel/blocks"
-import {Chunk, ChunkPosition, Coordinate2, Coordinate3, chunkPaletteTemplate, emptyChunk} from "@openvoxel/world"
+import {BlockRegistry, WorldBlockRegistry, baseWorldBlockRegistry, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {Chunk, ChunkPosition, Coordinate2, Coordinate3, chunkKey, chunkPaletteTemplate, emptyChunk} from "@openvoxel/world"
 import {WorldGenerator} from "../contracts.vel"
 import {WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "../runtime/builtin-catalog.vel"
@@ -10,7 +10,9 @@ import {generateAquifers} from "./fluids.vel"
 import {generateMinerals, mineralPlanner} from "./minerals.vel"
 import {generateSurface, surfacePlanner} from "./surface.vel"
 import {GenerationFields, TerrainColumnPlan, baseTerrainBlock, columnPlanner, createGenerationFields, terrainTargetSurfaceY} from "./terrain.vel"
-import {decorationPlanner, generateVegetation} from "./vegetation.vel"
+import {DecorationPlan, decorationPlanner, generateVegetation} from "./vegetation.vel"
+import {seasonalSurfacePlanner} from "./seasonal-surfaces.vel"
+import {evictOldest} from "./lru-cache.vel"
 
 export def generateBaseTerrain(
     chunk: Chunk,
@@ -46,6 +48,27 @@ type SpawnCandidate:
     x: number
     z: number
     score: number
+
+/// 出生点使用最终装饰计划复核脚部和头部两格。树干、叶片、仙人掌、积雪以及
+/// Mod 内容都通过方块目录中的碰撞盒判断；生成器不按具体方块身份写例外。
+def decorationObstructsSpawn(
+    plan: readonly DecorationPlan,
+    x: number,
+    feetY: number,
+    z: number,
+    registry: readonly BlockRegistry,
+) -> bool:
+    for feature in plan.features:
+        if x < feature.bounds.minimumX or x > feature.bounds.maximumX or z < feature.bounds.minimumZ or z > feature.bounds.maximumZ:
+            continue
+        for write in feature.writes:
+            const worldX = feature.origin.x + write.x
+            const worldY = feature.origin.y + write.y
+            const worldZ = feature.origin.z + write.z
+            if worldX != x or worldZ != z or worldY < feetY or worldY > feetY + 1: continue
+            const state = registry.requireStateByRuntimeId(write.runtimeId)
+            if resolveBlockShapeBoxes(state.physics.collision, state.properties).size > 0: return true
+    return false
 
 /// 第一遍只用地形骨架高度筛掉明显不合格的位置，并按粗略分数排序。
 /// 第二遍优先检查前 64 个候选；如果它们都被最终坡度或群系淘汰，则继续沿
@@ -100,14 +123,25 @@ export def survivalWorldGenerator(
         const plan = columns.columns((position.x / edge).floor(), (position.z / edge).floor())
         return TerrainSample.parse(plan.sampleAt(position.x, position.z))
 
-    def generate(position: readonly ChunkPosition) -> Chunk:
+    def generateTerrain(position: readonly ChunkPosition) -> Chunk:
         const minimumY = position.y * edge
         const maximumY = minimumY + edge - 1
         if maximumY < profile.world.minimumY or minimumY > profile.world.maximumY:
             return emptyChunk(position, edge, blocks.air)
-        const generatedChunk = generationChunkPalette.instantiate(position, edge)
-
+        // 生成器配置已经给出自然地表的硬上界，装饰阶段也最多向上延伸十格。
+        // 这个全局包络不依赖 x/z，必须先于地形列规划检查；高空飞行因而不会
+        // 为一批可证明为空的 section 建造昂贵的密度列缓存。
+        const maximumGeneratedContentY = Math.max(
+            profile.world.maximumNaturalSurfaceY + 10,
+            profile.world.seaLevel,
+        )
+        if minimumY > maximumGeneratedContentY: return emptyChunk(position, edge, blocks.air)
         const plan = columns.columns(position.x, position.z)
+        // 地形列包络已经由最终密度场求得。高于地表、海面和最高装饰范围的
+        // section 可证明只含空气，不再分配完整生成调色板，也不扫描 4096 格。
+        const maximumContentY = Math.max(plan.maximumSurfaceY + 10, profile.world.seaLevel)
+        if minimumY > maximumContentY: return emptyChunk(position, edge, blocks.air)
+        const generatedChunk = generationChunkPalette.instantiate(position, edge)
         // 固定阶段顺序是生成结果的一部分：后续阶段只覆盖前一阶段明确允许的方块。
         generateBaseTerrain(generatedChunk, fields, plan, generationPalette.indices)
         carveCaves(generatedChunk, caves, profile, blocks, worldBlocks.registry, plan)
@@ -134,6 +168,10 @@ export def survivalWorldGenerator(
             if candidate.surfaceY < profile.spawn.minimumY or candidate.surfaceY > profile.spawn.maximumY: continue
             if candidate.slope > profile.spawn.maximumSlope: continue
             if candidate.biome == profile.biomes.ocean or candidate.biome == profile.biomes.coast: continue
+            const feetY = candidate.surfaceY + 1
+            const decoration = decorations.decorations((candidate.position.x / edge).floor(), (candidate.position.z / edge).floor())
+            if decorationObstructsSpawn(decoration, candidate.position.x, feetY, candidate.position.z, worldBlocks.registry):
+                continue
             const score = spawnScore(profile, candidate)
             if score > bestScore:
                 best = candidate
@@ -144,4 +182,27 @@ export def survivalWorldGenerator(
         const selected: TerrainSample = best
         return {x: selected.position.x, y: selected.surfaceY + 1, z: selected.position.z}
 
-    return {sample, generate, findSpawn}
+    // 生态候选偶尔先于冷地形请求读取相邻 section 的支撑面。保留最多十六个
+    // 尚未交给调用者的结果，随后冷查询直接接管并移出缓存，不重跑完整生成。
+    const preparedTerrain: Map<string, Chunk> = Map()
+
+    def prepareForEcology(position: readonly ChunkPosition) -> Chunk:
+        const key = chunkKey(position)
+        const existing = preparedTerrain.get(key)
+        if existing != null: return existing
+        const chunk = generateTerrain(position)
+        if preparedTerrain.size >= 16: evictOldest(preparedTerrain)
+        preparedTerrain.set(key, chunk)
+        return chunk
+
+    const seasonalPlanner = seasonalSurfacePlanner(profile, blocks, worldBlocks.registry, columns, decorations, prepareForEcology)
+
+    def generate(position: readonly ChunkPosition) -> Chunk:
+        const key = chunkKey(position)
+        const chunk = preparedTerrain.get(key) ?? generateTerrain(position)
+        preparedTerrain.remove(key)
+        seasonalPlanner.remember(chunk)
+        return chunk
+
+    const seasonalSurfaces = seasonalPlanner.candidates
+    return {sample, generate, seasonalSurfaces, findSpawn}

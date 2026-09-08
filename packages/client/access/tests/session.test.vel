@@ -1,17 +1,20 @@
 import {expect} from "velar/test"
-import {Cancellation, task} from "velar/task"
-import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, TerrainChunkBatchResponse, TerrainChunkResponse, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
-import {Chunk, ChunkPosition, WorldManifest} from "@openvoxel/world"
-import {BlockChangeBatch, BlockEdit, ChunkDelta, CreateWorld, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
+import {Cancellation, channel, task} from "velar/task"
+import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockChange, RealtimeBlockEdit, RealtimeChunkDelta, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
+import {Chunk, ChunkPosition, WorldEnvironmentSample, WorldGameMode, WorldManifest, WorldPrecipitationKind, worldEnvironmentAt} from "@openvoxel/world"
+import {BlockChangeBatch, BlockEdit, CreateWorld, WorldContentSnapshot, WorldRuntime, memoryWorldStore, worldRuntime} from "@openvoxel/world-runtime"
 import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "../src/backend.vel"
 import {verifyWorldBackend} from "../src/backend-conformance.vel"
 import {ClientWorldSession, openClientWorld} from "../src/session.vel"
+import {ClientTerrainBatchSnapshot, ClientTerrainChunkSnapshot} from "../src/terrain-snapshot.vel"
 
 type BackendHarness:
     backend: WorldBackend
     runtime: WorldRuntime
     world: WorldManifest
     injectDuringNextSync: (edit: readonly RealtimeBlockEdit) -> null
+
+type Signal = bool
 
 def contractResponse() -> WorldBackendContract:
     return {
@@ -50,8 +53,7 @@ def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldC
         maximumChunkBatchSize: 1,
     })
 
-def terrainResponse(chunk: readonly Chunk) -> TerrainChunkResponse:
-    return TerrainChunkResponse.from(chunk, {indices: chunk.indices.values()})
+def terrainSnapshot(chunk: readonly Chunk) -> ClientTerrainChunkSnapshot: return ClientTerrainChunkSnapshot.from(chunk)
 
 def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
     return batch.changes
@@ -64,6 +66,7 @@ async def backendHarness() -> BackendHarness:
     const listeners: Map<number, (event: readonly WorldBlocksChangedEvent) -> null> = Map()
     let nextListenerId = 1
     let currentSequence = 0
+    let environmentMilliseconds = 120000
     let injectedEdit: RealtimeBlockEdit? = null
 
     def publish(batch: readonly BlockChangeBatch):
@@ -98,23 +101,31 @@ async def backendHarness() -> BackendHarness:
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> TerrainChunkBatchResponse:
+    ) -> ClientTerrainBatchSnapshot:
         if cancellation != null:
             // 为取消回归保留一个确定的异步窗口；普通契约测试不传 token。
             await Promise.sleep(20ms)
             await cancellation.checkpoint()
         const chunks = await runtime.terrainChunks(worldId, positions)
-        const output: List<TerrainChunkResponse> = []
-        for chunk in chunks: output.append(terrainResponse(chunk))
+        const output: List<readonly ClientTerrainChunkSnapshot> = []
+        for chunk in chunks: output.append(terrainSnapshot(chunk))
         return {worldId, chunks: output}
 
     async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
-        await runtime.requireWorld(worldId)
+        const connectedWorld = await runtime.requireWorld(worldId)
         const listenerId = nextListenerId
         nextListenerId += 1
         listeners.set(listenerId, listener)
         let connectionClosed = false
-        const ready: WorldReadyEvent = {event: "world.ready", worldId, protocolVersion, sequence: currentSequence}
+        const environment = worldEnvironmentAt(connectedWorld.seed, environmentMilliseconds, connectedWorld.spawn)
+        environmentMilliseconds += 1000
+        const ready: WorldReadyEvent = {
+            event: "world.ready",
+            worldId,
+            protocolVersion,
+            sequence: currentSequence,
+            environment,
+        }
 
         async def syncChunks(
             requestId: string,
@@ -163,6 +174,54 @@ def replacementState(session: readonly ClientWorldSession, current: number) -> n
     assert replacement != null else "Expected at least two world block states"
     return replacement.runtimeId
 
+type SyncResponseProjection = (event: readonly ChunksSyncedEvent) -> readonly ChunksSyncedEvent
+
+/// 让两个位置进入同一个实时批次，便于验证会话拥有的请求/响应关联；其余后端
+/// 能力仍由共享契约测试实现提供。
+def backendWithSyncProjection(original: WorldBackend, projection: SyncResponseProjection) -> WorldBackend:
+    async def contract() -> WorldBackendContract:
+        const value = await original.contract()
+        return WorldBackendContract.from(value, {
+            chunks: {
+                paletteEntries: value.chunks.paletteEntries,
+                localIndices: value.chunks.localIndices,
+                indexOrder: value.chunks.indexOrder,
+                maximumBatchSize: 2,
+            },
+        })
+
+    async def bootstrap(worldId: string) -> WorldBootstrapResponse:
+        return WorldBootstrapResponse.from(await original.bootstrap(worldId), {maximumChunkBatchSize: 2})
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await original.connect(worldId, listener)
+
+        async def syncChunks(
+            requestId: string,
+            positions: readonly List<readonly ChunkPosition>,
+            cancellation: Cancellation? = null,
+        ) -> readonly ChunksSyncedEvent:
+            const event = (
+                cancellation == null
+                    ? await opened.syncChunks(requestId, positions)
+                    : await opened.syncChunks(requestId, positions, cancellation)
+            )
+            return projection(event)
+
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    return WorldBackend.from(original, {contract, bootstrap, connect})
+
+async def expectRejectedSyncProjection(projection: SyncResponseProjection):
+    const harness = await backendHarness()
+    const session = await openClientWorld(backendWithSyncProjection(harness.backend, projection), harness.world.id)
+    try:
+        await expect(session.loadChunks([{x: 0, y: 1, z: 0}, {x: 1, y: 1, z: 0}])).toReject()
+        expect(session.state.trackedPositions().size).toBe(0)
+    finally:
+        await session.close()
+        await harness.runtime.close()
+
 test "WorldBackend satisfies the shared create, open, edit, and reconnect contract":
     const harness = await backendHarness()
     try:
@@ -170,10 +229,60 @@ test "WorldBackend satisfies the shared create, open, edit, and reconnect contra
             id: "backend-contract",
             name: "Backend Contract",
             seed: "backend-contract-seed",
+            mode: WorldGameMode.creative,
         })
+        expect((await harness.backend.findWorld(result.worldId)).mode).toBe(WorldGameMode.creative)
         expect(result.revision).toBe(1)
         expect(result.generation).toBe(2)
     finally: await harness.runtime.close()
+
+test "client sessions reject a semantically invalid environment anchor and close its connection":
+    const harness = await backendHarness()
+    const original = harness.backend
+    let connectionClosed = false
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await original.connect(worldId, listener)
+        const environment = WorldEnvironmentSample.from(opened.ready.environment, {
+            precipitation: WorldPrecipitationKind.clear,
+            precipitationIntensity: 0.1,
+        })
+        const ready = WorldReadyEvent.from(opened.ready, {environment})
+
+        async def close():
+            connectionClosed = true
+            await opened.close()
+
+        return WorldBackendConnection.from(opened, {ready, close})
+
+    const backend = WorldBackend.from(original, {connect})
+    try:
+        await expect(openClientWorld(backend, harness.world.id)).toReject()
+        expect(connectionClosed).toBe(true)
+    finally: await harness.runtime.close()
+
+test "client sessions accept valid authoritative anchors without JSON implementation lockstep":
+    const harness = await backendHarness()
+    const original = harness.backend
+    const authoritativePosition = {x: 768, y: 96, z: -512}
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await original.connect(worldId, listener)
+        const environment = WorldEnvironmentSample.from(opened.ready.environment, {
+            cloudiness: opened.ready.environment.cloudiness == 0 ? 0.1 : 0,
+            samplePosition: authoritativePosition,
+        })
+        const ready = WorldReadyEvent.from(opened.ready, {environment})
+        return WorldBackendConnection.from(opened, {ready})
+
+    const backend = WorldBackend.from(original, {connect})
+    const session = await openClientWorld(backend, harness.world.id)
+    try:
+        expect(session.environment().worldMilliseconds >= 120_000).toBe(true)
+        expect(session.environment().samplePosition).toEqual(authoritativePosition)
+    finally:
+        await session.close()
+        await harness.runtime.close()
 
 test "client sessions share hot changes and preserve broadcasts that cross a complete sync":
     const harness = await backendHarness()
@@ -185,6 +294,17 @@ test "client sessions share hot changes and preserve broadcasts that cross a com
         await second.loadChunks(positions)
         expect(first.state.trackedPositions().size).toBe(2)
         expect(first.state.requiresResync()).toBe(false)
+
+        const initialEnvironment = first.environment()
+        expect(initialEnvironment.samplePosition).toEqual(harness.world.spawn)
+        await Promise.sleep(5ms)
+        const advancedEnvironment = first.environment()
+        expect(advancedEnvironment.worldMilliseconds > initialEnvironment.worldMilliseconds).toBe(true)
+        expect(advancedEnvironment).toEqual(worldEnvironmentAt(harness.world.seed, advancedEnvironment.worldMilliseconds, harness.world.spawn))
+        const distantPosition = {x: 4_096, y: 128, z: -2_048}
+        const distantEnvironment = first.environment(distantPosition)
+        expect(distantEnvironment.samplePosition).toEqual(distantPosition)
+        expect(distantEnvironment).toEqual(worldEnvironmentAt(harness.world.seed, distantEnvironment.worldMilliseconds, distantPosition))
 
         const target = {x: 0, y: 30, z: 0}
         const current = first.state.block(target)
@@ -207,10 +327,164 @@ test "client sessions share hot changes and preserve broadcasts that cross a com
         expect(first.state.requiresResync()).toBe(false)
         expect(first.state.block(crossedTarget)).toBe(crossedReplacement)
         expect(second.state.block(crossedTarget)).toBe(crossedReplacement)
+        expect(first.environment().worldMilliseconds > advancedEnvironment.worldMilliseconds).toBe(true)
     finally:
         await first.close()
         await second.close()
         await harness.runtime.close()
+
+test "retired synchronization cannot block broadcasts or roll back the new connection":
+    const harness = await backendHarness()
+    const entered = channel(Signal, capacity=1)
+    const release = channel(Signal, capacity=1)
+    let generation = 0
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        generation += 1
+        const current = generation
+        const opened = await harness.backend.connect(worldId, listener)
+
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ChunksSyncedEvent:
+            const response = cancellation == null ? await opened.syncChunks(requestId, positions) : await opened.syncChunks(requestId, positions, cancellation)
+            if current == 1:
+                entered.trySend(true)
+                await release.next()
+                // 已退役的连接既不能覆写当前状态，也不能靠非法响应触发回滚。
+                return ChunksSyncedEvent.from(response, {requestId: "obsolete", chunks: []})
+            return response
+
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id)
+    const position = {x: 0, y: 1, z: 0}
+    const pending = session.loadChunks([position])
+    try:
+        await entered.next()
+        await session.reconnect()
+        expect(session.state.requiresResync()).toBe(false)
+        const target = {x: 0, y: 30, z: 0}
+        const original = session.state.block(target)
+        assert original != null else "Expected synchronized terrain"
+        const replacement = replacementState(session, original)
+        // 通过真实后端广播；旧 sync 尚未结束，新代际必须即时交付。
+        await harness.runtime.editBlocks(harness.world.id, [{position: target, blockStateRuntimeId: replacement}])
+        expect(session.state.block(target)).toBe(replacement)
+        release.trySend(true)
+        await expect(pending).toReject()
+        expect(session.state.trackedPositions()).toEqual([position])
+        expect(session.state.block(target)).toBe(replacement)
+        expect(session.state.generation()).toBe(2)
+    finally:
+        release.trySend(true)
+        await session.close()
+        await harness.runtime.close()
+        entered.close()
+        release.close()
+
+test "retired loads cannot report synchronized terrain while reconnect is still opening":
+    const harness = await backendHarness()
+    const syncing = channel(Signal, capacity=1)
+    const connecting = channel(Signal, capacity=1)
+    const releaseSync = channel(Signal, capacity=1)
+    const releaseConnect = channel(Signal, capacity=1)
+    let generation = 0
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        generation += 1
+        const current = generation
+        if current > 1:
+            connecting.trySend(true)
+            await releaseConnect.next()
+        const opened = await harness.backend.connect(worldId, listener)
+
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ChunksSyncedEvent:
+            const response = cancellation == null ? await opened.syncChunks(requestId, positions) : await opened.syncChunks(requestId, positions, cancellation)
+            if current == 1:
+                syncing.trySend(true)
+                await releaseSync.next()
+            return response
+
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id)
+    const loading = session.loadChunks([{x: 0, y: 1, z: 0}])
+    try:
+        await syncing.next()
+        const reconnecting = session.reconnect()
+        await connecting.next()
+        releaseSync.trySend(true)
+        await expect(loading).toReject()
+        expect(session.state.trackedPositions()).toEqual([])
+        releaseConnect.trySend(true)
+        await reconnecting
+        expect(session.state.requiresResync()).toBe(false)
+    finally:
+        releaseSync.trySend(true)
+        releaseConnect.trySend(true)
+        await session.close()
+        await harness.runtime.close()
+        syncing.close()
+        connecting.close()
+        releaseSync.close()
+        releaseConnect.close()
+
+test "ecology waits through reconnect without failing the caller's refresh loop":
+    const harness = await backendHarness()
+    const entered = channel(Signal, capacity=1)
+    const release = channel(Signal, capacity=1)
+    let generation = 0
+    let elapsed = 0
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        generation += 1
+        if generation > 1:
+            entered.trySend(true)
+            await release.next()
+        return await harness.backend.connect(worldId, listener)
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id, () => elapsed)
+    try:
+        await session.loadChunks([{x: 0, y: 1, z: 0}])
+        elapsed = 30_000
+        const reconnecting = session.reconnect()
+        await entered.next()
+        expect(await session.refreshEcology()).toBe(false)
+        release.trySend(true)
+        await reconnecting
+        elapsed = 60_000
+        expect(await session.refreshEcology()).toBe(true)
+    finally:
+        release.trySend(true)
+        await session.close()
+        await harness.runtime.close()
+        entered.close()
+        release.close()
+
+test "terrain arriving after session close cannot introduce cold chunks":
+    const harness = await backendHarness()
+    const entered = channel(Signal, capacity=1)
+    const release = channel(Signal, capacity=1)
+
+    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ClientTerrainBatchSnapshot:
+        const terrain = cancellation == null ? await harness.backend.terrainChunks(worldId, positions) : await harness.backend.terrainChunks(worldId, positions, cancellation)
+        entered.trySend(true)
+        await release.next()
+        return terrain
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {terrainChunks}), harness.world.id)
+    const loading = session.loadChunks([{x: 0, y: 1, z: 0}])
+    try:
+        await entered.next()
+        await session.close()
+        release.trySend(true)
+        await expect(loading).toReject()
+        expect(session.state.trackedPositions()).toEqual([])
+    finally:
+        release.trySend(true)
+        await session.close()
+        await harness.runtime.close()
+        entered.close()
+        release.close()
 
 test "cancelled Chunk loads leave no cold-only state behind":
     const harness = await backendHarness()
@@ -224,5 +498,224 @@ test "cancelled Chunk loads leave no cold-only state behind":
         await expect(owner.result()).toReject()
         expect(session.state.trackedPositions().size).toBe(0)
     finally:
+        await session.close()
+        await harness.runtime.close()
+
+test "a failed overlapping Chunk load cannot roll back another successful owner":
+    const harness = await backendHarness()
+    const original = harness.backend
+    let successfulTerrainEntered = false
+    let cancellableSyncEntered = false
+
+    async def terrainChunks(
+        worldId: string,
+        positions: readonly List<readonly ChunkPosition>,
+        cancellation: Cancellation? = null,
+    ) -> readonly ClientTerrainBatchSnapshot:
+        if cancellation == null:
+            successfulTerrainEntered = true
+            while not cancellableSyncEntered: await Promise.sleep(0ms)
+            return await original.terrainChunks(worldId, positions)
+
+        while not successfulTerrainEntered: await Promise.sleep(0ms)
+        return await original.terrainChunks(worldId, positions, cancellation)
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await original.connect(worldId, listener)
+
+        async def syncChunks(
+            requestId: string,
+            positions: readonly List<readonly ChunkPosition>,
+            cancellation: Cancellation? = null,
+        ) -> readonly ChunksSyncedEvent:
+            if cancellation != null:
+                cancellableSyncEntered = true
+                while cancellableSyncEntered:
+                    await Promise.sleep(0ms)
+                    await cancellation.checkpoint()
+            return await opened.syncChunks(requestId, positions)
+
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    const backend = WorldBackend.from(original, {terrainChunks, connect})
+    const session = await openClientWorld(backend, harness.world.id)
+    const position = {x: 0, y: 1, z: 0}
+
+    async def cancellableLoad(cancellation: Cancellation): await session.loadChunks([position], cancellation)
+
+    try:
+        const successful = session.loadChunks([position])
+        const cancelled = task(cancellableLoad)
+        const loaded = await successful
+        expect(loaded.size).toBe(1)
+        expect(session.state.chunk(position) != null).toBe(true)
+
+        await cancelled.cancel("The overlapping view moved away")
+        await expect(cancelled.result()).toReject()
+        expect(session.state.chunk(position) != null).toBe(true)
+        expect(session.state.trackedPositions().size).toBe(1)
+    finally:
+        await session.close()
+        await harness.runtime.close()
+
+test "Chunk synchronization rejects a missing requested position before changing state":
+    def omitLast(event: readonly ChunksSyncedEvent) -> readonly ChunksSyncedEvent:
+        const chunks = event.chunks.slice(0, 1).map(delta => RealtimeChunkDelta.from(delta))
+        return ChunksSyncedEvent.from(event, {chunks})
+
+    await expectRejectedSyncProjection(omitLast)
+
+test "Chunk synchronization rejects reordered positions before changing state":
+    def reorder(event: readonly ChunksSyncedEvent) -> readonly ChunksSyncedEvent:
+        const chunks = [RealtimeChunkDelta.from(event.chunks[1]), RealtimeChunkDelta.from(event.chunks[0])]
+        return ChunksSyncedEvent.from(event, {chunks})
+
+    await expectRejectedSyncProjection(reorder)
+
+test "Chunk synchronization rejects an unrequested position before changing state":
+    def replacePosition(event: readonly ChunksSyncedEvent) -> readonly ChunksSyncedEvent:
+        const unrequested = RealtimeChunkDelta.from(event.chunks[1], {position: {x: 9, y: 1, z: 0}})
+        const chunks = [RealtimeChunkDelta.from(event.chunks[0]), unrequested]
+        return ChunksSyncedEvent.from(event, {chunks})
+
+    await expectRejectedSyncProjection(replacePosition)
+
+test "Chunk synchronization rejects a mismatched request id before changing state":
+    def replaceRequestId(event: readonly ChunksSyncedEvent) -> readonly ChunksSyncedEvent:
+        const chunks = event.chunks.map(delta => RealtimeChunkDelta.from(delta))
+        return ChunksSyncedEvent.from(event, {requestId: f"{event.requestId}-other", chunks})
+
+    await expectRejectedSyncProjection(replaceRequestId)
+
+test "ecology refresh bounds each pass and preserves queue fairness across epochs":
+    const harness = await backendHarness()
+    const requests: List<readonly ChunkPosition> = []
+    let elapsed = 0
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await harness.backend.connect(worldId, listener)
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ChunksSyncedEvent:
+            for position in positions: requests.append(position)
+            return cancellation == null ? await opened.syncChunks(requestId, positions) : await opened.syncChunks(requestId, positions, cancellation)
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id, () => elapsed)
+    const positions = range(6).map(y => {x: 0, y, z: 0})
+    try:
+        await session.loadChunks(positions)
+        requests.clear()
+        expect(await session.refreshEcology()).toBe(false)
+        elapsed = 30_000
+        expect(await session.refreshEcology()).toBe(true)
+        expect(requests.map(position => position.y)).toEqual([0, 1, 2, 3])
+        elapsed = 60_000
+        requests.clear()
+        expect(await session.refreshEcology()).toBe(true)
+        expect(requests.map(position => position.y)).toEqual([4, 5, 0, 1])
+    finally:
+        await session.close()
+        await harness.runtime.close()
+
+test "session ecology cancellation reaches pending transport without closing the connection":
+    const harness = await backendHarness()
+    let elapsed = 0
+    let blockEcology = false
+    let requestEntered = false
+    let requestFinished = false
+    let refreshFinished = false
+    let connectionCloses = 0
+    let synchronizationCalls = 0
+    let ownerCancellation: Cancellation? = null
+    let requestCancellation: Cancellation? = null
+
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await harness.backend.connect(worldId, listener)
+
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ChunksSyncedEvent:
+            synchronizationCalls += 1
+            if blockEcology:
+                requestEntered = true
+                requestCancellation = cancellation
+                assert cancellation != null else "Session ecology must forward its owner's cancellation"
+                try:
+                    while blockEcology:
+                        await cancellation.checkpoint()
+                        await Promise.sleep(0ms)
+                finally: requestFinished = true
+            return cancellation == null ? await opened.syncChunks(requestId, positions) : await opened.syncChunks(requestId, positions, cancellation)
+
+        async def close():
+            connectionCloses += 1
+            await opened.close()
+
+        return WorldBackendConnection.from(opened, {syncChunks, close})
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id, () => elapsed)
+    const position = {x: 0, y: 1, z: 0}
+
+    async def refresh(cancellation: Cancellation):
+        ownerCancellation = cancellation
+        try: await session.refreshEcology(cancellation)
+        finally: refreshFinished = true
+
+    try:
+        await session.loadChunks([position])
+        synchronizationCalls = 0
+        elapsed = 30_000
+        blockEcology = true
+        const owner = task(refresh)
+        try:
+            while not requestEntered and not refreshFinished: await Promise.sleep(0ms)
+            expect(requestEntered).toBe(true)
+            expect(requestCancellation).toBe(ownerCancellation)
+            expect(connectionCloses).toBe(0)
+            await owner.cancel("World renderer is closing")
+            await expect(owner.result()).toReject()
+            expect(requestFinished).toBe(true)
+            expect(refreshFinished).toBe(true)
+            expect(connectionCloses).toBe(0)
+            expect(synchronizationCalls).toBe(1)
+            expect(session.state.chunk(position) != null).toBe(true)
+
+            blockEcology = false
+            expect(await session.refreshEcology()).toBe(true)
+            expect(synchronizationCalls).toBe(2)
+            expect(await session.refreshEcology()).toBe(false)
+        finally: await owner.cancel("Ecology cancellation test finished")
+    finally:
+        await session.close()
+        await harness.runtime.close()
+
+test "ecology refresh coalesces concurrent calls and cannot revive unloaded chunks after close":
+    const harness = await backendHarness()
+    let elapsed = 0
+    let hold = false
+    let entered = false
+    async def connect(worldId: string, listener: (event: readonly WorldBlocksChangedEvent) -> null) -> WorldBackendConnection:
+        const opened = await harness.backend.connect(worldId, listener)
+        async def syncChunks(requestId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ChunksSyncedEvent:
+            if hold:
+                entered = true
+                while hold: await Promise.sleep(0ms)
+            return cancellation == null ? await opened.syncChunks(requestId, positions) : await opened.syncChunks(requestId, positions, cancellation)
+        return WorldBackendConnection.from(opened, {syncChunks})
+
+    const session = await openClientWorld(WorldBackend.from(harness.backend, {connect}), harness.world.id, () => elapsed)
+    const position = {x: 0, y: 1, z: 0}
+    try:
+        await session.loadChunks([position])
+        elapsed = 30_000
+        hold = true
+        const pending = session.refreshEcology()
+        while not entered: await Promise.sleep(0ms)
+        expect(await session.refreshEcology()).toBe(false)
+        session.unloadChunks([position])
+        await session.close()
+        hold = false
+        await pending
+        expect(session.state.chunk(position)).toBe(null)
+        expect(session.state.trackedPositions()).toEqual([])
+        expect(await session.refreshEcology()).toBe(false)
+    finally:
+        hold = false
         await session.close()
         await harness.runtime.close()

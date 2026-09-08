@@ -1,0 +1,198 @@
+import {DatabaseCommand, DatabaseQuery, all, command, execute, query, trustedSqlTemplate} from "@velarscript-labs/database"
+import {selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlEqual, sqlLeftJoin, sqlNamedField, sqlTable, sqlTupleIn} from "@velarscript-labs/sql"
+import {SqliteConnection, SqliteTransaction} from "@velarscript-labs/sqlite"
+import {requireBlockStateRuntimeId} from "@openvoxel/blocks"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "@openvoxel/world-runtime"
+
+type ChunkDeltaRow:
+    chunkX: number
+    chunkY: number
+    chunkZ: number
+    revision: number
+    localX: number?
+    localY: number?
+    localZ: number?
+    blockStateRuntimeId: number?
+
+type ChunkStateRow:
+    chunkX: number
+    chunkY: number
+    chunkZ: number
+    revision: number
+
+/// SQL 行聚合阶段需要逐项 append；完成后再一次性投影成对外只读 StoredChunkDelta。
+type MutableStoredChunkDelta:
+    position: ChunkPosition
+    revision: number
+    overrides: List<BlockOverride>
+
+def findChunkStatesOperation(worldId: string, coordinates: List<List<unknown>>) -> DatabaseQuery<ChunkStateRow>:
+    return query(
+        trustedSqlTemplate([
+            `SELECT chunk_x AS "chunkX", chunk_y AS "chunkY", chunk_z AS "chunkZ", revision FROM chunk_states WHERE world_id = `,
+            " AND (chunk_x, chunk_y, chunk_z) IN (SELECT CAST(json_extract(value, '$[0]') AS INTEGER), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER) FROM json_each(",
+            "))",
+        ], [worldId, Json.stableStringify(coordinates)]),
+        ChunkStateRow,
+        maximumRows=coordinates.size,
+    )
+
+def saveChunkStatesOperation(rows: List<List<unknown>>) -> DatabaseCommand:
+    return command(trustedSqlTemplate([
+        "INSERT INTO chunk_states (world_id, chunk_x, chunk_y, chunk_z, revision) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER) FROM json_each(",
+        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z) DO UPDATE SET revision = excluded.revision",
+    ], [Json.stableStringify(rows)]), minimumAffected = rows.size, maximumAffected = rows.size)
+
+def removeBlockOverridesOperation(worldId: string, coordinates: List<List<unknown>>) -> DatabaseCommand:
+    return command(trustedSqlTemplate([
+        "DELETE FROM block_overrides WHERE world_id = ",
+        " AND (chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) IN (SELECT CAST(json_extract(value, '$[0]') AS INTEGER), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER), CAST(json_extract(value, '$[5]') AS INTEGER) FROM json_each(",
+        "))",
+    ], [worldId, Json.stableStringify(coordinates)]), maximumAffected = coordinates.size)
+
+def saveBlockOverridesOperation(rows: List<List<unknown>>) -> DatabaseCommand:
+    return command(trustedSqlTemplate([
+        "INSERT INTO block_overrides (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z, block_state_runtime_id) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER), CAST(json_extract(value, '$[5]') AS INTEGER), CAST(json_extract(value, '$[6]') AS INTEGER), CAST(json_extract(value, '$[7]') AS INTEGER) FROM json_each(",
+        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) DO UPDATE SET block_state_runtime_id = excluded.block_state_runtime_id",
+    ], [Json.stableStringify(rows)]), minimumAffected = rows.size, maximumAffected = rows.size)
+
+/// 查询聚合和乐观 revision 提交共同属于玩家增量持久化。
+export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
+    const databaseExecutor = database.executor()
+
+    async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<StoredChunkDelta>:
+        if positions.size == 0: return []
+
+        const coordinateRows: List<List<unknown>> = []
+        for position in positions:
+            const coordinate: List<unknown> = [position.x, position.y, position.z]
+            coordinateRows.append(coordinate)
+        const stateTable = sqlTable("chunk_states", alias="state")
+        const overrideTable = sqlTable("block_overrides", alias="override")
+        const findChunkDeltas = selectQuery(
+            stateTable,
+            [
+                sqlNamedField("chunk_x", alias="chunkX", qualifier="state"),
+                sqlNamedField("chunk_y", alias="chunkY", qualifier="state"),
+                sqlNamedField("chunk_z", alias="chunkZ", qualifier="state"),
+                sqlNamedField("revision", qualifier="state"),
+                sqlNamedField("local_x", alias="localX", qualifier="override"),
+                sqlNamedField("local_y", alias="localY", qualifier="override"),
+                sqlNamedField("local_z", alias="localZ", qualifier="override"),
+                sqlNamedField("block_state_runtime_id", alias="blockStateRuntimeId", qualifier="override"),
+            ],
+            ChunkDeltaRow,
+            joins=[sqlLeftJoin(overrideTable, sqlAnd([
+                sqlEqual(sqlColumn("world_id", qualifier="override"), sqlColumn("world_id", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_x", qualifier="override"), sqlColumn("chunk_x", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_y", qualifier="override"), sqlColumn("chunk_y", qualifier="state")),
+                sqlEqual(sqlColumn("chunk_z", qualifier="override"), sqlColumn("chunk_z", qualifier="state")),
+            ]))],
+            where=sqlAnd([
+                sqlColumnEqual("world_id", worldId, qualifier="state"),
+                sqlTupleIn([
+                    sqlColumn("chunk_x", qualifier="state"),
+                    sqlColumn("chunk_y", qualifier="state"),
+                    sqlColumn("chunk_z", qualifier="state"),
+                ], coordinateRows),
+            ]),
+            orderBy=[
+                sqlAscending(sqlColumn("chunk_x", qualifier="state")),
+                sqlAscending(sqlColumn("chunk_y", qualifier="state")),
+                sqlAscending(sqlColumn("chunk_z", qualifier="state")),
+                sqlAscending(sqlColumn("local_y", qualifier="override")),
+                sqlAscending(sqlColumn("local_z", qualifier="override")),
+                sqlAscending(sqlColumn("local_x", qualifier="override")),
+            ],
+            maximumRows=1000000,
+        )
+        const rows = await all(databaseExecutor, findChunkDeltas)
+
+        const deltas: List<MutableStoredChunkDelta> = []
+        const indices: Map<string, number> = Map()
+        for row in rows:
+            const position: ChunkPosition = {x: row.chunkX, y: row.chunkY, z: row.chunkZ}
+            const key = chunkKey(position)
+            const existingIndex = indices.get(key)
+            let deltaIndex = 0
+            if existingIndex == null:
+                const overrides: List<BlockOverride> = []
+                deltas.append({position, revision: row.revision, overrides})
+                deltaIndex = deltas.size - 1
+                indices.set(key, deltaIndex)
+            else: deltaIndex = existingIndex
+            if row.localX != null and row.localY != null and row.localZ != null and row.blockStateRuntimeId != null:
+                requireBlockStateRuntimeId(row.blockStateRuntimeId)
+                deltas[deltaIndex].overrides.append({
+                    position: {x: row.localX, y: row.localY, z: row.localZ},
+                    blockStateRuntimeId: row.blockStateRuntimeId,
+                })
+        return deltas.map(delta => StoredChunkDelta.from(delta))
+
+    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+        if commits.size == 0: return
+        const chunkCoordinates: List<List<unknown>> = []
+        const chunkStateRows: List<List<unknown>> = []
+        const removedOverrideCoordinates: List<List<unknown>> = []
+        const savedOverrideRows: List<List<unknown>> = []
+        const seenChunks: Set<string> = Set()
+        for commit in commits:
+            assert commit.expectedRevision.isInteger() and commit.expectedRevision >= 0 else "Expected Chunk revision must be a non-negative integer"
+            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
+            const key = chunkKey(commit.position)
+            assert key not in seenChunks else f"SQLite Chunk batch contains duplicate position {key}"
+            seenChunks.add(key)
+            chunkCoordinates.append([commit.position.x, commit.position.y, commit.position.z])
+            chunkStateRows.append([worldId, commit.position.x, commit.position.y, commit.position.z, commit.revision])
+            const seenLocals: Set<string> = Set()
+            for write in commit.writes:
+                const localKey = f"{write.position.x}:{write.position.y}:{write.position.z}"
+                assert localKey not in seenLocals else f"SQLite Chunk commit contains duplicate local position {localKey}"
+                seenLocals.add(localKey)
+                if write.blockStateRuntimeId == null:
+                    removedOverrideCoordinates.append([
+                        commit.position.x,
+                        commit.position.y,
+                        commit.position.z,
+                        write.position.x,
+                        write.position.y,
+                        write.position.z,
+                    ])
+                else:
+                    requireBlockStateRuntimeId(write.blockStateRuntimeId)
+                    savedOverrideRows.append([
+                        worldId,
+                        commit.position.x,
+                        commit.position.y,
+                        commit.position.z,
+                        write.position.x,
+                        write.position.y,
+                        write.position.z,
+                        write.blockStateRuntimeId,
+                    ])
+
+        async def transactionOperation(transaction: SqliteTransaction):
+            const executor = transaction.executor()
+            // 坐标和值作为一个 JSON 参数交给 SQLite 的 json_each 展开。这样每组
+            // 操作都保持固定 SQL 形状，不受 999 个绑定参数限制，也不需要逐项执行。
+            const revisions: Map<string, number> = Map()
+            const storedStates = await all(executor, findChunkStatesOperation(worldId, chunkCoordinates))
+            for state in storedStates:
+                const key = f"{state.chunkX}:{state.chunkY}:{state.chunkZ}"
+                assert revisions.get(key) == null else f"SQLite returned duplicate Chunk state {key}"
+                revisions.set(key, state.revision)
+            for commit in commits:
+                const key = chunkKey(commit.position)
+                const currentRevision = revisions.get(key) ?? 0
+                assert currentRevision == commit.expectedRevision else f"Chunk revision conflict at {key}: expected {commit.expectedRevision}, stored {currentRevision}"
+            // 先建立或推进 Chunk 状态，再写覆盖，满足 block_overrides 外键。
+            await execute(executor, saveChunkStatesOperation(chunkStateRows))
+            if removedOverrideCoordinates.size > 0:
+                await execute(executor, removeBlockOverridesOperation(worldId, removedOverrideCoordinates))
+            if savedOverrideRows.size > 0: await execute(executor, saveBlockOverridesOperation(savedOverrideRows))
+            return null
+
+        await database.transaction(transactionOperation)
+
+    return {findChunks, commitChunks}

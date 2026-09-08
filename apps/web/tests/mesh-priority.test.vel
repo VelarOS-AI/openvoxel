@@ -1,0 +1,107 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {PortalVisibilitySummary} from "../src/rendering/portal-visibility.vel"
+import {chunkNeedsMesh, demandedChunkMeshKeys, priorityPendingChunk} from "../src/rendering/mesh-priority.vel"
+
+def view(center: readonly ChunkPosition = {x: 0, y: 0, z: 0}): return {center, forwardX: 0, forwardY: 0, forwardZ: -1}
+
+test "pending Chunk priority follows the latest view instead of insertion history":
+    const queued: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 9, y: 1, z: 8},
+        {x: 10, y: 0, z: 10},
+        {x: 8, y: 0, z: 8},
+    ]
+
+    expect(priorityPendingChunk(queued, Set(), view({x: 10, y: 0, z: 9}))).toEqual({x: 10, y: 0, z: 10})
+    expect(priorityPendingChunk([], Set(), view())).toBe(null)
+
+test "safety neighbors precede the expanded forward view and offscreen residents":
+    const nearBehind: ChunkPosition = {x: 0, y: 0, z: 2}
+    const forward: ChunkPosition = {x: 0, y: 0, z: -4}
+    const farBehind: ChunkPosition = {x: 0, y: 0, z: 4}
+    expect(priorityPendingChunk([farBehind, forward, nearBehind], Set(), view())).toEqual(nearBehind)
+    expect(priorityPendingChunk([farBehind, forward], Set(), view())).toEqual(forward)
+
+test "vertical view direction prioritizes the section the player is looking toward":
+    const up: ChunkPosition = {x: 0, y: 4, z: 0}
+    const down: ChunkPosition = {x: 0, y: -4, z: 0}
+    expect(priorityPendingChunk([down, up], Set(), {
+        center: {x: 0, y: 0, z: 0},
+        forwardX: 0,
+        forwardY: 1,
+        forwardZ: 0,
+    })).toEqual(up)
+
+test "mesh demand keeps the safety sphere and conservatively expands the forward view":
+    expect(chunkNeedsMesh({x: 0, y: 0, z: 2}, view())).toBe(true)
+    expect(chunkNeedsMesh({x: 0, y: 0, z: -5}, view())).toBe(true)
+    expect(chunkNeedsMesh({x: 0, y: 0, z: 5}, view())).toBe(false)
+    expect(chunkNeedsMesh({x: 0, y: 4, z: 0}, view())).toBe(false)
+    expect(chunkNeedsMesh({x: 0, y: 4, z: 0}, {
+        center: {x: 0, y: 0, z: 0},
+        forwardX: 0,
+        forwardY: 1,
+        forwardZ: 0,
+    })).toBe(true)
+
+test "active Chunk keys cannot start a second concurrent build":
+    const active = {x: 10, y: 0, z: 10}
+    const next = {x: 8, y: 0, z: 8}
+    const activeKeys: Set<string> = Set([chunkKey(active)])
+
+    expect(priorityPendingChunk([active, next], activeKeys, view({x: 10, y: 0, z: 9}))).toEqual(next)
+    expect(priorityPendingChunk([active], activeKeys, view({x: 10, y: 0, z: 9}))).toBe(null)
+
+test "mesh demand combines conservative portal visibility with the safety sphere":
+    const positions: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 1, y: 0, z: 0},
+        {x: 2, y: 0, z: 0},
+        {x: 3, y: 0, z: 0},
+        {x: 0, y: 0, z: 2},
+    ]
+    const open: readonly PortalVisibilitySummary = {
+        empty: true,
+        fullyOccluding: false,
+        openFaces: Math.pow(2, 6) - 1,
+        connectedFaces: Math.pow(2, 36) - 1,
+    }
+    const solid: readonly PortalVisibilitySummary = {
+        empty: false,
+        fullyOccluding: true,
+        openFaces: 0,
+        connectedFaces: 0,
+    }
+    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+        ["0:0:0", solid],
+        ["1:0:0", open],
+        ["2:0:0", solid],
+        ["3:0:0", open],
+        ["0:0:2", solid],
+    ])
+    const demanded = demandedChunkMeshKeys(positions, summaries, {
+        center: {x: 0, y: 0, z: 0},
+        forwardX: 1,
+        forwardY: 0,
+        forwardZ: 0,
+    })
+
+    // The solid center cannot propagate, but the whole radius-two safety
+    // sphere remains ready. The distant section stays hidden.
+    expect(demanded).toEqual(Set(["0:0:0", "1:0:0", "2:0:0", "0:0:2"]))
+
+test "portal traversal cannot revive data retained behind the current view":
+    const positions: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 0, y: 0, z: -1},
+        {x: 0, y: 0, z: -2},
+        {x: 0, y: 0, z: -3},
+        {x: 0, y: 0, z: 3},
+    ]
+    const demanded = demandedChunkMeshKeys(positions, Map(), view())
+
+    expect("0:0:0" in demanded).toBe(true)
+    expect("0:0:-1" in demanded).toBe(true)
+    expect("0:0:-3" in demanded).toBe(true)
+    expect("0:0:3" in demanded).toBe(false)

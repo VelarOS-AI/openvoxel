@@ -1,4 +1,10 @@
+import {WorldGameMode} from "@openvoxel/world"
 import {WorldPreset} from "./saved-world.vel"
+
+export def worldGameModeName(mode: WorldGameMode) -> string:
+    match mode:
+        case WorldGameMode.survival: return "Survival"
+        case WorldGameMode.creative: return "Creative"
 
 export def worldCover(preset: WorldPreset) -> string:
     match preset:

@@ -1,5 +1,5 @@
 import {RealtimeBlockChange, RealtimeChunkDelta} from "@openvoxel/protocol"
-import {BlockChangeBatch, ChunkDelta} from "@openvoxel/world-runtime"
+import {BlockChangeBatch, WorldChunkSnapshot} from "@openvoxel/world-runtime"
 import {Bytes} from "velar/binary"
 import {encode} from "@velarscript-labs/msgpack"
 
@@ -20,5 +20,5 @@ export def encodeWorldBlockChanges(batch: readonly BlockChangeBatch) -> Bytes:
     })
 
 /// 把持久化增量投影成纯数据消息，保留请求顺序和每个 Chunk 的最终 revision。
-export def realtimeChunkDeltas(deltas: readonly List<readonly ChunkDelta>) -> List<RealtimeChunkDelta>:
+export def realtimeChunkDeltas(deltas: readonly List<readonly WorldChunkSnapshot>) -> List<RealtimeChunkDelta>:
     return deltas.map(delta => RealtimeChunkDelta.from(delta))

@@ -1,0 +1,40 @@
+import {BlockPropertyValue, BlockShape, BlockShapeBox, BlockShapeKind, BlockStateProperty, ResolvedBlockShapeBox} from "../definition/block.vel"
+
+const fullCubeShapeBoxes: readonly List<readonly ResolvedBlockShapeBox> = [{
+    minimumX: 0,
+    minimumY: 0,
+    minimumZ: 0,
+    maximumX: 1,
+    maximumY: 1,
+    maximumZ: 1,
+}]
+
+def propertyValue(properties: readonly List<readonly BlockStateProperty>, name: string) -> BlockPropertyValue?:
+    return properties.find(property => property.name == name)?.value
+
+def resolveShapeBox(
+    declared: readonly BlockShapeBox,
+    properties: readonly List<readonly BlockStateProperty>,
+) -> readonly ResolvedBlockShapeBox:
+    let maximumY = declared.maximumY
+    const propertyName = declared.maximumYProperty
+    if propertyName != null:
+        const value = propertyValue(properties, propertyName)
+        const scale = declared.maximumYScale
+        assert (value is number) and scale != null else f"Custom block shape requires numeric property {propertyName}"
+        maximumY = Math.clamp(value * scale, declared.minimumY, declared.maximumY)
+    return ResolvedBlockShapeBox.from(declared, {maximumY})
+
+/// 把内容声明的逻辑形状解析为当前方块状态对应的局部 AABB 集合。该语义属于方块
+/// 内容契约，服务端物理和各类客户端适配器都不需要按内置方块身份写分支。
+export def resolveBlockShapeBoxes(
+    shape: readonly BlockShape,
+    properties: readonly List<readonly BlockStateProperty>,
+) -> readonly List<readonly ResolvedBlockShapeBox>:
+    match shape.kind:
+        case BlockShapeKind.empty: return []
+        case BlockShapeKind.fullCube: return fullCubeShapeBoxes
+        case BlockShapeKind.custom:
+            const boxes = shape.boxes
+            if boxes == null: return []
+            return boxes.map(declared => resolveShapeBox(declared, properties))

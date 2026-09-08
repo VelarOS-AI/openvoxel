@@ -1,0 +1,14 @@
+import {LocalPosition} from "@openvoxel/world"
+
+export enum SeasonalSurfaceKind:
+    snow
+    water
+
+/// 生成器只提供自然表面的冷暖替换候选，不读取时钟，也不持有玩家修改。
+export type SeasonalSurfaceCandidate:
+    readonly position: readonly LocalPosition
+    readonly kind: SeasonalSurfaceKind
+    readonly baselineBlockStateRuntimeId: number
+    readonly warmBlockStateRuntimeId: number
+    readonly coldBlockStateRuntimeId: number
+    readonly exposed: bool

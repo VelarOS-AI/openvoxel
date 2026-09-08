@@ -1,0 +1,103 @@
+import {WorldGameMode, WorldManifest} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {AsyncCloseable} from "../src/lifecycle/async-page-lifetime.vel"
+import {WorldExperienceSession, worldExperience} from "../src/worlds/world-experience.vel"
+
+const manifest: WorldManifest = {
+    id: "experience", name: "Experience", seed: "experience", mode: WorldGameMode.creative,
+    worldTimeOriginMilliseconds: 0, formatVersion: 5, chunkEdge: 16,
+    generator: "test", generatorHash: "test", spawn: {x: 0, y: 64, z: 0},
+    content: {contentHash: "test", packs: []},
+    blockRegistry: {formatVersion: 1, nextModRuntimeId: 65536, states: []},
+}
+
+test "closing during session acquisition releases its late result without preparing terrain":
+    const calls: List<string> = []
+    let release = false
+    async def prepare(): calls.append("prepare")
+    async def render() -> AsyncCloseable:
+        calls.append("render")
+        return {close: async () => calls.append("renderer")}
+    async def open() -> WorldExperienceSession:
+        while not release: await Promise.sleep(0ms)
+        return {manifest, prepare, render, close: async () => calls.append("session")}
+    const experience = worldExperience(open, async () => calls.append("backend"))
+    const entering = experience.enter()
+    await experience.close()
+    release = true
+    expect(await entering).toBe(null)
+    expect(calls).toEqual(["backend", "session"])
+    await experience.close()
+    expect(calls.size).toBe(2)
+
+test "closing during initial Chunk loading prevents render acquisition":
+    const calls: List<string> = []
+    let preparing = false
+    let release = false
+    async def prepare():
+        preparing = true
+        while not release: await Promise.sleep(0ms)
+    async def render() -> AsyncCloseable:
+        calls.append("render")
+        return {close: async () => calls.append("renderer")}
+    async def open() -> WorldExperienceSession:
+        return {manifest, prepare, render, close: async () => calls.append("session")}
+    const experience = worldExperience(open, async () => calls.append("backend"))
+    const entering = experience.enter()
+    while not preparing: await Promise.sleep(0ms)
+    await experience.close()
+    release = true
+    expect(await entering).toBe(null)
+    expect(calls).toEqual(["session", "backend"])
+
+test "a renderer that finishes opening after page close is still released":
+    const calls: List<string> = []
+    let rendering = false
+    let release = false
+    async def prepare(): pass
+    async def render() -> AsyncCloseable:
+        rendering = true
+        while not release: await Promise.sleep(0ms)
+        return {close: async () => calls.append("renderer")}
+    async def open() -> WorldExperienceSession:
+        return {manifest, prepare, render, close: async () => calls.append("session")}
+    const experience = worldExperience(open, async () => calls.append("backend"))
+    const entering = experience.enter()
+    while not rendering: await Promise.sleep(0ms)
+    await experience.close()
+    release = true
+    expect(await entering).toBe(null)
+    expect(calls).toEqual(["session", "backend", "renderer"])
+
+test "failed render initialization closes the session and backend while preserving its error":
+    const calls: List<string> = []
+    async def prepare(): pass
+    async def render() -> AsyncCloseable: throw Error("render initialization failed")
+    async def open() -> WorldExperienceSession:
+        return {manifest, prepare, render, close: async () => calls.append("session")}
+    const experience = worldExperience(open, async () => calls.append("backend"))
+    let message = ""
+    try: await experience.enter()
+    catch error: message = error.message
+    expect(message).toBe("render initialization failed")
+    expect(calls).toEqual(["session", "backend"])
+
+test "world experience coalesces entry and closes every owner once in reverse order":
+    const calls: List<string> = []
+    async def prepare(): calls.append("prepare")
+    async def closeRenderer():
+        calls.append("renderer")
+        throw Error("a failed close must not leak the session")
+    async def render() -> AsyncCloseable:
+        calls.append("render")
+        return {close: closeRenderer}
+    async def open() -> WorldExperienceSession:
+        calls.append("open")
+        return {manifest, prepare, render, close: async () => calls.append("session")}
+    const experience = worldExperience(open, async () => calls.append("backend"))
+    const first = experience.enter()
+    const second = experience.enter()
+    expect(await first).toEqual(manifest)
+    expect(await second).toEqual(manifest)
+    await Promise.all([experience.close(), experience.close()])
+    expect(calls).toEqual(["open", "prepare", "render", "renderer", "session", "backend"])

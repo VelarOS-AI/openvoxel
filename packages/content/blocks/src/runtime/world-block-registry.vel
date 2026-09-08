@@ -100,7 +100,7 @@ def registerCatalogContent(
     statesByKey: Map<string, readonly BlockStateDefinition>,
     blocksByKey: Map<string, readonly BlockDefinition>,
 ):
-    assert catalog.schemaVersion == 3 else "Unsupported contributed block catalog schema version"
+    assert catalog.schemaVersion == 4 else "Unsupported contributed block catalog schema version"
     for state in catalog.states:
         if owner != null:
             assert belongsToOwner(state.blockKey, owner) else f"Block state {state.stateKey} is outside contribution namespace {owner}"

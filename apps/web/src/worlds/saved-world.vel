@@ -1,7 +1,4 @@
-export enum SavedWorldMode:
-    survival = "Survival"
-    creative = "Creative"
-    existing = "Existing world"
+import {WorldGameMode} from "@openvoxel/world"
 
 export enum WorldPreset:
     meadow = "meadow"
@@ -13,7 +10,7 @@ export type SavedWorld:
     readonly id: string
     readonly name: string
     readonly seed: string
-    readonly mode: SavedWorldMode
+    readonly mode: WorldGameMode
     readonly preset: WorldPreset
     readonly lastPlayed: string
 

@@ -1,0 +1,53 @@
+import {ChunkPosition, chunkKey, worldEnvironmentAt} from "@openvoxel/world"
+import {uint16Buffer} from "velar/binary"
+import {Cancellation, task} from "velar/task"
+import {expect} from "velar/test"
+import {sessionEnvironment} from "../src/session-environment.vel"
+import {clientWorldState} from "../src/world-state.vel"
+
+test "ecology forwards its owner's cancellation into pending synchronization and retains retry work":
+    const position: ChunkPosition = {x: 0, y: 4, z: 0}
+    const state = clientWorldState("ecology-cancellation", 16)
+    state.rememberTerrain({
+        worldId: "ecology-cancellation",
+        chunks: [{position, edge: 16, palette: [0], indices: uint16Buffer(4096)}],
+    })
+    const batches: List<List<string>> = []
+    let now = 0
+    let requestEntered = false
+    let requestFinished = false
+    let requestCancellation: Cancellation? = null
+    let ownerCancellation: Cancellation? = null
+
+    async def synchronize(positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null):
+        batches.append(positions.map(value => chunkKey(value)))
+        if cancellation == null: return
+        requestCancellation = cancellation
+        requestEntered = true
+        try:
+            while requestEntered:
+                await cancellation.checkpoint()
+                await Promise.sleep(0ms)
+        finally: requestFinished = true
+
+    const ecology = sessionEnvironment("ecology-owner", state, () => now, synchronize, () => true)
+    ecology.install(worldEnvironmentAt("ecology-owner", 300000, {x: 0, y: 64, z: 0}))
+    now = 30001
+
+    async def refresh(cancellation: Cancellation):
+        ownerCancellation = cancellation
+        await ecology.refresh(cancellation)
+
+    const owner = task(refresh)
+    try:
+        while not requestEntered: await Promise.sleep(0ms)
+        expect(requestCancellation).toBe(ownerCancellation)
+        await owner.cancel("World renderer is closing")
+        await expect(owner.result()).toReject()
+        expect(requestFinished).toBe(true)
+        expect(batches).toEqual([[chunkKey(position)]])
+        expect(await ecology.refresh()).toBe(true)
+        expect(batches).toEqual([[chunkKey(position)], [chunkKey(position)]])
+    finally:
+        await owner.cancel("Ecology test finished")
+        ecology.close()

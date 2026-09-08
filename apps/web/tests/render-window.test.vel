@@ -1,0 +1,163 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {ChunkWindowView, batchChunkWindowTransition, chunkNeedsResidency, chunkRetainsResidency, environmentSamplePositionForChunk, horizontalRenderChunkRadius, planChunkWindow, retainedNeighborsAfterEviction, shouldRefreshChunkWindow, streamedChunkPositions} from "../src/rendering/render-window.vel"
+
+def view(
+    center: readonly ChunkPosition = {x: 0, y: 0, z: 0},
+    forwardX: number = 0,
+    forwardY: number = 0,
+    forwardZ: number = -1,
+) -> ChunkWindowView: return {center, forwardX, forwardY, forwardZ}
+
+test "Chunk window plan preserves target order and separates missing from obsolete positions":
+    const desired: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 1, y: 0, z: 0},
+        {x: 2, y: 0, z: 0},
+    ]
+    const tracked: List<readonly ChunkPosition> = [
+        {x: -1, y: 0, z: 0},
+        {x: 0, y: 0, z: 0},
+        {x: 3, y: 0, z: 0},
+    ]
+
+    const plan = planChunkWindow(desired, tracked)
+    expect(plan.missing).toEqual([{x: 1, y: 0, z: 0}, {x: 2, y: 0, z: 0}])
+    expect(plan.obsolete).toEqual([{x: -1, y: 0, z: 0}, {x: 3, y: 0, z: 0}])
+
+test "eviction invalidates each retained face neighbor exactly once":
+    const evicted: List<readonly ChunkPosition> = [
+        {x: 0, y: 0, z: 0},
+        {x: 1, y: 1, z: 0},
+    ]
+    const evictedKeys = evicted.map(position => chunkKey(position))
+    const retained = retainedNeighborsAfterEviction(
+        evicted,
+        position => chunkKey(position) not in evictedKeys,
+    )
+    const retainedKeys = retained.map(position => chunkKey(position))
+
+    expect(retainedKeys.size).toBe(10)
+    expect(retainedKeys.filter(key => key == "1:0:0").size).toBe(1)
+    expect(retainedKeys.filter(key => key == "0:1:0").size).toBe(1)
+    expect("0:0:0" in retainedKeys).toBe(false)
+    expect("1:1:0" in retainedKeys).toBe(false)
+
+test "streamed window combines a radius-two safety sphere with a radius-five forward view":
+    const current = streamedChunkPositions(view(), -6, 6)
+    const shifted = streamedChunkPositions(view({x: 1, y: 0, z: 0}), -6, 6)
+    const plan = planChunkWindow(shifted, current)
+
+    expect(horizontalRenderChunkRadius).toBe(5)
+    expect(current.size).toBe(240)
+    expect(Set(current.map(position => chunkKey(position))).size).toBe(240)
+    expect(shifted.size).toBe(240)
+    expect(Set(shifted.map(position => chunkKey(position))).size).toBe(240)
+    expect(plan.missing.size).toBe(44)
+    expect(plan.obsolete.size).toBe(44)
+    expect(chunkNeedsResidency({x: 0, y: 2, z: 0}, view())).toBe(true)
+    expect(chunkNeedsResidency({x: 0, y: 3, z: 0}, view())).toBe(false)
+    expect(chunkNeedsResidency({x: 0, y: 5, z: 0}, view())).toBe(false)
+    expect(chunkNeedsResidency({x: 0, y: 5, z: 0}, view({x: 0, y: 0, z: 0}, 0, 1, 0))).toBe(true)
+    expect(chunkNeedsResidency({x: 0, y: 0, z: -5}, view())).toBe(true)
+    expect(chunkNeedsResidency({x: 0, y: 0, z: 5}, view())).toBe(false)
+
+test "resident window uses a wider release envelope without acquiring its guard band":
+    const radialGuard: ChunkPosition = {x: 0, y: 0, z: -6}
+    const safetyGuard: ChunkPosition = {x: 3, y: 0, z: 0}
+    const behind: ChunkPosition = {x: 0, y: 0, z: 6}
+    expect(chunkNeedsResidency(radialGuard, view())).toBe(false)
+    expect(chunkRetainsResidency(radialGuard, view())).toBe(true)
+    expect(chunkNeedsResidency(safetyGuard, view())).toBe(false)
+    expect(chunkRetainsResidency(safetyGuard, view())).toBe(true)
+    expect(chunkRetainsResidency(behind, view())).toBe(false)
+
+    const withoutResidents = streamedChunkPositions(view(), -6, 6)
+    const withResidents = streamedChunkPositions(view(), -6, 6, [radialGuard, safetyGuard, behind])
+    expect(chunkKey(radialGuard) in withResidents.map(position => chunkKey(position))).toBe(true)
+    expect(chunkKey(safetyGuard) in withResidents.map(position => chunkKey(position))).toBe(true)
+    expect(chunkKey(behind) in withResidents.map(position => chunkKey(position))).toBe(false)
+    expect(withResidents.size).toBe(withoutResidents.size + 2)
+
+test "window refresh ignores minor look jitter but accepts accumulated direction and center changes":
+    const current = view()
+    expect(shouldRefreshChunkWindow(null, current)).toBe(true)
+    expect(shouldRefreshChunkWindow(current, view())).toBe(false)
+    expect(shouldRefreshChunkWindow(current, view({x: 0, y: 0, z: 0}, 0.087156, 0, -0.996195))).toBe(false)
+    expect(shouldRefreshChunkWindow(current, view({x: 0, y: 0, z: 0}, 0.342020, 0, -0.939693))).toBe(true)
+    expect(shouldRefreshChunkWindow(current, view({x: 1, y: 0, z: 0}, 0, 0, -1))).toBe(true)
+
+test "streamed window keeps every horizontal terrain column contiguous":
+    const positions = streamedChunkPositions(view(), -6, 6)
+    const completedColumns: Set<string> = Set()
+    let activeColumn = ""
+    for position in positions:
+        const column = f"{position.x}:{position.z}"
+        if column == activeColumn: continue
+        if activeColumn != "": completedColumns.add(activeColumn)
+        expect(column in completedColumns).toBe(false)
+        activeColumn = column
+
+    expect(completedColumns.size + 1).toBe(44)
+    expect(positions.slice(0, 5).map(position => position.y)).toEqual([0, -1, 1, -2, 2])
+
+test "window work stays distance-independent across a long sequence of moves":
+    let tracked = streamedChunkPositions(view(), -6, 6)
+    let maximumResident = tracked.size
+    for centerX in range(1, 257):
+        const desired = streamedChunkPositions(view({x: centerX, y: 0, z: -centerX}), -6, 6, tracked)
+        const transition = batchChunkWindowTransition(planChunkWindow(desired, tracked), 12)
+        const resident: Map<string, readonly ChunkPosition> = Map()
+        for position in tracked: resident.set(chunkKey(position), position)
+        for position in transition.surplus: resident.remove(chunkKey(position))
+        for batch in transition.batches:
+            for position in batch.load: resident.set(chunkKey(position), position)
+            if resident.size > maximumResident: maximumResident = resident.size
+            for position in batch.unload: resident.remove(chunkKey(position))
+        tracked = resident.values()
+        expect(Set(tracked.map(position => chunkKey(position)))).toEqual(Set(desired.map(position => chunkKey(position))))
+
+    expect(maximumResident).toBe(304)
+    expect(tracked.size).toBe(292)
+
+test "paired stream batches preserve a valid window prefix and converge after interruption":
+    const current = streamedChunkPositions(view(), -6, 6)
+    const desired = streamedChunkPositions(view({x: 2, y: 0, z: 0}), -6, 6, current)
+    const transition = batchChunkWindowTransition(planChunkWindow(desired, current), 12)
+    expect(transition.surplus).toEqual([])
+    expect(transition.batches.map(batch => batch.load.size)).toEqual([12, 12, 12, 12, 12, 12, 8])
+    expect(transition.batches.map(batch => batch.unload.size)).toEqual([12, 10, 0, 0, 0, 0, 0])
+
+    const tracked: Map<string, readonly ChunkPosition> = Map()
+    for position in current: tracked.set(chunkKey(position), position)
+    const first = transition.batches[0]
+    for position in first.load: tracked.set(chunkKey(position), position)
+    expect(tracked.size).toBe(252)
+    for position in first.unload: tracked.remove(chunkKey(position))
+    expect(tracked.size).toBe(240)
+
+    const resumed = batchChunkWindowTransition(planChunkWindow(desired, tracked.values()), 12)
+    for position in resumed.surplus: tracked.remove(chunkKey(position))
+    for batch in resumed.batches:
+        for position in batch.load: tracked.set(chunkKey(position), position)
+        expect(tracked.size <= 298).toBe(true)
+        for position in batch.unload: tracked.remove(chunkKey(position))
+    expect(Set(tracked.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
+
+test "window shrink releases only unpaired surplus before loading":
+    const tracked = streamedChunkPositions(view(), -6, 6)
+    const desired = tracked.slice(0, 100)
+    const transition = batchChunkWindowTransition(planChunkWindow(desired, tracked), 12)
+    expect(transition.surplus.size).toBe(140)
+    expect(transition.batches).toEqual([])
+
+test "stream batch size must be a positive integer":
+    const plan = planChunkWindow([], [])
+    expect(() => batchChunkWindowTransition(plan, 0)).toThrow()
+    expect(() => batchChunkWindowTransition(plan, 1.5)).toThrow()
+
+test "environment samples follow the integer center of the streamed view Chunk":
+    expect(environmentSamplePositionForChunk({x: 3, y: 4, z: -2}, 16)).toEqual({x: 56, y: 72, z: -24})
+    expect(environmentSamplePositionForChunk({x: -1, y: -1, z: -1}, 16)).toEqual({x: -8, y: -8, z: -8})
+    expect(() => environmentSamplePositionForChunk({x: 0, y: 0, z: 0}, 0)).toThrow()
+    expect(() => environmentSamplePositionForChunk({x: 33554431, y: 0, z: 0}, 16)).toThrow()

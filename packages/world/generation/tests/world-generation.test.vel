@@ -1,7 +1,7 @@
 import {expect} from "velar/test"
-import {WorldBlockRegistrySnapshot, baseWorldBlockRegistry, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {WorldBlockRegistrySnapshot, baseWorldBlockRegistry, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {Chunk, ChunkPosition, Coordinate2, WorldManifest, chunkBlockAtIndex, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {Chunk, ChunkPosition, Coordinate2, WorldGameMode, WorldManifest, blockIndex, chunkBlockAtIndex, chunkChecksum, initialChunkEdge, locateBlock, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
 import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette, survivalChunkPalette} from "../src/survival/block-palette.vel"
 import {columnPlanner, createGenerationFields, maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "../src/survival/terrain.vel"
@@ -17,6 +17,8 @@ def manifest(id: string) -> WorldManifest:
         id,
         name: id,
         seed: "openvoxel",
+        mode: WorldGameMode.survival,
+        worldTimeOriginMilliseconds: 0,
         formatVersion: worldFormatVersion,
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
@@ -105,6 +107,13 @@ test "generated world ids always find a safe land spawn inside the configured ra
         expect(sample.surfaceY >= profile.spawn.minimumY and sample.surfaceY <= profile.spawn.maximumY).toBe(true)
         expect(sample.slope <= profile.spawn.maximumSlope).toBe(true)
         expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast).toBe(false)
+        if index < 16:
+            for offsetY in range(2):
+                const located = locateBlock({x: spawn.x, y: spawn.y + offsetY, z: spawn.z}, initialChunkEdge)
+                const chunk = generator.generate(located.chunk)
+                const runtimeId = chunkBlockAtIndex(chunk, blockIndex(located.local, initialChunkEdge))
+                const state = baseWorldBlockRegistry.registry.requireStateByRuntimeId(runtimeId)
+                expect(resolveBlockShapeBoxes(state.physics.collision, state.properties)).toEqual([])
 
 test "bounded generation corpus contains caves aquifers magma minerals and land":
     const generator = worldGenerator(manifest("feature-corpus"))
@@ -156,6 +165,11 @@ test "generator returns empty chunks outside the version two vertical range":
     const above = generateChunk(world, {x: 0, y: 16, z: 0})
     expect(countBlock(below, airBlock)).toBe(4096)
     expect(countBlock(above, airBlock)).toBe(4096)
+
+test "generator returns provably empty high sections inside the world range":
+    const highAir = generateChunk(manifest("high-air-envelope"), {x: 0, y: 15, z: 0})
+    expect(highAir.palette).toEqual([airBlock])
+    expect(countBlock(highAir, airBlock)).toBe(4096)
 
 test "survival v2 fixed seed corpus detects accidental algorithm drift":
     const generator = worldGenerator(manifest("golden"))

@@ -1,22 +1,50 @@
-import {ClientWorldChange, ClientWorldChangeKind, ClientWorldSession} from "@openvoxel/client"
-import {MeshingWorkerRequest, MeshingWorkerResponse, VoxelRenderSurface, builtinClientResourcePack, createClientRenderCatalog, meshingWorkerOperations, openVoxelRenderSurface, snapshotChunkNeighborhood} from "@openvoxel/renderer"
-import {ChunkPosition, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
-import {Cancellation, Task, task} from "velar/task"
-import {workerPool} from "velar/worker"
-import {horizontalRenderChunkRadius, streamedChunkPositions} from "./render-window.vel"
+import {ClientWorldChange, ClientWorldChangeKind, ClientWorldChangeSubscription, ClientWorldSession} from "@openvoxel/client"
+import {ClientBlockCollisionBox, VoxelMovementMode, VoxelNavigationMode, VoxelRenderSurface, builtinClientResourcePack, createClientRenderCatalog, openVoxelRenderSurface} from "@openvoxel/renderer"
+import {ChunkPosition, WorldGameMode, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
+import {Cancellation} from "velar/task"
+import {AsyncCloseable, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+import {ChunkMeshing, chunkMeshing} from "./chunk-meshing.vel"
+import {chunkMeshWorker} from "./chunk-mesh-worker.vel"
+import {ChunkStreamer, chunkStreamer} from "./chunk-streamer.vel"
+import {EnvironmentSync, environmentSync} from "./environment-sync.vel"
+import {ChunkWindowView, environmentSamplePositionForChunk, horizontalRenderChunkRadius} from "./render-window.vel"
 
 export type WorldRendererStats:
     readonly chunks: number
     readonly meshes: number
     readonly quads: number
+    readonly residentChunks: number
+    readonly terrainPendingChunks: number
+    readonly meshQueuedChunks: number
+    readonly meshActiveChunks: number
+    readonly uploadQueuedChunks: number
+    readonly translucentSortQueuedMeshes: number
     readonly pending: number
+    readonly startupPending: number
+    readonly ready: bool
+    readonly navigationMode: VoxelNavigationMode
+    readonly movementMode: VoxelMovementMode
+    readonly viewX: number
+    readonly viewY: number
+    readonly viewZ: number
+    readonly viewChunkX: number
+    readonly viewChunkY: number
+    readonly viewChunkZ: number
+    readonly forwardX: number
+    readonly forwardY: number
+    readonly forwardZ: number
+    readonly pointerLocked: bool
 
 export type WorldRenderer:
     close: () -> Promise<null>
 
-const streamBatchSize = 12
-const meshingWorkerCount = 2
+const unloadedCollisionBoxes: readonly List<readonly ClientBlockCollisionBox> = [{
+    minimumX: 0, minimumY: 0, minimumZ: 0,
+    maximumX: 1, maximumY: 1, maximumZ: 1,
+}]
 
+/// 应用组合根只连接会话、构网、流送、环境与 Surface 的所有权。
+/// 各工作队列独立收敛，碰撞 readiness 则只接受已经完成冷热同步的 Chunk。
 export async def openWorldRenderer(
     canvas: CanvasElement,
     session: readonly ClientWorldSession,
@@ -25,246 +53,135 @@ export async def openWorldRenderer(
     failed: (message: string) -> null,
 ) -> WorldRenderer:
     const catalog = createClientRenderCatalog(session.content, builtinClientResourcePack)
-    const spawnChunk = locateBlock(manifest.spawn, manifest.chunkEdge).chunk
-    const minimumChunkY = chunkCoordinate(session.content.minimumWorldY, manifest.chunkEdge)
-    const maximumChunkY = chunkCoordinate(session.content.maximumWorldY, manifest.chunkEdge)
+    const startupPositions = session.state.trackedPositions()
+    assert startupPositions.size > 0 else "World renderer requires resident startup Chunks"
+    const collisionReady = Set(startupPositions.map(position => chunkKey(position)))
+    let view: readonly ChunkWindowView = {
+        center: locateBlock(manifest.spawn, manifest.chunkEdge).chunk,
+        forwardX: 0, forwardY: 0, forwardZ: -1,
+    }
     let surface: VoxelRenderSurface? = null
-    const meshing = workerPool("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerCount, 32)
-    let subscription = session.subscribeChanges(_event => null)
-    const tickets: Map<string, number> = Map()
-    const meshTasks: Map<string, Task<null>> = Map()
-    const activeMeshKeys: Set<string> = Set()
-    const queuedMeshPositions: Map<string, readonly ChunkPosition> = Map()
-    const queuedMeshTickets: Map<string, number> = Map()
-    let streaming: Task<null>? = null
-    let streamVersion = 0
-    let activeMeshBuilds = 0
-    let loading = 0
+    let meshing: ChunkMeshing? = null
+    let streaming: ChunkStreamer? = null
+    let environment: EnvironmentSync? = null
+    let subscription: ClientWorldChangeSubscription? = null
     let closed = false
+    let closing: Promise<null>? = null
 
     def activeSurface() -> VoxelRenderSurface:
         const current = surface
-        assert current != null else "World render surface is not ready"
+        assert current != null and not closed else "World render surface is not ready"
         return current
 
     def publishStats():
-        if surface == null: return
-        const stats = activeSurface().stats()
-        changed(WorldRendererStats.from(stats, {pending: activeMeshBuilds + queuedMeshPositions.size + loading}))
+        const currentSurface = surface
+        const currentMeshing = meshing
+        if closed or currentSurface == null or currentMeshing == null: return
+        const mesh = currentMeshing.stats()
+        const loading = streaming?.pending() ?? 0
+        changed(WorldRendererStats.from(currentSurface.stats(), {
+            pending: mesh.active + mesh.queued + loading,
+            residentChunks: mesh.resident,
+            terrainPendingChunks: loading,
+            meshQueuedChunks: mesh.queued,
+            meshActiveChunks: mesh.active,
+            startupPending: mesh.startupPending,
+            ready: mesh.startupPending == 0,
+        }))
 
-    let continueMeshing: () -> null = () => null
-
-    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation):
-        try:
-            await cancellation.checkpoint()
-            const center = session.state.chunk(position)
-            assert center != null else "Cannot mesh an untracked client Chunk"
-            const paddedBlocks = snapshotChunkNeighborhood(position, center.edge, candidate => session.state.chunk(candidate))
-            const response = await meshing.call({
-                operation: meshingWorkerOperations.mesh,
-                position,
-                edge: manifest.chunkEdge,
-                paddedBlocks,
-                ticket,
-            }, cancellation, 15s)
-            if closed or tickets.get(chunkKey(position)) != ticket: return
-            assert response.operation == meshingWorkerOperations.mesh else "Meshing Worker returned a mismatched operation"
-            const mesh = response.mesh
-            assert mesh != null else "Meshing Worker returned no Chunk mesh"
-            assert mesh.ticket == ticket else "Meshing Worker returned a mismatched Chunk ticket"
-            assert mesh.position.x == position.x and mesh.position.y == position.y and mesh.position.z == position.z else "Meshing Worker returned a mismatched Chunk position"
-            activeSurface().setChunkMesh(mesh)
-        catch error:
-            if not closed and tickets.get(chunkKey(position)) == ticket: failed(error.message)
-        finally:
-            const key = chunkKey(position)
-            meshTasks.remove(key)
-            activeMeshKeys.remove(key)
-            activeMeshBuilds -= 1
-            if not closed:
-                continueMeshing()
-                publishStats()
-
-    async def cancelEvicted(owner: Task<null>, key: string, ticket: number):
-        await owner.cancel("Chunk left the render window")
-        if tickets.get(key) == ticket: tickets.remove(key)
-
-    def drainMeshQueue():
-        while not closed and activeMeshBuilds < meshingWorkerCount:
-            const cursor = queuedMeshPositions.iterator()
-            let selected = cursor.next()
-            while selected != null and selected.value in activeMeshKeys: selected = cursor.next()
-            if selected == null: return
-            const key = selected.value
-            const position = queuedMeshPositions.get(key)!
-            const ticket = queuedMeshTickets.get(key)!
-            queuedMeshPositions.remove(key)
-            queuedMeshTickets.remove(key)
-            activeMeshKeys.add(key)
-            activeMeshBuilds += 1
-            async def runBuild(cancellation: Cancellation): await build(position, ticket, cancellation)
-            const owner: Task<null> = task(runBuild)
-            meshTasks.set(key, owner)
-
-    continueMeshing = drainMeshQueue
-
-    def schedule(position: readonly ChunkPosition):
-        if closed or session.state.chunk(position) == null: return
-        const key = chunkKey(position)
-        const ticket = (tickets.get(key) ?? 0) + 1
-        tickets.set(key, ticket)
-        queuedMeshPositions.set(key, position)
-        queuedMeshTickets.set(key, ticket)
-        drainMeshQueue()
-
-    def addTracked(targets: Map<string, readonly ChunkPosition>, position: readonly ChunkPosition):
-        if session.state.chunk(position) != null: targets.set(chunkKey(position), position)
-
-    def addNeighbors(targets: Map<string, readonly ChunkPosition>, position: readonly ChunkPosition):
-        addTracked(targets, {x: position.x + 1, y: position.y, z: position.z})
-        addTracked(targets, {x: position.x - 1, y: position.y, z: position.z})
-        addTracked(targets, {x: position.x, y: position.y + 1, z: position.z})
-        addTracked(targets, {x: position.x, y: position.y - 1, z: position.z})
-        addTracked(targets, {x: position.x, y: position.y, z: position.z + 1})
-        addTracked(targets, {x: position.x, y: position.y, z: position.z - 1})
+    def collisionAt(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+        if y < session.content.minimumWorldY or y > session.content.maximumWorldY: return unloadedCollisionBoxes
+        const position = {x, y, z}
+        if chunkKey(locateBlock(position, manifest.chunkEdge).chunk) not in collisionReady:
+            return unloadedCollisionBoxes
+        const runtimeId = session.state.block(position)
+        if runtimeId == null: return unloadedCollisionBoxes
+        return catalog.requireState(runtimeId).collisionBoxes
 
     def invalidate(event: readonly ClientWorldChange):
-        if event.kind == ClientWorldChangeKind.terrainUnloaded:
-            for position in event.positions:
-                const key = chunkKey(position)
-                const ticket = (tickets.get(key) ?? 0) + 1
-                tickets.set(key, ticket)
-                queuedMeshPositions.remove(key)
-                queuedMeshTickets.remove(key)
-                const previous = meshTasks.get(key)
-                if previous == null: tickets.remove(key)
-                else: detach cancelEvicted(previous, key, ticket)
-                activeSurface().removeChunk(position.x, position.y, position.z)
-            publishStats()
-            return
-        // 地形下载后还会紧接着同步热数据。只在同步完成后建网格，避免先用冷快照
-        // 建一次、再被相同 Chunk 的增量结果立刻推翻。
-        if event.kind == ClientWorldChangeKind.terrainLoaded: return
-        const targets: Map<string, readonly ChunkPosition> = Map()
-        if event.kind == ClientWorldChangeKind.blocksChanged and event.changes.size > 0:
-            for change in event.changes:
-                addTracked(targets, change.chunk)
-                const local = change.local
-                if local.x == 0: addTracked(targets, {x: change.chunk.x - 1, y: change.chunk.y, z: change.chunk.z})
-                if local.x == manifest.chunkEdge - 1:
-                    addTracked(targets, {x: change.chunk.x + 1, y: change.chunk.y, z: change.chunk.z})
-                if local.y == 0: addTracked(targets, {x: change.chunk.x, y: change.chunk.y - 1, z: change.chunk.z})
-                if local.y == manifest.chunkEdge - 1:
-                    addTracked(targets, {x: change.chunk.x, y: change.chunk.y + 1, z: change.chunk.z})
-                if local.z == 0: addTracked(targets, {x: change.chunk.x, y: change.chunk.y, z: change.chunk.z - 1})
-                if local.z == manifest.chunkEdge - 1:
-                    addTracked(targets, {x: change.chunk.x, y: change.chunk.y, z: change.chunk.z + 1})
-        else:
-            for position in event.positions:
-                addTracked(targets, position)
-                addNeighbors(targets, position)
-        for position in targets.values(): schedule(position)
-        publishStats()
-
-    async def streamWindow(centerX: number, centerY: number, centerZ: number, version: number, cancellation: Cancellation):
-        const desired = streamedChunkPositions(centerX, centerY, centerZ, minimumChunkY, maximumChunkY)
-        const desiredKeys: Set<string> = Set()
-        const missing: List<readonly ChunkPosition> = []
-        for position in desired:
-            const key = chunkKey(position)
-            desiredKeys.add(key)
-            if session.state.chunk(position) == null: missing.append(position)
-        loading = missing.size
-        publishStats()
-        try:
-            let start = 0
-            while start < missing.size:
-                await cancellation.checkpoint()
-                if closed or streamVersion != version: return
-                let end = start + streamBatchSize
-                if end > missing.size: end = missing.size
-                await session.loadChunks(missing.slice(start, end), cancellation)
-                start = end
-                if streamVersion == version:
-                    loading = missing.size - start
-                    publishStats()
-            await cancellation.checkpoint()
-            if closed or streamVersion != version: return
-            const obsolete: List<readonly ChunkPosition> = []
-            for position in session.state.trackedPositions():
-                if chunkKey(position) not in desiredKeys: obsolete.append(position)
-            if obsolete.size > 0: session.unloadChunks(obsolete)
-        finally:
-            if streamVersion == version:
-                loading = 0
-                if not closed: publishStats()
-
-    async def replaceStream(
-        previous: Task<null>?,
-        centerX: number,
-        centerY: number,
-        centerZ: number,
-        version: number,
-        cancellation: Cancellation,
-    ):
-        try:
-            if previous != null: await previous.cancel("Camera entered another Chunk")
-            await cancellation.checkpoint()
-            await streamWindow(centerX, centerY, centerZ, version, cancellation)
-        catch error:
-            if not closed and streamVersion == version: failed(error.message)
-        finally:
-            if streamVersion == version: streaming = null
-
-    def requestWindow(centerX: number, centerY: number, centerZ: number):
         if closed: return
-        streamVersion += 1
-        const version = streamVersion
-        const previous = streaming
-        async def run(cancellation: Cancellation):
-            await replaceStream(previous, centerX, centerY, centerZ, version, cancellation)
-        streaming = task(run)
+        if event.kind == ClientWorldChangeKind.synchronizationStarted or event.kind == ClientWorldChangeKind.terrainUnloaded:
+            for position in event.positions: collisionReady.remove(chunkKey(position))
+        if event.kind == ClientWorldChangeKind.chunksSynchronized:
+            for position in event.positions: collisionReady.add(chunkKey(position))
+        meshing?.invalidate(event)
+        if event.kind == ClientWorldChangeKind.synchronizationStarted: publishStats()
 
-    def viewChanged(centerX: number, centerY: number, centerZ: number): requestWindow(centerX, centerY, centerZ)
+    def viewChanged(x: number, y: number, z: number, forwardX: number, forwardY: number, forwardZ: number):
+        if closed: return
+        const centerChanged = view.center.x != x or view.center.y != y or view.center.z != z
+        view = {center: {x, y, z}, forwardX, forwardY, forwardZ}
+        if centerChanged: environment?.sampleAt(environmentSamplePositionForChunk(view.center, manifest.chunkEdge))
+        streaming?.request(view)
+        meshing?.reconcile(true)
+
+    /// 正常退出和任意初始化失败共用关闭顺序。先封住回调并释放 Surface，使
+    /// 等待 GPU 提交的任务结束。各所有者先同步封口，再等待所有后台工作回收。
+    async def shutdown():
+        closed = true
+        subscription?.close()
+        subscription = null
+        const ownedSurface = surface
+        surface = null
+        const owners: List<AsyncCloseable?> = [environment, streaming, meshing]
+        const stopped = owners.map(owner => closeBestEffort([owner]))
+        try:
+            if ownedSurface != null: ownedSurface.release()
+        finally: await Promise.all(stopped)
+        collisionReady.clear()
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    async def loadStreamedChunks(positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation):
+        await session.loadChunks(positions, cancellation)
+        for position in positions: collisionReady.add(chunkKey(position))
 
     try:
-        surface = await openVoxelRenderSurface(
-            canvas,
-            catalog,
-            manifest.chunkEdge,
-            manifest.spawn.x,
-            manifest.spawn.y,
-            manifest.spawn.z,
-            horizontalRenderChunkRadius,
-            viewChanged,
+        meshing = chunkMeshing(
+            session.state, manifest.chunkEdge, startupPositions,
+            chunkMeshWorker(catalog.states, session.state, manifest.chunkEdge),
+            {
+                enqueueChunkMesh: mesh => activeSurface().enqueueChunkMesh(mesh),
+                removeChunk: (x, y, z) => activeSurface().removeChunk(x, y, z),
+            },
+            () => view,
+            publishStats, failed,
+            () => streaming?.resume(),
         )
-        await meshing.broadcast({operation: meshingWorkerOperations.initialize, states: catalog.states}, null, 10s)
-        subscription.close()
+        streaming = chunkStreamer(
+            {
+                trackedPositions: () => session.state.trackedPositions(),
+                load: loadStreamedChunks,
+                unload: positions => session.unloadChunks(positions),
+            },
+            chunkCoordinate(session.content.minimumWorldY, manifest.chunkEdge),
+            chunkCoordinate(session.content.maximumWorldY, manifest.chunkEdge),
+            () => meshing?.stats()?.startupPending == 0,
+            publishStats, failed,
+        )
+        surface = await openVoxelRenderSurface(
+            canvas, catalog, manifest.chunkEdge,
+            manifest.spawn.x, manifest.spawn.y, manifest.spawn.z,
+            horizontalRenderChunkRadius, viewChanged, session.environment(),
+            VoxelNavigationMode.firstPerson,
+            manifest.mode == WorldGameMode.creative ? VoxelMovementMode.creativeFlight : VoxelMovementMode.survivalWalk,
+            collisionAt, session.content.minimumWorldY, session.content.maximumWorldY, manifest.seed,
+        )
+        await meshing.initialize()
         subscription = session.subscribeChanges(invalidate)
-        for position in session.state.trackedPositions(): schedule(position)
+        meshing.start()
+        const initialView = activeSurface().stats()
+        viewChanged(initialView.viewChunkX, initialView.viewChunkY, initialView.viewChunkZ, initialView.forwardX, initialView.forwardY, initialView.forwardZ)
+        environment = environmentSync(
+            {environment: position => session.environment(position), refreshEcology: session.refreshEcology},
+            environmentSamplePositionForChunk(view.center, manifest.chunkEdge),
+            sample => activeSurface().setEnvironment(sample), failed,
+        )
         publishStats()
-        requestWindow(spawnChunk.x, spawnChunk.y, spawnChunk.z)
     catch error:
-        subscription.close()
-        await meshing.close()
-        if surface != null: activeSurface().release()
-        throw error
-
-    async def close():
-        if closed: return
-        closed = true
-        subscription.close()
-        const activeStream = streaming
-        streaming = null
-        if activeStream != null: await activeStream.cancel("World renderer closed")
-        const activeTasks = meshTasks.values()
-        for owner in activeTasks: await owner.cancel("World renderer closed")
-        meshTasks.clear()
-        activeMeshKeys.clear()
-        queuedMeshPositions.clear()
-        queuedMeshTickets.clear()
-        await meshing.close()
-        if surface != null: activeSurface().release()
-        surface = null
+        try: await close()
+        finally: throw error
 
     return {close}

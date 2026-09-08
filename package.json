@@ -15,9 +15,10 @@
     "node": ">=24.12"
   },
   "scripts": {
-    "generate": "npm run generate --workspaces --if-present",
-    "generate:check": "npm run generate:check --workspaces --if-present",
+    "generate": "npm run generate --workspace @openvoxel/identities && npm run generate --workspace @openvoxel/blocks && npm run generate --workspace @openvoxel/world-generation && npm run generate --workspace @openvoxel/renderer && npm run generate --workspace @openvoxel/web",
+    "generate:check": "npm run generate:check --workspace @openvoxel/identities && npm run generate:check --workspace @openvoxel/blocks && npm run generate:check --workspace @openvoxel/world-generation && npm run generate:check --workspace @openvoxel/renderer && npm run generate:check --workspace @openvoxel/web",
     "structure:check": "node tools/check-layout.mjs",
+    "test:structure": "node --test tools/tests/*.test.mjs",
     "check": "npm run check --workspaces --if-present",
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
@@ -25,7 +26,8 @@
     "dev:web": "npm run dev --workspace @openvoxel/web",
     "start": "npm run start --workspace @openvoxel/server",
     "test": "npm run test --workspaces --if-present",
-    "test:web-ui": "npm run generate --workspace @openvoxel/web && node apps/web/tests/ui-acceptance.mjs",
+    "test:gpu": "npm run generate && npm run test:gpu --workspace @openvoxel/renderer",
+    "test:web-ui": "npm run generate && node apps/web/tests/ui-acceptance.mjs",
     "build": "npm run build --workspaces --if-present",
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/world-generation",
     "benchmark:caves": "npm run benchmark:caves --workspace @openvoxel/world-generation",
@@ -33,7 +35,9 @@
     "benchmark:runtime": "npm run benchmark --workspace @openvoxel/world-runtime",
     "benchmark:sqlite": "npm run benchmark:sqlite --workspace @openvoxel/server",
     "benchmark:presentation": "npm run benchmark:presentation --workspace @openvoxel/server",
-    "validate": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check && npm run check && npm test && npm run build && npm run test:web-ui"
+    "validate:static": "npm run generate && npm run generate:check && npm run structure:check && npm run test:structure && npm run format:check && npm run check && npm test && npm run build",
+    "validate:browser": "npm run test:gpu && npm run test:web-ui",
+    "validate": "npm run validate:static && npm run validate:browser"
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
@@ -45,11 +49,13 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.29.2",
+    "@velarscript/cli": "0.33.1",
+    "@velarscript/compiler": "0.33.1",
+    "@velarscript/node": "0.33.1",
+    "@velarscript/web": "0.33.1",
     "playwright": "1.62.1"
   },
   "allowScripts": {
-    "esbuild": false,
-    "msgpackr-extract": false
+    "esbuild": false
   }
 }

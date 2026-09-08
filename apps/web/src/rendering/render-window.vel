@@ -1,9 +1,175 @@
-import {ChunkPosition, WorldManifest, chunkCoordinate, locateBlock} from "@openvoxel/world"
+import {ChunkPosition, Coordinate3, WorldManifest, chunkCoordinate, chunkKey, locateBlock, requireChunkEdge, requireChunkPosition, requireCoordinate3} from "@openvoxel/world"
 
 const initialHorizontalChunkRadius = 1
-const verticalRenderChunkRadius = 2
+const initialVerticalOffsets: readonly List<number> = [0, -1, 1]
+const streamedVerticalOffsets: readonly List<number> = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6]
+const collisionSafetyChunkRadius = 2
+const retainedCollisionSafetyChunkRadius = 3
+const retainedRenderChunkRadius = 6
+const visibleAlignmentThreshold = 0.2
+const retainedAlignmentThreshold = 0.1
+const streamDirectionCosineThreshold = 0.9659258262890683
 
-export const horizontalRenderChunkRadius = 3
+/// 可见需求向视点前方扩张到半径五；碰撞安全区独立保留全方向半径二。
+/// 初次进入仍只加载 3×3×3 的近邻，完整窗口在后台按近到远补齐。
+export const horizontalRenderChunkRadius = 5
+
+export type ChunkWindowView:
+    readonly center: readonly ChunkPosition
+    readonly forwardX: number
+    readonly forwardY: number
+    readonly forwardZ: number
+
+def normalizedChunkWindowView(view: readonly ChunkWindowView) -> ChunkWindowView:
+    requireChunkPosition(view.center)
+    const length = Math.sqrt(view.forwardX * view.forwardX + view.forwardY * view.forwardY + view.forwardZ * view.forwardZ)
+    assert length.isFinite() and length > 0 else "Chunk window direction must be finite and non-zero"
+    return {
+        center: view.center,
+        forwardX: view.forwardX / length,
+        forwardY: view.forwardY / length,
+        forwardZ: view.forwardZ / length,
+    }
+
+def chunkInsideDirectionalEnvelope(
+    position: readonly ChunkPosition,
+    view: readonly ChunkWindowView,
+    safetyRadius: number,
+    directionalRadius: number,
+    alignmentThreshold: number,
+) -> bool:
+    const dx = position.x - view.center.x
+    const dy = position.y - view.center.y
+    const dz = position.z - view.center.z
+    const distanceSquared = dx * dx + dy * dy + dz * dz
+    if distanceSquared <= safetyRadius * safetyRadius: return true
+    if distanceSquared > directionalRadius * directionalRadius: return false
+    const alignment = (dx * view.forwardX + dy * view.forwardY + dz * view.forwardZ) / Math.sqrt(distanceSquared)
+    return alignment >= alignmentThreshold
+
+/// 新驻留需求由全方向碰撞安全球和前向扩张视区组成。方向判定使用完整三维
+/// forward，因此水平观察不会把同一 x/z 下整根高空柱当作可见数据。
+export def chunkNeedsResidency(position: readonly ChunkPosition, view: readonly ChunkWindowView) -> bool:
+    return chunkInsideDirectionalEnvelope(
+        position,
+        normalizedChunkWindowView(view),
+        collisionSafetyChunkRadius,
+        horizontalRenderChunkRadius,
+        visibleAlignmentThreshold,
+    )
+
+/// 已驻留数据使用更宽的距离和夹角阈值，避免临界面附近移动或转头造成重复
+/// 装卸；迟滞只保留已有项，不会主动拉取半径五以外的数据。
+export def chunkRetainsResidency(position: readonly ChunkPosition, view: readonly ChunkWindowView) -> bool:
+    return chunkInsideDirectionalEnvelope(
+        position,
+        normalizedChunkWindowView(view),
+        retainedCollisionSafetyChunkRadius,
+        retainedRenderChunkRadius,
+        retainedAlignmentThreshold,
+    )
+
+/// Chunk 跨越必须立即刷新；同一 Chunk 内只有累计到显著方向变化才提交新的
+/// 数据窗口。该阈值与导航输入节流分层，保证未来的其他相机源也不会制造抖动。
+export def shouldRefreshChunkWindow(
+    previous: readonly ChunkWindowView?,
+    next: readonly ChunkWindowView,
+) -> bool:
+    const normalizedNext = normalizedChunkWindowView(next)
+    if previous == null: return true
+    const normalizedPrevious = normalizedChunkWindowView(previous)
+    if normalizedPrevious.center.x != normalizedNext.center.x
+        or normalizedPrevious.center.y != normalizedNext.center.y
+        or normalizedPrevious.center.z != normalizedNext.center.z: return true
+    const alignment = normalizedPrevious.forwardX * normalizedNext.forwardX
+        + normalizedPrevious.forwardY * normalizedNext.forwardY
+        + normalizedPrevious.forwardZ * normalizedNext.forwardZ
+    return alignment <= streamDirectionCosineThreshold
+
+/// 环境场按视窗中心 Chunk 的整数中心采样。这个投影与流送窗口共用同一坐标
+/// 事实，避免相机已经跨区而天气和闪电仍停留在出生点。
+export def environmentSamplePositionForChunk(position: readonly ChunkPosition, edge: number) -> Coordinate3:
+    requireChunkEdge(edge)
+    const halfEdge = (edge / 2).floor()
+    const samplePosition: Coordinate3 = {
+        x: position.x * edge + halfEdge,
+        y: position.y * edge + halfEdge,
+        z: position.z * edge + halfEdge,
+    }
+    requireCoordinate3(samplePosition, "Environment sample")
+    return samplePosition
+
+export type ChunkWindowPlan:
+    readonly missing: readonly List<readonly ChunkPosition>
+    readonly obsolete: readonly List<readonly ChunkPosition>
+
+export type ChunkWindowBatch:
+    readonly load: readonly List<readonly ChunkPosition>
+    readonly unload: readonly List<readonly ChunkPosition>
+
+export type ChunkWindowTransition:
+    readonly surplus: readonly List<readonly ChunkPosition>
+    readonly batches: readonly List<readonly ChunkWindowBatch>
+
+/// 对比目标窗口与当前驻留集。调用方逐批载入 missing，并在每批成功后淘汰
+/// 等量 obsolete；失败时仍保留尚未被替换的旧窗口，峰值只多一个流送批次。
+export def planChunkWindow(
+    desired: readonly List<readonly ChunkPosition>,
+    tracked: readonly List<readonly ChunkPosition>,
+) -> ChunkWindowPlan:
+    const desiredKeys: Set<string> = Set()
+    const trackedKeys: Set<string> = Set()
+    for position in desired: desiredKeys.add(chunkKey(position))
+    for position in tracked: trackedKeys.add(chunkKey(position))
+    return {
+        missing: desired.filter(position => chunkKey(position) not in trackedKeys),
+        obsolete: tracked.filter(position => chunkKey(position) not in desiredKeys),
+    }
+
+/// 将窗口差异拆成有界批次。目标缩小时，多出的 obsolete 可立即释放；其余
+/// obsolete 与 load 一一配对，调用方必须先完成 load，再提交对应 unload。
+export def batchChunkWindowTransition(
+    plan: readonly ChunkWindowPlan,
+    batchSize: number,
+) -> ChunkWindowTransition:
+    assert batchSize.isInteger() and batchSize > 0 else "Chunk stream batch size must be a positive integer"
+    let obsoleteStart = plan.obsolete.size - plan.missing.size
+    if obsoleteStart < 0: obsoleteStart = 0
+    const surplus = plan.obsolete.slice(0, obsoleteStart)
+    const batches: List<readonly ChunkWindowBatch> = []
+    let start = 0
+    while start < plan.missing.size:
+        let end = start + batchSize
+        if end > plan.missing.size: end = plan.missing.size
+        let obsoleteEnd = obsoleteStart + end - start
+        if obsoleteEnd > plan.obsolete.size: obsoleteEnd = plan.obsolete.size
+        batches.append({
+            load: plan.missing.slice(start, end),
+            unload: plan.obsolete.slice(obsoleteStart, obsoleteEnd),
+        })
+        obsoleteStart = obsoleteEnd
+        start = end
+    return {surplus, batches}
+
+/// Chunk 离开驻留窗口后，仍驻留的六面邻居必须重新构网，补回此前因共享边界
+/// 被剔除的外露面。Map 同时保持稳定顺序并合并多个淘汰项指向的同一邻居。
+export def retainedNeighborsAfterEviction(
+    evicted: readonly List<readonly ChunkPosition>,
+    retained: (position: readonly ChunkPosition) -> bool,
+) -> List<readonly ChunkPosition>:
+    const output: Map<string, readonly ChunkPosition> = Map()
+
+    def add(position: readonly ChunkPosition):
+        if retained(position): output.set(chunkKey(position), position)
+
+    for position in evicted:
+        add({x: position.x + 1, y: position.y, z: position.z})
+        add({x: position.x - 1, y: position.y, z: position.z})
+        add({x: position.x, y: position.y + 1, z: position.z})
+        add({x: position.x, y: position.y - 1, z: position.z})
+        add({x: position.x, y: position.y, z: position.z + 1})
+        add({x: position.x, y: position.y, z: position.z - 1})
+    return output.values()
 
 /// 首屏先加载出生点附近的小窗口，避免首次进入世界被完整流送窗口阻塞。
 export def initialRenderChunkPositions(
@@ -15,7 +181,7 @@ export def initialRenderChunkPositions(
     const minimumChunkY = chunkCoordinate(minimumWorldY, manifest.chunkEdge)
     const maximumChunkY = chunkCoordinate(maximumWorldY, manifest.chunkEdge)
     const positions: List<readonly ChunkPosition> = []
-    for dy in range(-1, 2):
+    for dy in initialVerticalOffsets:
         const y = center.y + dy
         if y < minimumChunkY or y > maximumChunkY: continue
         for dz in range(-initialHorizontalChunkRadius, initialHorizontalChunkRadius + 1):
@@ -23,21 +189,47 @@ export def initialRenderChunkPositions(
                 positions.append({x: center.x + dx, y, z: center.z + dz})
     return positions
 
-/// 按离视点的环形距离返回完整流送窗口，近处 Chunk 总是先于远处 Chunk。
+/// 返回碰撞安全球与前向扩张视区的并集，并只为 tracked 应用释放迟滞。同一
+/// x/z 地形柱的垂直 Chunk 仍连续排列，使服务端或本地生成器可以复用列规划。
 export def streamedChunkPositions(
-    centerX: number,
-    centerY: number,
-    centerZ: number,
+    view: readonly ChunkWindowView,
     minimumChunkY: number,
     maximumChunkY: number,
+    tracked: readonly List<readonly ChunkPosition> = [],
 ) -> List<readonly ChunkPosition>:
+    assert minimumChunkY.isInteger() and maximumChunkY.isInteger() and minimumChunkY <= maximumChunkY else "Chunk window height bounds must be ordered integers"
+    const normalizedView = normalizedChunkWindowView(view)
+    const trackedKeys = Set(tracked.map(position => chunkKey(position)))
     const positions: List<readonly ChunkPosition> = []
-    for ring in range(horizontalRenderChunkRadius + 1):
+    for ring in range(retainedRenderChunkRadius + 1):
+        const outerSquared = ring * ring
+        const innerSquared = (ring - 1) * (ring - 1)
         for dz in range(-ring, ring + 1):
             for dx in range(-ring, ring + 1):
-                if Math.max(dx.abs(), dz.abs()) != ring: continue
-                for dy in range(-verticalRenderChunkRadius, verticalRenderChunkRadius + 1):
-                    const y = centerY + dy
-                    if y >= minimumChunkY and y <= maximumChunkY:
-                        positions.append({x: centerX + dx, y, z: centerZ + dz})
+                const horizontalSquared = dx * dx + dz * dz
+                if horizontalSquared > outerSquared: continue
+                if ring > 0 and horizontalSquared <= innerSquared: continue
+                for dy in streamedVerticalOffsets:
+                    const y = normalizedView.center.y + dy
+                    if y < minimumChunkY or y > maximumChunkY: continue
+                    const position: ChunkPosition = {
+                        x: normalizedView.center.x + dx,
+                        y,
+                        z: normalizedView.center.z + dz,
+                    }
+                    const acquire = chunkInsideDirectionalEnvelope(
+                        position,
+                        normalizedView,
+                        collisionSafetyChunkRadius,
+                        horizontalRenderChunkRadius,
+                        visibleAlignmentThreshold,
+                    )
+                    const retain = (chunkKey(position) in trackedKeys) and chunkInsideDirectionalEnvelope(
+                        position,
+                        normalizedView,
+                        retainedCollisionSafetyChunkRadius,
+                        retainedRenderChunkRadius,
+                        retainedAlignmentThreshold,
+                    )
+                    if acquire or retain: positions.append(position)
     return positions

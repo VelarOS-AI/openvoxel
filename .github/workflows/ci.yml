@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   validate:
+    name: Static and Node gates
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -23,9 +24,10 @@ jobs:
           node-version: "24.x"
           cache: npm
       - run: npm ci
-      - run: npm run validate
+      - run: npm run validate:static
 
   browser:
+    name: Headless browser gates
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -37,4 +39,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - name: Run browser gates
+        run: npm run validate:browser
+        timeout-minutes: 17
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence-${{ github.run_attempt }}
+          path: |
+            packages/client/rendering/generated/gpu-render-probe
+            apps/web/generated/ui-acceptance
+          if-no-files-found: warn
+          retention-days: 7

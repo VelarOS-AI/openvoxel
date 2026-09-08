@@ -2,34 +2,44 @@ import {localBackend} from "@openvoxel/client"
 import {Head, navigate} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
-import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, errorLook, fieldLook, formActionsLook, labelLook, openPanelLook, panelTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, topBarLook} from "../look.vel"
-import {SavedWorld, SavedWorldMode, WorldPreset} from "../worlds/saved-world.vel"
+import {asyncPageLifetime, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+import {errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
+import {openPanelLook, panelTitleLook} from "../styles/open-world.vel"
+import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
+import {SavedWorld, WorldPreset} from "../worlds/saved-world.vel"
 import {rememberWorld} from "../worlds/world-library.vel"
 import {worldCover} from "../worlds/world-presentation.vel"
+import {worldRoute} from "../worlds/world-route.vel"
 
 export component OpenWorldPage:
     const backend = localBackend()
+    const lifetime = asyncPageLifetime()
     state worldId = ""
     state failure = ""
 
     def cancel(): navigate("/")
 
     action openWorld():
+        const generation = lifetime.begin()
         failure = ""
         try:
             const id = worldId.trim()
             assert not id.isBlank() else "World identifier cannot be blank"
             const found = await backend.findWorld(id)
+            if not lifetime.owns(generation): return
             const saved = SavedWorld.from(found, {
-                mode: SavedWorldMode.existing,
+                mode: found.mode,
                 preset: WorldPreset.meadow,
                 lastPlayed: "Opened just now",
             })
             rememberWorld(saved)
-            navigate(f"/world/{found.id}")
-        catch error: failure = error.message
+            navigate(worldRoute(found.id))
+        catch error:
+            if lifetime.owns(generation): failure = error.message
 
-    @cleanup: detach backend.close()
+    @cleanup:
+        lifetime.dispose()
+        detach closeBestEffort([backend])
 
     return <div look={appShellLook} data-app data-screen="open-world">
         <Head

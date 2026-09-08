@@ -1,0 +1,142 @@
+import {Look, alpha, blur, border, minmax, repeat, shadow, spacing, tracks} from "velar/look"
+import {secondaryButtonLook} from "./common.vel"
+import {blue, brightBlue, ink, panel, white} from "./theme.vel"
+
+export const createLayoutLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 5
+    display = "grid"
+    gridTemplateColumns = tracks(minmax(0px, 1.35fr), minmax(360px, 0.65fr))
+    alignItems = "center"
+    gap = 52px
+    height = 100%
+    boxSizing = "border-box"
+    overflowY = "auto"
+    padding = spacing(110px, 5.4vw, 48px, 5.4vw)
+
+    if viewport.width <= 980px:
+        gridTemplateColumns = tracks(1fr)
+        alignContent = "start"
+        gap = 24px
+        padding = spacing(96px, 24px, 26px, 24px)
+
+export const createIntroLook: Look = look:
+    display = "grid"
+    gap = 24px
+    alignSelf = "center"
+
+export const presetGridLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(3, minmax(0px, 1fr))
+    gap = 14px
+    maxWidth = 760px
+
+    if viewport.width <= 640px:
+        gap = 8px
+
+export const presetLook: Look = look:
+    display = "grid"
+    gridTemplateRows = tracks(130px, "auto")
+    minWidth = 0
+    overflow = "hidden"
+    color = white
+    backgroundColor = alpha(panel, 0.58)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 15px
+    boxShadow = shadow(0px, 12px, 28px, alpha(ink, 0.24))
+    backdropFilter = blur(16px)
+    textAlign = "start"
+    cursor = "pointer"
+
+    if @hover:
+        borderColor = alpha(white, 0.46)
+    if @focus:
+        outline = border(2px, brightBlue)
+        outlineOffset = 3px
+
+    if viewport.width <= 640px:
+        gridTemplateRows = tracks(82px, "auto")
+
+export const selectedPresetLook: Look = look:
+    ...presetLook
+    borderColor = brightBlue
+    boxShadow = shadow(0px, 0px, 26px, alpha(brightBlue, 0.34))
+
+export const presetImageLook: Look = look:
+    width = 100%
+    height = 100%
+    objectFit = "cover"
+
+export const presetLabelLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    gap = 9px
+    padding = spacing(13px, 15px)
+    fontSize = 0.94rem
+    fontWeight = 600
+
+    if viewport.width <= 640px:
+        gap = 6px
+        padding = spacing(11px, 9px)
+        fontSize = 0.78rem
+
+export const formPanelLook: Look = look:
+    display = "grid"
+    gap = 20px
+    padding = 30px
+    backgroundColor = alpha(panel, 0.74)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 24px
+    boxShadow = shadow(0px, 30px, 70px, alpha(ink, 0.44))
+    backdropFilter = blur(26px)
+
+    if viewport.width <= 980px:
+        padding = 22px
+        borderRadius = 18px
+
+export const segmentLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(2, minmax(0px, 1fr))
+    gap = 4px
+    padding = 4px
+    backgroundColor = alpha(ink, 0.42)
+    border = border(1px, alpha(white, 0.14))
+    borderRadius = 12px
+
+export const segmentButtonLook: Look = look:
+    display = "inline-flex"
+    alignItems = "center"
+    justifyContent = "center"
+    gap = 9px
+    minHeight = 42px
+    color = alpha(white, 0.7)
+    backgroundColor = "transparent"
+    border = border(1px, alpha(white, 0))
+    borderRadius = 9px
+    fontFamily = "Inter, sans-serif"
+    fontWeight = 500
+    cursor = "pointer"
+
+    if @hover:
+        color = white
+
+export const selectedSegmentButtonLook: Look = look:
+    ...segmentButtonLook
+    color = white
+    backgroundColor = alpha(blue, 0.82)
+    borderColor = alpha(white, 0.22)
+    boxShadow = shadow(0px, 7px, 20px, alpha(blue, 0.26))
+
+export const advancedButtonLook: Look = look:
+    ...secondaryButtonLook
+    justifyContent = "space-between"
+    width = 100%
+    paddingInline = 2px
+    borderTop = border(1px, alpha(white, 0.14))
+    borderRadius = 0px
+
+export const advancedFieldsLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(2, minmax(0px, 1fr))
+    gap = 12px

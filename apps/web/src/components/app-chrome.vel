@@ -1,6 +1,6 @@
 import {Link, navigate} from "velar/web"
 import {Icon, IconName} from "../icon.vel"
-import {brandIconLook, brandLook, brandNameLook, navButtonLook, navLabelLook, navLook} from "../look.vel"
+import {brandIconLook, brandLook, brandNameLook, navButtonLook, navLabelLook, navLook} from "../styles/shell.vel"
 
 export component Brand(back: bool = false):
     def home(): navigate("/")

@@ -1,0 +1,11 @@
+import css unsafe "./fonts.css" before look
+
+import {Color, rgb} from "velar/look"
+
+export const white: Color = rgb(247, 250, 255)
+export const ink: Color = rgb(6, 15, 29)
+export const panel: Color = rgb(12, 24, 42)
+export const blue: Color = rgb(48, 105, 236)
+export const brightBlue: Color = rgb(62, 129, 255)
+export const muted: Color = rgb(185, 198, 218)
+export const danger: Color = rgb(255, 128, 146)
