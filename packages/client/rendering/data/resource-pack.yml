@@ -1,4 +1,4 @@
-formatVersion: 9
+formatVersion: 10
 owner: openvoxel
 
 textureCatalogs:
@@ -33,18 +33,18 @@ environment:
     snow: environment/weather/snow.webp
 
 surfaceProfiles:
-  - {key: rock, normalStrength: 1.35, occlusionStrength: 0.28, roughness: 0.88, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: soil, normalStrength: 0.85, occlusionStrength: 0.2, roughness: 0.94, roughnessVariation: 0.06, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: mineral, normalStrength: 1.45, occlusionStrength: 0.3, roughness: 0.78, roughnessVariation: 0.14, metallic: 0.02, metallicVariation: 0.12, emissive: 0, emissiveThreshold: 1}
-  - {key: metallic-mineral, normalStrength: 1.5, occlusionStrength: 0.32, roughness: 0.62, roughnessVariation: 0.22, metallic: 0.04, metallicVariation: 0.92, emissive: 0, emissiveThreshold: 1}
-  - {key: wood, normalStrength: 1.05, occlusionStrength: 0.22, roughness: 0.86, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: foliage, normalStrength: 0.42, occlusionStrength: 0.12, roughness: 0.84, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: plant, normalStrength: 0.24, occlusionStrength: 0.08, roughness: 0.9, roughnessVariation: 0.06, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: cactus, normalStrength: 0.7, occlusionStrength: 0.18, roughness: 0.82, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: snow, normalStrength: 0.22, occlusionStrength: 0.06, roughness: 0.8, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: ice, normalStrength: 0.3, occlusionStrength: 0.04, roughness: 0.12, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: water, normalStrength: 0.52, occlusionStrength: 0.02, roughness: 0.08, roughnessVariation: 0.04, metallic: 0, metallicVariation: 0, emissive: 0.02, emissiveThreshold: 0.72}
-  - {key: magma, normalStrength: 0.62, occlusionStrength: 0.2, roughness: 0.4, roughnessVariation: 0.18, metallic: 0.02, metallicVariation: 0.08, emissive: 1, emissiveThreshold: 0.18}
+  - {key: rock, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.55, occlusionStrength: 0.28, roughness: 0.88, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: soil, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.45, occlusionStrength: 0.2, roughness: 0.94, roughnessVariation: 0.06, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: mineral, normalFallback: albedo-height, materialFallback: uniform, normalStrength: 0.35, occlusionStrength: 0.3, roughness: 0.82, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: metallic-mineral, normalFallback: albedo-height, materialFallback: uniform, normalStrength: 0.5, occlusionStrength: 0.32, roughness: 0.78, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: wood, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.15, occlusionStrength: 0.22, roughness: 0.86, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: foliage, normalFallback: flat, materialFallback: uniform, normalStrength: 0.42, occlusionStrength: 0.12, roughness: 0.84, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: plant, normalFallback: flat, materialFallback: uniform, normalStrength: 0.24, occlusionStrength: 0.08, roughness: 0.9, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: cactus, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.18, occlusionStrength: 0.18, roughness: 0.82, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: snow, normalFallback: flat, materialFallback: uniform, normalStrength: 0.22, occlusionStrength: 0.06, roughness: 0.8, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: ice, normalFallback: flat, materialFallback: uniform, normalStrength: 0.3, occlusionStrength: 0.04, roughness: 0.12, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: water, normalFallback: flat, materialFallback: uniform, normalStrength: 0.04, occlusionStrength: 0.02, roughness: 0.08, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: magma, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.45, occlusionStrength: 0.2, roughness: 0.4, roughnessVariation: 0.18, metallic: 0, metallicVariation: 0, emissive: 1, emissiveThreshold: 0.18}
 
 models:
   - {key: openvoxel:model/block/cube, kind: cube}

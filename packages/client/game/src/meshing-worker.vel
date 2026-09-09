@@ -1,0 +1,3 @@
+/// 宿主只认识 OpenVoxel 游戏框架；纯体素构网实现继续由 Renderer 的精确
+/// Worker 入口拥有，闭包不会进入游戏运行时、图形后端或 Babylon。
+export {serveMeshingWorker} from "@openvoxel/renderer/meshing-worker"

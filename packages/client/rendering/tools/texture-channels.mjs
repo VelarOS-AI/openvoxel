@@ -12,6 +12,8 @@ import {
 } from "./resource-pack-values.mjs";
 
 const channelNames = new Set(["normal", "height", "material", "emissive"]);
+const normalFallbacks = new Set(["flat", "albedo-height"]);
+const materialFallbacks = new Set(["uniform", "albedo-derived"]);
 
 function wrap(value, size) {
   return (value % size + size) % size;
@@ -83,7 +85,17 @@ function spatialTransforms(value, tileSize, label) {
 
 function surfaceProfile(value, label) {
   const profile = requireRecord(value, label);
+  const normalFallback = requireText(profile.normalFallback, `${label} normalFallback`);
+  const materialFallback = requireText(profile.materialFallback, `${label} materialFallback`);
+  if (!normalFallbacks.has(normalFallback)) {
+    throw new Error(`${label} normalFallback must be flat or albedo-height`);
+  }
+  if (!materialFallbacks.has(materialFallback)) {
+    throw new Error(`${label} materialFallback must be uniform or albedo-derived`);
+  }
   return {
+    normalFallback,
+    materialFallback,
     normalStrength: requireNumber(profile.normalStrength, 0, 4, `${label} normalStrength`),
     occlusionStrength: requireNumber(profile.occlusionStrength, 0, 1, `${label} occlusionStrength`),
     roughness: requireNumber(profile.roughness, 0, 1, `${label} roughness`),
@@ -185,8 +197,12 @@ function heightSamples(source, alphaSource, size, linear) {
 }
 
 function normalsFromHeight(source, albedo, profile, size, linear) {
-  const heights = heightSamples(source, albedo, size, linear);
-  const heightAt = (x, y) => heights[wrap(y, size) * size + wrap(x, size)];
+  const heights = new Float64Array(size * size);
+  for (let index = 0; index < heights.length; index += 1) heights[index] = luminance(source, index * 4, linear);
+  const heightAt = (x, y, fallback) => {
+    const index = wrap(y, size) * size + wrap(x, size);
+    return albedo[index * 4 + 3] === 0 ? fallback : heights[index];
+  };
   const output = Buffer.alloc(albedo.length);
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
@@ -196,10 +212,11 @@ function normalsFromHeight(source, albedo, profile, size, linear) {
         output.set([128, 128, 255, 0], offset);
         continue;
       }
-      const horizontal = (heightAt(x + 1, y - 1) + 2 * heightAt(x + 1, y) + heightAt(x + 1, y + 1))
-        - (heightAt(x - 1, y - 1) + 2 * heightAt(x - 1, y) + heightAt(x - 1, y + 1));
-      const vertical = (heightAt(x - 1, y + 1) + 2 * heightAt(x, y + 1) + heightAt(x + 1, y + 1))
-        - (heightAt(x - 1, y - 1) + 2 * heightAt(x, y - 1) + heightAt(x + 1, y - 1));
+      const centerHeight = heights[y * size + x];
+      const horizontal = (heightAt(x + 1, y - 1, centerHeight) + 2 * heightAt(x + 1, y, centerHeight) + heightAt(x + 1, y + 1, centerHeight))
+        - (heightAt(x - 1, y - 1, centerHeight) + 2 * heightAt(x - 1, y, centerHeight) + heightAt(x - 1, y + 1, centerHeight));
+      const vertical = (heightAt(x - 1, y + 1, centerHeight) + 2 * heightAt(x, y + 1, centerHeight) + heightAt(x + 1, y + 1, centerHeight))
+        - (heightAt(x - 1, y - 1, centerHeight) + 2 * heightAt(x, y - 1, centerHeight) + heightAt(x + 1, y - 1, centerHeight));
       const normalX = -horizontal * profile.normalStrength;
       const normalY = vertical * profile.normalStrength;
       const inverseLength = 1 / Math.hypot(normalX, normalY, 1);
@@ -212,7 +229,7 @@ function normalsFromHeight(source, albedo, profile, size, linear) {
   return output;
 }
 
-function transformNormalPixels(source, albedo, size, transforms, label) {
+function transformNormalPixels(source, albedo, size, transforms, normalStrength, label) {
   const spatial = transformPixelSequence(source, size, transforms);
   const output = Buffer.alloc(spatial.length);
   for (let offset = 0; offset < spatial.length; offset += 4) {
@@ -230,15 +247,40 @@ function transformNormalPixels(source, albedo, size, transforms, label) {
     if (length < 1 / 64) throw new Error(`${label} contains a zero-length normal`);
     let transformed = decoded;
     for (const transform of transforms) transformed = applyNormalTransform(transformed, transform);
-    output[offset] = Math.round((transformed.x / length * 0.5 + 0.5) * 255);
-    output[offset + 1] = Math.round((transformed.y / length * 0.5 + 0.5) * 255);
-    output[offset + 2] = Math.round((transformed.z / length * 0.5 + 0.5) * 255);
+    if (normalStrength === 0) {
+      output.set([128, 128, 255, alpha], offset);
+      continue;
+    }
+    const normalX = transformed.x * normalStrength;
+    const normalY = transformed.y * normalStrength;
+    const strengthenedLength = Math.hypot(normalX, normalY, transformed.z);
+    output[offset] = Math.round((normalX / strengthenedLength * 0.5 + 0.5) * 255);
+    output[offset + 1] = Math.round((normalY / strengthenedLength * 0.5 + 0.5) * 255);
+    output[offset + 2] = Math.round((transformed.z / strengthenedLength * 0.5 + 0.5) * 255);
     output[offset + 3] = alpha;
   }
   return output;
 }
 
-function generatedMaterial(albedo, profile, size) {
+function flatNormals(albedo) {
+  const output = Buffer.alloc(albedo.length);
+  for (let offset = 0; offset < albedo.length; offset += 4) {
+    output.set([128, 128, 255, albedo[offset + 3]], offset);
+  }
+  return output;
+}
+
+function uniformMaterial(albedo, profile) {
+  const output = Buffer.alloc(albedo.length);
+  const roughness = Math.round(profile.roughness * 255);
+  const metallic = Math.round(profile.metallic * 255);
+  for (let offset = 0; offset < albedo.length; offset += 4) {
+    output.set([255, roughness, metallic, albedo[offset + 3]], offset);
+  }
+  return output;
+}
+
+function albedoDerivedMaterial(albedo, profile, size) {
   const output = Buffer.alloc(albedo.length);
   const heights = heightSamples(albedo, albedo, size, true);
   let weightedLuminance = 0;
@@ -359,8 +401,8 @@ async function loadChannel(dataRoot, file, tileSize, channel, label, sourceCache
 
 /**
  * Loads optional author maps and resolves the normal, ORM material, and
- * emissive channels. Missing maps are deterministically generated from the
- * transformed albedo and surface profile. Ordered transforms mirror the base
+ * emissive channels. Surface profiles explicitly select the normal and ORM
+ * fallback used when a map is absent. Ordered transforms mirror the base
  * texture transform followed by any variant transform. Output alpha always
  * follows albedo.
  */
@@ -389,20 +431,32 @@ export async function resolveTextureChannels({
   let normal;
   let normalSource;
   if (loaded.has("normal")) {
-    normal = transformNormalPixels(loaded.get("normal"), albedo, size, transforms, `${label} normal channel`);
+    normal = transformNormalPixels(
+      loaded.get("normal"),
+      albedo,
+      size,
+      transforms,
+      profile.normalStrength,
+      `${label} normal channel`,
+    );
     normalSource = "authored-normal";
   } else if (loaded.has("height")) {
     const height = transformPixelSequence(loaded.get("height"), size, transforms);
     normal = normalsFromHeight(height, albedo, profile, size, false);
     normalSource = "authored-height";
+  } else if (profile.normalFallback === "flat") {
+    normal = flatNormals(albedo);
+    normalSource = "fallback-flat";
   } else {
     normal = normalsFromHeight(albedo, albedo, profile, size, true);
-    normalSource = "generated";
+    normalSource = "fallback-albedo-height";
   }
 
   const authoredMaterial = loaded.get("material");
   const material = authoredMaterial == null
-    ? generatedMaterial(albedo, profile, size)
+    ? profile.materialFallback === "uniform"
+      ? uniformMaterial(albedo, profile)
+      : albedoDerivedMaterial(albedo, profile, size)
     : alignAlpha(transformPixelSequence(authoredMaterial, size, transforms), albedo);
   const emissive = loaded.has("emissive")
     ? alignAlpha(transformPixelSequence(loaded.get("emissive"), size, transforms), albedo)
@@ -414,7 +468,7 @@ export async function resolveTextureChannels({
     emissive,
     sources: {
       normal: normalSource,
-      material: authoredMaterial == null ? "generated" : "authored-material",
+      material: authoredMaterial == null ? `fallback-${profile.materialFallback}` : "authored-material",
       emissive: loaded.has("emissive") ? "authored-emissive" : "generated",
     },
   };

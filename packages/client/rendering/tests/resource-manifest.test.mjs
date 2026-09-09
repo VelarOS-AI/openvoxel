@@ -9,6 +9,8 @@ import {loadResourceManifest} from "../tools/resource-manifest.mjs";
 
 const surfaceProfile = {
   key: "rock",
+  normalFallback: "albedo-height",
+  materialFallback: "albedo-derived",
   normalStrength: 1,
   occlusionStrength: 0.2,
   roughness: 0.8,
@@ -50,7 +52,7 @@ async function imageBytes(format = "png") {
   return format === "webp" ? image.webp().toBuffer() : image.png().toBuffer();
 }
 
-async function fixture(context, {formatVersion = 9, maps = {}, variants = [], texturePipeline = null} = {}) {
+async function fixture(context, {formatVersion = 10, maps = {}, variants = [], texturePipeline = null} = {}) {
   const root = await mkdtemp(join(tmpdir(), "openvoxel-resource-manifest-"));
   context.after(() => rm(root, {recursive: true, force: true}));
   await Promise.all([
@@ -106,7 +108,7 @@ async function updateYaml(path, update) {
   await writeFile(path, stringify(document));
 }
 
-test("author format v9 normalizes optional PBR map declarations and array limits", async (context) => {
+test("author format v10 normalizes explicit PBR fallbacks, optional maps, and array limits", async (context) => {
   const maps = {
     height: {file: "textures/terrain/maps/stone.height.png"},
     material: {file: "textures/terrain/maps/stone.material.png"},
@@ -115,6 +117,7 @@ test("author format v9 normalizes optional PBR map declarations and array limits
   const {root, manifestPath} = await fixture(context, {maps});
   const source = await loadResourceManifest(root, manifestPath);
   assert.deepEqual(source.textures[0].maps, maps);
+  assert.deepEqual(source.surfaceProfiles.get("rock"), surfaceProfile);
   assert.deepEqual(source.packing, {tileSize: 2, maximumLayers: 32, mipmaps: true});
   assert.equal(source.imageFiles.length, 19);
   assert.deepEqual(source.unusedFiles, []);
@@ -202,8 +205,46 @@ test("author map schema rejects ambiguous, unknown, misplaced, and stale declara
     /texturePipeline contains unknown field atlasPadding/u,
   );
 
-  const stale = await fixture(context, {formatVersion: 8});
+  const stale = await fixture(context, {formatVersion: 9});
   await assert.rejects(loadResourceManifest(stale.root, stale.manifestPath), /Unsupported client resource pack source format/u);
+});
+
+test("surface profiles require closed normal and material fallback policies", async (context) => {
+  const missingNormal = await fixture(context);
+  await updateYaml(missingNormal.manifestPath, (document) => {
+    delete document.surfaceProfiles[0].normalFallback;
+  });
+  await assert.rejects(
+    loadResourceManifest(missingNormal.root, missingNormal.manifestPath),
+    /surface profile rock normalFallback must be non-empty text/u,
+  );
+
+  const invalidNormal = await fixture(context);
+  await updateYaml(invalidNormal.manifestPath, (document) => {
+    document.surfaceProfiles[0].normalFallback = "procedural";
+  });
+  await assert.rejects(
+    loadResourceManifest(invalidNormal.root, invalidNormal.manifestPath),
+    /normalFallback must be flat or albedo-height/u,
+  );
+
+  const missingMaterial = await fixture(context);
+  await updateYaml(missingMaterial.manifestPath, (document) => {
+    delete document.surfaceProfiles[0].materialFallback;
+  });
+  await assert.rejects(
+    loadResourceManifest(missingMaterial.root, missingMaterial.manifestPath),
+    /surface profile rock materialFallback must be non-empty text/u,
+  );
+
+  const invalidMaterial = await fixture(context);
+  await updateYaml(invalidMaterial.manifestPath, (document) => {
+    document.surfaceProfiles[0].materialFallback = "procedural";
+  });
+  await assert.rejects(
+    loadResourceManifest(invalidMaterial.root, invalidMaterial.manifestPath),
+    /materialFallback must be uniform or albedo-derived/u,
+  );
 });
 
 test("material precipitation surfaces are required finite policies independent of resource names", async (context) => {

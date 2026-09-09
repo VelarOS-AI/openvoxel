@@ -1,0 +1,63 @@
+import {WorldManifest} from "@openvoxel/world"
+import {WorldGameOwner, closeWorldGameOwners} from "./ownership.vel"
+
+export type WorldGameStage:
+    readonly manifest: readonly WorldManifest
+    prepare: () -> Promise<null>
+    start: () -> Promise<WorldGameOwner>
+    close: () -> Promise<null>
+
+export type WorldGameExperience:
+    enter: () -> Promise<readonly WorldManifest?>
+    close: () -> Promise<null>
+
+/// 进入世界是一次资源获取事务：会话、首屏数据、渲染器依次取得所有权。
+/// 关闭先同步撤销所有后续阶段，迟到的获取结果由同一个所有者立即释放。
+export def worldGameExperience(
+    openStage: () -> Promise<WorldGameStage>,
+    closeBackend: () -> Promise<null>,
+) -> WorldGameExperience:
+    let stage: WorldGameStage? = null
+    let game: WorldGameOwner? = null
+    let entering: Promise<readonly WorldManifest?>? = null
+    let closing: Promise<null>? = null
+    let closed = false
+
+    async def releaseResources():
+        const ownedGame = game
+        const ownedStage = stage
+        game = null
+        stage = null
+        await closeWorldGameOwners([ownedGame, ownedStage])
+
+    async def shutdown():
+        closed = true
+        await releaseResources()
+        await closeWorldGameOwners([{close: closeBackend}])
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    async def open() -> readonly WorldManifest?:
+        try:
+            const opened = await openStage()
+            stage = opened
+            if closed: return null
+            await opened.prepare()
+            if closed: return null
+            game = await opened.start()
+            if closed: return null
+            return opened.manifest
+        catch error:
+            await close()
+            throw error
+        finally:
+            if closed: await releaseResources()
+
+    def enter() -> Promise<readonly WorldManifest?>:
+        assert not closed else "World experience is closed"
+        if entering == null: entering = open()
+        return entering!
+
+    return {enter, close}

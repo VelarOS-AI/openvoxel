@@ -1,12 +1,11 @@
+import {WorldGameStats, openLocalWorldGame} from "@openvoxel/game"
 import {WorldGameMode, WorldManifest} from "@openvoxel/world"
 import {Head, RouteContext, navigate} from "velar/web"
 import {Icon, IconName} from "../icon.vel"
 import {asyncPageLifetime} from "../lifecycle/async-page-lifetime.vel"
-import {WorldRendererStats} from "../rendering/world-renderer.vel"
 import {subtitleLook} from "../styles/common.vel"
 import {navButtonLook} from "../styles/shell.vel"
 import {gameCanvasLook, loadingLook, worldChromeLook, worldStageLook} from "../styles/world-stage.vel"
-import {localWorldExperience} from "../worlds/world-entry.vel"
 
 export component WorldPage(route: RouteContext):
     const lifetime = asyncPageLifetime()
@@ -14,7 +13,7 @@ export component WorldPage(route: RouteContext):
     state world: readonly WorldManifest? = null
     state loading = true
     state failure = ""
-    state stats: readonly WorldRendererStats? = null
+    state stats: readonly WorldGameStats? = null
     let canvas: CanvasElement? = null
     computed renderStatus = (not failure.isBlank()
         ? "Rendering stopped"
@@ -26,13 +25,13 @@ export component WorldPage(route: RouteContext):
         assert current != null else "World canvas is not mounted"
         return current
 
-    def receiveStats(value: readonly WorldRendererStats):
+    def receiveStats(value: readonly WorldGameStats):
         if lifetime.owns(generation) and failure.isBlank(): stats = value
 
     def receiveFailure(message: string):
         if lifetime.owns(generation): failure = message
 
-    const experience = localWorldExperience(route.params.get("id") ?? "", mountedCanvas, receiveStats, receiveFailure)
+    const experience = openLocalWorldGame(route.params.get("id") ?? "", mountedCanvas, receiveStats, receiveFailure)
 
     async def enter():
         try:

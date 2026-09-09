@@ -8,7 +8,8 @@ export type AsyncPageLifetime:
     owns: (generation: number) -> bool
     dispose: () -> null
 
-/// 页面生命周期内可异步关闭的资源最小契约。
+/// 页面生命周期内可异步关闭的资源最小契约。游戏资源由 @openvoxel/game
+/// 自己回收；这里仅供创建、打开等页面级事务使用。
 export type AsyncCloseable:
     close: () -> Promise<null>
 
@@ -30,8 +31,8 @@ export def asyncPageLifetime() -> AsyncPageLifetime:
 
     return {begin, owns, dispose}
 
-/// 按所有权的逆序关闭独立资源。每项失败都被隔离，确保后续资源仍会释放；
-/// 页面卸载后没有安全的状态或 DOM 可以承接清理错误。
+/// 页面卸载后没有安全的状态或 DOM 可以承接清理错误；每项失败必须隔离，
+/// 确保同一页面事务中的后续资源仍能释放。
 export async def closeBestEffort(resources: readonly List<AsyncCloseable?>):
     for resource in resources:
         if resource == null: continue

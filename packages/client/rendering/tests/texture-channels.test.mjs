@@ -7,6 +7,8 @@ import sharp from "sharp";
 import {resolveTextureChannels, transformTangentNormal} from "../tools/texture-channels.mjs";
 
 const profile = {
+  normalFallback: "albedo-height",
+  materialFallback: "albedo-derived",
   normalStrength: 1,
   occlusionStrength: 0.25,
   roughness: 0.8,
@@ -53,7 +55,7 @@ async function writeGrayPng(root, name, size, pixels) {
     .toColourspace("b-w").png().toFile(join(root, name));
 }
 
-test("missing author maps deterministically fall back to albedo-derived PBR channels", async () => {
+test("albedo-derived fallback deterministically resolves missing normal and material maps", async () => {
   const size = 3;
   const albedo = horizontalGradient(size);
   albedo[3] = 0;
@@ -65,7 +67,11 @@ test("missing author maps deterministically fall back to albedo-derived PBR chan
     label: "fallback texture",
   });
 
-  assert.deepEqual(output.sources, {normal: "generated", material: "generated", emissive: "generated"});
+  assert.deepEqual(output.sources, {
+    normal: "fallback-albedo-height",
+    material: "fallback-albedo-derived",
+    emissive: "generated",
+  });
   assert.equal(output.normal.length, albedo.length);
   assert.equal(output.material.length, albedo.length);
   assert.equal(output.emissive.length, albedo.length);
@@ -85,6 +91,32 @@ test("missing author maps deterministically fall back to albedo-derived PBR chan
     label: "alpha-masked fallback texture",
   });
   assert.deepEqual(pixel(maskedEmission.emissive, 1, 0, 0), [0, 0, 0, 64]);
+});
+
+test("flat normal and uniform material fallbacks ignore albedo detail while preserving alpha", async () => {
+  const size = 2;
+  const albedo = Buffer.from([
+    0, 20, 255, 255,
+    255, 220, 0, 128,
+    70, 90, 110, 0,
+    180, 30, 140, 255,
+  ]);
+  const output = await resolveTextureChannels({
+    dataRoot: ".",
+    tileSize: size,
+    albedoPixels: albedo,
+    profile: {...profile, normalFallback: "flat", materialFallback: "uniform"},
+    label: "uniform fallback texture",
+  });
+
+  assert.deepEqual(output.sources, {normal: "fallback-flat", material: "fallback-uniform", emissive: "generated"});
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const alpha = pixel(albedo, size, x, y)[3];
+      assert.deepEqual(pixel(output.normal, size, x, y), [128, 128, 255, alpha]);
+      assert.deepEqual(pixel(output.material, size, x, y), [255, 204, 13, alpha]);
+    }
+  }
 });
 
 test("authored channels follow ordered base and variant transforms", async (context) => {
@@ -128,6 +160,37 @@ test("authored channels follow ordered base and variant transforms", async (cont
   assert.deepEqual(pixel(output.emissive, size, 0, 1), [44, 55, 66, 0]);
 });
 
+test("authored normal strength flattens or amplifies XY before renormalizing and keeps transparent edges flat", async (context) => {
+  const root = await fixture(context);
+  const size = 2;
+  await writePng(root, "normal.png", size, solid(size, [180, 160, 240, 255]));
+  const albedo = solid(size, [90, 100, 110, 255]);
+  albedo[3] = 0;
+  const outputs = new Map();
+  for (const strength of [0, 0.5, 2]) {
+    outputs.set(strength, await resolveTextureChannels({
+      dataRoot: root,
+      tileSize: size,
+      albedoPixels: albedo,
+      profile: {...profile, normalStrength: strength},
+      sourceFiles: {normal: "normal.png"},
+      label: `authored normal strength ${strength}`,
+    }));
+  }
+
+  assert.deepEqual(pixel(outputs.get(0).normal, size, 1, 0), [128, 128, 255, 255]);
+  for (const output of outputs.values()) {
+    assert.equal(output.sources.normal, "authored-normal");
+    assert.deepEqual(pixel(output.normal, size, 0, 0), [128, 128, 255, 0]);
+  }
+  const decode = (bytes) => bytes.slice(0, 3).map((value) => value / 255 * 2 - 1);
+  const weak = decode(pixel(outputs.get(0.5).normal, size, 1, 0));
+  const strong = decode(pixel(outputs.get(2).normal, size, 1, 0));
+  assert.ok(Math.hypot(weak[0], weak[1]) < Math.hypot(strong[0], strong[1]));
+  assert.ok(weak[2] > strong[2]);
+  for (const normal of [weak, strong]) assert.ok(Math.abs(Math.hypot(...normal) - 1) < 0.01);
+});
+
 test("an authored height map replaces only normal generation", async (context) => {
   const root = await fixture(context);
   const size = 3;
@@ -143,7 +206,11 @@ test("an authored height map replaces only normal generation", async (context) =
     label: "height texture",
   });
 
-  assert.deepEqual(output.sources, {normal: "authored-height", material: "generated", emissive: "generated"});
+  assert.deepEqual(output.sources, {
+    normal: "authored-height",
+    material: "fallback-albedo-derived",
+    emissive: "generated",
+  });
   const center = pixel(output.normal, size, 1, 1);
   assert.equal(center[0] < 128, true);
   assert.ok(center[2] > 128, "height normals must encode positive Z in signed tangent space");
@@ -161,6 +228,27 @@ test("an authored height map replaces only normal generation", async (context) =
   assert.ok(Math.abs(rotatedCenter[0] - 128) <= 1, "clockwise height rotation removes the horizontal slope");
   assert.ok(rotatedCenter[1] > 128, "clockwise height rotation tilts the tangent normal upward");
   assert.ok(rotatedCenter[2] > 128, "rotated height normal must keep positive Z");
+});
+
+test("transparent height neighbors extend the visible center instead of creating silhouette cliffs", async (context) => {
+  const root = await fixture(context);
+  const size = 3;
+  await writeGrayPng(root, "uniform-height.png", size, Buffer.alloc(size * size, 190));
+  const albedo = solid(size, [190, 190, 190, 255]);
+  for (let y = 0; y < size; y += 1) albedo[(y * size) * 4 + 3] = 0;
+
+  for (const sourceFiles of [{height: "uniform-height.png"}, {}]) {
+    const output = await resolveTextureChannels({
+      dataRoot: root,
+      tileSize: size,
+      albedoPixels: albedo,
+      profile,
+      sourceFiles,
+      label: sourceFiles.height == null ? "albedo-height transparent edge" : "authored-height transparent edge",
+    });
+    assert.deepEqual(pixel(output.normal, size, 1, 1), [128, 128, 255, 255]);
+    assert.deepEqual(pixel(output.normal, size, 0, 1), [128, 128, 255, 0]);
+  }
 });
 
 test("all tangent-space normal orientations follow image rotation then flips", () => {
@@ -240,5 +328,13 @@ test("channel declarations and authored images fail closed", async (context) => 
   await assert.rejects(
     resolveTextureChannels({...options, sourceFiles: {orm: "orm.png"}}),
     /unknown channel orm/u,
+  );
+  await assert.rejects(
+    resolveTextureChannels({...options, profile: {...profile, normalFallback: "procedural"}}),
+    /normalFallback must be flat or albedo-height/u,
+  );
+  await assert.rejects(
+    resolveTextureChannels({...options, profile: {...profile, materialFallback: "procedural"}}),
+    /materialFallback must be uniform or albedo-derived/u,
   );
 });

@@ -108,6 +108,24 @@ function channelAverage(data, level, variant, channel) {
   return total / count;
 }
 
+function normalAnglePercentile(normalData, albedoData, level, variant, percentile) {
+  const angles = [];
+  for (let y = 0; y < level.height; y += 1) {
+    for (let x = 0; x < level.width; x += 1) {
+      const albedo = pixel(albedoData, level.width, level.height, variant.layer, x, y);
+      if (albedo[3] === 0) continue;
+      const normal = pixel(normalData, level.width, level.height, variant.layer, x, y);
+      const decoded = normal.slice(0, 3).map((component) => component / 127.5 - 1);
+      const length = Math.hypot(...decoded);
+      assert.ok(length > 0, "Visible normal texels must not be zero length");
+      angles.push(Math.acos(Math.max(-1, Math.min(1, decoded[2] / length))) * 180 / Math.PI);
+    }
+  }
+  assert.ok(angles.length > 0, "Texture region must contain at least one visible normal");
+  angles.sort((left, right) => left - right);
+  return angles[Math.max(0, Math.ceil(angles.length * percentile) - 1)];
+}
+
 function channelLayer(data, level, variant) {
   const layerBytes = level.width * level.height * 4;
   return data.subarray(variant.layer * layerBytes, (variant.layer + 1) * layerBytes);
@@ -127,7 +145,7 @@ function identityLevel(name, width, height) {
 function identityFixture(overrides = {}) {
   return {
     manifest: {
-      formatVersion: 9,
+      formatVersion: 10,
       owner: "openvoxel",
       textureCatalogs: ["textures/terrain.yml", "textures/fluid.yml"],
       texturePipeline: {tileSize: 32, maximumArrayLayers: 256, mipmaps: true},
@@ -417,8 +435,19 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     }
   }
   assert.deepEqual(channelSources, {
-    normal: {"authored-height": 19, "authored-normal": 4, composed: 1, generated: 33},
-    material: {"authored-material": 23, composed: 1, generated: 33},
+    normal: {
+      "authored-height": 19,
+      "authored-normal": 4,
+      "fallback-albedo-height": 25,
+      "fallback-flat": 8,
+      composed: 1,
+    },
+    material: {
+      "authored-material": 23,
+      "fallback-albedo-derived": 19,
+      "fallback-uniform": 14,
+      composed: 1,
+    },
     emissive: {"authored-emissive": 2, composed: 1, generated: 54},
   });
   const auditedVariants = audit.banks.flatMap((bank) => bank.variants);
@@ -450,7 +479,7 @@ test("resource hash is deterministic and covers every authoring and generated bo
       textureCatalogs: [...fixture.manifest.textureCatalogs].reverse(),
       environment: fixture.manifest.environment,
       owner: "openvoxel",
-      formatVersion: 9,
+      formatVersion: 10,
     },
     catalogs: [...fixture.catalogs].reverse().map((catalog) => ({
       ...catalog,
@@ -655,9 +684,14 @@ test("generated ORM and emissive channels preserve material intent and animation
   const copper = "openvoxel:texture/block/copper_ore";
   const magma = "openvoxel:texture/block/magma";
   assert.ok(sample(stone, "material", 1) > sample(water, "material", 1), "stone must be rougher than water");
-  assert.ok(sample(copper, "material", 2) > sample(stone, "material", 2), "copper ore must be more metallic than stone");
+  assert.ok(sample(copper, "material", 1) < sample(stone, "material", 1), "copper grains must be smoother than stone");
+  for (const texture of [stone, water, copper, magma]) {
+    assert.equal(sample(texture, "material", 2), 0, `${texture} must remain non-metallic`);
+  }
   const magmaEmission = sample(magma, "emissive", 0) + sample(magma, "emissive", 1) + sample(magma, "emissive", 2);
   const stoneEmission = sample(stone, "emissive", 0) + sample(stone, "emissive", 1) + sample(stone, "emissive", 2);
+  const waterEmission = sample(water, "emissive", 0) + sample(water, "emissive", 1) + sample(water, "emissive", 2);
+  assert.equal(waterEmission, 0, "water must not emit light");
   assert.ok(magmaEmission > stoneEmission, "magma must emit more light than stone");
 
   for (const animation of output.artifact.animations) {
@@ -670,6 +704,65 @@ test("generated ORM and emissive channels preserve material intent and animation
     assert.equal(new Set(frames.map((texture) => texture.bankKey)).size, 1, `${animation.key} frames must share a bank`);
     const layers = frames.map((texture) => texture.variants[0].layer);
     assert.equal(new Set(layers).size, frames.length, `${animation.key} frames must own distinct array layers`);
+  }
+});
+
+test("shipped surface families stay inside their normal and metallic material budgets", async () => {
+  const {artifact} = await outputPromise;
+  const banks = new Map(artifact.textureBanks.map((bank) => [bank.key, bank]));
+  const textures = new Map(artifact.textures.map((texture) => [texture.key, texture]));
+  const textureMetrics = (key) => {
+    const texture = textures.get(`openvoxel:texture/block/${key}`);
+    assert.ok(texture != null, `Expected shipped texture ${key}`);
+    const bank = banks.get(texture.bankKey);
+    assert.ok(bank != null, `Expected texture bank ${texture.bankKey}`);
+    const level = bank.levels[0];
+    const normal = decodedChannel(level, "normal");
+    const material = decodedChannel(level, "material");
+    const albedo = decodedChannel(level, "albedo");
+    return texture.variants.map((variant) => ({
+      normalP95: normalAnglePercentile(normal, albedo, level, variant, 0.95),
+      metallic: channelAverage(material, level, variant, 2),
+    }));
+  };
+
+  for (const texture of artifact.textures) {
+    for (const [variant, metrics] of textureMetrics(texture.key.split("/").at(-1)).entries()) {
+      assert.ok(metrics.normalP95 <= 35, `${texture.key} variant ${variant} normal P95 must stay at or below 35 degrees`);
+    }
+  }
+  for (const key of ["water", "water_flow"]) {
+    for (const metrics of textureMetrics(key)) {
+      assert.ok(metrics.normalP95 <= 10, `${key} must keep only subtle wave normals`);
+      assert.equal(metrics.metallic, 0, `${key} must remain dielectric`);
+    }
+  }
+  for (const key of [
+    "birch_leaves",
+    "dry_bush",
+    "mimosa_leaves",
+    "oak_leaves",
+    "poplar_leaves",
+    "purple_flower",
+    "red_flower",
+    "spruce_leaves",
+    "tall_grass",
+    "white_flower",
+  ]) {
+    for (const metrics of textureMetrics(key)) {
+      assert.ok(metrics.normalP95 <= 1, `${key} cutout silhouette must not be embossed into its normal map`);
+    }
+  }
+  for (const key of [
+    "coal_ore",
+    "copper_ore",
+    "diamond_ore",
+    "germanium_ore",
+    "iron_ore",
+    "saltpeter_ore",
+    "sulphur_ore",
+  ]) {
+    for (const metrics of textureMetrics(key)) assert.equal(metrics.metallic, 0, `${key} rock matrix must remain dielectric`);
   }
 });
 

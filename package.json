@@ -26,7 +26,7 @@
     "dev:web": "npm run dev --workspace @openvoxel/web",
     "start": "npm run start --workspace @openvoxel/server",
     "test": "npm run test --workspaces --if-present",
-    "test:gpu": "npm run generate && npm run test:gpu --workspace @openvoxel/renderer",
+    "test:gpu": "npm run generate && npm run test:gpu --workspace @openvoxel/game",
     "test:web-ui": "npm run generate && node apps/web/tests/ui-acceptance.mjs",
     "build": "npm run build --workspaces --if-present",
     "benchmark:worldgen": "npm run benchmark --workspace @openvoxel/world-generation",
@@ -42,6 +42,7 @@
   "dependencies": {
     "@openvoxel/client": "0.2.0",
     "@openvoxel/content": "0.2.0",
+    "@openvoxel/game": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/renderer": "0.2.0",
     "@openvoxel/world": "0.2.0",

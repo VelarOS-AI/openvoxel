@@ -48,7 +48,7 @@ jobs:
         with:
           name: browser-evidence-${{ github.run_attempt }}
           path: |
-            packages/client/rendering/generated/gpu-render-probe
+            packages/client/game/generated/gpu-render-probe
             apps/web/generated/ui-acceptance
           if-no-files-found: warn
           retention-days: 7

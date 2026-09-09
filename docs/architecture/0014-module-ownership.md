@@ -4,7 +4,7 @@
 
 ## 包与模块
 
-包按职责族群组织：`content`、`world`、`client` 下的叶目录分别发布自己的契约；`protocol` 拥有线上形状。运行环境单独写入包清单。包内按变化原因拆模块，组合根连接端口，状态与资源由实际执行该职责的模块拥有。
+包按职责族群组织：`content`、`world`、`client` 下的叶目录分别发布自己的契约；`protocol` 拥有线上形状。运行环境单独写入包清单。包内按变化原因拆模块，组合根连接端口，状态与资源由实际执行该职责的模块拥有。客户端世界体验统一由 `@openvoxel/game` 编排，专用框架边界见 [ADR 0015](0015-openvoxel-game-framework.md)。
 
 | 位置 | 所有者 | 扩展点 |
 | --- | --- | --- |
@@ -17,15 +17,20 @@
 | `packages/client/access/src/session-connection.vel` | 活跃连接、连接代际、迟到连接释放 | 后端连接实现 |
 | `packages/client/access/src/session-environment.vel` | 权威环境锚点、生态时间槽与公平刷新队列 | 环境刷新策略 |
 | `packages/client/access/src/chunk-load-ownership.vel` | 重叠冷加载的成功/失败所有权 | 加载取消与回滚 |
-| `apps/web/src/worlds/world-experience.vel` | 会话、首屏数据、渲染器的阶段获取与回收 | 世界进入流程 |
-| `apps/web/src/worlds/world-entry.vel` | 浏览器本地后端和 Canvas 的具体组装 | 宿主入口 |
-| `apps/web/src/rendering/world-renderer.vel` | 会话、流送、构网、环境、碰撞 readiness 与 Surface 组合 | 客户端世界体验 |
-| `apps/web/src/rendering/chunk-streamer.vel` | 唯一流送任务、最新完整视窗与分批提交 | 视区与驻留策略 |
-| `apps/web/src/rendering/chunk-meshing.vel` | 构网优先级、票据、失效、Portal 和提交 | 网格调度策略 |
-| `apps/web/src/rendering/chunk-mesh-worker.vel` | Worker 获取、初始化及消息适配 | 构网执行宿主 |
-| `apps/web/src/rendering/environment-sync.vel` | 天气和生态的独立调度任务 | 宿主刷新节拍 |
+| `apps/web/src/lifecycle/async-page-lifetime.vel` | 页面异步操作的 generation 与失效判断 | 页面切换与迟到 UI 回调保护 |
+| `packages/client/game/src/runtime/world-experience.vel` | 会话、首屏数据、游戏实例的阶段获取与回收 | 世界进入流程 |
+| `packages/client/game/src/runtime/local-world-game.vel` | 本地后端、世界会话、首批 Chunk 与 Canvas 的具体组装 | `openLocalWorldGame` 用例 |
+| `packages/client/game/src/runtime/world-game.vel` | 会话、流送、构网、环境、碰撞 readiness 与图形边界组合 | 客户端世界运行时 |
+| `packages/client/game/src/runtime/chunk-streamer.vel` | 唯一流送任务、最新完整视窗与分批提交 | 视区与驻留策略 |
+| `packages/client/game/src/runtime/chunk-meshing.vel` | 构网优先级、票据、失效、Portal 和提交 | 网格调度策略 |
+| `packages/client/game/src/runtime/chunk-mesh-worker.vel` | Worker 获取、初始化及消息适配 | 构网执行宿主 |
+| `packages/client/game/src/runtime/environment-sync.vel` | 天气和生态的独立调度任务 | 宿主刷新节拍 |
+| `packages/client/game/src/controls/` | 玩家意图、创造飞行、生存步行和导航策略 | OpenVoxel 玩家操作 |
+| `packages/client/game/src/host/` | 宿主输入、Canvas、焦点、指针锁和监听器 | 宿主接入 |
+| `packages/client/game/src/graphics/` | 图形边界与权威环境的呈现投影 | OpenVoxel 画面语义 |
+| `packages/client/game/src/backends/babylon/` | 私有相机、材质、天空、环境贴图与 GPU 生命周期 | 后端实现与定向呈现优化 |
 | `packages/client/rendering/src/meshing/` | 状态读取、Portal 洪泛、面策略、模型与 buffer 输出 | 模型和面优化 |
-| `packages/client/rendering/src/native/babylon/` | 相机、材质、天空、环境贴图与 GPU 生命周期 | 原生呈现能力 |
+| `packages/client/rendering/src/resource-pack.vel`、`render-catalog.vel` | 资源包纯数据校验、逻辑资源与运行时渲染目录 | 资源配方与方块视觉身份 |
 
 ## 世界事实与持久化
 
@@ -38,19 +43,19 @@
 
 1. 每次连接安装新建同步状态。旧请求的完成、错误或 `finally` 只收敛旧代际；新连接的广播与生态调度独立前进。请求响应先确认仍属于当前连接，再进行请求关联和状态写入。
 2. 关闭先同步封住入口与回调，再等待已拥有的任务回收。挂起获取的连接和渲染器在迟到返回时由发起者释放；重复关闭共享同一次完成。
-3. 世界进入分为会话、首屏准备、渲染器三个阶段。页面拥有一个体验实例和一份统计事实；页面退出不会继续推进下一阶段。
+3. game 的世界进入分为会话、首屏准备、游戏图形三个阶段。页面只拥有 `WorldGameExperience` 和一份 `WorldGameStats`；通过 `openLocalWorldGame` 获取体验并调用 `enter` / `close`。game 拥有资源关闭契约，页面 generation 只保护 UI；页面退出不会继续推进下一阶段。
 4. 流送只保留最新的完整视窗与版本。每批四个 Chunk 先加载再配对卸载；切换目标发生在成对提交之后，确保驻留有界与当前视区连续。
 5. 构网使用单调票据验证 Worker 返回和 GPU 提交。物理已安装网格与当前内容是否有效是两个事实；任务取消不能把旧网格误认为已从 GPU 移除。
 6. 碰撞 readiness 由已完成冷热同步的 Chunk 决定。未知区域保守阻挡，首屏安全条件不会由任务队列计数替代。
 7. 生态刷新一次最多四个 Chunk，单在途；队尾跨时间槽保持公平。天气采样与生态请求分别调度，重连等待期间生态刷新保持空闲。取消令牌贯穿调度、会话与传输请求，关闭等待实际请求收敛。
 
-## 原生渲染边界
+## 游戏图形与宿主边界
 
-Velar 模块提供受检端口，原生实现集中在 `.mjs` 中。`surface-contract` 在创建 Engine 前检查相机、世界界限、移动模式和 TypedArray 上传约束；`material-library` 统一解析材质、纹理 bank、动画及 PBR；`surface-lifetime` 负责逆序释放，并保证一项清理失败仍会继续回收其它资源。
+game 的 Velar 模块提供受检端口，宿主与后端原生实现集中在各自的 `.mjs` 中。`surface-contract` 在创建 Engine 前检查相机、世界界限、移动模式和 TypedArray 上传约束；`material-library` 统一解析材质、纹理 bank、动画及 PBR；`surface-lifetime` 负责逆序释放，并保证一项清理失败仍会继续回收其它资源。公开入口只提供 OpenVoxel 游戏契约，Scene、Mesh 与 `unknown` 原生句柄均留在私有后端。
 
 `environment-contract` 拥有资源/frame 校验，`environment-textures` 拥有异步贴图批次。批次失败会回收已完成及随后完成的贴图；天空层拥有自己的 shader 与 mesh。环境组合器连接灯光、阴影、天空和天气，各贴图的采样、混合方式由相应呈现职责维护。
 
-构网代码保持纯数据闭包，经精确 `@openvoxel/renderer/meshing-worker` 入口进入 Worker。方块运行时 ID 用于世界状态索引，texture/material/model/tint 的逻辑身份用于资源解析。
+renderer 的构网代码保持纯数据闭包，经精确 `@openvoxel/renderer/meshing-worker` 入口进入 game 拥有的 Worker。renderer 拥有资源作者格式、生成管线和资源产物，game 的后端拥有 GPU 资源实例。方块运行时 ID 用于世界状态索引，texture/material/model/tint 的逻辑身份用于资源解析。
 
 ## 自动门禁
 

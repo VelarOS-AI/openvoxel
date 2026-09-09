@@ -20,12 +20,11 @@ test "page lifetime invalidates superseded and disposed async continuations":
     expect(lifetime.owns(second)).toBe(false)
     expect(() => lifetime.begin()).toThrow()
 
-test "best effort cleanup closes every resource even when earlier resources fail":
+test "best effort cleanup closes every page resource when earlier releases fail":
     const calls: List<string> = []
-    const renderer = closeable("renderer", calls, true)
-    const session = closeable("session", calls, true)
+    const dialog = closeable("dialog", calls, true)
     const backend = closeable("backend", calls)
 
-    await closeBestEffort([renderer, session, backend])
+    await closeBestEffort([dialog, backend])
 
-    expect(calls).toEqual(["renderer", "session", "backend"])
+    expect(calls).toEqual(["dialog", "backend"])

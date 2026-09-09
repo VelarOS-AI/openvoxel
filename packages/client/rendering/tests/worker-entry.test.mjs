@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const projectRoot = resolve(packageRoot, "../../..");
+const gameRoot = join(projectRoot, "packages/client/game");
 const sourceRoot = join(packageRoot, "src");
 const workerEntry = "src/meshing-worker.vel";
 
@@ -31,7 +32,7 @@ async function sourceClosure(entry) {
   return visited;
 }
 
-test("renderer exposes meshing as an exact package entry", async () => {
+test("renderer exposes pure meshing and the game package owns its host bridge", async () => {
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   assert.equal(manifest.velar.entry, "src/index.vel");
   assert.deepEqual(manifest.velar.entries, {"./meshing-worker": workerEntry});
@@ -40,9 +41,16 @@ test("renderer exposes meshing as an exact package entry", async () => {
   const rootEntry = await readFile(join(packageRoot, manifest.velar.entry), "utf8");
   assert.doesNotMatch(rootEntry, /serveMeshingWorker|meshing-worker\.vel/u);
 
+  const gameManifest = JSON.parse(await readFile(join(gameRoot, "package.json"), "utf8"));
+  assert.equal(gameManifest.velar.entries["./meshing-worker"], "src/meshing-worker.vel");
+  assert.equal(gameManifest.exports["./meshing-worker"], "./dist/meshing-worker.js");
+  const gameBridge = await readFile(join(gameRoot, "src/meshing-worker.vel"), "utf8");
+  assert.match(gameBridge, /from "@openvoxel\/renderer\/meshing-worker"/u);
+  assert.doesNotMatch(gameBridge, /runtime\/|graphics\/|backends\/|@babylonjs/u);
+
   const webBootstrap = await readFile(join(projectRoot, "apps/web/src/meshing-worker.vel"), "utf8");
-  assert.match(webBootstrap, /from "@openvoxel\/renderer\/meshing-worker"/u);
-  assert.doesNotMatch(webBootstrap, /from "@openvoxel\/renderer"/u);
+  assert.match(webBootstrap, /from "@openvoxel\/game\/meshing-worker"/u);
+  assert.doesNotMatch(webBootstrap, /from "@openvoxel\/renderer/u);
 });
 
 test("meshing Worker source closure excludes GPU and generated resource owners", async () => {
@@ -54,14 +62,13 @@ test("meshing Worker source closure excludes GPU and generated resource owners",
     assert.ok(paths.includes(`src/meshing/${responsibility}.vel`));
   }
   assert.equal(paths.includes("src/index.vel"), false);
-  assert.equal(paths.includes("src/surface.vel"), false);
   assert.equal(paths.includes("src/builtin-resource-pack.vel"), false);
 
   const source = [...closure.values()].join("\n");
   for (const forbidden of [
     "@babylonjs/core",
     "PBRMaterial",
-    "openVoxelRenderSurface",
+    "openWorldGraphics",
     "resource-pack-data",
     "builtinClientResourcePack",
     "data:image/",

@@ -4,7 +4,3 @@ export {ClientRenderCatalog, createClientRenderCatalog} from "./render-catalog.v
 export {builtinClientResourcePack} from "./builtin-resource-pack.vel"
 export {meshChunk} from "./mesher.vel"
 export {ClientChunkBlockView, snapshotChunkNeighborhood} from "./snapshot.vel"
-export {VoxelEnvironmentStats, VoxelMovementMode, VoxelNavigationMode, VoxelNavigationStats, VoxelRenderSurface, VoxelSurfaceOptions, VoxelSurfaceStats, openVoxelRenderSurface} from "./surface.vel"
-export {ClientEnvironmentColor, ClientEnvironmentFrame, ClientEnvironmentVector3, environmentFrame} from "./environment/frame.vel"
-export {CreativeFlightBasis, CreativeFlightBounds, CreativeFlightIntent, CreativeFlightState, creativeFlightAcceleration, creativeFlightBoostSpeed, creativeFlightBraking, creativeFlightChunk, creativeFlightMaximumFrameMilliseconds, creativeFlightSpeed, creativeFlightState, stepCreativeFlight} from "./navigation/creative-flight.vel"
-export {SurvivalCollisionQuery, SurvivalWalkBasis, SurvivalWalkBounds, SurvivalWalkIntent, SurvivalWalkState, stepSurvivalWalk, survivalEyeHeight, survivalGravity, survivalJumpSpeed, survivalMaximumFrameMilliseconds, survivalPlayerHeight, survivalPlayerRadius, survivalSprintSpeed, survivalTerminalVelocity, survivalWalkSpeed, survivalWalkState} from "./navigation/survival-walk.vel"

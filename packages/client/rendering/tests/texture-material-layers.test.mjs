@@ -9,6 +9,8 @@ import {composeMaterialLayer} from "../tools/texture-material-layers.mjs";
 
 const channels = ["albedo", "normal", "material", "emissive"];
 const profile = {
+  normalFallback: "albedo-height",
+  materialFallback: "albedo-derived",
   normalStrength: 1,
   occlusionStrength: 0.25,
   roughness: 0.8,

@@ -105,6 +105,128 @@ test("normal mips decode, average, and renormalize tangent-space vectors", () =>
   assert.ok(Math.abs(Math.hypot(...decoded) - 1) < 0.01);
 });
 
+test("constant normal directions preserve every roughness byte throughout odd-sized mip chains", () => {
+  const definitions = [[128, 128, 255, 255], [200, 160, 232, 255], [255, 128, 128, 255]]
+    .flatMap((normal) => Array.from({length: 256}, (_value, roughness) => ({
+      albedo: [60, 90, 120, 255], normal, material: [201, roughness, 23, 255],
+    })));
+  const levels = buildPbrTextureArrayMipLevels({
+    width: 5,
+    height: 3,
+    ...layersFor(5, 3, definitions),
+    alphaCutoffs: definitions.map(() => null),
+  });
+
+  for (const level of levels) {
+    for (let layer = 0; layer < definitions.length; layer += 1) {
+      for (let offset = 0; offset < level.layers[layer].material.byteLength; offset += 4) {
+        assert.deepEqual([...level.layers[layer].material.subarray(offset, offset + 4)], definitions[layer].material);
+      }
+    }
+  }
+});
+
+test("opposing normals broaden specular roughness while preserving AO, metallic, alpha and normal fallback", () => {
+  const defaults = layersFor(2, 2, [{albedo: [60, 90, 120, 255], material: [64, 20, 137, 255]}]);
+  const normal = Buffer.from([
+    255, 128, 128, 255, 0, 127, 127, 255,
+    255, 128, 128, 255, 0, 127, 127, 255,
+  ]);
+  const levels = buildPbrTextureArrayMipLevels({...defaults, width: 2, height: 2, normalLayers: [normal], alphaCutoffs: [null]});
+
+  assert.deepEqual([...levels[1].layers[0].material], [64, 255, 137, 255]);
+  assert.deepEqual([...levels[1].layers[0].normal], [128, 128, 255, 255]);
+  assert.deepEqual([...levels[0].layers[0].material], [...defaults.materialLayers[0]]);
+});
+
+test("specular compensation is bounded and monotonic in both normal spread and source roughness", () => {
+  const sourceRoughness = [0, 20, 100, 200, 255];
+  const compensated = [0, 10, 30, 60, 89].map((degrees) => {
+    const angle = degrees * Math.PI / 180;
+    const normalByte = (value) => Math.round((value * 0.5 + 0.5) * 255);
+    const left = [normalByte(Math.sin(angle)), 128, normalByte(Math.cos(angle)), 255];
+    const right = [normalByte(-Math.sin(angle)), 128, normalByte(Math.cos(angle)), 255];
+    return sourceRoughness.map((roughness) => {
+      const defaults = layersFor(2, 2, [{albedo: [60, 90, 120, 255], material: [64, roughness, 137, 255]}]);
+      const levels = buildPbrTextureArrayMipLevels({
+        ...defaults, width: 2, height: 2,
+        normalLayers: [Buffer.from([...left, ...right, ...left, ...right])], alphaCutoffs: [null],
+      });
+      const result = levels[1].layers[0].material[1];
+      assert.ok(result >= roughness && result <= 255, `${degrees} degrees, ${roughness} -> ${result}`);
+      return result;
+    });
+  });
+
+  assert.deepEqual(compensated[0], sourceRoughness);
+  for (let spread = 0; spread < compensated.length; spread += 1) {
+    for (let roughness = 0; roughness < sourceRoughness.length; roughness += 1) {
+      if (spread > 0) assert.ok(compensated[spread][roughness] >= compensated[spread - 1][roughness]);
+      if (roughness > 0) assert.ok(compensated[spread][roughness] >= compensated[spread][roughness - 1]);
+    }
+  }
+});
+
+test("normal variance uses visible coverage and ignores transparent normal and material texels", () => {
+  const defaults = layersFor(2, 2, [{albedo: [60, 90, 120, 0], material: [70, 48, 90, 0]}]);
+  defaults.albedoLayers[0][3] = 255;
+  defaults.albedoLayers[0][7] = 64;
+  const visibleNormals = [255, 128, 128, 255, 128, 128, 255, 64];
+  const normal = Buffer.from([...visibleNormals, 0, 127, 127, 255, 127, 127, 0, 255]);
+  const alternativeNormal = Buffer.from([...visibleNormals, 128, 255, 128, 0, 128, 0, 128, 0]);
+  const alternativeMaterial = Buffer.from(defaults.materialLayers[0]);
+  alternativeMaterial.fill(255, 8);
+
+  for (const cutoff of [null, 0.45]) {
+    const original = buildPbrTextureArrayMipLevels({
+      ...defaults, width: 2, height: 2, normalLayers: [normal], alphaCutoffs: [cutoff],
+    })[1].layers[0];
+    const alternative = buildPbrTextureArrayMipLevels({
+      ...defaults, width: 2, height: 2, normalLayers: [alternativeNormal],
+      materialLayers: [alternativeMaterial], alphaCutoffs: [cutoff],
+    })[1].layers[0];
+    for (const channel of channels) assert.deepEqual(original[channel], alternative[channel]);
+
+    const surfaceWeight = 64 / 255;
+    const x = 1 + surfaceWeight / 255;
+    const y = (1 + surfaceWeight) / 255;
+    const z = 1 / 255 + surfaceWeight;
+    const coherence = Math.hypot(x, y, z) / ((1 + surfaceWeight) * Math.hypot(1, 1 / 255, 1 / 255));
+    const expectedRoughness = Math.round(Math.min(1, (48 / 255) ** 4 + 1 - coherence * coherence) ** 0.25 * 255);
+    assert.equal(original.material[1], expectedRoughness);
+    assert.deepEqual([original.material[0], original.material[2]], [70, 90]);
+    assert.equal(original.albedo[3], cutoff === null ? 80 : Math.ceil(cutoff * 255));
+    for (const channel of channels.slice(1)) assert.equal(original[channel][3], original.albedo[3]);
+  }
+
+  const transparent = buildPbrTextureArrayMipLevels({
+    ...defaults, width: 2, height: 2, albedoLayers: [solidLayer(2, 2, [60, 90, 120, 0])],
+    normalLayers: [normal], alphaCutoffs: [0.45],
+  })[1].layers[0];
+  assert.deepEqual([...transparent.material], [0, 0, 0, 0]);
+  assert.deepEqual([...transparent.normal], [128, 128, 255, 0]);
+});
+
+test("a complete mip chain retains filtered normal variance without repeatedly roughening constant mip normals", () => {
+  const defaults = layersFor(8, 8, [{albedo: [60, 90, 120, 255], material: [70, 24, 90, 255]}]);
+  const normal = Buffer.from(Array.from({length: 64}, (_value, index) => index % 2 === 0
+    ? [191, 128, 238, 255]
+    : [64, 128, 238, 255]).flat());
+  const levels = buildPbrTextureArrayMipLevels({
+    ...defaults, width: 8, height: 8, normalLayers: [normal], alphaCutoffs: [null],
+  });
+  const filteredRoughness = levels[1].layers[0].material[1];
+
+  assert.deepEqual(levels.map(({width, height}) => [width, height]), [[8, 8], [4, 4], [2, 2], [1, 1]]);
+  assert.ok(filteredRoughness > 24 && filteredRoughness < 255);
+  for (const level of levels.slice(1)) {
+    for (let offset = 0; offset < level.layers[0].material.byteLength; offset += 4) {
+      assert.deepEqual([...level.layers[0].material.subarray(offset, offset + 4)], [70, filteredRoughness, 90, 255]);
+      assert.deepEqual([...level.layers[0].normal.subarray(offset, offset + 4)], [128, 128, 255, 255]);
+    }
+  }
+});
+
 test("cutout mips preserve the nearest representable alpha coverage per layer", () => {
   const alpha = [
     0, 0, 255, 255,

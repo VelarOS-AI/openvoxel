@@ -26,7 +26,7 @@ npm run dev:web
 
 访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。Creative 世界中点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Space` 上升，`Ctrl` 或 `C` 下降，`Shift` 加速，`Esc` 释放指针。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
 
-渲染器的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/rendering/generated/gpu-render-probe`：
+游戏图形后端的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/game/generated/gpu-render-probe`：
 
 ```sh
 npm run test:gpu
@@ -68,10 +68,14 @@ npm run compile:mod --workspace @openvoxel/content
 
 ## 架构
 
-包内模块的具体所有者、异步回收规则与后续扩展点见 [职责模块与异步所有权](docs/architecture/0014-module-ownership.md)。源码边界由编译器模块 metadata 驱动的 `structure:check` 验证，`test:structure` 覆盖依赖越界和工具链版本一致性。
+OpenVoxel 专用游戏框架及其公开契约见 [ADR 0015：游戏框架](docs/architecture/0015-openvoxel-game-framework.md)：世界页通过 `@openvoxel/game` 进入和退出世界，game 组合 client、renderer 与 world，并拥有玩家控制、环境呈现和私有 Babylon 后端。包内模块的具体所有者、异步回收规则与后续扩展点见 [职责模块与异步所有权](docs/architecture/0014-module-ownership.md)。源码边界由编译器模块 metadata 驱动的 `structure:check` 验证，`test:structure` 覆盖依赖越界和工具链版本一致性。
 
 ```mermaid
 flowchart LR
+    Web["apps/web 页面与世界管理"] --> Game["@openvoxel/game 世界体验"]
+    Game --> C
+    Game --> Renderer["@openvoxel/renderer 构网与资源数据"]
+    Game --> W
     C["@openvoxel/client 世界会话"] --> L["LocalBackend / Browser Worker"]
     C --> O["OnlineBackend / HTTP + WebSocket"]
     L --> R["@openvoxel/world-runtime"]
@@ -102,16 +106,17 @@ flowchart LR
 - `packages/world/generation`：生成器注册入口与确定性生存生成算法；地形、洞穴、地下流体、矿物和植被按阶段分离，不负责后续 Tick 模拟。
 - `packages/world/runtime`：创建世界、解析精确内容、读取固定地形、缓存活动世界增量、顺序提交原子批次和发布有序世界事件等用例与存储端口。
 - `packages/client/access`：拥有客户端世界接入职责；世界会话、OnlineBackend、Worker/IndexedDB LocalBackend 共用一个 `WorldBackend` 端口和冷热 Chunk 合并状态机。网络地形 DTO 在 OnlineBackend 边界一次压缩成本地 `UInt16Buffer` 快照，Local Worker 直接转移相同紧凑形状；驻留状态一次展开由热增量维护的 `UInt32Buffer` 组合视图，供碰撞与构网共享；包清单明确声明 Web/Desktop 与 `web` 能力。
-- `packages/client/rendering`：拥有客户端呈现职责；资源包身份、运行时渲染目录、Chunk 邻域快照、网格生成和 Babylon 表面在一个包内，包清单明确声明 Web/Desktop 与 `web` 能力。
+- `packages/client/rendering`：拥有体素构网、资源身份、资源包与纯数据契约；资源目录、Chunk 邻域快照和网格生成保持 Core 可消费，资源人工定义与生成管线也归此包。
+- `packages/client/game`：OpenVoxel 专用游戏框架；通过 `openLocalWorldGame` 提供世界体验，拥有会话和首屏获取、Chunk 流送与构网协调、环境呈现、创造/生存移动、宿主输入及私有 Babylon 后端；包清单声明实际 Web/Desktop 与 `web` 能力。
 - `packages/protocol`：只拥有 HTTP 和 MessagePack WebSocket 的线上数据类型、协议版本与客户端接入事实；实际 HTTP 路由由服务端注解和 OpenAPI 共同描述。
 - `apps/server`：system、world、chunk、block、realtime 模块，负责把领域值投影成协议响应；同时拥有当前表结构、世界注册表 JSON、稀疏世界规则的 SQLite 适配器与组合根。
-- `apps/web`：正式浏览器客户端；开始界面负责世界创建与管理，进入世界后由有界 Chunk 会话、Meshing Worker 和 Babylon 表面组合大世界呈现。
+- `apps/web`：正式浏览器客户端；开始界面负责世界创建与管理，世界页消费 game 的体验和统计契约，页面保留路由、HUD 与 UI 生命周期。
 - `@velarscript/server` 是显式激活的官方服务端应用扩展，负责应用配置、启动约定，以及类型化实时会话的一条有界发送队列、唯一 writer 和确定性清理；世界身份、MessagePack 命令、广播范围与错误码仍归 OpenVoxel。
 - VelarScript 官方工具链继续使用 `@velarscript/*`；Libraries 非标准包统一从公开 npm scope `@velarscript-labs/*` 安装。两个命名空间的所有权在依赖名上直接可见，并由 lockfile 固定版本与完整性。
 
 族群与包目录只按职责命名，运行环境写入各自的 `velar.targets` 与
 `velar.requires.capabilities`。OpenVoxel 的可移植职责包统一声明
-`targets: ["core"]`，表示 Core、Node、Web、Desktop 都能消费；客户端与渲染器
+`targets: ["core"]`，表示 Core、Node、Web、Desktop 都能消费；客户端接入与游戏框架
 声明实际需要的 Web 宿主。当前使用的 Labs 清单也显式声明环境：YAML、Noise、
 MessagePack、Database、SQL 覆盖全部目标且不要求宿主能力，SQLite 只支持 Node 并
 要求 `node` 能力。`npm run structure:check` 会同时检查内部依赖与直接 Labs 依赖的
@@ -119,7 +124,7 @@ MessagePack、Database、SQL 覆盖全部目标且不要求宿主能力，SQLite
 
 目录按职责固定：手写运行时代码进入 `src/`，测试进入 `tests/`，测试辅助件进入 `tests/support/`，性能基准进入 `benchmarks/`，人工数据进入 `data/`，生成物进入 `generated/`，生成与检查脚本进入 `tools/`。`src/` 不放测试和生成物，`generated/` 禁止生成 `.vel`；`npm run structure:check` 和完整门禁会持续检查这两条规则。
 
-应用边界和标准库晋升规则见 [ADR 0001](docs/architecture/0001-application-boundary.md)，Chunk 格式见 [ADR 0002](docs/architecture/0002-world-format-v1.md)，世界生成裁决见 [ADR 0004](docs/architecture/0004-survival-world-generation.md)，原生服务框架裁决见 [ADR 0010](docs/architecture/0010-native-velarscript-backend.md)，稀疏世界存储见 [ADR 0006](docs/architecture/0006-sparse-world-deltas.md)，YAML 定义与 JSON 方块产物见 [ADR 0007](docs/architecture/0007-yaml-configuration-and-block-catalog.md)，每世界方块注册表见 [ADR 0008](docs/architecture/0008-world-block-registry.md)，客户端接入契约见 [ADR 0009](docs/architecture/0009-client-contract-boundary.md)，方块类型与有限状态地基见 [ADR 0011](docs/architecture/0011-block-type-and-state-foundation.md)，世界模型与生成边界见 [ADR 0012](docs/architecture/0012-world-model-and-generation-boundary.md)，客户端大世界呈现见 [ADR 0013](docs/architecture/0013-client-world-rendering.md)。
+应用边界和标准库晋升规则见 [ADR 0001](docs/architecture/0001-application-boundary.md)，Chunk 格式见 [ADR 0002](docs/architecture/0002-world-format-v1.md)，世界生成裁决见 [ADR 0004](docs/architecture/0004-survival-world-generation.md)，原生服务框架裁决见 [ADR 0010](docs/architecture/0010-native-velarscript-backend.md)，稀疏世界存储见 [ADR 0006](docs/architecture/0006-sparse-world-deltas.md)，YAML 定义与 JSON 方块产物见 [ADR 0007](docs/architecture/0007-yaml-configuration-and-block-catalog.md)，每世界方块注册表见 [ADR 0008](docs/architecture/0008-world-block-registry.md)，客户端接入契约见 [ADR 0009](docs/architecture/0009-client-contract-boundary.md)，方块类型与有限状态地基见 [ADR 0011](docs/architecture/0011-block-type-and-state-foundation.md)，世界模型与生成边界见 [ADR 0012](docs/architecture/0012-world-model-and-generation-boundary.md)，客户端大世界呈现见 [ADR 0013](docs/architecture/0013-client-world-rendering.md)，职责模块与异步所有权见 [ADR 0014](docs/architecture/0014-module-ownership.md)，OpenVoxel 游戏框架见 [ADR 0015](docs/architecture/0015-openvoxel-game-framework.md)。
 
 生成性能基线可以独立运行：
 

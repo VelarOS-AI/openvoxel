@@ -1,0 +1,179 @@
+import {ChunkMesh, ClientAnimationResource, ClientMaterialResource, ClientRenderCatalog, ClientResourceEnvironment, ClientTextureBank, ClientTextureResource} from "@openvoxel/renderer"
+import {WorldClimateSample, WorldEnvironmentSample, worldClimateAt} from "@openvoxel/world"
+import {WorldMovementFlightState, worldMovementFlightState, stepWorldMovementFlight} from "../controls/creative-flight.vel"
+import {WorldMovementCollisionQuery, WorldMovementWalkState, stepWorldMovementWalk, worldMovementEyeHeight, worldMovementPlayerHeight, worldMovementWalkState} from "../controls/survival-walk.vel"
+import {WorldMovementFlightStep, WorldMovementMode, WorldMovementWalkStep, WorldNavigationFactory, WorldNavigationMode, WorldNavigationStats, createWorldNavigation} from "../controls/world-navigation.vel"
+import {WorldGraphicsEnvironmentFrame, worldGraphicsEnvironmentFrame} from "./environment-frame.vel"
+
+export {WorldMovementMode, WorldNavigationMode, WorldNavigationStats} from "../controls/world-navigation.vel"
+
+export type WorldGraphicsEnvironmentStats:
+    readonly environmentTextureReady: bool
+    readonly environmentTextureUpdates: number
+    readonly precipitation: string
+    readonly precipitationIntensity: number
+    readonly cloudiness: number
+    readonly activeRainParticles: number
+    readonly activeSnowParticles: number
+    readonly activeRainSplashes: number
+    readonly activeSnowSplashes: number
+    /// 成功创建的真实碰地粒子累计数，生命周期结束前单调递增。
+    readonly rainSplashContacts: number
+    readonly snowSplashContacts: number
+    readonly rainSplashGrounded: bool
+    readonly rainSplashGroundY: number?
+    readonly shadowCasters: number
+    readonly activeShadowCasters: number
+    readonly sunVisible: bool
+    readonly moonVisible: bool
+    readonly starVisibility: number
+    readonly lightningSequence: number?
+
+export type WorldGraphicsStats:
+    readonly chunks: number
+    readonly meshes: number
+    readonly quads: number
+    readonly uploadQueuedChunks: number
+    readonly translucentSortQueuedMeshes: number
+    readonly navigationMode: WorldNavigationMode
+    readonly movementMode: WorldMovementMode
+    readonly viewX: number
+    readonly viewY: number
+    readonly viewZ: number
+    readonly viewChunkX: number
+    readonly viewChunkY: number
+    readonly viewChunkZ: number
+    readonly forwardX: number
+    readonly forwardY: number
+    readonly forwardZ: number
+    readonly pointerLocked: bool
+
+/// OpenVoxel 游戏层的稳定图形表面。Chunk 网格和资源目录仍由 Renderer 拥有；
+/// 具体 GPU 后端只实现这组游戏所需操作。
+export type WorldGraphics:
+    setChunkMesh: (mesh: readonly ChunkMesh) -> null
+    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    removeChunk: (x: number, y: number, z: number) -> null
+    stats: () -> WorldGraphicsStats
+    environmentStats: () -> WorldGraphicsEnvironmentStats
+    setEnvironment: (sample: readonly WorldEnvironmentSample) -> null
+    close: () -> null
+
+export type WorldGraphicsRequest:
+    readonly canvas: CanvasElement
+    readonly catalog: readonly ClientRenderCatalog
+    readonly edge: number
+    readonly targetX: number
+    readonly targetY: number
+    readonly targetZ: number
+    readonly horizontalChunkRadius: number
+    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+    readonly initialEnvironment: readonly WorldEnvironmentSample
+    readonly navigationMode: WorldNavigationMode
+    readonly movementMode: WorldMovementMode
+    readonly collisionAt: WorldMovementCollisionQuery
+    readonly minimumWorldY: number
+    readonly maximumWorldY: number
+    readonly worldSeed: string
+
+/// 记录型测试和未来后端替换都注入这一游戏专用工厂，不复制 Renderer 的资源描述。
+export type WorldGraphicsFactory = (request: readonly WorldGraphicsRequest) -> Promise<WorldGraphics>
+
+type NativeWorldGraphicsOptions:
+    readonly textureBanks: readonly List<readonly ClientTextureBank>
+    readonly environmentResources: readonly ClientResourceEnvironment
+    readonly environmentFrame: readonly WorldGraphicsEnvironmentFrame
+    readonly climateAt: (worldMilliseconds: number, x: number, y: number, z: number) -> WorldClimateSample
+    readonly edge: number
+    readonly materials: readonly List<readonly ClientMaterialResource>
+    readonly textures: readonly List<readonly ClientTextureResource>
+    readonly animations: readonly List<readonly ClientAnimationResource>
+    readonly targetX: number
+    readonly targetY: number
+    readonly targetZ: number
+    readonly horizontalChunkRadius: number
+    readonly navigationMode: WorldNavigationMode
+    readonly movementMode: WorldMovementMode
+    readonly collisionAt: WorldMovementCollisionQuery
+    readonly survivalEyeHeight: number
+    readonly survivalPlayerHeight: number
+    readonly minimumWorldY: number
+    readonly maximumWorldY: number
+    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+
+type NativeWorldGraphicsDependencies:
+    readonly createNavigation: WorldNavigationFactory
+    readonly createFlightState: (x: number, y: number, z: number) -> WorldMovementFlightState
+    readonly createWalkState: (x: number, y: number, z: number) -> WorldMovementWalkState
+    readonly stepFlight: WorldMovementFlightStep
+    readonly stepWalk: WorldMovementWalkStep
+
+type NativeWorldGraphics:
+    setChunkMesh: (mesh: readonly ChunkMesh) -> null
+    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    removeChunk: (x: number, y: number, z: number) -> null
+    stats: () -> WorldGraphicsStats
+    environmentStats: () -> WorldGraphicsEnvironmentStats
+    setEnvironmentFrame: (frame: readonly WorldGraphicsEnvironmentFrame) -> null
+    release: () -> null
+
+extern module "#openvoxel/game/babylon-surface":
+    export async def createSurfaceAdapter(
+        canvas: CanvasElement,
+        options: readonly NativeWorldGraphicsOptions,
+        dependencies: readonly NativeWorldGraphicsDependencies,
+    ) -> NativeWorldGraphics
+
+import js {createSurfaceAdapter} from "#openvoxel/game/babylon-surface"
+
+async def openDefaultWorldGraphics(request: readonly WorldGraphicsRequest) -> WorldGraphics:
+    const catalog = request.catalog
+    const native = await createSurfaceAdapter(request.canvas, {
+        textureBanks: catalog.textureBanks,
+        environmentResources: catalog.environment,
+        environmentFrame: worldGraphicsEnvironmentFrame(request.initialEnvironment),
+        climateAt: (worldMilliseconds, x, y, z) => worldClimateAt(request.worldSeed, worldMilliseconds, {x, y, z}),
+        edge: request.edge,
+        materials: catalog.materials,
+        textures: catalog.textures,
+        animations: catalog.animations,
+        targetX: request.targetX,
+        targetY: request.targetY,
+        targetZ: request.targetZ,
+        horizontalChunkRadius: request.horizontalChunkRadius,
+        navigationMode: request.navigationMode,
+        movementMode: request.movementMode,
+        collisionAt: request.collisionAt,
+        survivalEyeHeight: worldMovementEyeHeight,
+        survivalPlayerHeight: worldMovementPlayerHeight,
+        minimumWorldY: request.minimumWorldY,
+        maximumWorldY: request.maximumWorldY,
+        viewChanged: request.viewChanged,
+    }, {
+        createNavigation: createWorldNavigation,
+        createFlightState: worldMovementFlightState,
+        createWalkState: worldMovementWalkState,
+        stepFlight: stepWorldMovementFlight,
+        stepWalk: stepWorldMovementWalk,
+    })
+
+    def setEnvironment(sample: readonly WorldEnvironmentSample):
+        native.setEnvironmentFrame(worldGraphicsEnvironmentFrame(sample))
+
+    return {
+        setChunkMesh: mesh => native.setChunkMesh(mesh),
+        enqueueChunkMesh: mesh => native.enqueueChunkMesh(mesh),
+        removeChunk: (x, y, z) => native.removeChunk(x, y, z),
+        stats: () => native.stats(),
+        environmentStats: () => native.environmentStats(),
+        setEnvironment,
+        close: () => native.release(),
+    }
+
+export async def openWorldGraphicsWithBackend(
+    request: readonly WorldGraphicsRequest,
+    factory: WorldGraphicsFactory,
+) -> WorldGraphics: return await factory(request)
+
+export async def openWorldGraphics(request: readonly WorldGraphicsRequest) -> WorldGraphics:
+    return await openWorldGraphicsWithBackend(request, openDefaultWorldGraphics)

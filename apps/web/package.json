@@ -33,8 +33,8 @@
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
+    "@openvoxel/game": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
-    "@openvoxel/renderer": "0.2.0",
     "@openvoxel/world": "0.2.0",
     "@velarscript/web": "0.33.1"
   },

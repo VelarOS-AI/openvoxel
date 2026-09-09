@@ -1,0 +1,11 @@
+/// OpenVoxel 游戏运行时内部统一使用的异步所有权契约。它只描述关闭语义，
+/// 不把页面、会话、Worker 或图形后端的具体类型带进其他职责模块。
+export type WorldGameOwner:
+    close: () -> Promise<null>
+
+/// 按取得所有权的逆序传入资源。单项关闭失败不能阻断其余游戏资源回收。
+export async def closeWorldGameOwners(owners: readonly List<WorldGameOwner?>):
+    for owner in owners:
+        if owner == null: continue
+        try: await owner.close()
+        catch error: pass

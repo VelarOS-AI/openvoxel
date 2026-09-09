@@ -1,0 +1,55 @@
+{
+  "name": "@openvoxel/game",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#openvoxel/game/babylon-surface": "./src/backends/babylon/native/surface.mjs",
+    "#openvoxel/game/web-navigation": "./src/host/web/navigation.mjs"
+  },
+  "files": [
+    "src"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./meshing-worker": "./dist/meshing-worker.js"
+  },
+  "velar": {
+    "entry": "src/index.vel",
+    "entries": {
+      "./meshing-worker": "src/meshing-worker.vel"
+    },
+    "targets": [
+      "web",
+      "desktop"
+    ],
+    "requires": {
+      "capabilities": [
+        "web"
+      ]
+    }
+  },
+  "scripts": {
+    "check": "velar check",
+    "format": "velar format",
+    "format:check": "velar format --check",
+    "test": "velar test && node --test tests/*.test.mjs",
+    "test:gpu": "velar build && node tests/gpu-render-probe.mjs",
+    "build": "velar build"
+  },
+  "dependencies": {
+    "@babylonjs/core": "9.23.0",
+    "@openvoxel/client": "0.2.0",
+    "@openvoxel/renderer": "0.2.0",
+    "@openvoxel/world": "0.2.0"
+  },
+  "devDependencies": {
+    "@openvoxel/blocks": "0.2.0",
+    "@velarscript/cli": "0.33.1",
+    "@velarscript/web": "0.33.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1",
+    "sharp": "0.35.4",
+    "yaml": "2.9.0"
+  }
+}

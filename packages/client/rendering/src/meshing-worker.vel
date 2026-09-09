@@ -27,5 +27,5 @@ async def handleMeshingWorker(request: readonly MeshingWorkerRequest, cancellati
     throw Error(f"Unsupported Meshing Worker operation {request.operation}")
 
 /// 这是 @openvoxel/renderer/meshing-worker 的唯一宿主启动 API。精确包入口
-/// 只闭包构网依赖；Babylon 表面和内置资源包仍只属于渲染器主入口。
+/// 只闭包构网依赖；游戏运行时、图形后端和内置资源包均不进入 Worker。
 export def serveMeshingWorker(): serveWorker(MeshingWorkerRequest, MeshingWorkerResponse, handleMeshingWorker, 32)

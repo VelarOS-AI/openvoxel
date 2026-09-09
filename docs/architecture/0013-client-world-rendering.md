@@ -4,9 +4,9 @@
 
 ## 裁决
 
-客户端世界呈现由四条边界组合：服务端内容目录定义可用方块状态，客户端资源包解析视觉资源，客户端会话维护有界 Chunk 窗口，渲染职责包生成并提交 GPU 网格。渲染器不维护第二份方块编号表，也不把 Babylon 类型泄露给世界、内容或协议包。
+客户端世界呈现由 OpenVoxel 游戏框架组合：服务端内容目录定义可用方块状态，renderer 的资源包与纯构网解析视觉资源并生成网格，client 维护已同步 Chunk 状态，game 决定有界视窗、调度构网并通过私有后端提交 GPU。方块状态仍只有一份权威编号，Babylon 对象留在 game 内部。包边界与公开入口见 [ADR 0015：OpenVoxel 游戏框架](0015-openvoxel-game-framework.md)。
 
-VelarScript 文件只定义 OpenVoxel 的强类型表面、纯策略和组合根；Babylon、DOM、WebGL 与原生事件实现按 surface、texture-bank、environment、navigation 职责位于 `src/native/babylon/*.mjs`，通过 package `imports` 和 `extern module` 接入。每个 JS 入口在自己的主机边界校验参数，对外仍只返回 OpenVoxel 契约，不在 JS 中复制移动或世界规则。
+VelarScript 文件定义 OpenVoxel 的强类型图形边界、纯策略和游戏组合根。game 的 `src/backends/babylon/` 拥有私有 Babylon/WebGL 实现，`src/host/` 拥有 DOM 与原生输入事件，分别通过 package `imports` 和 `extern module` 接入。每个 JS 入口在自己的宿主边界校验参数，对外只返回 OpenVoxel 契约；移动策略与世界规则由各自的 Velar 模块拥有。
 
 进入世界先加载出生点周围 3×3×3 个 Chunk，建立可交互首帧；随后以全方向半径二的安全球和半径五的完整三维前向视区组成新驻留需求。已有数据使用半径三/六的释放迟滞，转头后可复用刚离开视区的数据。同一 x/z 列的垂直 section 连续请求，使生成器复用一次地形列规划。任一轴跨过 Chunk 边界后只保留最新窗口需求；正在完成的一个小批次不反复取消，批次 load 成功后必须先提交与它配对的 unload，再响应更新的视窗版本。世界本身仍由确定性生成器按坐标寻址；窗口大小只约束客户端驻留量，不成为世界边界。
 
@@ -14,11 +14,11 @@ VelarScript 文件只定义 OpenVoxel 的强类型表面、纯策略和组合根
 
 ## 世界模式与探索控制
 
-`WorldManifest.mode` 是游戏模式的权威事实，与生成器及内容身份一起持久化并经协议传递；首页缓存只负责展示。Renderer 只把这个领域事实投影为移动策略：Survival 使用带重力、碰撞、跳跃、台阶和冲刺的第一人称步行，Creative 使用第一人称自由飞行。页面深链、重新打开、本地 Worker 和线上后端都从同一份 Manifest 选择策略，不根据页面入口或本地缓存猜测模式。
+`WorldManifest.mode` 是游戏模式的权威事实，与生成器及内容身份一起持久化并经协议传递；首页缓存只负责展示。game 把这个领域事实投影为移动策略：Survival 使用带重力、碰撞、跳跃、台阶和冲刺的第一人称步行，Creative 使用第一人称自由飞行。页面深链、重新打开、本地 Worker 和线上后端都从同一份 Manifest 选择策略，不根据页面入口或本地缓存猜测模式。
 
 Creative 的连续位置与速度更新属于纯 VelarScript 策略；它统一归一化三轴输入、限制加速度与制动、钳制世界高度，并把单帧积分限制在 50 ms，避免后台页面恢复时瞬移。Babylon/DOM 适配器只拥有 UniversalCamera、指针锁、鼠标增量、键盘状态和监听器生命周期：点击 Canvas 捕获指针，WASD 平移，Space 上升，Ctrl/C 下降，Shift 加速，Esc 由浏览器释放指针。失焦、指针锁丢失、页面隐藏和表面释放都会原子清空按键与三轴速度；释放表面还必须移除全部监听器并归还指针锁。异步指针锁请求以表面代次校验所有权；已释放表面的迟到完成只能退出其自身 Canvas 的锁，不能释放后来表面取得的锁。
 
-适配器每帧把相机水平朝向投影为纯策略的正交单位基，并把返回的新状态一次性提交给 Camera。位置跨过 Chunk 边界或视向显著变化时通知 Web 世界渲染器；位置与完整三维 forward 同时驱动 Chunk 窗口、环境采样、Portal 可见性、局部阴影和透明面排序。数据窗口只在累计转向约 15 度后刷新。Babylon 只提供相机事实，窗口和优先级仍由渲染组合根决定。Babylon 对象、DOM 事件与可变按键集合均不得越过适配器进入世界模型或移动策略。
+适配器每帧把相机水平朝向投影为纯策略的正交单位基，并把返回的新状态一次性提交给 Camera。位置跨过 Chunk 边界或视向显著变化时通知 game 的世界运行时；位置与完整三维 forward 同时驱动 Chunk 窗口、环境采样、Portal 可见性、局部阴影和透明面排序。数据窗口只在累计转向约 15 度后刷新。Babylon 提供相机事实，窗口和优先级由 game 的运行时协调。Babylon 对象、DOM 事件与可变按键集合均不得越过适配器进入世界模型或移动策略。
 
 ## 可见性与高度需求
 
@@ -34,13 +34,13 @@ Chunk 数据驻留与可见网格需求是两条不同边界，不能用视锥�
 
 ## 资源与光照
 
-作者格式 v9 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；manifest 及其 catalog、texture、variant、layer、image reference、transform、环境资源均使用闭合字段集，图片使用清单只来自验证后的配方。normal、height、material 与 mask 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。缺失通道继续由 surface profile 确定性生成。terrain、vegetation、fluid 是作者资源分类，environment 按 sky 与 weather 保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
+作者格式 v10 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；manifest 及其 catalog、texture、variant、layer、image reference、transform、环境资源均使用闭合字段集，图片使用清单只来自验证后的配方。normal、height、material 与 mask 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。每个 surface profile 必须分别声明 `normalFallback: flat | albedo-height` 与 `materialFallback: uniform | albedo-derived`；缺图时只能采用所声明的确定性策略，不能默认把颜色纹理解释成几何或金属响应。`normalStrength` 同时约束作者 normal、作者 height 与 albedo-height 生成结果，作者 normal 会先缩放切线 XY 再归一化。terrain、vegetation、fluid 是作者资源分类，environment 按 sky 与 weather 保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
 
-每个 variant 可按声明顺序叠加至多四个完整 material layer。每层拥有独立 albedo，可选 normal 或 height、ORM material、emissive、灰度乘 alpha mask、局部 transform、opacity 和 albedo blend。base 与 layer 的局部空间变换先作用于 albedo 及作者 map，height 变换完成后才生成切线法线；缺失通道也从变换后的 albedo 生成。随后各层用统一覆盖率合成：albedo 在线性光空间混合；切线法线执行 whiteout detail blend 后归一化；AO 相乘，roughness 与 metallic 插值；emissive 在线性光空间相加并钳制。variant transform 最后作为全局变换作用于合成 surface，颜色操作只改变 albedo，空间操作保持各通道配准并重映射法线方向。
+每个 variant 可按声明顺序叠加至多四个完整 material layer。每层拥有独立 albedo，可选 normal 或 height、ORM material、emissive、灰度乘 alpha mask、局部 transform、opacity 和 albedo blend。base 与 layer 的局部空间变换先作用于 albedo 及作者 map，height 变换完成后才生成切线法线；缺失通道按 surface profile 选择平面/统一值或从变换后的 albedo 推导。高度 Sobel 邻域遇到透明 texel 时延拓当前可见像素高度，不能把 cutout 轮廓制造成高度断崖。随后各层用统一覆盖率合成：albedo 在线性光空间混合；切线法线执行 whiteout detail blend 后归一化；AO 相乘，roughness 与 metallic 插值；emissive 在线性光空间相加并钳制。variant transform 最后作为全局变换作用于合成 surface，颜色操作只改变 albedo，空间操作保持各通道配准并重映射法线方向。
 
-资源审计 artifact v4 会按 texture key、variant index 和最终 bank layer 逐项记录四个 PBR 通道的 authored、generated 或 composed 模式，并保留 composed 通道的输入来源类型；它还记录环境图片的解码/GPU 字节、Base64 堆占用和整个资源包的统一常驻预算。这是构建诊断身份，不进入运行时资源协议。
+资源审计 artifact v4 会按 texture key、variant index 和最终 bank layer 逐项记录四个 PBR 通道的 authored、composed、`fallback-flat`、`fallback-albedo-height`、`fallback-uniform` 或 `fallback-albedo-derived` 模式，并保留 composed 通道的输入来源类型；它还记录环境图片的解码/GPU 字节、Base64 堆占用和整个资源包的统一常驻预算。这是构建诊断身份，不进入运行时资源协议。
 
-每个 bank 同时生成 layer-major 的 albedo、normal、material、emissive 四通道完整 mip 链，四通道共享每一级尺寸、层数与 layer 顺序，并在生成期逐级转换为 GPU 自下而上的行序。这个存储转换只重排 texel，不改变 normal 的通道值；运行时可以关闭 WebGL unpack Y 翻转并逐级上传数组。albedo 与 emissive 在生成 mip 时先转入线性光空间，normal 以切线空间向量平均后重归一化，material 的 AO、roughness、metallic 保持线性平均。cutout 的每个逻辑纹理从实际使用它的材质取得 `alphaCutoff`，据此跨 mip 保持最接近可表达值的覆盖率；同一纹理不能同时服务不同阈值。material 通道按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 保存 bank key、生成阈值和带权重的稳定 layer 变体。最终四通道 alpha 统一取合成 albedo。独立作者纹理是可增删改查的资源源，纹理数组仅是确定性构建产物。
+每个 bank 同时生成 layer-major 的 albedo、normal、material、emissive 四通道完整 mip 链，四通道共享每一级尺寸、层数与 layer 顺序，并在生成期逐级转换为 GPU 自下而上的行序。这个存储转换只重排 texel，不改变 normal 的通道值；运行时可以关闭 WebGL unpack Y 翻转并逐级上传数组。albedo 与 emissive 在生成 mip 时先转入线性光空间，normal 以可见覆盖率加权的切线空间向量平均后重归一化。下采样会由平均法线的一致性估算被滤掉的微表面方差并单调补入 perceptual roughness，防止远处法线趋平时镜面反而变尖；恒定法线的 roughness 字节保持不变。material 的 AO 与 metallic 仍保持线性平均。cutout 的每个逻辑纹理从实际使用它的材质取得 `alphaCutoff`，据此跨 mip 保持最接近可表达值的覆盖率；同一纹理不能同时服务不同阈值。material 通道按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 保存 bank key、生成阈值和带权重的稳定 layer 变体。最终四通道 alpha 统一取合成 albedo。独立作者纹理是可增删改查的资源源，纹理数组仅是确定性构建产物。
 
 生成 artifact v8 的 `textureBanks` 使用 `storage: texture_2d_array`，把四通道每一级 RGBA8 数组数据与完整环境 WebP 资源嵌入产物。构网仍为每个面写入 0..1 UV，同时以独立的 `textureLayer` 顶点属性选择数组层；纹理层分配不会进入方块目录、世界 runtimeId 或协议身份。bank 角色由已解析模型的 `kind` 与渲染层决定，不依赖某个内建模型资源 key。动画至少有两个互不重复的帧，全部帧必须处在同一 bank 且各自只有一个 layer，运行时只更新材质的 layer 偏移，不重建 Chunk 网格。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道 mip 字节共同计算；YAML 对象字段顺序、texture catalog 及其中独立 texture 条目的声明顺序、源文件与映射的枚举顺序不会产生伪变更，variant、material layer 与动画帧等有语义列表仍保留声明顺序。
 
@@ -60,8 +60,8 @@ OpenVoxel 的分类 YAML、独立 PNG 和生成产物共同构成客户端资源
 关闭和重新打开后仍连续推进；天气样本不持久化，也不进入方块事件 sequence。
 
 Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`ClientWorldSession`
-验证样本结构与跨字段语义，再记录 `monotonic()` 锚点；Web 渲染器以 100 ms 周期
-按当前视点取得新样本并更新表面，重连则换用新的权威时间锚点。Renderer 只把
+验证样本结构与跨字段语义，再记录 `monotonic()` 锚点；game 以 100 ms 周期
+按当前视点取得新样本并更新表面，重连则换用新的权威时间锚点。game 的环境呈现模块把
 样本投影为天体方向、天空/地平线/地面颜色、光照强度、动态立方环境贴图、雾、云和
 粒子参数；权威 `windX/windZ` 同时驱动云层相位与雨雪的水平漂移。闪电年龄取 `worldMilliseconds - occurredAtWorldMilliseconds`，重复应用同一
 事件不会重新播放，渲染帧率也不会改变其寿命。天空、灯光、雾和天气跟随每个样本；
@@ -72,7 +72,7 @@ Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`Clie
 
 环境 WebP 保留作者预乘 RGB。日月、云和雨雪的无光材质直接输出 `texture × vertexColor × tint`，使用 `ONE / ONE_MINUS_SRC_ALPHA`；淡出同时缩放 RGBA，透明顶点为透明黑。光晕与星星使用 `SRC_ALPHA / ONE` 加法混合。所有环境图使用单 mip；天空图使用 LinearClamp，云使用 LinearWrap，降水与落地粒子使用 PointClamp。图片上传翻转 Y 后，几何 UV 显式补偿 V，包含月面细节与雪花格方向。
 
-贴图用法参考本地 Survivalcraft 的 `SubsystemSky`、`PrecipitationShaftParticleSystem`、`RainSplashParticleSystem` 与 `SnowSplashParticleSystem`，由 OpenVoxel 的渲染适配层实现：
+贴图用法参考本地 Survivalcraft 的 `SubsystemSky`、`PrecipitationShaftParticleSystem`、`RainSplashParticleSystem` 与 `SnowSplashParticleSystem`，由 game 的私有环境后端实现：
 
 | 资源 | 呈现规则 |
 | --- | --- |
@@ -115,7 +115,7 @@ Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`Clie
 
 ## GPU 验收边界
 
-渲染职责包维护一个仅在测试期间由临时 HTTP 服务承载的无头 GPU 探针，不注册产品路由，也不进入正式前端导航。探针从后台的完整状态目录和内建客户端资源包动态建场景，经公开 RenderCatalog、Chunk mesher、Babylon 表面和真实 WebGL 2 `Texture2DArray` 链路提交，而不是复制一套测试渲染器。
+game 维护一个仅在测试期间由临时 HTTP 服务承载的无头 GPU 探针，不注册产品路由，也不进入正式前端导航。探针从后台的完整状态目录和内建客户端资源包动态建场景，经 renderer 的 RenderCatalog、Chunk mesher、game 图形边界和私有 Babylon 后端，以真实 WebGL 2 `Texture2DArray` 链路提交。探针复用生产模块；资源生成与纯构网验收仍归 renderer。
 
 探针必须覆盖全部可见 runtime state、每个纹理数组 layer 及四个 PBR 通道、动画帧、opaque 与异种树叶的跨 Chunk 接缝，以及 water、magma、ice 与不透明几何共同出现时的双视角透明排序。环境场景另覆盖白昼、夜晚、云层、雨、雪和闪电，断言日月星可见性、粒子活动、事件重放身份及场景截图差异。树叶阴影场景把同一 cutout 材质放入两个 Chunk，既检查共享阴影 Effect 与销毁后的零残留引用，也以临时实心阴影为反例，从实际地面像素证明 alpha 镂空参与投影。验收同时检查 GPU 网格统计、纹理层闭包、浏览器 console/page error、上下文丢失恢复和分区图像度量，并把截图写入忽略版本控制的 `generated/gpu-render-probe` 作为本次运行证据。Web UI 长距离移动验收主动请求浏览器硬件加速并记录实际 renderer；只有硬件后端承担生产帧预算，SwiftShader 回退只验证进度与工作量有界，不能用 CPU 光栅帧时间冒充产品 GPU 性能。根级 `test:gpu` 可独立执行 GPU 门禁，完整 `validate` 在生产构建后再次执行两类浏览器验收。
 
@@ -124,14 +124,14 @@ Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`Clie
 第一人称环境探针另以仰视相机检查云穹顶的四环高度、世界采样尺度和透明混合，并在平视画面的中间视野带对比雨雪粒子开关。四季探针在同一组 GPU Mesh 上更新时间，检查草叶像素变化与 Mesh 身份不变；阴影探针对比投影开关，验证地面实际变暗而不只统计 caster 数量。
 
 - 首页、创建和世界管理路由不静态导入世界页。世界页通过 `velar/web.lazy`
-  形成显式 split point，因此 Babylon、生成的资源包和渲染组合根只在进入世界后加载。
+  形成显式 split point，因此 game、Babylon 和生成的资源包只在进入世界后加载。
 - Babylon 原生适配器从具体职责模块导入所用类型，并显式导入碰撞协调器等必要注册项；
   不从 `@babylonjs/core` 聚合入口拉入未使用的引擎、材质、加载器和 shader 注册图。
 - 首帧下载与远景流式加载分离，单次流式提交最多 4 个 Chunk，限制反序列化和状态合入的同步突发。
-- ticket 在 Renderer 生命周期内单调且不复用；GPU 物理安装和内容新鲜度分别记录。编辑、邻区加载和视窗淘汰都会使旧结果失效；迟到提交会重建或显式释放。邻区卸载还会重建仍驻留的六面邻居，让原先被剔除的共享面重新外露。
+- ticket 在 game 世界运行时生命周期内单调且不复用；GPU 物理安装和内容新鲜度分别记录。编辑、邻区加载和视窗淘汰都会使旧结果失效；迟到提交会重建或显式释放。邻区卸载还会重建仍驻留的六面邻居，让原先被剔除的共享面重新外露。
 - Meshing 生命周期维护自己的驻留位置表；Portal 候选 key、六邻接和几何连通只在视向或驻留拓扑变化时重建。单个网格摘要提交只复用整数队列、代次标记和面掩码重跑 reachability，不重新快照世界位置或构造候选图。
 - 网格 Worker 由一个有界池统一调度；资源目录通过池级广播只初始化一次，视窗任务的取消信号继续传入 Chunk 下载、热增量同步和本地生成循环。
-- 网格 Worker 只从 `@openvoxel/renderer/meshing-worker` 精确入口启动；该入口与渲染器主入口拥有独立依赖图，不携带 Babylon 表面、PBR 管线或生成的材质纹理资源。
+- game 从 `@openvoxel/renderer/meshing-worker` 精确入口获取网格 Worker；该入口只包含构网纯数据闭包，资源由池级初始化传入。Babylon 与 GPU 管线留在 game 的主线程后端，生成的材质纹理资源不进入 Worker。
 - Worker 初始化时只构造一次 runtimeId 状态索引；网格校验和直接遍历固定缓冲区，不生成 List 快照。
 - 客户端 Chunk 保留 UInt16 冷索引，并为驻留期一次展开由热增量维护的 UInt32 组合视图；16³ Chunk 增加 16 KiB 常驻读取缓存，换取碰撞与重复构网不再逐格访问 override Map 和 palette。邻域快照复用调用方已经捕获的中心 Chunk，并在进入体素循环前各读取一次中心与六邻居的线性读取函数。
 - 动态天空与天气可按 100 ms 权威样本更新；动态立方 IBL 使用可见变化阈值，不在每次样本刷新时重算并上传六个面。

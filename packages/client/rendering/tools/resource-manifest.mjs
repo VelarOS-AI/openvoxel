@@ -16,6 +16,8 @@ const imageExtension = /\.(?:avif|jpe?g|png|webp)$/iu;
 const catalogExtension = /\.ya?ml$/iu;
 const textureMapNames = new Set(["normal", "height", "material", "emissive"]);
 const layerBlendModes = new Set(["normal", "multiply", "overlay"]);
+const normalFallbacks = new Set(["flat", "albedo-height"]);
+const materialFallbacks = new Set(["uniform", "albedo-derived"]);
 const transformFields = ["rotate", "flipX", "flipY", "shiftX", "shiftY", "hue", "saturation", "brightness", "contrast"];
 const textureFields = ["key", "surface", "file", "maps", "transform", "weight", "variants"];
 const variantFields = ["weight", "transform", "layers"];
@@ -97,6 +99,8 @@ function surfaceProfiles(values) {
   for (const raw of requireList(values, "surfaceProfiles")) {
     const entry = requireKnownFields(requireRecord(raw, "surfaceProfiles entry"), [
       "key",
+      "normalFallback",
+      "materialFallback",
       "normalStrength",
       "occlusionStrength",
       "roughness",
@@ -109,8 +113,18 @@ function surfaceProfiles(values) {
     const key = requireText(entry.key, "surface profile key");
     if (!/^[a-z][a-z0-9-]*$/u.test(key)) throw new Error(`Surface profile key ${key} is invalid`);
     if (profiles.has(key)) throw new Error(`surfaceProfiles repeats ${key}`);
+    const normalFallback = requireText(entry.normalFallback, `surface profile ${key} normalFallback`);
+    const materialFallback = requireText(entry.materialFallback, `surface profile ${key} materialFallback`);
+    if (!normalFallbacks.has(normalFallback)) {
+      throw new Error(`surface profile ${key} normalFallback must be flat or albedo-height`);
+    }
+    if (!materialFallbacks.has(materialFallback)) {
+      throw new Error(`surface profile ${key} materialFallback must be uniform or albedo-derived`);
+    }
     profiles.set(key, {
       key,
+      normalFallback,
+      materialFallback,
       normalStrength: requireNumber(entry.normalStrength, 0, 4, `surface profile ${key} normalStrength`),
       occlusionStrength: requireNumber(entry.occlusionStrength, 0, 1, `surface profile ${key} occlusionStrength`),
       roughness: requireNumber(entry.roughness, 0, 1, `surface profile ${key} roughness`),
@@ -185,7 +199,7 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     "tints",
     "animations",
   ], "Client resource pack manifest");
-  if (manifest.formatVersion !== 9) throw new Error("Unsupported client resource pack source format");
+  if (manifest.formatVersion !== 10) throw new Error("Unsupported client resource pack source format");
   const owner = requireText(manifest.owner, "Client resource pack owner");
   if (!/^[a-z][a-z0-9_.-]*$/u.test(owner)) throw new Error("Client resource pack owner is invalid");
   const environment = environmentDefinition(manifest.environment);

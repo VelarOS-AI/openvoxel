@@ -68,6 +68,19 @@ function averageByte(total, totalWeight) {
   return Math.round(Math.min(255, Math.max(0, total / totalWeight)));
 }
 
+function filteredRoughnessByte(roughnessByte, normalLength, sourceNormalLength) {
+  if (sourceNormalLength <= 1e-8) return roughnessByte;
+  // Divide out RGBA8 length error: any constant direction has coherence one,
+  // including encoded normals whose decoded magnitude is slightly below one.
+  const coherence = Math.min(1, normalLength / sourceNormalLength);
+  if (coherence >= 1 - 1e-12) return roughnessByte;
+  const variance = 1 - coherence * coherence;
+  // GGX uses alpha = perceptualRoughness². Preserve filtered normal variance
+  // in alpha² so renormalizing the mip normal cannot sharpen its reflection.
+  const roughness = roughnessByte / 255;
+  return Math.round(Math.min(1, roughness ** 4 + variance) ** 0.25 * 255);
+}
+
 function downsampleLayer(source, sourceWidth, sourceHeight, targetWidth, targetHeight) {
   const target = Object.fromEntries(channelNames.map((channel) => [channel, Buffer.alloc(targetWidth * targetHeight * 4)]));
   const horizontal = axisContributions(sourceWidth, targetWidth);
@@ -83,6 +96,7 @@ function downsampleLayer(source, sourceWidth, sourceHeight, targetWidth, targetH
       let alpha = 0;
       let totalWeight = 0;
       let visibleWeight = 0;
+      let sourceNormalLength = 0;
 
       for (const verticalSample of vertical[y]) {
         for (const horizontalSample of horizontal[x]) {
@@ -92,6 +106,11 @@ function downsampleLayer(source, sourceWidth, sourceHeight, targetWidth, targetH
           totalWeight += weight;
           visibleWeight += surfaceWeight;
           alpha += source.albedo[input + 3] * weight;
+          sourceNormalLength += Math.hypot(
+            source.normal[input] / 127.5 - 1,
+            source.normal[input + 1] / 127.5 - 1,
+            source.normal[input + 2] / 127.5 - 1,
+          ) * surfaceWeight;
           for (let component = 0; component < 3; component += 1) {
             albedoLinear[component] += srgbToLinear[source.albedo[input + component]] * surfaceWeight;
             emissiveLinear[component] += srgbToLinear[source.emissive[input + component]] * surfaceWeight;
@@ -107,6 +126,7 @@ function downsampleLayer(source, sourceWidth, sourceHeight, targetWidth, targetH
         target.material[output + component] = visibleWeight > 0 ? averageByte(material[component], visibleWeight) : 0;
       }
       const normalLength = Math.hypot(normal[0], normal[1], normal[2]);
+      target.material[output + 1] = filteredRoughnessByte(target.material[output + 1], normalLength, sourceNormalLength);
       const normalized = normalLength > 1e-8
         ? normal.map((component) => component / normalLength)
         : [0, 0, 1];
