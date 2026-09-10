@@ -16,7 +16,7 @@ npm run validate
 npm start
 ```
 
-`validate` 是完整本地门禁；`validate:static` 只运行生成一致性、结构、格式、编译、Node 测试与构建，`validate:browser` 运行需要 Chromium 的 GPU 和 Web UI 验收。CI 会先通过静态门禁，再安装 Playwright Chromium 并运行浏览器门禁。
+`validate` 是面向日常开发的快速门禁，运行生成一致性、结构、格式、编译检查和原生 Node 单测，目标是在常规开发机上 1 分钟内完成。`validate:full` 是完整本地门禁，额外运行全部 Velar 测试、生产构建以及 Chromium GPU 与 Web UI 验收；`validate:static` 和 `validate:browser` 可分别运行完整静态与浏览器门禁。workspace 门禁默认并发数不超过 4，可用 `OPENVOXEL_VALIDATE_JOBS` 调整。CI 始终运行完整静态和浏览器门禁。
 
 另开一个终端运行 Web 客户端：
 

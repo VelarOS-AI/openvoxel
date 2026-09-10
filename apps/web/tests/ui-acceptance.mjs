@@ -925,7 +925,9 @@ const cleanupFailures = [];
 try {
   await rm(screenshotsDirectory, { recursive: true, force: true });
   await mkdir(screenshotsDirectory, { recursive: true });
-  await requireSuccess(start("Web build", ["build", "apps/web"]), buildTimeoutMs);
+  if (!process.argv.includes("--reuse-build")) {
+    await requireSuccess(start("Web build", ["build", "apps/web"]), buildTimeoutMs);
+  }
   await assertBuildPerformance();
   const expectedHtml = await readFile(builtHtmlPath, "utf8");
   assert.match(expectedHtml, /<title>OpenVoxel<\/title>/u, "This run's Web build is not the OpenVoxel page");

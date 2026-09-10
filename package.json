@@ -35,9 +35,19 @@
     "benchmark:runtime": "npm run benchmark --workspace @openvoxel/world-runtime",
     "benchmark:sqlite": "npm run benchmark:sqlite --workspace @openvoxel/server",
     "benchmark:presentation": "npm run benchmark:presentation --workspace @openvoxel/server",
-    "validate:static": "npm run generate && npm run generate:check && npm run structure:check && npm run test:structure && npm run format:check && npm run check && npm test && npm run build",
+    "validate:static": "npm run generate && npm run generate:check && npm run structure:check && npm run test:structure && npm run format:check:workspaces && npm run check:workspaces && npm run test:workspaces && npm run build:workspaces",
     "validate:browser": "npm run test:gpu && npm run test:web-ui",
-    "validate": "npm run validate:static && npm run validate:browser"
+    "validate": "npm run validate:quick",
+    "test:gpu:built": "npm run test:gpu:built --workspace @openvoxel/game",
+    "test:web-ui:built": "node apps/web/tests/ui-acceptance.mjs --reuse-build",
+    "validate:browser:built": "npm run test:gpu:built && npm run test:web-ui:built",
+    "format:check:workspaces": "node tools/run-workspace-gate.mjs format:check",
+    "check:workspaces": "node tools/run-workspace-gate.mjs check",
+    "test:workspaces": "node tools/run-workspace-gate.mjs test",
+    "build:workspaces": "node tools/run-workspace-gate.mjs build",
+    "test:quick": "node --test tools/tests/*.test.mjs apps/web/tests/*.test.mjs packages/client/game/tests/*.test.mjs packages/client/rendering/tests/*.test.mjs",
+    "validate:quick": "npm run generate && npm run generate:check && npm run structure:check && npm run format:check:workspaces && npm run check:workspaces && npm run test:quick",
+    "validate:full": "npm run validate:static && npm run validate:browser:built"
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
