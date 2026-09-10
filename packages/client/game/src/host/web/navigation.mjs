@@ -18,6 +18,16 @@ const firstPersonControlCodes = new Set([
   "ShiftLeft",
   "ShiftRight",
 ]);
+const observedShortcutModifierCodes = new Set([
+  "AltLeft",
+  "AltRight",
+  "MetaLeft",
+  "MetaRight",
+]);
+
+function isModifiedC(event) {
+  return event.code === "KeyC" && (event.ctrlKey === true || event.metaKey === true || event.altKey === true);
+}
 
 function requireRecord(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -83,6 +93,7 @@ function requireSurvivalState(value) {
     velocityY: requireFinite(value.velocityY, "Survival walk state velocityY"),
     velocityZ: requireFinite(value.velocityZ, "Survival walk state velocityZ"),
     grounded: value.grounded === true,
+    crouching: value.crouching === true,
   };
 }
 
@@ -341,14 +352,28 @@ class WebWorldNavigation {
   }
 
   press(event) {
-    if (this.released || !this.ownsCanvas() || !firstPersonControlCodes.has(event.code) || !this.firstPersonInputActive()) return;
+    if (
+      this.released
+      || !this.ownsCanvas()
+      || (!firstPersonControlCodes.has(event.code) && !observedShortcutModifierCodes.has(event.code))
+      || !this.firstPersonInputActive()
+    ) return;
+    if (observedShortcutModifierCodes.has(event.code)) {
+      this.keys.add(event.code);
+      return;
+    }
+    if (isModifiedC(event)) return;
     event.preventDefault();
     this.keys.add(event.code);
   }
 
   releaseKey(event) {
-    if (!firstPersonControlCodes.has(event.code)) return;
-    if (this.ownsCanvas() && this.firstPersonInputActive()) event.preventDefault();
+    if (!firstPersonControlCodes.has(event.code) && !observedShortcutModifierCodes.has(event.code)) return;
+    if (observedShortcutModifierCodes.has(event.code)) {
+      this.keys.delete(event.code);
+      return;
+    }
+    if (this.ownsCanvas() && this.firstPersonInputActive() && !isModifiedC(event)) event.preventDefault();
     this.keys.delete(event.code);
   }
 
@@ -357,7 +382,7 @@ class WebWorldNavigation {
     if (this.mode === firstPersonMode && this.movementMode === creativeFlightMovement) {
       const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
       const sideways = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
-      const descending = this.keys.has("KeyC") || this.keys.has("ControlLeft") || this.keys.has("ControlRight");
+      const descending = this.keys.has("ControlLeft") || this.keys.has("ControlRight");
       const vertical = (this.keys.has("Space") ? 1 : 0) - (descending ? 1 : 0);
       const boosted = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
       this.flightState = requireFlightState(this.stepFlight(
@@ -373,9 +398,16 @@ class WebWorldNavigation {
       const sideways = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
       const jumping = this.keys.has("Space");
       const sprinting = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+      const crouching = this.keys.has("KeyC")
+        && !this.keys.has("ControlLeft")
+        && !this.keys.has("ControlRight")
+        && !this.keys.has("MetaLeft")
+        && !this.keys.has("MetaRight")
+        && !this.keys.has("AltLeft")
+        && !this.keys.has("AltRight");
       this.survivalState = requireSurvivalState(this.stepWalk(
         this.survivalState,
-        {forward, sideways, jumping, sprinting},
+        {forward, sideways, jumping, sprinting, crouching},
         requireBasis(this.readHorizontalBasis()),
         requireFinite(deltaMilliseconds, "Voxel navigation frame delta"),
         this.bounds,
@@ -417,6 +449,10 @@ class WebWorldNavigation {
     this.canvas.setAttribute(
       "data-player-grounded",
       String(this.movementMode === survivalWalkMovement && this.survivalState.grounded),
+    );
+    this.canvas.setAttribute(
+      "data-player-crouching",
+      String(this.movementMode === survivalWalkMovement && this.survivalState.crouching),
     );
   }
 

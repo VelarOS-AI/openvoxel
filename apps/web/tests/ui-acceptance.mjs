@@ -577,6 +577,41 @@ async function createWorld(page, world, {waitForRendering = true} = {}) {
   await assertRenderedGeometry(page);
 }
 
+async function worldUnloadIsGuarded(page) {
+  return page.evaluate(() => {
+    const event = new Event("beforeunload", {cancelable: true});
+    const allowed = window.dispatchEvent(event);
+    return {allowed, defaultPrevented: event.defaultPrevented};
+  });
+}
+
+async function waitForWorldExitDialog(page) {
+  const dialog = page.locator('[data-world-exit-dialog]');
+  await dialog.waitFor({state: "visible"});
+  assert.equal(await dialog.getAttribute("data-world-exit-pending"), "false");
+  assert.equal(await page.locator('[data-stay-in-world]').isEnabled(), true);
+  assert.equal(await page.locator('[data-confirm-leave-world]').isEnabled(), true);
+  return dialog;
+}
+
+async function cancelWorldExit(page) {
+  const dialog = await waitForWorldExitDialog(page);
+  await page.locator('[data-stay-in-world]').click();
+  await dialog.waitFor({state: "hidden"});
+  await page.locator('[data-app][data-screen="world"]').waitFor();
+}
+
+async function confirmWorldExit(page) {
+  await waitForWorldExitDialog(page);
+  await page.locator('[data-confirm-leave-world]').click();
+}
+
+async function leaveWorldToHome(page) {
+  await page.locator('[data-leave-world]').click();
+  await confirmWorldExit(page);
+  await page.locator('[data-app][data-screen="world-home"]').waitFor();
+}
+
 async function cancelCreateWhilePending(page, world, browserFailures) {
   await fillWorldCreation(page, world);
   const workerCount = page.workers().length;
@@ -626,10 +661,12 @@ async function cancelWorldEntryWhileLoading(page, world, browserFailures) {
     await page.locator('[data-world-loading]').waitFor();
     await heldWorker.waitUntilRequested();
     await page.locator('[data-leave-world]').click();
-    await page.locator('[data-selected-world-name]').filter({hasText: world.name}).waitFor();
+    await waitForWorldExitDialog(page);
   } finally {
     await heldWorker.release();
   }
+  await confirmWorldExit(page);
+  await page.locator('[data-selected-world-name]').filter({hasText: world.name}).waitFor();
   await waitForWorkerCount(page, workerCount, "Cancelled world entry");
   await page.waitForTimeout(100);
   assert.equal(new URL(page.url()).pathname, "/", "Cancelled world entry navigated after its page was destroyed");
@@ -817,6 +854,7 @@ async function moveFirstPersonWorld(page, graphics) {
 
   await page.keyboard.press("Escape");
   await page.locator('[data-voxel-canvas][data-pointer-locked="false"]').waitFor({timeout: 10_000});
+  assert.equal(await page.locator('[data-world-exit-dialog]').isVisible(), false, "Escape opened the world exit confirmation");
   const afterEscape = await viewChunk(page);
   await page.keyboard.down("Shift");
   await page.keyboard.down("w");
@@ -877,6 +915,7 @@ async function assertWorldHasSurvivalWalk(page) {
   }
   await page.keyboard.press("Escape");
   await page.locator('[data-voxel-canvas][data-pointer-locked="false"]').waitFor({timeout: 10_000});
+  assert.equal(await page.locator('[data-world-exit-dialog]').isVisible(), false, "Escape opened the world exit confirmation");
   assert.deepEqual(await page.locator('[data-error]').allTextContents(), []);
 }
 
@@ -990,8 +1029,28 @@ try {
   );
   await restoreVoxelContext(page, "03-world");
   await screenshot(page, "03-world");
+
+  assert.deepEqual(await worldUnloadIsGuarded(page), {allowed: false, defaultPrevented: true});
+  const protectedWorldUrl = page.url();
+  await page.evaluate(() => history.back());
+  await waitForWorldExitDialog(page);
+  assert.equal(page.url(), protectedWorldUrl, "Cancelled history navigation did not restore the protected world URL");
+  await cancelWorldExit(page);
+  assert.equal(page.url(), protectedWorldUrl, "Cancelling history navigation left the world");
+
   await page.locator('[data-leave-world]').click();
-  await page.locator('[data-selected-world-name]').filter({ hasText: coast.name }).waitFor();
+  await waitForWorldExitDialog(page);
+  await screenshot(page, "03-world-exit-confirmation");
+  await cancelWorldExit(page);
+
+  await page.evaluate(() => history.back());
+  await confirmWorldExit(page);
+  await page.waitForFunction(() => document.querySelector('[data-screen]')?.getAttribute("data-screen") !== "world");
+  assert.deepEqual(await worldUnloadIsGuarded(page), {allowed: true, defaultPrevented: false});
+  if (await page.locator('[data-screen="world-home"]').count() === 0) {
+    await page.locator('[data-back-home]').click();
+  }
+  await page.locator('[data-selected-world-name]').filter({hasText: coast.name}).waitFor();
   assert.equal(await dispatchCarouselWheel(page, {deltaY: 180}), false, "Single-world carousel consumed page scrolling");
   await screenshot(page, "04-populated");
   await cancelWorldEntryWhileLoading(page, coast, browserFailures);
@@ -1000,8 +1059,10 @@ try {
   await page.locator('[data-world-ready="true"]').waitFor({timeout: 60_000});
   assert.equal(await page.locator('[data-voxel-canvas]').getAttribute("data-navigation-mode"), "first-person");
   assert.equal(await page.locator('[data-first-person-controls]').count(), 1);
-  await page.locator('[data-leave-world]').click();
+  assert.deepEqual(await worldUnloadIsGuarded(page), {allowed: false, defaultPrevented: true});
+  await leaveWorldToHome(page);
   await page.locator('[data-selected-world-name]').filter({hasText: coast.name}).waitFor();
+  assert.deepEqual(await worldUnloadIsGuarded(page), {allowed: true, defaultPrevented: false});
 
   await page.locator('[data-new-world]').click();
   const highlands = {
@@ -1013,7 +1074,7 @@ try {
   };
   await createWorld(page, highlands);
   await assertWorldHasSurvivalWalk(page);
-  await page.locator('[data-leave-world]').click();
+  await leaveWorldToHome(page);
   await page.locator('[data-selected-world-name]').filter({ hasText: highlands.name }).waitFor();
   assert.equal(await page.locator('[data-carousel-dot]').count(), 2);
 

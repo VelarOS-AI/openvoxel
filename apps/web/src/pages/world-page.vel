@@ -1,11 +1,14 @@
 import {WorldGameStats, openLocalWorldGame} from "@openvoxel/game"
 import {WorldGameMode, WorldManifest} from "@openvoxel/world"
-import {Head, RouteContext, navigate} from "velar/web"
+import {closeDialog, showDialog} from "velar/browser"
+import {Head, RouteContext} from "velar/web"
 import {Icon, IconName} from "../icon.vel"
 import {asyncPageLifetime} from "../lifecycle/async-page-lifetime.vel"
-import {subtitleLook} from "../styles/common.vel"
+import {WorldExitGuard, releaseWorldPointerLock, worldExitGuard} from "../lifecycle/world-exit-guard.vel"
+import {navigate} from "../navigation/app-navigation.vel"
+import {primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
 import {navButtonLook} from "../styles/shell.vel"
-import {gameCanvasLook, loadingLook, worldChromeLook, worldStageLook} from "../styles/world-stage.vel"
+import {gameCanvasLook, loadingLook, worldChromeLook, worldExitActionsLook, worldExitBodyLook, worldExitDescriptionLook, worldExitDialogLook, worldExitTitleLook, worldStageLook} from "../styles/world-stage.vel"
 
 export component WorldPage(route: RouteContext):
     const lifetime = asyncPageLifetime()
@@ -14,7 +17,13 @@ export component WorldPage(route: RouteContext):
     state loading = true
     state failure = ""
     state stats: readonly WorldGameStats? = null
+    state leaving = false
     let canvas: CanvasElement? = null
+    let leaveDialog: DialogElement? = null
+    let exitGuard: WorldExitGuard? = null
+    let leaveRequested = false
+    let historyLeaveRequested = false
+    let departureStarted = false
     computed renderStatus = (not failure.isBlank()
         ? "Rendering stopped"
         : stats == null ? "Preparing world"
@@ -32,6 +41,14 @@ export component WorldPage(route: RouteContext):
         if lifetime.owns(generation): failure = message
 
     const experience = openLocalWorldGame(route.params.get("id") ?? "", mountedCanvas, receiveStats, receiveFailure)
+    let closing: Promise<null>? = null
+
+    def closeExperience() -> Promise<null>:
+        const current = closing
+        if current != null: return current
+        const started = experience.close()
+        closing = started
+        return started
 
     async def enter():
         try:
@@ -44,13 +61,59 @@ export component WorldPage(route: RouteContext):
             failure = error.message
             loading = false
 
-    def leave(): navigate("/")
+    def requestLeave(throughHistory: bool):
+        if departureStarted or leaveRequested: return
+        const current = leaveDialog
+        if current == null: return
+        const currentCanvas = canvas
+        if currentCanvas != null: releaseWorldPointerLock(currentCanvas)
+        leaveRequested = true
+        historyLeaveRequested = throughHistory
+        showDialog(current)
 
-    @mounted: await enter()
+    def requestHomeLeave(): requestLeave(false)
+
+    def requestHistoryLeave(): requestLeave(true)
+
+    def stayInWorld():
+        if departureStarted: return
+        const current = leaveDialog
+        resetLeaveRequest()
+        if current != null: closeDialog(current)
+
+    def resetLeaveRequest():
+        if departureStarted: return
+        leaveRequested = false
+        historyLeaveRequested = false
+        const guard = exitGuard
+        if guard != null: guard.cancelHistoryLeave()
+
+    action confirmLeave():
+        if departureStarted or not leaveRequested: return
+        departureStarted = true
+        leaving = true
+        const throughHistory = historyLeaveRequested
+        const stopped = closeExperience()
+        const guard = exitGuard
+        if throughHistory:
+            if guard != null: guard.confirmHistoryLeave()
+            else: navigate("/", {replace: true})
+        else:
+            if guard != null: guard.allow()
+            navigate("/", {replace: true})
+        try: await stopped
+        catch error: pass
+
+    @mounted:
+        exitGuard = worldExitGuard(requestHistoryLeave)
+        await enter()
 
     @cleanup:
         lifetime.dispose()
-        detach experience.close()
+        const guard = exitGuard
+        exitGuard = null
+        if guard != null: guard.dispose()
+        detach closeExperience()
 
     return <main
         look={worldStageLook}
@@ -88,7 +151,7 @@ export component WorldPage(route: RouteContext):
             data-movement-mode={world?.mode == WorldGameMode.creative ? "creative-flight" : "survival-walk"}
         ></canvas>
         <div look={worldChromeLook}>
-            <button type="button" look={navButtonLook} on:click={leave} aria-label="Back to worlds" data-leave-world>
+            <button type="button" look={navButtonLook} on:click={requestHomeLeave} aria-label="Back to worlds" data-leave-world>
                 <Icon name={IconName.chevronLeft} />
             </button>
             <div>
@@ -96,8 +159,8 @@ export component WorldPage(route: RouteContext):
                 <p look={subtitleLook} aria-live="polite" data-render-status>{renderStatus}</p>
                 <p look={subtitleLook} data-first-person-controls>
                     {world?.mode == WorldGameMode.creative
-                        ? "Click to look · WASD move · Space rise · Ctrl/C descend · Shift accelerate · Esc release"
-                        : "Click to look · WASD move · Space jump · Shift sprint · Esc release"}
+                        ? "Click to look · WASD move · Space rise · Ctrl descend · Shift accelerate · Esc release"
+                        : "Click to look · WASD move · Space jump · C crouch · Shift sprint · Esc release"}
                 </p>
             </div>
         </div>
@@ -105,7 +168,31 @@ export component WorldPage(route: RouteContext):
         {failure.isBlank() ? <></> : <div look={loadingLook} role="alert" data-error>
             <div>
                 <p>{failure}</p>
-                <button type="button" look={navButtonLook} on:click={leave}>Back to worlds</button>
+                <button type="button" look={navButtonLook} on:click={requestHomeLeave}>Back to worlds</button>
             </div>
         </div>}
+        <dialog
+            ref={leaveDialog}
+            look={worldExitDialogLook}
+            aria-labelledby="world-exit-title"
+            aria-describedby="world-exit-description"
+            on:cancel.prevent={stayInWorld}
+            data-world-exit-dialog
+            data-world-exit-pending={str(leaving)}
+        >
+            <div look={worldExitBodyLook}>
+                <h2 id="world-exit-title" look={worldExitTitleLook}>Leave this world?</h2>
+                <p id="world-exit-description" look={worldExitDescriptionLook}>
+                    Your current game session will close. You can stay here or leave when you are ready.
+                </p>
+                <div look={worldExitActionsLook}>
+                    <button type="button" look={secondaryButtonLook} on:click={stayInWorld} disabled={leaving} data-stay-in-world>
+                        Stay in world
+                    </button>
+                    <button type="button" look={primaryButtonLook} on:click={confirmLeave} disabled={leaving} data-confirm-leave-world>
+                        {leaving ? "Leaving…" : "Leave world"}
+                    </button>
+                </div>
+            </div>
+        </dialog>
     </main>

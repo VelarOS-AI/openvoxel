@@ -1,5 +1,5 @@
-import {Look, alpha} from "velar/look"
-import {ink, white} from "./theme.vel"
+import {Look, alpha, blur, border, shadow, spacing} from "velar/look"
+import {ink, panel, white} from "./theme.vel"
 
 export const worldStageLook: Look = look:
     position = "fixed"
@@ -37,6 +37,48 @@ export const loadingLook: Look = look:
     color = alpha(white, 0.84)
     backgroundColor = alpha(ink, 0.7)
     fontSize = 1rem
+
+export const worldExitDialogLook: Look = look:
+    width = 90%
+    maxWidth = 460px
+    padding = 0px
+    color = white
+    backgroundColor = alpha(panel, 0.98)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 18px
+    boxShadow = shadow(0px, 24px, 72px, alpha(ink, 0.76))
+    fontFamily = "Inter, sans-serif"
+
+    @backdrop:
+        backgroundColor = alpha(ink, 0.76)
+        backdropFilter = blur(8px)
+
+export const worldExitBodyLook: Look = look:
+    display = "grid"
+    gap = 16px
+    padding = spacing(26px, 28px, 24px, 28px)
+
+export const worldExitTitleLook: Look = look:
+    margin = 0px
+    fontFamily = "Rajdhani, Inter, sans-serif"
+    fontSize = 1.8rem
+    lineHeight = 1.1
+
+export const worldExitDescriptionLook: Look = look:
+    margin = 0px
+    color = alpha(white, 0.7)
+    lineHeight = 1.55
+
+export const worldExitActionsLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "flex-end"
+    flexWrap = "wrap"
+    gap = 10px
+    paddingTop = 4px
+
+    if viewport.width <= 520px:
+        display = "grid"
 
 export const screenReaderLook: Look = look:
     position = "absolute"

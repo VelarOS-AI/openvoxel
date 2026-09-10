@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "imports": {
-    "#openvoxel/web/carousel-input": "./src/native/carousel-input.mjs"
+    "#openvoxel/web/carousel-input": "./src/native/carousel-input.mjs",
+    "#openvoxel/web/world-exit-guard": "./src/native/world-exit-guard.mjs"
   },
   "velar": {
     "entry": "src/main.vel",
@@ -24,7 +25,7 @@
     "check": "velar check",
     "format": "velar format",
     "format:check": "velar format --check",
-    "test": "velar test && node --test tests/carousel-input.test.mjs",
+    "test": "velar test && node --test tests/*.test.mjs",
     "predev": "npm run generate",
     "dev": "velar dev --port 7173",
     "prebuild": "npm run generate",

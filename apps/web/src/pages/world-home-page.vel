@@ -1,6 +1,7 @@
-import {Head, navigate} from "velar/web"
+import {Head} from "velar/web"
 import {Brand, Navigation} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
+import {navigate} from "../navigation/app-navigation.vel"
 import {displayTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
 import {actionGroupLook, actionRowLook, activeDotLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, settingsPanelLook, settingsRowLook, settingsValueLook} from "../styles/home.vel"
 import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"

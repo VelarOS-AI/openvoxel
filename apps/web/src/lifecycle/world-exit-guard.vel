@@ -1,0 +1,24 @@
+export type WorldExitGuard:
+    allow: () -> null
+    cancelHistoryLeave: () -> null
+    confirmHistoryLeave: () -> null
+    dispose: () -> null
+
+extern module "#openvoxel/web/world-exit-guard":
+    export def createWorldExitGuard(requestHistoryConfirmation: () -> null) -> WorldExitGuard
+    export def installWorldExitCoordinator() -> null
+    export def releaseCanvasPointerLock(canvas: CanvasElement) -> null
+
+import js {createWorldExitGuard, installWorldExitCoordinator, releaseCanvasPointerLock} from "#openvoxel/web/world-exit-guard"
+
+/// 必须在 Router 挂载前调用一次，使 history capture 先于 Router 自己的
+/// popstate 订阅建立。协调器只持有当前世界的一个回调，页面 cleanup 会释放它。
+export def installWorldExitProtection(): installWorldExitCoordinator()
+
+/// 世界页拥有这个浏览器边界。产品内导航先走自有 dialog；同文档历史返回
+/// 会被恢复到当前世界并请求同一确认；真正卸载则交给浏览器原生确认。
+export def worldExitGuard(requestHistoryConfirmation: () -> null) -> WorldExitGuard:
+    return createWorldExitGuard(requestHistoryConfirmation)
+
+/// dialog 必须在 Pointer Lock 释放后打开，否则浏览器仍把键盘和鼠标交给画布。
+export def releaseWorldPointerLock(canvas: CanvasElement): releaseCanvasPointerLock(canvas)

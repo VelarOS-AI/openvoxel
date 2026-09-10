@@ -9,12 +9,14 @@ export type WorldMovementWalkState:
     readonly velocityY: number
     readonly velocityZ: number
     readonly grounded: bool
+    readonly crouching: bool
 
 export type WorldMovementWalkIntent:
     readonly forward: number
     readonly sideways: number
     readonly jumping: bool
     readonly sprinting: bool
+    readonly crouching: bool
 
 export type WorldMovementWalkBasis:
     readonly forwardX: number
@@ -31,8 +33,11 @@ export type WorldMovementCollisionQuery = (x: number, y: number, z: number) -> r
 export const worldMovementPlayerRadius = 0.3
 export const worldMovementPlayerHeight = 1.8
 export const worldMovementEyeHeight = 1.62
+export const worldMovementCrouchingPlayerHeight = 1.5
+export const worldMovementCrouchingEyeHeight = 1.27
 export const worldMovementWalkSpeed = 4.6
 export const worldMovementSprintSpeed = 6.8
+export const worldMovementCrouchSpeed = 2.3
 export const worldMovementJumpSpeed = 8.2
 export const worldMovementGravity = 24
 export const worldMovementTerminalVelocity = 32
@@ -52,6 +57,19 @@ type HorizontalMovement:
     readonly position: number
     readonly y: number
     readonly blocked: bool
+
+type PlayerCollisionShape:
+    readonly height: number
+    readonly eyeHeight: number
+
+const standingPlayerShape: PlayerCollisionShape = {
+    height: worldMovementPlayerHeight,
+    eyeHeight: worldMovementEyeHeight,
+}
+const crouchingPlayerShape: PlayerCollisionShape = {
+    height: worldMovementCrouchingPlayerHeight,
+    eyeHeight: worldMovementCrouchingEyeHeight,
+}
 
 def requireFiniteState(state: readonly WorldMovementWalkState):
     assert state.x.isFinite() and state.y.isFinite() and state.z.isFinite() else "Survival player position must be finite"
@@ -81,12 +99,13 @@ def occupiesCollision(
     x: number,
     y: number,
     z: number,
+    shape: readonly PlayerCollisionShape,
     collisionAt: WorldMovementCollisionQuery,
 ) -> bool:
     const minimumX = x - worldMovementPlayerRadius
     const maximumX = x + worldMovementPlayerRadius
-    const minimumY = y - worldMovementEyeHeight
-    const maximumY = minimumY + worldMovementPlayerHeight
+    const minimumY = y - shape.eyeHeight
+    const maximumY = minimumY + shape.height
     const minimumZ = z - worldMovementPlayerRadius
     const maximumZ = z + worldMovementPlayerRadius
     for blockY in range((minimumY + collisionEpsilon).floor(), (maximumY - collisionEpsilon).floor() + 1):
@@ -102,36 +121,57 @@ def occupiesCollision(
                     if overlaps: return true
     return false
 
-def resolveX(x: number, y: number, z: number, delta: number, collisionAt: WorldMovementCollisionQuery) -> number:
+def resolveX(
+    x: number,
+    y: number,
+    z: number,
+    delta: number,
+    shape: readonly PlayerCollisionShape,
+    collisionAt: WorldMovementCollisionQuery,
+) -> number:
     const target = x + delta
-    if not occupiesCollision(target, y, z, collisionAt): return target
+    if not occupiesCollision(target, y, z, shape, collisionAt): return target
     let clearAmount = 0
     let blockedAmount = 1
     for iteration in range(12):
         const amount = (clearAmount + blockedAmount) / 2
-        if occupiesCollision(x + delta * amount, y, z, collisionAt): blockedAmount = amount
+        if occupiesCollision(x + delta * amount, y, z, shape, collisionAt): blockedAmount = amount
         else: clearAmount = amount
     return x + delta * clearAmount
 
-def resolveY(x: number, y: number, z: number, delta: number, collisionAt: WorldMovementCollisionQuery) -> number:
+def resolveY(
+    x: number,
+    y: number,
+    z: number,
+    delta: number,
+    shape: readonly PlayerCollisionShape,
+    collisionAt: WorldMovementCollisionQuery,
+) -> number:
     const target = y + delta
-    if not occupiesCollision(x, target, z, collisionAt): return target
+    if not occupiesCollision(x, target, z, shape, collisionAt): return target
     let clearAmount = 0
     let blockedAmount = 1
     for iteration in range(12):
         const amount = (clearAmount + blockedAmount) / 2
-        if occupiesCollision(x, y + delta * amount, z, collisionAt): blockedAmount = amount
+        if occupiesCollision(x, y + delta * amount, z, shape, collisionAt): blockedAmount = amount
         else: clearAmount = amount
     return y + delta * clearAmount
 
-def resolveZ(x: number, y: number, z: number, delta: number, collisionAt: WorldMovementCollisionQuery) -> number:
+def resolveZ(
+    x: number,
+    y: number,
+    z: number,
+    delta: number,
+    shape: readonly PlayerCollisionShape,
+    collisionAt: WorldMovementCollisionQuery,
+) -> number:
     const target = z + delta
-    if not occupiesCollision(x, y, target, collisionAt): return target
+    if not occupiesCollision(x, y, target, shape, collisionAt): return target
     let clearAmount = 0
     let blockedAmount = 1
     for iteration in range(12):
         const amount = (clearAmount + blockedAmount) / 2
-        if occupiesCollision(x, y, z + delta * amount, collisionAt): blockedAmount = amount
+        if occupiesCollision(x, y, z + delta * amount, shape, collisionAt): blockedAmount = amount
         else: clearAmount = amount
     return z + delta * clearAmount
 
@@ -144,18 +184,19 @@ def resolveHorizontalX(
     delta: number,
     grounded: bool,
     maximumStepY: number,
+    shape: readonly PlayerCollisionShape,
     collisionAt: WorldMovementCollisionQuery,
 ) -> HorizontalMovement:
     const target = x + delta
-    if not occupiesCollision(target, y, z, collisionAt): return {position: target, y, blocked: false}
+    if not occupiesCollision(target, y, z, shape, collisionAt): return {position: target, y, blocked: false}
     if grounded and delta != 0:
         const liftSteps = (Math.max(0, maximumStepY - y) / collisionStep).ceil()
         for liftIndex in range(1, liftSteps + 1):
             const liftedY = Math.min(y + liftIndex * collisionStep, maximumStepY)
-            if occupiesCollision(x, liftedY, z, collisionAt): break
-            if not occupiesCollision(target, liftedY, z, collisionAt):
+            if occupiesCollision(x, liftedY, z, shape, collisionAt): break
+            if not occupiesCollision(target, liftedY, z, shape, collisionAt):
                 return {position: target, y: liftedY, blocked: false}
-    return {position: resolveX(x, y, z, delta, collisionAt), y, blocked: true}
+    return {position: resolveX(x, y, z, delta, shape, collisionAt), y, blocked: true}
 
 def resolveHorizontalZ(
     x: number,
@@ -164,21 +205,26 @@ def resolveHorizontalZ(
     delta: number,
     grounded: bool,
     maximumStepY: number,
+    shape: readonly PlayerCollisionShape,
     collisionAt: WorldMovementCollisionQuery,
 ) -> HorizontalMovement:
     const target = z + delta
-    if not occupiesCollision(x, y, target, collisionAt): return {position: target, y, blocked: false}
+    if not occupiesCollision(x, y, target, shape, collisionAt): return {position: target, y, blocked: false}
     if grounded and delta != 0:
         const liftSteps = (Math.max(0, maximumStepY - y) / collisionStep).ceil()
         for liftIndex in range(1, liftSteps + 1):
             const liftedY = Math.min(y + liftIndex * collisionStep, maximumStepY)
-            if occupiesCollision(x, liftedY, z, collisionAt): break
-            if not occupiesCollision(x, liftedY, target, collisionAt):
+            if occupiesCollision(x, liftedY, z, shape, collisionAt): break
+            if not occupiesCollision(x, liftedY, target, shape, collisionAt):
                 return {position: target, y: liftedY, blocked: false}
-    return {position: resolveZ(x, y, z, delta, collisionAt), y, blocked: true}
+    return {position: resolveZ(x, y, z, delta, shape, collisionAt), y, blocked: true}
 
 export def worldMovementWalkState(x: number, y: number, z: number) -> WorldMovementWalkState:
-    const state: WorldMovementWalkState = {x, y, z, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: false}
+    const state: WorldMovementWalkState = {
+        x, y, z,
+        velocityX: 0, velocityY: 0, velocityZ: 0,
+        grounded: false, crouching: false,
+    }
     requireFiniteState(state)
     return state
 
@@ -200,9 +246,24 @@ export def stepWorldMovementWalk(
     assert intent.forward.isFinite() and intent.forward >= -1 and intent.forward <= 1 else "Survival forward intent is outside -1 through 1"
     assert intent.sideways.isFinite() and intent.sideways >= -1 and intent.sideways <= 1 else "Survival sideways intent is outside -1 through 1"
 
+    let x = state.x
+    let y = state.y
+    let z = state.z
+    let crouching = state.crouching
+    const eyeHeightDifference = worldMovementEyeHeight - worldMovementCrouchingEyeHeight
+    if intent.crouching and not crouching:
+        y -= eyeHeightDifference
+        crouching = true
+    else if not intent.crouching and crouching:
+        const standingY = y + eyeHeightDifference
+        if not occupiesCollision(x, standingY, z, standingPlayerShape, collisionAt):
+            y = standingY
+            crouching = false
+    const shape = crouching ? crouchingPlayerShape : standingPlayerShape
+
     const deltaSeconds = Math.min(deltaMilliseconds, worldMovementWalkMaximumFrameMilliseconds) / 1000
     const intentLength = Math.hypot(intent.forward, intent.sideways)
-    const speed = intent.sprinting ? worldMovementSprintSpeed : worldMovementWalkSpeed
+    const speed = crouching ? worldMovementCrouchSpeed : (intent.sprinting ? worldMovementSprintSpeed : worldMovementWalkSpeed)
     let targetVelocityX = 0
     let targetVelocityZ = 0
     if intentLength > 0:
@@ -221,14 +282,11 @@ export def stepWorldMovementWalk(
     let velocityY = state.velocityY
     let velocityZ = horizontal.z
     let grounded = state.grounded
-    if intent.jumping and grounded:
+    if intent.jumping and grounded and not crouching:
         velocityY = worldMovementJumpSpeed
         grounded = false
     velocityY = Math.max(-worldMovementTerminalVelocity, velocityY - worldMovementGravity * deltaSeconds)
 
-    let x = state.x
-    let y = state.y
-    let z = state.z
     const maximumDelta = Math.max((velocityX * deltaSeconds).abs(), Math.max((velocityY * deltaSeconds).abs(), (velocityZ * deltaSeconds).abs()))
     const steps = Math.max(1, (maximumDelta / collisionStep).ceil())
     const stepX = velocityX * deltaSeconds / steps
@@ -237,19 +295,19 @@ export def stepWorldMovementWalk(
     for step in range(steps):
         const maximumStepY = y + maximumStepHeight
         const targetX = x + stepX
-        const movedX = resolveHorizontalX(x, y, z, stepX, grounded, maximumStepY, collisionAt)
+        const movedX = resolveHorizontalX(x, y, z, stepX, grounded, maximumStepY, shape, collisionAt)
         if movedX.blocked and (movedX.position - targetX).abs() > collisionEpsilon: velocityX = 0
         x = movedX.position
         y = movedX.y
 
         const targetZ = z + stepZ
-        const movedZ = resolveHorizontalZ(x, y, z, stepZ, grounded, maximumStepY, collisionAt)
+        const movedZ = resolveHorizontalZ(x, y, z, stepZ, grounded, maximumStepY, shape, collisionAt)
         if movedZ.blocked and (movedZ.position - targetZ).abs() > collisionEpsilon: velocityZ = 0
         z = movedZ.position
         y = movedZ.y
 
         const targetY = y + stepY
-        const movedY = resolveY(x, y, z, stepY, collisionAt)
+        const movedY = resolveY(x, y, z, stepY, shape, collisionAt)
         if (movedY - targetY).abs() > collisionEpsilon:
             if stepY < 0: grounded = true
             velocityY = 0
@@ -258,8 +316,8 @@ export def stepWorldMovementWalk(
 
     const minimumHorizontal = -maximumWorldCoordinate + worldMovementPlayerRadius
     const maximumHorizontal = maximumWorldCoordinate - worldMovementPlayerRadius
-    const minimumEyeY = bounds.minimumY + worldMovementEyeHeight
-    const maximumEyeY = bounds.maximumY + 1 - (worldMovementPlayerHeight - worldMovementEyeHeight)
+    const minimumEyeY = bounds.minimumY + shape.eyeHeight
+    const maximumEyeY = bounds.maximumY + 1 - (shape.height - shape.eyeHeight)
     x = Math.clamp(x, minimumHorizontal, maximumHorizontal)
     y = Math.clamp(y, minimumEyeY, maximumEyeY)
     z = Math.clamp(z, minimumHorizontal, maximumHorizontal)
@@ -271,6 +329,6 @@ export def stepWorldMovementWalk(
     else if y == maximumEyeY:
         velocityY = 0
         grounded = false
-    const next: WorldMovementWalkState = {x, y, z, velocityX, velocityY, velocityZ, grounded}
+    const next: WorldMovementWalkState = {x, y, z, velocityX, velocityY, velocityZ, grounded, crouching}
     requireFiniteState(next)
     return next

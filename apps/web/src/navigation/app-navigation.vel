@@ -1,0 +1,28 @@
+import {navigate as frameworkNavigate} from "velar/web"
+
+export type ApplicationNavigationOptions:
+    readonly replace: bool?
+    readonly scroll: bool?
+
+type FrameworkNavigate = (to: string, options: ApplicationNavigationOptions) -> null
+
+extern module "#openvoxel/web/world-exit-guard":
+    export def captureApplicationLinkClick(event: Event) -> bool
+    export def navigateWithHistoryPosition(
+        to: string,
+        options: ApplicationNavigationOptions,
+        runtimeNavigate: FrameworkNavigate,
+    ) -> null
+
+import js {captureApplicationLinkClick, navigateWithHistoryPosition} from "#openvoxel/web/world-exit-guard"
+
+def performFrameworkNavigation(to: string, options: ApplicationNavigationOptions):
+    frameworkNavigate(to, {replace: options.replace, scroll: options.scroll})
+
+/// 所有应用内导航先推进自有 history position，再让 Velar Router 同步处理
+/// synthetic popstate；协调器随后把 position 固化到新 entry 的 state。
+export def navigate(to: string, options: ApplicationNavigationOptions = {}):
+    navigateWithHistoryPosition(to, options, performFrameworkNavigation)
+
+/// 原生 anchor 的修饰键和新标签行为保持由浏览器拥有；只接管普通左键导航。
+export def captureLink(event: Event) -> bool: return captureApplicationLinkClick(event)

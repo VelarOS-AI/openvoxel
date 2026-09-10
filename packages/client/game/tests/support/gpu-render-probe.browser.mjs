@@ -1244,7 +1244,7 @@ globalThis.__openVoxelGpuProbePointerLockReleaseRace = async () => {
       edge: 16,
       bounds: {minimumY: -64, maximumY: 320},
       initialFlightState: {x: 0, y: 10, z: 0, velocityX: 0, velocityY: 0, velocityZ: 0},
-      initialWalkState: {x: 0, y: 10, z: 0, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: false},
+      initialWalkState: {x: 0, y: 10, z: 0, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: false, crouching: false},
       stepFlight: (state) => state,
       stepWalk: (state) => state,
       collisionAt: () => null,

@@ -1,7 +1,7 @@
 import {maximumWorldCoordinate} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {ClientBlockCollisionBox} from "@openvoxel/renderer"
-import {WorldMovementWalkState, stepWorldMovementWalk, worldMovementEyeHeight, worldMovementPlayerHeight, worldMovementPlayerRadius, worldMovementWalkSpeed, worldMovementWalkState} from "../src/controls/survival-walk.vel"
+import {WorldMovementWalkState, stepWorldMovementWalk, worldMovementCrouchSpeed, worldMovementCrouchingEyeHeight, worldMovementEyeHeight, worldMovementPlayerHeight, worldMovementPlayerRadius, worldMovementWalkSpeed, worldMovementWalkState} from "../src/controls/survival-walk.vel"
 
 const fullBlock: ClientBlockCollisionBox = {
     minimumX: 0,
@@ -15,9 +15,10 @@ const snowLayer: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBloc
 const halfBlock: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {maximumY: 0.5})
 const leftPost: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {maximumX: 0.15})
 const rightPost: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {minimumX: 0.85})
+const lowCeiling: ClientBlockCollisionBox = ClientBlockCollisionBox.from(fullBlock, {minimumY: 0.6})
 const basis = {forwardX: 0, forwardZ: 1, rightX: 1, rightZ: 0}
 const bounds = {minimumY: 0, maximumY: 255}
-const idle = {forward: 0, sideways: 0, jumping: false, sprinting: false}
+const idle = {forward: 0, sideways: 0, jumping: false, sprinting: false, crouching: false}
 const standingEyeY = 1 + worldMovementEyeHeight
 
 def flatGround(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
@@ -50,8 +51,13 @@ def diagonalDoubleStep(x: number, y: number, z: number) -> readonly List<readonl
     if x == 1 and y == 1 and z == 1: return [fullBlock]
     return []
 
+def crouchTunnel(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    if y == 0: return [fullBlock]
+    if y == 2: return [lowCeiling]
+    return []
+
 def groundedState(x: number, z: number) -> WorldMovementWalkState:
-    return {x, y: standingEyeY, z, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: true}
+    return {x, y: standingEyeY, z, velocityX: 0, velocityY: 0, velocityZ: 0, grounded: true, crouching: false}
 
 test "survival gravity lands on the synchronized block surface":
     let state = worldMovementWalkState(0.5, 8, 0.5)
@@ -63,7 +69,7 @@ test "survival gravity lands on the synchronized block surface":
 test "a grounded player jumps and returns to the same surface":
     const launched = stepWorldMovementWalk(
         groundedState(0.5, 0.5),
-        {forward: 0, sideways: 0, jumping: true, sprinting: false},
+        {forward: 0, sideways: 0, jumping: true, sprinting: false, crouching: false},
         basis,
         1000 / 60,
         bounds,
@@ -79,7 +85,7 @@ test "a grounded player jumps and returns to the same surface":
 
 test "independent horizontal axes block a wall while preserving tangential sliding":
     let state = groundedState(0.5, 0.5)
-    const diagonal = {forward: 1, sideways: 1, jumping: false, sprinting: false}
+    const diagonal = {forward: 1, sideways: 1, jumping: false, sprinting: false, crouching: false}
     for frame in range(90): state = stepWorldMovementWalk(state, diagonal, basis, 1000 / 60, bounds, wallAlongZ)
     expect(state.x <= 1 - worldMovementPlayerRadius + 0.001).toBe(true)
     expect(state.z > 3).toBe(true)
@@ -88,7 +94,7 @@ test "independent horizontal axes block a wall while preserving tangential slidi
 
 test "null collision shapes remain traversable":
     let state = groundedState(0.5, 0.5)
-    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false}
+    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false, crouching: false}
     for frame in range(30): state = stepWorldMovementWalk(state, forward, basis, 1000 / 60, bounds, flatGround)
     expect(state.z > 1.5).toBe(true)
     expect(state.grounded).toBe(true)
@@ -97,8 +103,8 @@ test "analog intent preserves its magnitude below the diagonal clamp":
     let half = groundedState(0.5, 0.5)
     let full = groundedState(0.5, 0.5)
     for frame in range(60):
-        half = stepWorldMovementWalk(half, {forward: 0.5, sideways: 0, jumping: false, sprinting: false}, basis, 1000 / 60, bounds, flatGround)
-        full = stepWorldMovementWalk(full, {forward: 1, sideways: 0, jumping: false, sprinting: false}, basis, 1000 / 60, bounds, flatGround)
+        half = stepWorldMovementWalk(half, {forward: 0.5, sideways: 0, jumping: false, sprinting: false, crouching: false}, basis, 1000 / 60, bounds, flatGround)
+        full = stepWorldMovementWalk(full, {forward: 1, sideways: 0, jumping: false, sprinting: false, crouching: false}, basis, 1000 / 60, bounds, flatGround)
     expect((half.velocityZ - worldMovementWalkSpeed / 2).abs() < 0.000001).toBe(true)
     expect((full.velocityZ - worldMovementWalkSpeed).abs() < 0.000001).toBe(true)
     expect(half.z < full.z).toBe(true)
@@ -112,10 +118,11 @@ test "substeps prevent a large frame from tunneling through a wall":
         velocityY: 0,
         velocityZ: 32,
         grounded: true,
+        crouching: false,
     }
     const stopped = stepWorldMovementWalk(
         fast,
-        {forward: 1, sideways: 0, jumping: false, sprinting: true},
+        {forward: 1, sideways: 0, jumping: false, sprinting: true, crouching: false},
         basis,
         1000,
         bounds,
@@ -134,10 +141,11 @@ test "world borders contain the whole player and cancel outward velocity":
         velocityY: 0,
         velocityZ: 0,
         grounded: true,
+        crouching: false,
     }
     const horizontal = stepWorldMovementWalk(
         outward,
-        {forward: 0, sideways: 1, jumping: false, sprinting: true},
+        {forward: 0, sideways: 1, jumping: false, sprinting: true, crouching: false},
         basis,
         50,
         bounds,
@@ -154,6 +162,7 @@ test "world borders contain the whole player and cancel outward velocity":
         velocityY: -32,
         velocityZ: 0,
         grounded: false,
+        crouching: false,
     }
     const lower = stepWorldMovementWalk(falling, idle, basis, 50, bounds, (x, y, z) => [])
     expect(lower.y).toBe(bounds.minimumY + worldMovementEyeHeight)
@@ -172,7 +181,7 @@ test "world borders contain the whole player and cancel outward velocity":
 
 test "a grounded player automatically crosses a snow-layer step":
     let state = groundedState(0.5, 0.5)
-    const right = {forward: 0, sideways: 1, jumping: false, sprinting: false}
+    const right = {forward: 0, sideways: 1, jumping: false, sprinting: false, crouching: false}
     for frame in range(14): state = stepWorldMovementWalk(state, right, basis, 1000 / 60, bounds, snowStep)
     expect(state.x > 0.8).toBe(true)
     expect(state.y > standingEyeY + 0.1).toBe(true)
@@ -180,7 +189,7 @@ test "a grounded player automatically crosses a snow-layer step":
     expect(state.grounded).toBe(true)
 
 test "multiple boxes block their occupied regions while preserving the gap":
-    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false}
+    const forward = {forward: 1, sideways: 0, jumping: false, sprinting: false, crouching: false}
     let center = groundedState(0.5, 0.5)
     for frame in range(30): center = stepWorldMovementWalk(center, forward, basis, 1000 / 60, bounds, splitGate)
     expect(center.z > 1.5).toBe(true)
@@ -198,13 +207,54 @@ test "diagonal axis resolution cannot stack two step-ups in one substep":
         velocityY: 0,
         velocityZ: 5,
         grounded: true,
+        crouching: false,
     }
     const moved = stepWorldMovementWalk(
         state,
-        {forward: 1, sideways: 1, jumping: false, sprinting: true},
+        {forward: 1, sideways: 1, jumping: false, sprinting: true, crouching: false},
         basis,
         20,
         bounds,
         diagonalDoubleStep,
     )
     expect(moved.y <= standingEyeY + 0.6).toBe(true)
+
+test "crouching keeps the player's feet anchored and caps horizontal speed":
+    let state = stepWorldMovementWalk(
+        groundedState(0.5, 0.5),
+        {forward: 1, sideways: 0, jumping: false, sprinting: true, crouching: true},
+        basis,
+        0,
+        bounds,
+        flatGround,
+    )
+    expect(state.crouching).toBe(true)
+    expect((state.y - (1 + worldMovementCrouchingEyeHeight)).abs() < 0.000001).toBe(true)
+    expect(((state.y - worldMovementCrouchingEyeHeight) - (standingEyeY - worldMovementEyeHeight)).abs() < 0.000001).toBe(true)
+    for frame in range(60):
+        state = stepWorldMovementWalk(
+            state,
+            {forward: 1, sideways: 0, jumping: false, sprinting: true, crouching: true},
+            basis,
+            1000 / 60,
+            bounds,
+            flatGround,
+        )
+    expect((state.velocityZ - worldMovementCrouchSpeed).abs() < 0.000001).toBe(true)
+
+test "a low ceiling keeps the player crouched until standing clearance returns":
+    const crouched = stepWorldMovementWalk(
+        groundedState(0.5, 0.5),
+        {forward: 0, sideways: 0, jumping: false, sprinting: false, crouching: true},
+        basis,
+        0,
+        bounds,
+        flatGround,
+    )
+    const blocked = stepWorldMovementWalk(crouched, idle, basis, 0, bounds, crouchTunnel)
+    expect(blocked.crouching).toBe(true)
+    expect(blocked.y).toBe(crouched.y)
+
+    const standing = stepWorldMovementWalk(blocked, idle, basis, 0, bounds, flatGround)
+    expect(standing.crouching).toBe(false)
+    expect((standing.y - standingEyeY).abs() < 0.000001).toBe(true)

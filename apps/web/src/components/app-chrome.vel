@@ -1,18 +1,21 @@
-import {Link, navigate} from "velar/web"
 import {Icon, IconName} from "../icon.vel"
+import {captureLink, navigate} from "../navigation/app-navigation.vel"
 import {brandIconLook, brandLook, brandNameLook, navButtonLook, navLabelLook, navLook} from "../styles/shell.vel"
 
 export component Brand(back: bool = false):
     def home(): navigate("/")
 
+    def followHome(event: Event):
+        if captureLink(event): home()
+
     return <div look={brandLook}>
         {back ? <button type="button" look={navButtonLook} on:click={home} aria-label="Back to worlds" data-back-home>
             <Icon name={IconName.chevronLeft} />
         </button> : <></>}
-        <Link to="/" look={brandLook}>
+        <a href="/" look={brandLook} on:click={followHome}>
             <Icon name={IconName.cube} look={brandIconLook} />
             <span look={brandNameLook}>OpenVoxel</span>
-        </Link>
+        </a>
     </div>
 
 export component Navigation(showCreate: bool = true):
