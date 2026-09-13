@@ -4,7 +4,7 @@
 
 import {monotonic} from "velar/time"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {WorldGameMode, chunkChecksum, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
+import {WorldGameMode, chunkChecksum, defaultWorldClimate, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "@openvoxel/world"
 import {defaultGenerator, defaultGeneratorHash, worldGenerator} from "../src/index.vel"
 
 type BenchmarkRun:
@@ -22,6 +22,7 @@ type BenchmarkRun:
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
         generatorHash: defaultGeneratorHash,
+        climate: defaultWorldClimate,
         spawn: {x: 0, y: 65, z: 0},
         content: {contentHash: "0".repeat(64), packs: []},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),

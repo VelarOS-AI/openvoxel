@@ -25,6 +25,7 @@ type SeedQualityReport:
     riverConnectedComponents: number
     spikeRatio: number
     biomeAreas: List<NamedCount>
+    landformAreas: List<NamedCount>
     caveRatio: number
     oreBlocks: number
     vegetationBlocks: number
@@ -47,10 +48,14 @@ type QualityReport:
 /// 尖峰地形或找不到出生点的世界。
 def validateQualityReport(profile: readonly WorldGeneratorDefinition, reports: readonly List<readonly SeedQualityReport>):
     const observedBiomes: Set<string> = Set()
+    const landforms: Map<string, number> = Map()
+    let totalSamples = 0
     for report in reports:
         assert report.landRatio >= 0.5 and report.landRatio <= 0.75 else f"Seed {report.seed} land ratio is outside 50% through 75%"
         assert report.riverLandRatio >= 0.02 and report.riverLandRatio <= 0.08 else f"Seed {report.seed} river ratio is outside 2% through 8% of land"
-        assert report.heightP95 >= 110 and report.heightP95 <= 190 else f"Seed {report.seed} 95th percentile height is outside 110 through 190"
+        assert report.heightP95 >= 75 and report.heightP95 <= 190 else f"Seed {report.seed} 95th percentile height is outside 75 through 190"
+        assert report.minimumHeight < profile.world.seaLevel - 10 else f"Seed {report.seed} ocean has lost its submerged shelf"
+        assert report.maximumHeight - report.minimumHeight >= 50 else f"Seed {report.seed} has insufficient regional relief"
         assert report.heightP99 < 224 else f"Seed {report.seed} 99th percentile height reaches the reserved ceiling"
         assert report.spikeRatio < 0.005 else f"Seed {report.seed} has too many single-column spikes"
         assert report.riverConnectedComponents > 0 else f"Seed {report.seed} contains no sampled river network"
@@ -58,6 +63,13 @@ def validateQualityReport(profile: readonly WorldGeneratorDefinition, reports: r
         assert Math.hypot(report.spawn.x, report.spawn.z) <= profile.spawn.searchRadius else f"Seed {report.seed} spawn is outside the configured search radius"
         assert report.spawn.y - 1 >= profile.spawn.minimumY and report.spawn.y - 1 <= profile.spawn.maximumY else f"Seed {report.seed} spawn height is unsafe"
         for biome in report.biomeAreas: observedBiomes.add(biome.key)
+        totalSamples += report.sampleCount
+        for area in report.landformAreas: landforms.set(area.key, (landforms.get(area.key) ?? 0) + area.count)
+    // 大尺度地貌允许单个出生区域以平原为主；语料整体必须同时留出平地与山地。
+    const plains = landforms.get(profile.terrainTypes.plain) ?? 0
+    const mountains = landforms.get(profile.terrainTypes.mountain) ?? 0
+    assert plains / totalSamples >= 0.1 else "Regional landforms leave too little continuous plain area"
+    assert mountains / totalSamples >= 0.03 and mountains / totalSamples < 0.4 else "Regional mountain belts have lost their bounded coverage"
     for biome in [profile.biomes.plains, profile.biomes.forest, profile.biomes.desert, profile.biomes.tundra]:
         assert biome in observedBiomes else f"Fixed seed corpus is missing climate biome {biome}"
 
@@ -112,6 +124,7 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
     const heights: List<number> = []
     const riverMask: List<bool> = []
     const biomeCounts: Map<string, number> = Map()
+    const landformCounts: Map<string, number> = Map()
     const previewRects: List<string> = []
     let slopeTotal = 0
     let landCount = 0
@@ -133,6 +146,7 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
             if river: riverLandCount += 1
             if sample.slope >= 0.95: spikeCount += 1
             biomeCounts.set(sample.biome, (biomeCounts.get(sample.biome) ?? 0) + 1)
+            landformCounts.set(sample.terrainType, (landformCounts.get(sample.terrainType) ?? 0) + 1)
             if writePreview:
                 previewRects.append(f`<rect x="{gridX}" y="{gridZ}" width="1" height="1" fill="{previewColor(profile, sample.biome, sample.surfaceY)}"/>`)
     const terrainMilliseconds = monotonic() - terrainStarted
@@ -141,27 +155,36 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
         const preview = f`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {gridEdge} {gridEdge}" shape-rendering="crispEdges">{previewRects.join("")}</svg>\n`
         await writeText(".velar/reports/worldgen-preview.svg", preview)
 
-    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, palette.blocks)
-    const oreIds = Set(palette.minerals.map(mineral => baseWorldBlockRegistry.registry.defaultStateRuntimeIdForKey(mineral.block)))
-    const vegetationIds = Set([
-        blocks.oakLog,
-        blocks.oakLeaves,
-        blocks.birchLog,
-        blocks.birchLeaves,
-        blocks.spruceLog,
-        blocks.spruceLeaves,
-        blocks.poplarLog,
-        blocks.poplarLeaves,
-        blocks.mimosaLog,
-        blocks.mimosaLeaves,
-        blocks.cactus,
-        blocks.dryBush,
-        blocks.tallGrass,
-        blocks.redFlower,
-        blocks.purpleFlower,
-        blocks.whiteFlower,
-        blocks.snow,
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, palette.blocks)
+    const oreIds = Set(palette.minerals.map(mineral => registry.defaultStateRuntimeIdForKey(mineral.block)))
+    const vegetationBlockKeys = Set([
+        palette.blocks.oakLog,
+        palette.blocks.oakLeaves,
+        palette.blocks.birchLog,
+        palette.blocks.birchLeaves,
+        palette.blocks.spruceLog,
+        palette.blocks.spruceLeaves,
+        palette.blocks.poplarLog,
+        palette.blocks.poplarLeaves,
+        palette.blocks.mimosaLog,
+        palette.blocks.mimosaLeaves,
+        palette.blocks.cactus,
+        palette.blocks.dryBush,
+        palette.blocks.largeDryBush,
+        palette.blocks.tallGrass,
+        palette.blocks.redFlower,
+        palette.blocks.purpleFlower,
+        palette.blocks.whiteFlower,
+        palette.blocks.rye,
+        palette.blocks.cotton,
+        palette.blocks.pumpkin,
+        palette.blocks.snow,
     ])
+    // 质量统计按方块家族展开 runtimeId，避免只计默认年龄或默认朝向。
+    const vegetationIds: Set<number> = Set()
+    for state in registry.states():
+        if state.blockKey in vegetationBlockKeys: vegetationIds.add(state.runtimeId)
     const generator = survivalWorldGenerator(seed, 16, baseWorldBlockRegistry, profile, palette)
     let caveAir = 0
     let undergroundBlocks = 0
@@ -191,6 +214,7 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
     const biomeAreas: List<NamedCount> = []
     for key in biomeCounts.keys().sorted(): biomeAreas.append({key, count: biomeCounts.get(key) ?? 0})
     const sortedHeights = heights.sorted()
+    const landformAreas = landformCounts.keys().sorted().map(key => {key, count: landformCounts.get(key) ?? 0})
     return {
         seed,
         sampleCount: heights.size,
@@ -204,6 +228,7 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
         riverConnectedComponents: connectedComponents(riverMask, gridEdge),
         spikeRatio: spikeCount / heights.size,
         biomeAreas,
+        landformAreas,
         caveRatio: caveAir / undergroundBlocks,
         oreBlocks,
         vegetationBlocks,
@@ -222,6 +247,9 @@ async def reportSeed(seed: string, radius: number, step: number, writePreview: b
     const reports: List<SeedQualityReport> = []
     for seed, index in seeds: reports.append(await reportSeed(seed, 512, 8, index == 0))
     const profile = baseWorldGeneratorCatalog.generators[0]
+    // 失败语料也留下完整数字，便于对照，而不是只得到第一条门禁异常。
+    const pending: QualityReport = {artifactVersion: 1, qualityGatePassed: false, sampledWidth: 1024, sampleStep: 8, seeds: reports}
+    await writeText(".velar/reports/worldgen-quality.json", f"{Json.stableStringify(pending, 2)}\n")
     validateQualityReport(profile, reports)
     const report: QualityReport = {artifactVersion: 1, qualityGatePassed: true, sampledWidth: 1024, sampleStep: 8, seeds: reports}
     const output = f"{Json.stableStringify(report, 2)}\n"

@@ -1,12 +1,12 @@
 import {RealtimeBlockChange} from "@openvoxel/protocol"
-import {ChunkPosition, Coordinate3, WorldEnvironmentSample, chunkKey, validateWorldEnvironmentSample, worldEcologyEpoch, worldEnvironmentAt} from "@openvoxel/world"
+import {WorldClimateDefinition, defaultWorldClimate, ChunkPosition, Coordinate3, WorldEnvironmentSample, chunkKey, validateWorldEnvironmentSample, worldEcologyEpoch, worldEnvironmentAt} from "@openvoxel/world"
 import {Cancellation} from "velar/task"
 import {ClientWorldState} from "./world-state.vel"
 
 export type SessionEnvironment:
-    install: (anchor: readonly WorldEnvironmentSample) -> null
-    sample: (position?: readonly Coordinate3) -> readonly WorldEnvironmentSample
-    changed: (changes: readonly List<readonly RealtimeBlockChange>) -> null
+    install: (anchor: WorldEnvironmentSample) -> null
+    sample: (position?: readonly Coordinate3) -> WorldEnvironmentSample
+    changed: (changes: readonly List<RealtimeBlockChange>) -> null
     forget: (positions: readonly List<readonly ChunkPosition>) -> null
     refresh: (cancellation?: Cancellation) -> Promise<bool>
     close: () -> null
@@ -18,8 +18,9 @@ export def sessionEnvironment(
     clock: () -> number,
     synchronize: (positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation?) -> Promise<null>,
     available: () -> bool,
+    climate: WorldClimateDefinition = defaultWorldClimate,
 ) -> SessionEnvironment:
-    let anchor: readonly WorldEnvironmentSample? = null
+    let anchor: WorldEnvironmentSample? = null
     let observedAt = 0
     let epoch = -1
     let refreshing = false
@@ -28,7 +29,7 @@ export def sessionEnvironment(
     const pending: Map<string, readonly ChunkPosition> = Map()
     const dirtyColumns: Set<string> = Set()
 
-    def install(value: readonly WorldEnvironmentSample):
+    def install(value: WorldEnvironmentSample):
         const validated = validateWorldEnvironmentSample(value)
         const now = clock()
         anchor = validated
@@ -38,13 +39,13 @@ export def sessionEnvironment(
         pending.clear()
         dirtyColumns.clear()
 
-    def sample(position: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
+    def sample(position: readonly Coordinate3? = null) -> WorldEnvironmentSample:
         assert not closed else "Client world session is closed"
         const value = anchor
         assert value != null else "Client world environment is not ready"
-        return worldEnvironmentAt(seed, value.worldMilliseconds + Math.max(0, clock() - observedAt), position ?? value.samplePosition)
+        return worldEnvironmentAt(seed, value.worldMilliseconds + Math.max(0, clock() - observedAt), position ?? value.samplePosition, climate)
 
-    def changed(changes: readonly List<readonly RealtimeBlockChange>):
+    def changed(changes: readonly List<RealtimeBlockChange>):
         const trackedColumns = Set(state.trackedPositions().map(position => f"{position.x}:{position.z}"))
         for key in dirtyColumns.values():
             if key not in trackedColumns: dirtyColumns.remove(key)

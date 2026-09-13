@@ -1,16 +1,16 @@
 import {BuiltinBlockIdentities} from "@openvoxel/identities"
 import {BlockShapeKind, BlockSourceFile, BlockTypeSource} from "../definition/block.vel"
-import {BlockCatalogContribution, BlockCatalogManifest, BlockCatalogSource, BlockStateMapSource, BlockStateMapping} from "../definition/catalog.vel"
+import {BlockCatalogContribution, BlockCatalogSource, BlockStateMapSource, BlockStateMapping, BuiltinBlockCatalogManifest} from "../definition/catalog.vel"
 import {assembleBlockCatalog} from "./catalog-assembly.vel"
 import {validateBuiltinBlockIdentities} from "./block-validation.vel"
 import {enumerateBlockStates} from "./state-expansion.vel"
 
-/// 按清单中的文件顺序合并分组方块；稳定 ID 分配仍使用规范状态键排序。
+/// 按清单中的文件顺序合并分组方块；稳定 ID 由内建 state-map 或具体世界分配。
 export def collectBlockTypes(files: List<BlockSourceFile>) -> List<BlockTypeSource>:
     return files.flatMap(file => file.blocks)
 
 /// 编译 OpenVoxel 基础目录，并验证空气哨兵和内置身份约束。
-export def compileBuiltinBlockCatalog(manifest: BlockCatalogManifest, identities: BuiltinBlockIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
+export def compileBuiltinBlockCatalog(manifest: BuiltinBlockCatalogManifest, identities: BuiltinBlockIdentities, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
     validateBuiltinBlockIdentities(identities, sourceBlocks)
     const catalog = assembleBlockCatalog(manifest.schemaVersion, manifest.catalogVersion, sourceBlocks, stateMap)
     const blocks = catalog.blocks
@@ -41,7 +41,7 @@ export def compileModBlockCatalog(owner: string, catalogVersion: string, sourceB
         reservedRuntimeIds: [],
         states: mappings,
     }
-    return assembleBlockCatalog(4, catalogVersion, sourceBlocks, stateMap)
+    return assembleBlockCatalog(6, catalogVersion, sourceBlocks, stateMap)
 
 /// 生成世界内容目录可直接消费的 Mod contribution。
 export def compileModBlockCatalogContribution(owner: string, catalogVersion: string, sourceBlocks: List<BlockTypeSource>) -> BlockCatalogContribution:

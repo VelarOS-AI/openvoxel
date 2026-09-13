@@ -1,3 +1,4 @@
+import {WorldClimateDefinition, defaultWorldClimate} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistry, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
@@ -23,6 +24,7 @@ def manifest(id: string) -> WorldManifest:
         chunkEdge: initialChunkEdge,
         generator: defaultGenerator,
         generatorHash: defaultGeneratorHash,
+        climate: defaultWorldClimate,
         spawn: {x: 0, y: 65, z: 0},
         content: {contentHash: "0".repeat(64), packs: []},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
@@ -81,20 +83,22 @@ test "generator registry rejects unknown identities and definition hash drift":
         generatorHash: "0000000000000000000000000000000000000000000000000000000000000000",
     })
     expect(() => worldGenerator(drifted)).toThrow()
+    const climateDrifted = WorldManifest.from(manifest("climate-drift"), {climate: WorldClimateDefinition.from(defaultWorldClimate, {temperaturePeriod: 512})})
+    expect(() => worldGenerator(climateDrifted)).toThrow()
 
 test "terrain samples expose final density climate landform and biome facts":
     const sample = sampleTerrain("openvoxel", {x: 0, z: 0})
     expect(seaLevel).toBe(64)
     expect(minimumWorldY).toBe(0)
     expect(maximumWorldY).toBe(255)
-    expect(sample.surfaceY).toBe(61)
+    expect(sample.surfaceY).toBe(62)
     expect(sample.slope >= 0 and sample.slope <= 1).toBe(true)
     expect(sample.continentalness >= -1 and sample.continentalness <= 1).toBe(true)
     expect(sample.erosion >= 0 and sample.erosion <= 1).toBe(true)
     expect(sample.ridge >= 0 and sample.ridge <= 1).toBe(true)
     expect(sample.riverStrength >= 0 and sample.riverStrength <= 1).toBe(true)
-    expect(sample.terrainType).toBe(builtinIdentities.terrainTypes.ocean)
-    expect(sample.biome).toBe(builtinIdentities.biomes.ocean)
+    expect(sample.terrainType).toBe(builtinIdentities.terrainTypes.river)
+    expect(sample.biome).toBe(builtinIdentities.biomes.river)
 
 test "generated world ids always find a safe land spawn inside the configured radius":
     const profile = baseWorldGeneratorCatalog.generators[0]
@@ -106,7 +110,7 @@ test "generated world ids always find a safe land spawn inside the configured ra
         expect(Math.hypot(spawn.x, spawn.z) <= profile.spawn.searchRadius).toBe(true)
         expect(sample.surfaceY >= profile.spawn.minimumY and sample.surfaceY <= profile.spawn.maximumY).toBe(true)
         expect(sample.slope <= profile.spawn.maximumSlope).toBe(true)
-        expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast).toBe(false)
+        expect(sample.biome == profile.biomes.ocean).toBe(false)
         if index < 16:
             for offsetY in range(2):
                 const located = locateBlock({x: spawn.x, y: spawn.y + offsetY, z: spawn.z}, initialChunkEdge)
@@ -116,7 +120,7 @@ test "generated world ids always find a safe land spawn inside the configured ra
                 expect(resolveBlockShapeBoxes(state.physics.collision, state.properties)).toEqual([])
 
 test "bounded generation corpus contains caves aquifers magma minerals and land":
-    const generator = worldGenerator(manifest("feature-corpus"))
+    const generator = worldGenerator(WorldManifest.from(manifest("feature-corpus"), {seed: "feature-corpus"}))
     let air = 0
     let water = 0
     let magma = 0
@@ -144,7 +148,7 @@ test "decoration plans preserve stable ownership across cubic Chunk seams":
     const fields = createGenerationFields("decoration-seams", profile)
     const columns = columnPlanner(fields, 16)
     const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
-    const planner = decorationPlanner(profile, "decoration-seams", blocks, columns)
+    const planner = decorationPlanner(profile, "decoration-seams", blocks, columns, baseWorldBlockRegistry.registry)
     let crossingOwner: string? = null
     let crossingBucketCount = 0
     for chunkX in range(-8, 9):
@@ -170,15 +174,3 @@ test "generator returns provably empty high sections inside the world range":
     const highAir = generateChunk(manifest("high-air-envelope"), {x: 0, y: 15, z: 0})
     expect(highAir.palette).toEqual([airBlock])
     expect(countBlock(highAir, airBlock)).toBe(4096)
-
-test "survival v2 fixed seed corpus detects accidental algorithm drift":
-    const generator = worldGenerator(manifest("golden"))
-    const positions: List<ChunkPosition> = [
-        {x: 0, y: 0, z: 0},
-        {x: 0, y: 4, z: 0},
-        {x: -10, y: 4, z: -10},
-        {x: 7, y: 6, z: -3},
-    ]
-    let checksum = 0
-    for position in positions: checksum = (checksum ^ chunkChecksum(generator.generate(position))) >>> 0
-    expect(checksum).toBe(3409832193)

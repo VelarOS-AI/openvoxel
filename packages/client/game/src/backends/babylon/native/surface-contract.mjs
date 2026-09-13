@@ -76,6 +76,7 @@ export function requireSurfaceOptions(candidate) {
   }
   return {
     ...options,
+    minimapCanvas: options.minimapCanvas == null ? null : requireCanvas(options.minimapCanvas),
     edge: requireInteger(options.edge, 4, 64, "Voxel Chunk edge"),
     targetX: requireFinite(options.targetX, "Camera target x"),
     targetY: requireFinite(options.targetY, "Camera target y"),
@@ -126,7 +127,8 @@ export function validateChunkMesh(chunk, edge, materialLibrary) {
       throw new Error("Chunk mesh vertex buffers have inconsistent lengths");
     }
     const quadCount = requireInteger(batch.quadCount, 0, 1_000_000, "Chunk mesh batch quad count");
-    if (vertexCount !== quadCount * 4 || indices.length !== quadCount * 6 || indices.length % 3 !== 0) {
+    const triangleCount = requireInteger(batch.triangleCount ?? 0, 0, 1_000_000, "Chunk mesh batch triangle count");
+    if (vertexCount !== quadCount * 4 + triangleCount * 3 || indices.length !== quadCount * 6 + triangleCount * 3 || indices.length % 3 !== 0) {
       throw new Error("Chunk mesh topology does not match its quad count");
     }
     for (const [label, values] of [["positions", positions], ["normals", normals], ["UVs", uvs], ["colors", colors]]) {
@@ -139,14 +141,18 @@ export function validateChunkMesh(chunk, edge, materialLibrary) {
         throw new RangeError("Chunk mesh texture layer is outside texture bank " + batch.bankKey);
       }
     }
-    for (const role of tintRoles) requireInteger(role, 0, 4, "Chunk mesh tint role");
+    for (const role of tintRoles) requireInteger(role, 0, 10, "Chunk mesh tint role");
     const layerAlphaCutoffs = materialLibrary.textureLayerAlphaCutoffs.get(batch.bankKey);
     if (layerAlphaCutoffs === undefined) throw new Error("Chunk mesh texture bank has no layer ownership map: " + batch.bankKey);
-    for (let offset = 0; offset < textureLayers.length; offset += 4) {
-      const layer = textureLayers[offset];
-      for (let vertexOffset = 1; vertexOffset < 4; vertexOffset += 1) {
-        if (textureLayers[offset + vertexOffset] !== layer) throw new Error("Chunk mesh quad interpolates between texture array layers");
-        if (tintRoles[offset + vertexOffset] !== tintRoles[offset]) throw new Error("Chunk mesh quad interpolates between climate tint roles");
+    for (const vertexIndex of indices) {
+      if (vertexIndex >= vertexCount) throw new RangeError("Chunk mesh index is outside its vertex buffer");
+    }
+    for (let offset = 0; offset < indices.length; offset += 3) {
+      const first = indices[offset];
+      const layer = textureLayers[first];
+      for (let vertexOffset = 1; vertexOffset < 3; vertexOffset += 1) {
+        if (textureLayers[indices[offset + vertexOffset]] !== layer) throw new Error("Chunk mesh quad interpolates between texture array layers");
+        if (tintRoles[indices[offset + vertexOffset]] !== tintRoles[first]) throw new Error("Chunk mesh quad interpolates between climate tint roles");
       }
       if (!layerAlphaCutoffs.has(layer)) throw new Error("Chunk mesh texture layer has no resource owner: " + batch.bankKey + ":" + layer);
       if (batch.layer === "cutout" && layerAlphaCutoffs.get(layer) !== resources.materialDefinition.alphaCutoff) {
@@ -159,7 +165,7 @@ export function validateChunkMesh(chunk, edge, materialLibrary) {
     for (const vertexIndex of indices) {
       if (vertexIndex >= vertexCount) throw new RangeError("Chunk mesh index is outside its vertex buffer");
     }
-    for (let quadIndex = 0; quadIndex < quadCount; quadIndex += 1) {
+    for (let quadIndex = 0; triangleCount === 0 && quadIndex < quadCount; quadIndex += 1) {
       const vertexOffset = quadIndex * 4;
       const indexOffset = quadIndex * 6;
       if (

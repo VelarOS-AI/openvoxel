@@ -4,7 +4,7 @@ import {
   collectBlockRenderResources,
 } from "@openvoxel/blocks";
 import {
-  builtinClientResourcePack,
+  loadBuiltinClientResourcePack,
   createClientRenderCatalog,
   meshChunk,
 } from "@openvoxel/renderer";
@@ -16,8 +16,11 @@ import {worldClimateAt, worldYearMilliseconds} from "@openvoxel/world";
 import {probeEnvironmentTextureBlending} from "./environment-texture-probe.browser.mjs";
 import {
   createMaterialYardScene,
+  materialYardPipelineOwner,
   materialYardChannelResourcePack,
 } from "./material-yard-probe.browser.mjs";
+
+const builtinClientResourcePack = await loadBuiltinClientResourcePack();
 
 const chunkEdge = 16;
 const packedStateByRuntimeId = new Map(basePackedBlockCatalogSource.states.map((state) => [state.runtimeId, state]));
@@ -187,6 +190,24 @@ function allStateScene(catalog) {
   };
 }
 
+function naturalModelScene(catalog) {
+  const chunk = createChunk({x: 0, y: 0, z: 0});
+  const marble = findState(catalog.states, "openvoxel:marble");
+  for (let x = 0; x < 16; x++) for (let z = 0; z < 12; z++) setBlock(chunk, x, 0, z, marble.runtimeId);
+  const specimens = ["cactus", "pumpkin", "starfish", "sea_urchin", "rotten_pumpkin"];
+  const counts = {};
+  for (const [i, key] of specimens.entries()) {
+    const state = findState(catalog.states, "openvoxel:" + key, state => !state.falling && (state.level ?? 0) === 0);
+    const geometry = state.geometry ?? state.attachments.find(a => a.geometry)?.geometry;
+    if (!geometry) throw new Error("Natural specimen is missing authored geometry: " + key);
+    counts[key] = geometry.triangles.length;
+    setBlock(chunk, 2 + i * 3, 1, 5, state.runtimeId);
+  }
+  const meshes = meshChunks(new Map([[chunkKey(chunk.position), chunk]]), catalog.states);
+  return {target: {x: 8, y: 1.1, z: 5.5}, cameraPose: {target: {x: 8, y: 1.1, z: 5.5}, alpha: -Math.PI / 2, beta: 0.8, radius: 12}, meshes,
+    payload: {naturalModelTriangles: counts}};
+}
+
 function pushQuad(group, x, y, z, layer, tint, width = 1, depth = 1) {
   const vertexOffset = group.positions.length / 3;
   group.positions.push(
@@ -288,31 +309,30 @@ function finishManualMesh(groups, tileCount, position = {x: 0, y: 0, z: 0}) {
 
 function textureLayerScene(catalog) {
   const laterAnimationFrames = new Set(builtinClientResourcePack.animations.flatMap((animation) => animation.frames.slice(1)));
+  const effectOnlyTextures = new Set(builtinClientResourcePack.materials
+    .filter((material) => material.materialEffect === "water")
+    .flatMap((material) => material.waterOptics.waves.slice(1).map((wave) => wave.normalTexture)));
   const animationByFirstFrame = new Map(builtinClientResourcePack.animations.map((animation) => [animation.frames[0], animation]));
-  const animatedLayerKeys = new Set();
+  const animationByKey = new Map(builtinClientResourcePack.animations.map((animation) => [animation.key, animation]));
+  const indirectlySampledLayerKeys = new Set();
   const groups = new Map();
   const submittedLayerKeys = new Set();
   let tileIndex = 0;
   let animationPanelCount = 0;
   for (const texture of builtinClientResourcePack.textures) {
-    if (laterAnimationFrames.has(texture.key)) {
-      for (const variant of texture.variants) animatedLayerKeys.add(`${texture.bankKey}:${variant.layer}`);
+    if (laterAnimationFrames.has(texture.key) || effectOnlyTextures.has(texture.key)) {
+      for (const variant of texture.variants) indirectlySampledLayerKeys.add(`${texture.bankKey}:${variant.layer}`);
       continue;
     }
-    const state = catalog.states.find((candidate) => candidate.pipelineKey !== null
-      && candidate.pipelineKey !== undefined
-      && candidate.textures !== null
-      && candidate.textures !== undefined
-      && [candidate.textures.top.key, candidate.textures.bottom.key, candidate.textures.side.key].includes(texture.key));
-    if (state === undefined) throw new Error(`GPU probe cannot find pipeline owner for ${texture.key}`);
-    let group = groups.get(state.pipelineKey);
+    const owner = materialYardPipelineOwner(catalog, texture, animationByKey, builtinClientResourcePack.materials);
+    let group = groups.get(owner.pipelineKey);
     if (group === undefined) {
       group = {
-        pipelineKey: state.pipelineKey,
-        layer: state.layer,
-        bankKey: state.bankKey,
-        materialKey: state.materialKey,
-        animationKey: state.animationKey,
+        pipelineKey: owner.pipelineKey,
+        layer: owner.layer,
+        bankKey: owner.bankKey,
+        materialKey: owner.materialKey,
+        animationKey: owner.animationKey,
         positions: [],
         normals: [],
         uvs: [],
@@ -322,25 +342,25 @@ function textureLayerScene(catalog) {
         indices: [],
         quadCount: 0,
       };
-      groups.set(state.pipelineKey, group);
+      groups.set(owner.pipelineKey, group);
     }
     for (const variant of texture.variants) {
       const x = (tileIndex % 8) * 2;
       const z = Math.floor(tileIndex / 8) * 2;
-      pushQuad(group, x, 1, z, variant.layer, [state.tintRed, state.tintGreen, state.tintBlue]);
+      pushQuad(group, x, 1, z, variant.layer, [owner.tintRed, owner.tintGreen, owner.tintBlue]);
       submittedLayerKeys.add(`${texture.bankKey}:${variant.layer}`);
       tileIndex += 1;
     }
     if (animationByFirstFrame.has(texture.key)) {
       const variant = texture.variants[0];
-      pushQuad(group, animationPanelCount * 8, 1.25, 14, variant.layer, [state.tintRed, state.tintGreen, state.tintBlue], 7, 2);
+      pushQuad(group, animationPanelCount * 8, 1.25, 14, variant.layer, [owner.tintRed, owner.tintGreen, owner.tintBlue], 7, 2);
       animationPanelCount += 1;
     }
   }
   const expectedLayerKeys = new Set(builtinClientResourcePack.textureBanks.flatMap((bank) => (
     Array.from({length: bank.layerCount}, (_, layer) => `${bank.key}:${layer}`)
   )));
-  const accessedLayerKeys = new Set([...submittedLayerKeys, ...animatedLayerKeys]);
+  const accessedLayerKeys = new Set([...submittedLayerKeys, ...indirectlySampledLayerKeys]);
   if (accessedLayerKeys.size !== expectedLayerKeys.size
     || [...expectedLayerKeys].some((key) => !accessedLayerKeys.has(key))) {
     throw new Error("GPU probe does not exercise every texture-array layer");
@@ -351,7 +371,7 @@ function textureLayerScene(catalog) {
     payload: {
       expectedLayers: expectedLayerKeys.size,
       submittedLayers: submittedLayerKeys.size,
-      animatedLayers: animatedLayerKeys.size,
+      animatedLayers: indirectlySampledLayerKeys.size,
       accessedLayers: accessedLayerKeys.size,
       animationPanels: animationPanelCount,
       channels: ["albedo", "normal", "material", "emissive"],
@@ -667,7 +687,7 @@ function environmentViewScene(catalog, preset, lookUp) {
 }
 
 const seasonalProbeSeed = "ecology-gpu";
-const seasonalTimes = {spring: 0, summer: 0.25, autumn: 0.5, winter: 0.75};
+const seasonalTimes = {spring: 0.125, summer: 0.375, autumn: 0.625, winter: 0.875};
 
 function seasonalScene(catalog) {
   const chunks = new Map();
@@ -675,6 +695,9 @@ function seasonalScene(catalog) {
   const water = findState(catalog.states, "openvoxel:water");
   const trunk = findState(catalog.states, "openvoxel:oak_log");
   const leaves = findState(catalog.states, "openvoxel:oak_leaves");
+  const spruceLeaves = findState(catalog.states, "openvoxel:spruce_leaves");
+  const mimosaLeaves = findState(catalog.states, "openvoxel:mimosa_leaves");
+  const kelp = findState(catalog.states, "openvoxel:kelp");
   for (let z = 0; z < 2; z += 1) {
     for (let x = 0; x < 2; x += 1) {
       const chunk = createChunk({x, y: 0, z});
@@ -699,6 +722,11 @@ function seasonalScene(catalog) {
       }
     }
   }
+  // One authored state per climate family keeps the real GPU fixture closed
+  // over every renderer role without manufacturing probe-only mesh data.
+  setBlock(chunks.get("0:0:0"), 2, 1, 2, spruceLeaves.runtimeId);
+  setBlock(chunks.get("0:0:0"), 4, 1, 2, mimosaLeaves.runtimeId);
+  setBlock(chunks.get("1:0:0"), 5, 1, 5, kelp.runtimeId);
   const meshes = meshChunks(chunks, catalog.states);
   return {
     target: {x: 16, y: 1, z: 16},
@@ -845,9 +873,9 @@ function offsetPoint(point, direction, distance) {
 }
 
 function transparencySortScene(catalog, reverseSubmission, chunkX = 0) {
-  const water = findState(catalog.states, "openvoxel:water", (state) => state.level === 0 && state.falling === false);
-  const group = batchGroup(water, null);
-  const layer = water.textures.top.variants[0].layer;
+  const magma = findState(catalog.states, "openvoxel:magma", (state) => state.level === 0 && state.falling === false);
+  const group = batchGroup(magma, null);
+  const layer = magma.textures.top.variants[0].layer;
   const basis = transparencyProbeBasis();
   const sortHorizontal = {x: -Math.SQRT1_2, y: 0, z: -Math.SQRT1_2};
   const sortVertical = {x: 0, y: 1, z: 0};
@@ -917,6 +945,7 @@ function transparencyDepthScene(catalog, includeHiddenPanel) {
 }
 
 const sceneFactories = {
+  "natural-models": naturalModelScene,
   states: allStateScene,
   layers: textureLayerScene,
   seams: seamScene,
@@ -984,6 +1013,7 @@ try {
     minimumWorldY: 0,
     maximumWorldY: 255,
     worldSeed: seasonalProbeSeed,
+    worldClimate: {temperaturePeriod: 1024, humidityPeriod: 896, samplingStep: 4, seaLevel: 64},
   });
   if (definition.lookDirection !== undefined) {
     const camera = EngineStore.LastCreatedScene?.activeCamera;
@@ -1281,7 +1311,8 @@ globalThis.__openVoxelGpuProbePointerLockReleaseRace = async () => {
 globalThis.__openVoxelGpuProbeSeason = (season) => {
   if (surface === null) throw new Error("GPU probe surface is unavailable");
   if (!Object.hasOwn(seasonalTimes, season)) throw new Error(`Unknown probe season ${season}`);
-  const worldMilliseconds = seasonalTimes[season] * worldYearMilliseconds;
+  // World time zero already begins at the spring midpoint (yearProgress .125).
+  const worldMilliseconds = (seasonalTimes[season] - 0.125) * worldYearMilliseconds;
   activeEnvironmentState = {...activeEnvironmentState, worldMilliseconds};
   surface.setEnvironment(activeEnvironmentState);
   const scene = EngineStore.LastCreatedScene;

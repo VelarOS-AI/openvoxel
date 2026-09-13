@@ -1,18 +1,43 @@
 import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
 import {UInt32Buffer} from "velar/binary"
-import {ChunkMesh, ClientBlockModelKind, ClientRenderState} from "./contracts.vel"
-import {MutableMeshBatch, finishMeshBatches} from "./meshing/batch.vel"
+import {ChunkMesh, ClientBlockModelKind, ClientRenderAttachment, ClientRenderState} from "./contracts.vel"
+import {MutableMeshBatch, finishMeshBatches, maximumChunkMeshQuads} from "./meshing/batch.vel"
+import {emitSubmergedCross, emitSubmergedSurface, emitWallOverlay} from "./meshing/attachments.vel"
+import {emitAuthoredModel} from "./meshing/authored-model.vel"
 import {blockIndex, centerChunkStates, indexRenderStates} from "./meshing/catalog.vel"
-import {emitBox, emitCross, emitFluid, emitSnowLayer} from "./meshing/models.vel"
+import {emitBox, emitCross, emitFluid, emitGroundCover, emitSnowLayer} from "./meshing/models.vel"
 import {summarizeChunkPortals} from "./meshing/portals.vel"
+
+def emitAttachment(
+    batches: Map<string, MutableMeshBatch>,
+    attachment: ClientRenderAttachment,
+    maximumFaces: number,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+):
+    if attachment.geometry != null:
+        emitAuthoredModel(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
+        return
+    match attachment.model:
+        case ClientBlockModelKind.submergedCross:
+            emitSubmergedCross(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
+        case ClientBlockModelKind.submergedSurface:
+            emitSubmergedSurface(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
+        case ClientBlockModelKind.wallOverlay:
+            emitWallOverlay(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
+        case _: throw Error(f"Unsupported render attachment model {attachment.model}")
 
 /// Worker 在初始化时构造一次 runtimeId 索引，后续 Chunk 直接复用，避免为每个
 /// 网格重复扫描完整内容目录。任何 Chunk 的输出都受 8 MiB 硬上限保护。
 export def meshChunkWithIndex(
     position: readonly ChunkPosition,
     edge: number,
-    paddedBlocks: readonly UInt32Buffer,
-    byRuntimeId: Map<number, readonly ClientRenderState>,
+    paddedBlocks: UInt32Buffer,
+    byRuntimeId: Map<number, ClientRenderState>,
     ticket: number,
 ) -> ChunkMesh:
     requireChunkPosition(position)
@@ -20,7 +45,7 @@ export def meshChunkWithIndex(
     assert ticket.isInteger() and ticket >= 0 else "Chunk mesh ticket must be a non-negative integer"
     const paddedEdge = edge + 2
     assert paddedBlocks.size == paddedEdge * paddedEdge * paddedEdge else "Chunk meshing input has the wrong padded volume"
-    const maximumFaces = edge * edge * edge * 6
+    const maximumFaces = maximumChunkMeshQuads
     const batches: Map<string, MutableMeshBatch> = Map()
     const chunkStates = centerChunkStates(edge, paddedBlocks, byRuntimeId)
     const portalSummary = summarizeChunkPortals(edge, chunkStates)
@@ -39,16 +64,25 @@ export def meshChunkWithIndex(
                 const worldX = worldOriginX + x
                 const worldY = worldOriginY + y
                 const worldZ = worldOriginZ + z
-                if model == ClientBlockModelKind.cube or model == ClientBlockModelKind.column:
+                if state.geometry != null:
+                    emitAuthoredModel(batches, state, maximumFaces, x, y, z, worldX, worldY, worldZ)
+                else if model == ClientBlockModelKind.cube or model == ClientBlockModelKind.column:
                     emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 0, 0, 0, 1, 1, 1)
                 else if model == ClientBlockModelKind.cross:
                     emitCross(batches, state, maximumFaces, x, y, z, worldX, worldY, worldZ)
+                else if model == ClientBlockModelKind.wallOverlay:
+                    emitWallOverlay(batches, state, maximumFaces, x, y, z, worldX, worldY, worldZ)
                 else if model == ClientBlockModelKind.cactus:
                     emitBox(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, 1 / 16, 0, 1 / 16, 15 / 16, 1, 15 / 16)
                 else if model == ClientBlockModelKind.snowLayer:
                     emitSnowLayer(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
+                else if model == ClientBlockModelKind.groundCover:
+                    emitGroundCover(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
                 else:
+                    assert model == ClientBlockModelKind.fluid else f"Unsupported primary block model {model}"
                     emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
+                for attachment in state.attachments:
+                    emitAttachment(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
 
     const finished = finishMeshBatches(batches)
     return ChunkMesh.from(finished, {position, ticket, portalSummary, visibleBlocks})
@@ -57,7 +91,7 @@ export def meshChunkWithIndex(
 export def meshChunk(
     position: readonly ChunkPosition,
     edge: number,
-    paddedBlocks: readonly UInt32Buffer,
-    states: readonly List<readonly ClientRenderState>,
+    paddedBlocks: UInt32Buffer,
+    states: readonly List<ClientRenderState>,
     ticket: number,
 ) -> ChunkMesh: return meshChunkWithIndex(position, edge, paddedBlocks, indexRenderStates(states), ticket)

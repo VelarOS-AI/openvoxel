@@ -1,5 +1,6 @@
 category: vegetation
 textures:
+  - {key: openvoxel:texture/block/cactus_top, surface: cactus, file: textures/vegetation/cactus_top.png}
   - {key: openvoxel:texture/block/birch_leaves, surface: foliage, file: textures/vegetation/birch_leaves.png}
   - {key: openvoxel:texture/block/birch_log_side, surface: wood, file: textures/vegetation/birch_log_side.png}
   - {key: openvoxel:texture/block/birch_log_top, surface: wood, file: textures/vegetation/birch_log_top.png}
@@ -17,7 +18,53 @@ textures:
   - {key: openvoxel:texture/block/purple_flower, surface: plant, file: textures/vegetation/purple_flower.png}
   - {key: openvoxel:texture/block/red_flower, surface: plant, file: textures/vegetation/red_flower.png}
   - {key: openvoxel:texture/block/spruce_leaves, surface: foliage, file: textures/vegetation/spruce_leaves.png}
+  - {key: openvoxel:texture/block/tall_spruce_leaves, surface: foliage, file: textures/vegetation/tall_spruce_leaves.png}
   - {key: openvoxel:texture/block/spruce_log_side, surface: wood, file: textures/vegetation/spruce_log_side.png}
   - {key: openvoxel:texture/block/spruce_log_top, surface: wood, file: textures/vegetation/spruce_log_top.png}
   - {key: openvoxel:texture/block/tall_grass, surface: plant, file: textures/vegetation/tall_grass.png, maps: {normal: {file: textures/vegetation/maps/tall_grass.normal.png}, material: {file: textures/vegetation/maps/tall_grass.material.png}}}
   - {key: openvoxel:texture/block/white_flower, surface: plant, file: textures/vegetation/white_flower.png}
+  - {key: openvoxel:texture/block/cotton_0, surface: plant, file: textures/vegetation/cotton_0.png}
+  - {key: openvoxel:texture/block/cotton_1, surface: plant, file: textures/vegetation/cotton_1.png}
+  - {key: openvoxel:texture/block/cotton_2, surface: plant, file: textures/vegetation/cotton_2.png}
+  - {key: openvoxel:texture/block/large_dry_bush, surface: plant, file: textures/vegetation/large_dry_bush.png}
+  - {key: openvoxel:texture/block/pumpkin_front, surface: plant, file: textures/vegetation/pumpkin_front.png}
+  - {key: openvoxel:texture/block/pumpkin_side, surface: plant, file: textures/vegetation/pumpkin_side.png}
+  - {key: openvoxel:texture/block/pumpkin_top, surface: plant, file: textures/vegetation/pumpkin_top.png}
+  - {key: openvoxel:texture/block/rye_0, surface: plant, file: textures/vegetation/rye_0.png}
+  - {key: openvoxel:texture/block/rye_1, surface: plant, file: textures/vegetation/rye_1.png}
+  - {key: openvoxel:texture/block/rye_2, surface: plant, file: textures/vegetation/rye_2.png}
+  - {key: openvoxel:texture/block/rye_3, surface: plant, file: textures/vegetation/rye_3.png}
+  - {key: openvoxel:texture/block/rye_4, surface: plant, file: textures/vegetation/rye_4.png}
+  - {key: openvoxel:texture/block/rye_5, surface: plant, file: textures/vegetation/rye_5.png}
+  - {key: openvoxel:texture/block/rye_6, surface: plant, file: textures/vegetation/rye_6.png}
+  - {key: openvoxel:texture/block/rye_7, surface: plant, file: textures/vegetation/rye_7.png}
+  - {key: openvoxel:texture/block/birch_sapling, surface: foliage, file: textures/vegetation/birch_sapling.png}
+  - {key: openvoxel:texture/block/blue_flower, surface: plant, file: textures/vegetation/blue_flower.png}
+  - {key: openvoxel:texture/block/deadwood_side, surface: wood, file: textures/vegetation/deadwood_side.png}
+  - {key: openvoxel:texture/block/deadwood_top, surface: wood, file: textures/vegetation/deadwood_top.png}
+  - {key: openvoxel:texture/block/fallen_leaves, surface: plant, file: textures/vegetation/fallen_leaves.png}
+  - {key: openvoxel:texture/block/kelp, surface: foliage, file: textures/vegetation/kelp.png}
+  - {key: openvoxel:texture/block/mimosa_sapling, surface: foliage, file: textures/vegetation/mimosa_sapling.png}
+  - {key: openvoxel:texture/block/oak_sapling, surface: foliage, file: textures/vegetation/oak_sapling.png}
+  - {key: openvoxel:texture/block/poplar_sapling, surface: foliage, file: textures/vegetation/poplar_sapling.png}
+  - {key: openvoxel:texture/block/pumpkin_stem_0, surface: plant, file: textures/vegetation/pumpkin_stem_0.png}
+  - {key: openvoxel:texture/block/pumpkin_stem_1, surface: plant, file: textures/vegetation/pumpkin_stem_1.png}
+  - {key: openvoxel:texture/block/pumpkin_stem_2, surface: plant, file: textures/vegetation/pumpkin_stem_2.png}
+  - {key: openvoxel:texture/block/pumpkin_stem_3, surface: plant, file: textures/vegetation/pumpkin_stem_3.png}
+  - {key: openvoxel:texture/block/rotten_pumpkin_front, surface: plant, file: textures/vegetation/rotten_pumpkin_front.png}
+  - {key: openvoxel:texture/block/rotten_pumpkin_side, surface: plant, file: textures/vegetation/rotten_pumpkin_side.png}
+  - {key: openvoxel:texture/block/rotten_pumpkin_top, surface: plant, file: textures/vegetation/rotten_pumpkin_top.png}
+  - {key: openvoxel:texture/block/sea_urchin, surface: plant, file: textures/vegetation/sea_urchin.png}
+  - {key: openvoxel:texture/block/seagrass, surface: foliage, file: textures/vegetation/seagrass.png}
+  - {key: openvoxel:texture/block/spruce_sapling, surface: foliage, file: textures/vegetation/spruce_sapling.png}
+  - {key: openvoxel:texture/block/starfish, surface: plant, file: textures/vegetation/starfish.png}
+  - {key: openvoxel:texture/block/vine, surface: foliage, file: textures/vegetation/vine.png}
+  - {key: openvoxel:texture/block/wheat_0, surface: plant, file: textures/vegetation/wheat_0.png}
+  - {key: openvoxel:texture/block/wheat_1, surface: plant, file: textures/vegetation/wheat_1.png}
+  - {key: openvoxel:texture/block/wheat_2, surface: plant, file: textures/vegetation/wheat_2.png}
+  - {key: openvoxel:texture/block/wheat_3, surface: plant, file: textures/vegetation/wheat_3.png}
+  - {key: openvoxel:texture/block/wheat_4, surface: plant, file: textures/vegetation/wheat_4.png}
+  - {key: openvoxel:texture/block/wheat_5, surface: plant, file: textures/vegetation/wheat_5.png}
+  - {key: openvoxel:texture/block/wheat_6, surface: plant, file: textures/vegetation/wheat_6.png}
+  - {key: openvoxel:texture/block/wheat_7, surface: plant, file: textures/vegetation/wheat_7.png}
+  - {key: openvoxel:texture/block/yellow_flower, surface: plant, file: textures/vegetation/yellow_flower.png}

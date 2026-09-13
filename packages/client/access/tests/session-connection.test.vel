@@ -11,7 +11,7 @@ def fixture(sequence: number, closed: List<number>) -> WorldBackendConnection:
     async def syncChunks(requestId: string, _positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation? = null) -> ChunksSyncedEvent:
         return {event: "chunks.synced", requestId, worldId: "connection", chunks: []}
 
-    async def applyBlocks(requestId: string, _edits: readonly List<readonly RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
+    async def applyBlocks(requestId: string, _edits: readonly List<RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
         return {event: "blocks.applied", requestId, worldId: "connection", sequence, changes: []}
 
     async def close(): closed.append(sequence)

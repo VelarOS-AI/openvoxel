@@ -1,0 +1,148 @@
+import {BlockPropertyKind, BlockRegistry, findCropGrowthBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {EcologyCandidateKind, CropGrowthEcologyCandidate, WorldGenerator} from "@openvoxel/world-generation"
+import {WorldClimateDefinition, defaultWorldClimate, ChunkPosition, blockIndex, chunkKey, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds} from "@openvoxel/world"
+import {ActiveWorldState} from "./active-world-state.vel"
+import {BlockOverride, StoredChunkDelta} from "./contracts.vel"
+import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
+import {Random, random} from "velar/random"
+
+export type WorldEcology:
+    deltas: (positions: readonly List<readonly ChunkPosition>, worldMilliseconds: number) -> Promise<readonly List<WorldChunkSnapshot>>
+    isGrowingCrop: (runtimeId: number) -> bool
+
+type CropGrowthState:
+    ageProperty: string
+    age: number
+    maximumAge: number
+    epochsPerStage: number
+
+/// 生态层是确定性地形和持久化玩家覆盖之间的可重建状态。只有查询时间槽发生
+/// 变化才会改变自然冰雪与作物阶段；玩家覆盖最后应用，任何自然结果都不进入
+/// 持久化 delta。
+def projectedCropRuntimeId(
+    stream: Random,
+    elapsedEpochs: number,
+    x: number,
+    y: number,
+    z: number,
+    baselineBlockStateRuntimeId: number,
+    ageProperty: string,
+    baselineAge: number,
+    maximumAge: number,
+    epochsPerStage: number,
+    registry: readonly BlockRegistry,
+) -> number:
+    assert elapsedEpochs.isInteger() and elapsedEpochs >= 0 else "Crop growth elapsed epochs must be a non-negative integer"
+    assert epochsPerStage.isInteger() and epochsPerStage > 0 else "Crop growth stage duration must be a positive integer"
+    if elapsedEpochs == 0 or baselineAge >= maximumAge: return baselineBlockStateRuntimeId
+    const phase = stream.fork(f"{x}:{y}:{z}").int(0, epochsPerStage)
+    assert phase >= 0 and phase < epochsPerStage else "Crop growth phase must remain inside its exclusive stage window"
+    const elapsedStages = ((elapsedEpochs + phase) / epochsPerStage).floor()
+    const age = Math.min(maximumAge, baselineAge + elapsedStages)
+    if age == baselineAge: return baselineBlockStateRuntimeId
+    return registry.withProperty(baselineBlockStateRuntimeId, ageProperty, age)
+
+export def worldEcology(
+    seed: string,
+    edge: number,
+    minimumWorldY: number,
+    maximumWorldY: number,
+    generator: WorldGenerator,
+    registry: readonly BlockRegistry,
+    state: ActiveWorldState,
+    naturalGrowthOriginEpoch: number,
+    climateDefinition: WorldClimateDefinition = defaultWorldClimate,
+) -> WorldEcology:
+    assert naturalGrowthOriginEpoch.isInteger() and naturalGrowthOriginEpoch >= 0 else "Natural crop growth origin epoch must be a non-negative integer"
+    const shelterBlocks: Set<number> = Set()
+    const cropGrowth = random(seed).fork("ecology:crop-growth")
+    const playerCropGrowth = random(seed).fork("ecology:player-crop-growth")
+    const cropStates: Map<number, readonly CropGrowthState> = Map()
+    for block in registry.states():
+        if resolveBlockShapeBoxes(block.physics.collision, block.properties).size > 0:
+            shelterBlocks.add(block.runtimeId)
+        const behavior = findCropGrowthBehavior(block.behaviors)
+        if behavior == null: continue
+        const ageProperty = behavior.ageProperty
+        const definition = registry.requireTypeByKey(block.blockKey)
+        const ageDefinition = definition.properties.find(property => property.name == ageProperty)
+        assert ageDefinition != null and ageDefinition.kind == BlockPropertyKind.integer else f"Crop {block.blockKey} requires its declared integer age property"
+        const age = block.properties.find(property => property.name == ageProperty)?.value
+        assert (age is number) and age.isInteger() and age >= ageDefinition.minimum and age <= ageDefinition.maximum else f"Crop {block.blockKey} has an invalid age state"
+        cropStates.set(block.runtimeId, {ageProperty, age, maximumAge: ageDefinition.maximum, epochsPerStage: behavior.epochsPerStage})
+
+    def isGrowingCrop(runtimeId: number) -> bool: return cropStates.has(runtimeId)
+
+    async def deltas(positions: readonly List<readonly ChunkPosition>, worldMilliseconds: number) -> readonly List<WorldChunkSnapshot>:
+        const epoch = worldEcologyEpoch(worldMilliseconds)
+        const cropGrowthEpoch = Math.max(0, epoch - naturalGrowthOriginEpoch)
+        const candidates = positions.map(position => generator.ecologyCandidates(position))
+        const required: Map<string, readonly ChunkPosition> = Map()
+        for position in positions: required.set(chunkKey(position), position)
+        for position, index in positions:
+            const observesSurfaces = candidates[index].some(candidate => candidate.kind != EcologyCandidateKind.cropGrowth)
+            if not observesSurfaces: continue
+            // 同一水平列的全部持久化修改一次批量读取；玩家屋顶即使不在客户端
+            // 驻留窗口内，也会阻挡屋内积雪。缓存命中不会重复访问存储。
+            const minimumChunkY = Math.max((minimumWorldY / edge).floor(), position.y - 1)
+            const maximumChunkY = (maximumWorldY / edge).floor()
+            for y in range(minimumChunkY, maximumChunkY + 1):
+                const upper = {x: position.x, y, z: position.z}
+                required.set(chunkKey(upper), upper)
+        const stored = await state.deltas(required.values())
+        const byChunk: Map<string, StoredChunkDelta> = Map()
+        const topShelter: Map<string, number> = Map()
+        const allOverrides: Map<string, number> = Map()
+        for delta in stored:
+            byChunk.set(chunkKey(delta.position), delta)
+            for entry in delta.overrides:
+                const x = delta.position.x * edge + entry.position.x
+                const y = delta.position.y * edge + entry.position.y
+                const z = delta.position.z * edge + entry.position.z
+                allOverrides.set(f"{x}:{y}:{z}", entry.blockStateRuntimeId)
+                if entry.blockStateRuntimeId in shelterBlocks:
+                    const key = f"{x}:{z}"
+                    topShelter.set(key, Math.max(topShelter.get(key) ?? -Math.infinity, y))
+        const output: List<WorldChunkSnapshot> = []
+        for position, index in positions:
+            const delta = byChunk.get(chunkKey(position))
+            assert delta != null else "World ecology lost the requested player delta"
+            // 空快照没有内部锚点可泄漏，可以继续共享唯一的空覆盖列表；高速流送
+            // 的稳定 Chunk 因而不必为每个查询分配等价容器。
+            if candidates[index].size == 0 and delta.overrides.size == 0:
+                output.append(WorldChunkSnapshot.from(delta, {ecologyEpoch: epoch}))
+                continue
+            const combined: Map<number, BlockOverride> = Map()
+            for candidate in candidates[index]:
+                const x = position.x * edge + candidate.position.x
+                const y = position.y * edge + candidate.position.y
+                const z = position.z * edge + candidate.position.z
+                let runtimeId = candidate.baselineBlockStateRuntimeId
+                match candidate.kind:
+                    case EcologyCandidateKind.cropGrowth:
+                        runtimeId = projectedCropRuntimeId(cropGrowth, cropGrowthEpoch, x, y, z, candidate.baselineBlockStateRuntimeId, candidate.ageProperty, candidate.baselineAge, candidate.maximumAge, candidate.epochsPerStage, registry)
+                    case EcologyCandidateKind.water:
+                        const climate = worldClimateAt(seed, epoch * worldEcologyEpochMilliseconds, {x, y, z}, climateDefinition)
+                        const exposed = candidate.exposed and (topShelter.get(f"{x}:{z}") ?? -Math.infinity) < y
+                        runtimeId = exposed and climate.frozenWater ? candidate.coldBlockStateRuntimeId : candidate.warmBlockStateRuntimeId
+                    case EcologyCandidateKind.snow:
+                        const climate = worldClimateAt(seed, epoch * worldEcologyEpochMilliseconds, {x, y, z}, climateDefinition)
+                        const supportOverride = allOverrides.get(f"{x}:{y - 1}:{z}")
+                        const supportPresent = supportOverride == null or supportOverride in shelterBlocks
+                        const exposed = candidate.exposed and (topShelter.get(f"{x}:{z}") ?? -Math.infinity) < y and supportPresent
+                        runtimeId = exposed and climate.snowCover >= 0.2 ? candidate.coldBlockStateRuntimeId : candidate.warmBlockStateRuntimeId
+                if runtimeId != candidate.baselineBlockStateRuntimeId:
+                    combined.set(blockIndex(candidate.position, edge), {position: candidate.position, blockStateRuntimeId: runtimeId})
+            for entry in delta.overrides:
+                let runtimeId = entry.blockStateRuntimeId
+                const growth = cropStates.get(runtimeId)
+                if entry.growthOriginEpoch != null and growth != null:
+                    const x = position.x * edge + entry.position.x
+                    const y = position.y * edge + entry.position.y
+                    const z = position.z * edge + entry.position.z
+                    runtimeId = projectedCropRuntimeId(playerCropGrowth, Math.max(0, epoch - entry.growthOriginEpoch), x, y, z, runtimeId, growth.ageProperty, growth.age, growth.maximumAge, growth.epochsPerStage, registry)
+                combined.set(blockIndex(entry.position, edge), {position: entry.position, blockStateRuntimeId: runtimeId})
+            output.append({position, revision: delta.revision, ecologyEpoch: epoch, overrides: combined.values().sorted(by=entry => blockIndex(entry.position, edge))})
+        return output
+
+    return {deltas, isGrowingCrop}

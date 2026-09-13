@@ -30,13 +30,13 @@
     }
   },
   "scripts": {
-    "check": "velar check",
+    "check": "node ../../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
-    "test": "velar test && node --test tests/*.test.mjs",
-    "test:gpu": "velar build && node tests/gpu-render-probe.mjs",
-    "build": "velar build",
-    "test:gpu:built": "node tests/gpu-render-probe.mjs"
+    "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
+    "test": "node ../../../tools/run-validation.mjs --shell \"velar test && node --test --test-concurrency=1 tests/*.test.mjs\"",
+    "test:gpu": "node ../../../tools/run-validation.mjs --shell \"velar build && node tests/gpu-render-probe.mjs\"",
+    "build": "node ../../../tools/run-validation.mjs -- velar build",
+    "test:gpu:built": "node ../../../tools/run-validation.mjs -- node tests/gpu-render-probe.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "9.23.0",
@@ -46,8 +46,9 @@
   },
   "devDependencies": {
     "@openvoxel/blocks": "0.2.0",
-    "@velarscript/cli": "0.33.1",
-    "@velarscript/web": "0.33.1",
+    "@openvoxel/world-generation": "0.2.0",
+    "@velarscript/cli": "0.34.0",
+    "@velarscript/web": "0.34.0",
     "esbuild": "0.28.2",
     "playwright": "1.62.1",
     "sharp": "0.35.4",

@@ -186,8 +186,22 @@ function alphaCoverage(bytes, cutoff) {
 
 function applyAlpha(layer, cutoff, referenceCoverage) {
   const scale = cutoff === null ? 1 : coverageScale(layer.albedo, referenceCoverage, cutoff);
+  const cutoffByte = cutoff === null ? null : Math.ceil(cutoff * 255);
+  const targetCount = cutoff === null ? null : referenceCoverage > 0
+    ? Math.max(1, Math.round(referenceCoverage * layer.albedo.byteLength / 4))
+    : 0;
+  let rankedOffsets = null;
+  if (cutoffByte !== null && passingAlphaCount(layer.albedo, cutoffByte, scale) !== targetCount) {
+    rankedOffsets = Array.from({length: layer.albedo.byteLength / 4}, (_value, pixel) => pixel * 4 + 3)
+      .sort((left, right) => layer.albedo[right] - layer.albedo[left] || left - right);
+  }
+  const passingOffsets = rankedOffsets === null ? null : new Set(rankedOffsets.slice(0, targetCount));
   for (let offset = 3; offset < layer.albedo.byteLength; offset += 4) {
-    const alpha = Math.round(Math.min(255, layer.albedo[offset] * scale));
+    let alpha = Math.round(Math.min(255, layer.albedo[offset] * scale));
+    if (cutoffByte !== null && passingOffsets !== null) {
+      if (passingOffsets.has(offset)) alpha = Math.max(cutoffByte, alpha);
+      else alpha = Math.min(cutoffByte - 1, alpha);
+    }
     for (const channel of channelNames) layer[channel][offset] = alpha;
   }
 }

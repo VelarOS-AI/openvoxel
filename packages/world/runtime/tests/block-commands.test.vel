@@ -1,0 +1,89 @@
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {EcologyCandidate, EcologyCandidateKind, WorldGenerator} from "@openvoxel/world-generation"
+import {ChunkPosition, Coordinate2, emptyChunk, setChunkBlock, worldEcologyEpoch, worldEcologyEpochMilliseconds} from "@openvoxel/world"
+import {BlockChangeBatch, worldBlockCommands} from "../src/block-commands.vel"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldEcology} from "../src/world-ecology.vel"
+import {initialWorldMilliseconds} from "../src/world-creation.vel"
+import {worldSessionCache} from "../src/world-sessions.vel"
+
+const air = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const dirt = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const rye = defaultBlockStateRuntimeId(builtinIdentities.blocks.rye)
+const ryeAge1 = baseWorldBlockRegistry.registry.withProperty(rye, "age", 1)
+const cropChunk: ChunkPosition = {x: 0, y: 4, z: 0}
+const cropLocal = {x: 4, y: 1, z: 0}
+const naturalGrowthOriginEpoch = worldEcologyEpoch(initialWorldMilliseconds)
+
+const cropCandidate: EcologyCandidate = {
+    position: cropLocal,
+    kind: EcologyCandidateKind.cropGrowth,
+    baselineBlockStateRuntimeId: rye,
+    ageProperty: "age",
+    baselineAge: 0,
+    maximumAge: 7,
+    // 故意快于玩家作物，用来证明持久化 ownership 最后覆盖自然投影。
+    epochsPerStage: 1,
+}
+
+def cropGenerator() -> WorldGenerator:
+    def generate(position: readonly ChunkPosition):
+        const chunk = emptyChunk(position, 16, air)
+        if position.x == cropChunk.x and position.y == cropChunk.y and position.z == cropChunk.z:
+            setChunkBlock(chunk, {x: cropLocal.x, y: cropLocal.y - 1, z: cropLocal.z}, dirt)
+            setChunkBlock(chunk, cropLocal, rye)
+        return chunk
+
+    return {
+        generate,
+        findSpawn: () => {x: 0, y: 65, z: 0},
+        ecologyCandidates: position => position.x == cropChunk.x and position.y == cropChunk.y and position.z == cropChunk.z ? [cropCandidate] : [],
+        sample: position => {position: Coordinate2.from(position), surfaceY: 64, slope: 0, continentalness: 0, erosion: 0, ridge: 0, riverStrength: 0, temperature: 8, humidity: 8, forestDensity: 0, terrainType: "plain", biome: "plains"},
+    }
+
+test "claiming a visible natural crop persists ownership without broadcasting a false change":
+    const store = memoryWorldStore()
+    const sessions = worldSessionCache(store)
+    const world = sessions.prepareNew({id: "crop-claim", name: "Crop Claim", seed: "crop-claim"}, 1_000_000)
+    const generator = cropGenerator()
+    world.generator = generator
+    world.ecology = worldEcology(world.manifest.seed, 16, 0, 255, generator, world.blocks.registry, world.state, naturalGrowthOriginEpoch)
+    await store.manifests.save(world.manifest)
+    await sessions.remember(world)
+    let currentWorldMilliseconds = initialWorldMilliseconds
+    const published: List<BlockChangeBatch> = []
+    const commands = worldBlockCommands(sessions, batch => published.append(batch), _manifest => currentWorldMilliseconds)
+    try:
+        const target = {x: 4, y: 65, z: 0}
+        const claimed = await commands.editBlocks(world.manifest.id, [{position: target, blockStateRuntimeId: rye}])
+        expect(claimed.sequence).toBe(0)
+        expect(claimed.changes[0].previousBlockStateRuntimeId).toBe(rye)
+        expect(claimed.changes[0].changed).toBe(false)
+        expect(claimed.changes[0].revision).toBe(0)
+        expect((await store.deltas.findChunks(world.manifest.id, [cropChunk]))[0].storageRevision).toBe(1)
+        expect(published).toEqual([])
+        expect((await store.deltas.findChunks(world.manifest.id, [cropChunk]))[0].overrides).toEqual([
+            {position: cropLocal, blockStateRuntimeId: rye, growthOriginEpoch: naturalGrowthOriginEpoch},
+        ])
+
+        const replayed = await commands.editBlocks(world.manifest.id, [{position: target, blockStateRuntimeId: rye}])
+        expect(replayed.sequence).toBe(0)
+        expect(replayed.changes[0].changed).toBe(false)
+        expect(replayed.changes[0].revision).toBe(0)
+        expect(published).toEqual([])
+
+        currentWorldMilliseconds += worldEcologyEpochMilliseconds * 4
+        const visible = (await world.ecology.deltas([cropChunk], currentWorldMilliseconds))[0]
+        expect(visible.overrides).toEqual([{position: cropLocal, blockStateRuntimeId: ryeAge1}])
+        expect((await store.deltas.findChunks(world.manifest.id, [cropChunk]))[0].overrides[0].blockStateRuntimeId).toBe(rye)
+        const removed = await commands.editBlocks(world.manifest.id, [{position: target, blockStateRuntimeId: air}])
+        expect(removed.sequence).toBe(1)
+        expect(removed.changes[0].revision).toBe(1)
+        expect(published.size).toBe(1)
+        expect((await store.deltas.findChunks(world.manifest.id, [cropChunk]))[0].storageRevision).toBe(2)
+    finally:
+        await commands.close()
+        await sessions.close()
+        await store.close()

@@ -43,34 +43,37 @@ test "eviction invalidates each retained face neighbor exactly once":
     expect("0:0:0" in retainedKeys).toBe(false)
     expect("1:1:0" in retainedKeys).toBe(false)
 
-test "streamed window combines a radius-two safety sphere with a radius-five forward view":
+test "streamed window combines a radius-two safety sphere with a radius-six forward view":
     const current = streamedChunkPositions(view(), -6, 6)
     const shifted = streamedChunkPositions(view({x: 1, y: 0, z: 0}), -6, 6)
     const plan = planChunkWindow(shifted, current)
 
-    expect(horizontalRenderChunkRadius).toBe(5)
-    expect(current.size).toBe(240)
-    expect(Set(current.map(position => chunkKey(position))).size).toBe(240)
-    expect(shifted.size).toBe(240)
-    expect(Set(shifted.map(position => chunkKey(position))).size).toBe(240)
-    expect(plan.missing.size).toBe(44)
-    expect(plan.obsolete.size).toBe(44)
+    expect(horizontalRenderChunkRadius).toBe(6)
+    expect(current.size).toBe(389)
+    expect(Set(current.map(position => chunkKey(position))).size).toBe(389)
+    expect(shifted.size).toBe(389)
+    expect(Set(shifted.map(position => chunkKey(position))).size).toBe(389)
+    expect(plan.missing.size).toBe(57)
+    expect(plan.obsolete.size).toBe(57)
     expect(chunkNeedsResidency({x: 0, y: 2, z: 0}, view())).toBe(true)
     expect(chunkNeedsResidency({x: 0, y: 3, z: 0}, view())).toBe(false)
-    expect(chunkNeedsResidency({x: 0, y: 5, z: 0}, view())).toBe(false)
-    expect(chunkNeedsResidency({x: 0, y: 5, z: 0}, view({x: 0, y: 0, z: 0}, 0, 1, 0))).toBe(true)
-    expect(chunkNeedsResidency({x: 0, y: 0, z: -5}, view())).toBe(true)
+    expect(chunkNeedsResidency({x: 0, y: 6, z: 0}, view())).toBe(false)
+    expect(chunkNeedsResidency({x: 0, y: 6, z: 0}, view({x: 0, y: 0, z: 0}, 0, 1, 0))).toBe(true)
+    expect(chunkNeedsResidency({x: 0, y: 0, z: -6}, view())).toBe(true)
     expect(chunkNeedsResidency({x: 0, y: 0, z: 5}, view())).toBe(false)
 
 test "resident window uses a wider release envelope without acquiring its guard band":
-    const radialGuard: ChunkPosition = {x: 0, y: 0, z: -6}
+    const radialGuard: ChunkPosition = {x: 0, y: 0, z: -7}
     const safetyGuard: ChunkPosition = {x: 3, y: 0, z: 0}
-    const behind: ChunkPosition = {x: 0, y: 0, z: 6}
+    const behind: ChunkPosition = {x: 0, y: 0, z: 7}
+    const verticalGuard: ChunkPosition = {x: 0, y: 7, z: 0}
     expect(chunkNeedsResidency(radialGuard, view())).toBe(false)
     expect(chunkRetainsResidency(radialGuard, view())).toBe(true)
     expect(chunkNeedsResidency(safetyGuard, view())).toBe(false)
     expect(chunkRetainsResidency(safetyGuard, view())).toBe(true)
     expect(chunkRetainsResidency(behind, view())).toBe(false)
+    expect(chunkRetainsResidency(verticalGuard, view({x: 0, y: 0, z: 0}, 0, 1, 0))).toBe(true)
+    expect(chunkKey(verticalGuard) in streamedChunkPositions(view({x: 0, y: 0, z: 0}, 0, 1, 0), -7, 7, [verticalGuard]).map(position => chunkKey(position))).toBe(true)
 
     const withoutResidents = streamedChunkPositions(view(), -6, 6)
     const withResidents = streamedChunkPositions(view(), -6, 6, [radialGuard, safetyGuard, behind])
@@ -98,7 +101,7 @@ test "streamed window keeps every horizontal terrain column contiguous":
         expect(column in completedColumns).toBe(false)
         activeColumn = column
 
-    expect(completedColumns.size + 1).toBe(44)
+    expect(completedColumns.size + 1).toBe(57)
     expect(positions.slice(0, 5).map(position => position.y)).toEqual([0, -1, 1, -2, 2])
 
 test "window work stays distance-independent across a long sequence of moves":
@@ -117,30 +120,30 @@ test "window work stays distance-independent across a long sequence of moves":
         tracked = resident.values()
         expect(Set(tracked.map(position => chunkKey(position)))).toEqual(Set(desired.map(position => chunkKey(position))))
 
-    expect(maximumResident).toBe(304)
-    expect(tracked.size).toBe(292)
+    expect(maximumResident).toBe(486)
+    expect(tracked.size).toBe(474)
 
 test "paired stream batches preserve a valid window prefix and converge after interruption":
     const current = streamedChunkPositions(view(), -6, 6)
     const desired = streamedChunkPositions(view({x: 2, y: 0, z: 0}), -6, 6, current)
     const transition = batchChunkWindowTransition(planChunkWindow(desired, current), 12)
     expect(transition.surplus).toEqual([])
-    expect(transition.batches.map(batch => batch.load.size)).toEqual([12, 12, 12, 12, 12, 12, 8])
-    expect(transition.batches.map(batch => batch.unload.size)).toEqual([12, 10, 0, 0, 0, 0, 0])
+    expect(transition.batches.map(batch => batch.load.size)).toEqual([12, 12, 12, 12, 12, 12, 12, 12, 12, 2])
+    expect(transition.batches.map(batch => batch.unload.size)).toEqual([12, 12, 6, 0, 0, 0, 0, 0, 0, 0])
 
     const tracked: Map<string, readonly ChunkPosition> = Map()
     for position in current: tracked.set(chunkKey(position), position)
     const first = transition.batches[0]
     for position in first.load: tracked.set(chunkKey(position), position)
-    expect(tracked.size).toBe(252)
+    expect(tracked.size).toBe(401)
     for position in first.unload: tracked.remove(chunkKey(position))
-    expect(tracked.size).toBe(240)
+    expect(tracked.size).toBe(389)
 
     const resumed = batchChunkWindowTransition(planChunkWindow(desired, tracked.values()), 12)
     for position in resumed.surplus: tracked.remove(chunkKey(position))
     for batch in resumed.batches:
         for position in batch.load: tracked.set(chunkKey(position), position)
-        expect(tracked.size <= 298).toBe(true)
+        expect(tracked.size <= 481).toBe(true)
         for position in batch.unload: tracked.remove(chunkKey(position))
     expect(Set(tracked.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
 
@@ -148,7 +151,7 @@ test "window shrink releases only unpaired surplus before loading":
     const tracked = streamedChunkPositions(view(), -6, 6)
     const desired = tracked.slice(0, 100)
     const transition = batchChunkWindowTransition(planChunkWindow(desired, tracked), 12)
-    expect(transition.surplus.size).toBe(140)
+    expect(transition.surplus.size).toBe(289)
     expect(transition.batches).toEqual([])
 
 test "stream batch size must be a positive integer":

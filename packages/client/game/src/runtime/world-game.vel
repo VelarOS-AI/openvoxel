@@ -1,5 +1,5 @@
 import {ClientWorldChange, ClientWorldChangeKind, ClientWorldChangeSubscription, ClientWorldSession} from "@openvoxel/client"
-import {ClientBlockCollisionBox, builtinClientResourcePack, createClientRenderCatalog} from "@openvoxel/renderer"
+import {ClientBlockCollisionBox, loadBuiltinClientResourcePack, createClientRenderCatalog} from "@openvoxel/renderer"
 import {ChunkPosition, WorldGameMode, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
 import {Cancellation} from "velar/task"
 import {WorldMovementMode, WorldNavigationMode} from "../controls/world-navigation.vel"
@@ -11,35 +11,35 @@ import {EnvironmentSync, environmentSync} from "./environment-sync.vel"
 import {WorldGameOwner, closeWorldGameOwners} from "./ownership.vel"
 import {ChunkWindowView, environmentSamplePositionForChunk, horizontalRenderChunkRadius} from "./render-window.vel"
 
-export type WorldGameStats:
-    readonly chunks: number
-    readonly meshes: number
-    readonly quads: number
-    readonly residentChunks: number
-    readonly terrainPendingChunks: number
-    readonly meshQueuedChunks: number
-    readonly meshActiveChunks: number
-    readonly uploadQueuedChunks: number
-    readonly translucentSortQueuedMeshes: number
-    readonly pending: number
-    readonly startupPending: number
-    readonly ready: bool
-    readonly navigationMode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly viewX: number
-    readonly viewY: number
-    readonly viewZ: number
-    readonly viewChunkX: number
-    readonly viewChunkY: number
-    readonly viewChunkZ: number
-    readonly forwardX: number
-    readonly forwardY: number
-    readonly forwardZ: number
-    readonly pointerLocked: bool
+export readonly type WorldGameStats:
+    chunks: number
+    meshes: number
+    quads: number
+    residentChunks: number
+    terrainPendingChunks: number
+    meshQueuedChunks: number
+    meshActiveChunks: number
+    uploadQueuedChunks: number
+    translucentSortQueuedMeshes: number
+    pending: number
+    startupPending: number
+    ready: bool
+    navigationMode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    viewX: number
+    viewY: number
+    viewZ: number
+    viewChunkX: number
+    viewChunkY: number
+    viewChunkZ: number
+    forwardX: number
+    forwardY: number
+    forwardZ: number
+    pointerLocked: bool
 
 export type WorldGameRuntime = WorldGameOwner
 
-const unloadedCollisionBoxes: readonly List<readonly ClientBlockCollisionBox> = [{
+const unloadedCollisionBoxes: readonly List<ClientBlockCollisionBox> = [{
     minimumX: 0, minimumY: 0, minimumZ: 0,
     maximumX: 1, maximumY: 1, maximumZ: 1,
 }]
@@ -49,17 +49,20 @@ const unloadedCollisionBoxes: readonly List<readonly ClientBlockCollisionBox> = 
 export async def openWorldGameRuntime(
     canvas: CanvasElement,
     session: readonly ClientWorldSession,
-    manifest: readonly WorldManifest,
-    changed: (stats: readonly WorldGameStats) -> null,
+    manifest: WorldManifest,
+    changed: (stats: WorldGameStats) -> null,
     failed: (message: string) -> null,
+    minimapCanvas: CanvasElement? = null,
 ) -> WorldGameRuntime:
-    const catalog = createClientRenderCatalog(session.content, builtinClientResourcePack)
+    const resources = await loadBuiltinClientResourcePack()
+    const catalog = createClientRenderCatalog(session.content, resources)
     const startupPositions = session.state.trackedPositions()
     assert startupPositions.size > 0 else "World renderer requires resident startup Chunks"
     const collisionReady = Set(startupPositions.map(position => chunkKey(position)))
-    let view: readonly ChunkWindowView = {
+    let view: ChunkWindowView = {
         center: locateBlock(manifest.spawn, manifest.chunkEdge).chunk,
         forwardX: 0, forwardY: 0, forwardZ: -1,
+        minimap: minimapCanvas != null,
     }
     let graphics: WorldGraphics? = null
     let meshing: ChunkMeshing? = null
@@ -90,7 +93,7 @@ export async def openWorldGameRuntime(
             ready: mesh.startupPending == 0,
         }))
 
-    def collisionAt(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+    def collisionAt(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
         if y < session.content.minimumWorldY or y > session.content.maximumWorldY: return unloadedCollisionBoxes
         const position = {x, y, z}
         if chunkKey(locateBlock(position, manifest.chunkEdge).chunk) not in collisionReady:
@@ -99,7 +102,7 @@ export async def openWorldGameRuntime(
         if runtimeId == null: return unloadedCollisionBoxes
         return catalog.requireState(runtimeId).collisionBoxes
 
-    def invalidate(event: readonly ClientWorldChange):
+    def invalidate(event: ClientWorldChange):
         if closed: return
         if event.kind == ClientWorldChangeKind.synchronizationStarted or event.kind == ClientWorldChangeKind.terrainUnloaded:
             for position in event.positions: collisionReady.remove(chunkKey(position))
@@ -111,7 +114,7 @@ export async def openWorldGameRuntime(
     def viewChanged(x: number, y: number, z: number, forwardX: number, forwardY: number, forwardZ: number):
         if closed: return
         const centerChanged = view.center.x != x or view.center.y != y or view.center.z != z
-        view = {center: {x, y, z}, forwardX, forwardY, forwardZ}
+        view = {center: {x, y, z}, forwardX, forwardY, forwardZ, minimap: minimapCanvas != null}
         if centerChanged: environment?.sampleAt(environmentSamplePositionForChunk(view.center, manifest.chunkEdge))
         streaming?.request(view)
         meshing?.reconcile(true)
@@ -164,6 +167,7 @@ export async def openWorldGameRuntime(
         )
         graphics = await openWorldGraphics({
             canvas,
+            minimapCanvas,
             catalog,
             edge: manifest.chunkEdge,
             targetX: manifest.spawn.x,
@@ -180,6 +184,7 @@ export async def openWorldGameRuntime(
             minimumWorldY: session.content.minimumWorldY,
             maximumWorldY: session.content.maximumWorldY,
             worldSeed: manifest.seed,
+            worldClimate: manifest.climate,
         })
         await meshing.initialize()
         subscription = session.subscribeChanges(invalidate)

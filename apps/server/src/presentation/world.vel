@@ -6,7 +6,7 @@ import {WorldContentSnapshot, maximumChunkBatchSize} from "@openvoxel/world-runt
 ///
 /// WorldManifest 仍是稳定世界模型；目录哈希、生成高度和查询限制属于当前运行的
 /// 服务实例。presentation 层在一个边界上组合它们，协议包不读取任何运行时状态。
-export def worldBootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+export def worldBootstrapResponse(manifest: WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
     return WorldBootstrapResponse.from(manifest, {
         clientContractVersion,
         protocolVersion,

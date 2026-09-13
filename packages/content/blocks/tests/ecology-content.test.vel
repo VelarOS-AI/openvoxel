@@ -1,0 +1,95 @@
+import {BlockBehaviorKind, BlockShapeKind, blockStateCatalog, blockStateDefinition, blockStateRuntimeId, blockTypeDefinition, defaultBlockStateRuntimeId, findCropGrowthBehavior, hasBlockBehavior, hasBlockTag} from "../src/index.vel"
+import {builtinIdentities} from "@openvoxel/identities"
+import {expect} from "velar/test"
+
+test "deadwood preserves one identity across stump and fallen log axes":
+    const expected = [
+        {axis: "x", runtimeId: 201},
+        {axis: "y", runtimeId: 202},
+        {axis: "z", runtimeId: 203},
+    ]
+    for entry in expected:
+        const runtimeId = blockStateRuntimeId(builtinIdentities.blocks.deadwood, [{name: "axis", value: entry.axis}])
+        expect(runtimeId).toBe(entry.runtimeId)
+        const state = blockStateDefinition(runtimeId)
+        expect(state.render.model).toBe(builtinIdentities.models.block.column)
+        expect(state.render.textures?.top).toBe(builtinIdentities.textures.block.deadwoodTop)
+        expect(state.render.textures?.side).toBe(builtinIdentities.textures.block.deadwoodSide)
+        expect(hasBlockTag(runtimeId, builtinIdentities.tags.wood)).toBe(true)
+
+test "saplings and masked vegetation carry authored climate tint policies":
+    const saplings = [
+        {block: builtinIdentities.blocks.oakSapling, tint: builtinIdentities.tints.deciduousFoliage},
+        {block: builtinIdentities.blocks.birchSapling, tint: builtinIdentities.tints.birchFoliage},
+        {block: builtinIdentities.blocks.spruceSapling, tint: builtinIdentities.tints.evergreenFoliage},
+        {block: builtinIdentities.blocks.mimosaSapling, tint: builtinIdentities.tints.drylandFoliage},
+        {block: builtinIdentities.blocks.poplarSapling, tint: builtinIdentities.tints.poplarFoliage},
+    ]
+    for sapling in saplings:
+        const runtimeId = defaultBlockStateRuntimeId(sapling.block)
+        expect(blockStateDefinition(runtimeId).render.tint).toBe(sapling.tint)
+        expect(hasBlockBehavior(runtimeId, BlockBehaviorKind.support)).toBe(true)
+
+    const vine = blockTypeDefinition(builtinIdentities.blocks.vine)
+    expect(vine.render.model).toBe(builtinIdentities.models.block.wallOverlay)
+    expect(vine.render.tint).toBe(builtinIdentities.tints.deciduousFoliage)
+    expect(blockStateCatalog().filter(state => state.blockKey == builtinIdentities.blocks.vine).size).toBe(4)
+
+    const litter = blockTypeDefinition(builtinIdentities.blocks.fallenLeaves)
+    expect(litter.render.model).toBe(builtinIdentities.models.block.groundCover)
+    expect(litter.physics.collision.kind).toBe(BlockShapeKind.empty)
+
+test "crops expose finite authored growth behavior":
+    const crops = [
+        {block: builtinIdentities.blocks.rye, stages: 8},
+        {block: builtinIdentities.blocks.cotton, stages: 3},
+        {block: builtinIdentities.blocks.wheat, stages: 8},
+        {block: builtinIdentities.blocks.pumpkinStem, stages: 4},
+    ]
+    for crop in crops:
+        const states = blockStateCatalog().filter(state => state.blockKey == crop.block)
+        expect(states.size).toBe(crop.stages)
+        for state in states:
+            const growth = findCropGrowthBehavior(state.behaviors)
+            assert growth != null else "Expected authored crop growth behavior"
+            expect(growth.ageProperty).toBe("age")
+            expect(growth.epochsPerStage).toBe(4)
+
+    const wheatTextures = [
+        builtinIdentities.textures.block.wheat0,
+        builtinIdentities.textures.block.wheat1,
+        builtinIdentities.textures.block.wheat2,
+        builtinIdentities.textures.block.wheat3,
+        builtinIdentities.textures.block.wheat4,
+        builtinIdentities.textures.block.wheat5,
+        builtinIdentities.textures.block.wheat6,
+        builtinIdentities.textures.block.wheat7,
+    ]
+    for texture, age in wheatTextures:
+        const state = blockStateDefinition(blockStateRuntimeId(builtinIdentities.blocks.wheat, [{name: "age", value: age}]))
+        expect(state.render.textures?.all).toBe(texture)
+
+test "submerged ecology keeps the water volume and adds one cutout attachment":
+    const cases = [
+        {block: builtinIdentities.blocks.kelp, model: builtinIdentities.models.block.submergedCross, tint: builtinIdentities.tints.kelpFoliage},
+        {block: builtinIdentities.blocks.seagrass, model: builtinIdentities.models.block.submergedCross, tint: builtinIdentities.tints.seagrassFoliage},
+        {block: builtinIdentities.blocks.seaUrchin, model: builtinIdentities.models.block.seaUrchin, tint: null},
+        {block: builtinIdentities.blocks.starfish, model: builtinIdentities.models.block.starfish, tint: null},
+    ]
+    for entry in cases:
+        const runtimeId = defaultBlockStateRuntimeId(entry.block)
+        const state = blockStateDefinition(runtimeId)
+        expect(state.render.model).toBe(builtinIdentities.models.block.fluid)
+        expect(state.render.material).toBe(builtinIdentities.materials.water)
+        expect(state.render.textures?.all).toBe(builtinIdentities.textures.block.water)
+        const attachments = state.render.attachments ?? []
+        expect(attachments.size).toBe(1)
+        expect(attachments[0].model).toBe(entry.model)
+        expect(attachments[0].tint).toBe(entry.tint)
+        expect(hasBlockTag(runtimeId, builtinIdentities.tags.aquatic)).toBe(true)
+        expect(hasBlockBehavior(runtimeId, BlockBehaviorKind.fluid)).toBe(true)
+
+    expect(hasBlockTag(defaultBlockStateRuntimeId(builtinIdentities.blocks.kelp), builtinIdentities.tags.plant)).toBe(true)
+    expect(hasBlockTag(defaultBlockStateRuntimeId(builtinIdentities.blocks.seagrass), builtinIdentities.tags.plant)).toBe(true)
+    expect(hasBlockTag(defaultBlockStateRuntimeId(builtinIdentities.blocks.seaUrchin), builtinIdentities.tags.plant)).toBe(false)
+    expect(hasBlockTag(defaultBlockStateRuntimeId(builtinIdentities.blocks.starfish), builtinIdentities.tags.plant)).toBe(false)

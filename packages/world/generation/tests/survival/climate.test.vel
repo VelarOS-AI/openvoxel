@@ -1,0 +1,46 @@
+import {expect} from "velar/test"
+import {worldBaseClimateAt, worldClimateAt} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+import {worldGeneratorClimate} from "../../src/generator-climate.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+import {Coordinate2} from "@openvoxel/world"
+
+test "column planning samples climate only at coarse nodes and reuses them vertically":
+    const fields = createGenerationFields("climate-cost")
+    const original = fields.climateNode
+    let samples = 0
+    def sampleNode(position: readonly Coordinate2):
+        samples += 1
+        return original(position)
+    fields.climateNode = sampleNode
+    const planner = columnPlanner(fields, 16)
+    planner.columns(0, 0)
+    const gridEdge = 16 / fields.profile.sampling.horizontalStep + 3
+    expect(samples).toBe(gridEdge * gridEdge)
+    planner.columns(0, 0)
+    expect(samples).toBe(gridEdge * gridEdge)
+
+test "terrain ecology and runtime use the same climate across chunk seams and custom generator parameters":
+    const builtin = baseWorldGeneratorCatalog.generators[0]
+    const custom = WorldGeneratorDefinition.parse(builtin)
+    custom.terrain.climate.temperaturePeriod = 512
+    custom.terrain.climate.humidityPeriod = 640
+    custom.sampling.horizontalStep = 8
+    custom.world.seaLevel = 80
+    for profile in [builtin, custom]:
+        const climate = worldGeneratorClimate(profile)
+        const planner = columnPlanner(createGenerationFields("ecology-climate", profile), 16, 2)
+        for chunkX in [-65, -2, -1, 0, 1, 64]:
+            const west = planner.columns(chunkX, -1)
+            const east = planner.columns(chunkX + 1, -1)
+            for x in range(chunkX * 16 + 15, chunkX * 16 + 17):
+                for z in range(-16, 0):
+                    const base = worldBaseClimateAt("ecology-climate", {x, z}, climate)
+                    const generated = west.sampleAt(x, z)
+                    const adjacent = east.sampleAt(x, z)
+                    expect(generated.temperature).toBe(base.temperature.round())
+                    expect(generated.humidity).toBe(base.humidity.round())
+                    expect(generated.temperature).toBe(adjacent.temperature)
+                    expect(generated.humidity).toBe(adjacent.humidity)
+                    expect(worldClimateAt("ecology-climate", 0, {x, y: generated.surfaceY, z}, climate).humidity).toBe(base.humidity / 15)

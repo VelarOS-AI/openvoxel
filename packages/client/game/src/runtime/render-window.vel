@@ -2,25 +2,26 @@ import {ChunkPosition, Coordinate3, WorldManifest, chunkCoordinate, chunkKey, lo
 
 const initialHorizontalChunkRadius = 1
 const initialVerticalOffsets: readonly List<number> = [0, -1, 1]
-const streamedVerticalOffsets: readonly List<number> = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6]
+const streamedVerticalOffsets: readonly List<number> = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7]
 const collisionSafetyChunkRadius = 2
 const retainedCollisionSafetyChunkRadius = 3
-const retainedRenderChunkRadius = 6
+const retainedRenderChunkRadius = 7
 const visibleAlignmentThreshold = 0.2
 const retainedAlignmentThreshold = 0.1
 const streamDirectionCosineThreshold = 0.9659258262890683
 
-/// 可见需求向视点前方扩张到半径五；碰撞安全区独立保留全方向半径二。
+/// 可见需求向视点前方扩张到半径六；碰撞安全区独立保留全方向半径二。
 /// 初次进入仍只加载 3×3×3 的近邻，完整窗口在后台按近到远补齐。
-export const horizontalRenderChunkRadius = 5
+export const horizontalRenderChunkRadius = 6
 
-export type ChunkWindowView:
-    readonly center: readonly ChunkPosition
-    readonly forwardX: number
-    readonly forwardY: number
-    readonly forwardZ: number
+export readonly type ChunkWindowView:
+    center: readonly ChunkPosition
+    forwardX: number
+    forwardY: number
+    forwardZ: number
+    minimap: bool?
 
-def normalizedChunkWindowView(view: readonly ChunkWindowView) -> ChunkWindowView:
+def normalizedChunkWindowView(view: ChunkWindowView) -> ChunkWindowView:
     requireChunkPosition(view.center)
     const length = Math.sqrt(view.forwardX * view.forwardX + view.forwardY * view.forwardY + view.forwardZ * view.forwardZ)
     assert length.isFinite() and length > 0 else "Chunk window direction must be finite and non-zero"
@@ -29,11 +30,12 @@ def normalizedChunkWindowView(view: readonly ChunkWindowView) -> ChunkWindowView
         forwardX: view.forwardX / length,
         forwardY: view.forwardY / length,
         forwardZ: view.forwardZ / length,
+        minimap: view.minimap,
     }
 
 def chunkInsideDirectionalEnvelope(
     position: readonly ChunkPosition,
-    view: readonly ChunkWindowView,
+    view: ChunkWindowView,
     safetyRadius: number,
     directionalRadius: number,
     alignmentThreshold: number,
@@ -49,8 +51,8 @@ def chunkInsideDirectionalEnvelope(
 
 /// 新驻留需求由全方向碰撞安全球和前向扩张视区组成。方向判定使用完整三维
 /// forward，因此水平观察不会把同一 x/z 下整根高空柱当作可见数据。
-export def chunkNeedsResidency(position: readonly ChunkPosition, view: readonly ChunkWindowView) -> bool:
-    return chunkInsideDirectionalEnvelope(
+export def chunkNeedsResidency(position: readonly ChunkPosition, view: ChunkWindowView) -> bool:
+    return chunkNeedsMinimap(position, view) or chunkInsideDirectionalEnvelope(
         position,
         normalizedChunkWindowView(view),
         collisionSafetyChunkRadius,
@@ -59,9 +61,9 @@ export def chunkNeedsResidency(position: readonly ChunkPosition, view: readonly 
     )
 
 /// 已驻留数据使用更宽的距离和夹角阈值，避免临界面附近移动或转头造成重复
-/// 装卸；迟滞只保留已有项，不会主动拉取半径五以外的数据。
-export def chunkRetainsResidency(position: readonly ChunkPosition, view: readonly ChunkWindowView) -> bool:
-    return chunkInsideDirectionalEnvelope(
+/// 装卸；迟滞只保留已有项，不会主动拉取半径六以外的数据。
+export def chunkRetainsResidency(position: readonly ChunkPosition, view: ChunkWindowView) -> bool:
+    return chunkNeedsMinimap(position, view) or chunkInsideDirectionalEnvelope(
         position,
         normalizedChunkWindowView(view),
         retainedCollisionSafetyChunkRadius,
@@ -69,15 +71,24 @@ export def chunkRetainsResidency(position: readonly ChunkPosition, view: readonl
         retainedAlignmentThreshold,
     )
 
+/// 64m 俯视图需要身后三格内的地表。只为启用地图的会话补一个有界局部柱体，
+/// 不扩大主相机前向远景，也不让地图依赖玩家当前朝向或 Portal 遮挡。
+export def chunkNeedsMinimap(position: readonly ChunkPosition, view: ChunkWindowView) -> bool:
+    if view.minimap != true: return false
+    const dx = position.x - view.center.x
+    const dz = position.z - view.center.z
+    return dx * dx + dz * dz <= 9 and (position.y - view.center.y).abs() <= 3
+
 /// Chunk 跨越必须立即刷新；同一 Chunk 内只有累计到显著方向变化才提交新的
 /// 数据窗口。该阈值与导航输入节流分层，保证未来的其他相机源也不会制造抖动。
 export def shouldRefreshChunkWindow(
-    previous: readonly ChunkWindowView?,
-    next: readonly ChunkWindowView,
+    previous: ChunkWindowView?,
+    next: ChunkWindowView,
 ) -> bool:
     const normalizedNext = normalizedChunkWindowView(next)
     if previous == null: return true
     const normalizedPrevious = normalizedChunkWindowView(previous)
+    if normalizedPrevious.minimap != normalizedNext.minimap: return true
     if normalizedPrevious.center.x != normalizedNext.center.x
         or normalizedPrevious.center.y != normalizedNext.center.y
         or normalizedPrevious.center.z != normalizedNext.center.z: return true
@@ -99,17 +110,17 @@ export def environmentSamplePositionForChunk(position: readonly ChunkPosition, e
     requireCoordinate3(samplePosition, "Environment sample")
     return samplePosition
 
-export type ChunkWindowPlan:
-    readonly missing: readonly List<readonly ChunkPosition>
-    readonly obsolete: readonly List<readonly ChunkPosition>
+export readonly type ChunkWindowPlan:
+    missing: readonly List<readonly ChunkPosition>
+    obsolete: readonly List<readonly ChunkPosition>
 
-export type ChunkWindowBatch:
-    readonly load: readonly List<readonly ChunkPosition>
-    readonly unload: readonly List<readonly ChunkPosition>
+export readonly type ChunkWindowBatch:
+    load: readonly List<readonly ChunkPosition>
+    unload: readonly List<readonly ChunkPosition>
 
-export type ChunkWindowTransition:
-    readonly surplus: readonly List<readonly ChunkPosition>
-    readonly batches: readonly List<readonly ChunkWindowBatch>
+export readonly type ChunkWindowTransition:
+    surplus: readonly List<readonly ChunkPosition>
+    batches: readonly List<ChunkWindowBatch>
 
 /// 对比目标窗口与当前驻留集。调用方逐批载入 missing，并在每批成功后淘汰
 /// 等量 obsolete；失败时仍保留尚未被替换的旧窗口，峰值只多一个流送批次。
@@ -129,14 +140,14 @@ export def planChunkWindow(
 /// 将窗口差异拆成有界批次。目标缩小时，多出的 obsolete 可立即释放；其余
 /// obsolete 与 load 一一配对，调用方必须先完成 load，再提交对应 unload。
 export def batchChunkWindowTransition(
-    plan: readonly ChunkWindowPlan,
+    plan: ChunkWindowPlan,
     batchSize: number,
 ) -> ChunkWindowTransition:
     assert batchSize.isInteger() and batchSize > 0 else "Chunk stream batch size must be a positive integer"
     let obsoleteStart = plan.obsolete.size - plan.missing.size
     if obsoleteStart < 0: obsoleteStart = 0
     const surplus = plan.obsolete.slice(0, obsoleteStart)
-    const batches: List<readonly ChunkWindowBatch> = []
+    const batches: List<ChunkWindowBatch> = []
     let start = 0
     while start < plan.missing.size:
         let end = start + batchSize
@@ -173,7 +184,7 @@ export def retainedNeighborsAfterEviction(
 
 /// 首屏先加载出生点附近的小窗口，避免首次进入世界被完整流送窗口阻塞。
 export def initialRenderChunkPositions(
-    manifest: readonly WorldManifest,
+    manifest: WorldManifest,
     minimumWorldY: number,
     maximumWorldY: number,
 ) -> List<readonly ChunkPosition>:
@@ -192,7 +203,7 @@ export def initialRenderChunkPositions(
 /// 返回碰撞安全球与前向扩张视区的并集，并只为 tracked 应用释放迟滞。同一
 /// x/z 地形柱的垂直 Chunk 仍连续排列，使服务端或本地生成器可以复用列规划。
 export def streamedChunkPositions(
-    view: readonly ChunkWindowView,
+    view: ChunkWindowView,
     minimumChunkY: number,
     maximumChunkY: number,
     tracked: readonly List<readonly ChunkPosition> = [],
@@ -231,5 +242,5 @@ export def streamedChunkPositions(
                         retainedRenderChunkRadius,
                         retainedAlignmentThreshold,
                     )
-                    if acquire or retain: positions.append(position)
+                    if acquire or retain or chunkNeedsMinimap(position, normalizedView): positions.append(position)
     return positions

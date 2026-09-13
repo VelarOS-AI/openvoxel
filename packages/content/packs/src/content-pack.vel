@@ -22,7 +22,7 @@ export type WorldContentSet:
 export type ContentCatalog:
     defaultContent: () -> readonly WorldContentSet
     select: (owners: readonly List<string>) -> readonly WorldContentSet
-    resolve: (identity: readonly WorldContentIdentity) -> readonly WorldContentSet
+    resolve: (identity: WorldContentIdentity) -> readonly WorldContentSet
     requirePack: (owner: string) -> readonly ContentPackArtifact
 
 def requireOwner(owner: string):
@@ -64,7 +64,7 @@ export def validateContentPackArtifact(artifact: readonly ContentPackArtifact) -
     assert artifact.contentHash == expected.contentHash else f"Content pack {artifact.owner} content hash does not match its payload"
     return artifact
 
-def worldContentHash(packs: readonly List<readonly WorldContentPackReference>) -> string:
+def worldContentHash(packs: readonly List<WorldContentPackReference>) -> string:
     return sha256Text(Json.stableStringify({blockCatalogHash, worldGeneratorCatalogHash, packs}))
 
 /// 已安装内容目录只接受每个 owner 的一份确定构建。默认集合也是 owner 列表，最终
@@ -110,7 +110,7 @@ export def createContentCatalog(
         validateWorldContentIdentity(identity)
         return {identity, blockContributions, generatorContributions}
 
-    def resolve(identity: readonly WorldContentIdentity) -> readonly WorldContentSet:
+    def resolve(identity: WorldContentIdentity) -> readonly WorldContentSet:
         validateWorldContentIdentity(identity)
         const selected = select(identity.packs.map(pack => pack.owner))
         assert selected.identity.contentHash == identity.contentHash else "World content hash does not match the installed content set"

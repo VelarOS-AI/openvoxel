@@ -59,7 +59,12 @@ export def surfacePlanner(
                 const underBlock = subsurfaceBlock(profile, blocks, sample)
                 let thickness = profile.surface.soilDepth
                 if sample.humidity >= 11: thickness = profile.surface.wetSoilDepth
-                if sample.slope >= profile.surface.rockSlope: thickness = 2
+                // 湿润平地留住厚土，高处、干旱和陡坡逐步变薄；露头本身不继续
+                // 向下刷同一表面材料，下面仍由地质层决定。
+                const altitude = Math.clamp((sample.surfaceY - profile.world.seaLevel - 36) / 72, 0, 1)
+                const dryness = Math.clamp((6 - sample.humidity) / 6, 0, 1)
+                const erosion = Math.clamp(sample.slope / profile.surface.rockSlope, 0, 1)
+                thickness = Math.max(1, (thickness * (1 - 0.65 * Math.max(altitude * dryness, erosion))).round())
                 for depth in range(thickness):
                     const worldY = sample.surfaceY - depth
                     const chunkY = (worldY / terrain.edge).floor()

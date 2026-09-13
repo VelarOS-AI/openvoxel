@@ -11,44 +11,73 @@ export type BuiltinBlockKeys:
     basalt: string
     birchLeaves: string
     birchLog: string
+    birchSapling: string
+    blueFlower: string
     cactus: string
     clay: string
     coalOre: string
     copperOre: string
+    cotton: string
+    deadwood: string
     diamondOre: string
     dirt: string
     dryBush: string
+    fallenLeaves: string
     germaniumOre: string
     granite: string
     grass: string
     gravel: string
     ice: string
     ironOre: string
+    kelp: string
+    largeDryBush: string
     limestone: string
+    marble: string
     magma: string
     mimosaLeaves: string
     mimosaLog: string
+    mimosaSapling: string
     oakLeaves: string
     oakLog: string
+    oakSapling: string
     poplarLeaves: string
     poplarLog: string
+    poplarSapling: string
+    pumpkin: string
+    pumpkinStem: string
     purpleFlower: string
     redFlower: string
+    rye: string
+    rottenPumpkin: string
     saltpeterOre: string
     sand: string
     sandstone: string
+    seaUrchin: string
+    seagrass: string
     snow: string
     spruceLeaves: string
+    tallSpruceLeaves: string
     spruceLog: string
+    spruceSapling: string
+    starfish: string
     stone: string
     sulphurOre: string
     tallGrass: string
     water: string
     whiteFlower: string
+    vine: string
+    wheat: string
+    yellowFlower: string
 
 /// 供玩法和生成系统查询的语义分类，不参与方块状态键计算。
 export type BuiltinBlockTags:
+    aquatic: string
+    aquaticPlantSupport: string
+    bottomDwellerSupport: string
+    cactusSupport: string
+    cropSupport: string
     damaging: string
+    dryPlantSupport: string
     flammable: string
     fluid: string
     ice: string
@@ -57,11 +86,14 @@ export type BuiltinBlockTags:
     naturalRock: string
     ore: string
     plant: string
-    plantSupport: string
+    lushPlantSupport: string
     replaceable: string
     snow: string
+    snowSupport: string
     soil: string
     terrain: string
+    treeSupport: string
+    vineSupport: string
     water: string
     wood: string
 
@@ -105,9 +137,11 @@ export type BuiltinCatalogKeys:
 
 /// 自定义碰撞、选取和遮挡形状的逻辑身份。
 export type BuiltinShapeKeys:
+    pumpkin: string
     cactus: string
     cross: string
     fluid: string
+    groundCover: string
     snowLayer: string
 
 /// 方块逻辑模型身份；客户端负责把它们映射到具体网格实现。
@@ -117,7 +151,14 @@ export type BuiltinBlockModelKeys:
     cross: string
     cube: string
     fluid: string
+    groundCover: string
     snowLayer: string
+    submergedCross: string
+    submergedSurface: string
+    pumpkin: string
+    starfish: string
+    seaUrchin: string
+    wallOverlay: string
 
 export type BuiltinModelKeys:
     block: BuiltinBlockModelKeys
@@ -135,17 +176,26 @@ export type BuiltinMaterialKeys:
 
 /// 方块纹理的逻辑身份；这里只列出目录可引用的位置。
 export type BuiltinBlockTextureKeys:
+    cactusTop: string
     basalt: string
     birchLeaves: string
     birchLogSide: string
     birchLogTop: string
+    birchSapling: string
+    blueFlower: string
     cactus: string
     clay: string
     coalOre: string
     copperOre: string
+    cotton0: string
+    cotton1: string
+    cotton2: string
+    deadwoodSide: string
+    deadwoodTop: string
     diamondOre: string
     dirt: string
     dryBush: string
+    fallenLeaves: string
     germaniumOre: string
     granite: string
     grassSide: string
@@ -153,84 +203,148 @@ export type BuiltinBlockTextureKeys:
     gravel: string
     ice: string
     ironOre: string
+    kelp: string
+    largeDryBush: string
     limestone: string
+    marble: string
     magma: string
     mimosaLeaves: string
     mimosaLogSide: string
     mimosaLogTop: string
+    mimosaSapling: string
     oakLeaves: string
     oakLogSide: string
     oakLogTop: string
+    oakSapling: string
     poplarLeaves: string
     poplarLogSide: string
     poplarLogTop: string
+    poplarSapling: string
+    pumpkinFront: string
+    pumpkinSide: string
+    pumpkinTop: string
+    pumpkinStem0: string
+    pumpkinStem1: string
+    pumpkinStem2: string
+    pumpkinStem3: string
     purpleFlower: string
     redFlower: string
+    rottenPumpkinFront: string
+    rottenPumpkinSide: string
+    rottenPumpkinTop: string
+    rye0: string
+    rye1: string
+    rye2: string
+    rye3: string
+    rye4: string
+    rye5: string
+    rye6: string
+    rye7: string
     saltpeterOre: string
     sand: string
     sandstone: string
+    seaUrchin: string
+    seagrass: string
     snow: string
     spruceLeaves: string
+    tallSpruceLeaves: string
     spruceLogSide: string
     spruceLogTop: string
+    spruceSapling: string
+    starfish: string
     stone: string
     sulphurOre: string
     tallGrass: string
     water: string
     whiteFlower: string
+    vine: string
+    wheat0: string
+    wheat1: string
+    wheat2: string
+    wheat3: string
+    wheat4: string
+    wheat5: string
+    wheat6: string
+    wheat7: string
+    yellowFlower: string
 
 export type BuiltinTextureKeys:
     block: BuiltinBlockTextureKeys
 
 /// 生物群系或其他环境颜色修正规则。
 export type BuiltinTintKeys:
-    biomeFoliage: string
+    deciduousFoliage: string
+    birchFoliage: string
+    poplarFoliage: string
+    drylandFoliage: string
+    evergreenFoliage: string
+    tallSpruceFoliage: string
     biomeGrass: string
     biomeGrassTop: string
     biomeWater: string
+    kelpFoliage: string
+    seagrassFoliage: string
 
 /// 动态纹理的动画规则身份。
 export type BuiltinAnimationKeys:
     magma: string
-    water: string
 
 /// 各方块默认掉落表的逻辑身份。
 export type BuiltinBlockLootKeys:
     basalt: string
     birchLeaves: string
     birchLog: string
+    birchSapling: string
+    blueFlower: string
     cactus: string
     clay: string
     coalOre: string
     copperOre: string
+    cotton: string
+    deadwood: string
     diamondOre: string
     dirt: string
     dryBush: string
+    fallenLeaves: string
     germaniumOre: string
     granite: string
     grass: string
     gravel: string
     ice: string
     ironOre: string
+    largeDryBush: string
     limestone: string
+    marble: string
     mimosaLeaves: string
     mimosaLog: string
+    mimosaSapling: string
     oakLeaves: string
     oakLog: string
+    oakSapling: string
     poplarLeaves: string
     poplarLog: string
+    poplarSapling: string
+    pumpkin: string
+    pumpkinStem: string
     purpleFlower: string
     redFlower: string
+    rye: string
+    rottenPumpkin: string
     saltpeterOre: string
     sand: string
     sandstone: string
     snow: string
     spruceLeaves: string
+    tallSpruceLeaves: string
     spruceLog: string
+    spruceSapling: string
     stone: string
     sulphurOre: string
     tallGrass: string
     whiteFlower: string
+    vine: string
+    wheat: string
+    yellowFlower: string
 
 export type BuiltinLootKeys:
     empty: string

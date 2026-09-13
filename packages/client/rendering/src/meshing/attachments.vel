@@ -1,0 +1,184 @@
+import {ClientTextureVariant} from "../contracts.vel"
+import {ClientMeshSurface, MutableMeshBatch, batchFor, emitQuad} from "./batch.vel"
+import {MeshFace, eastFace, northFace, southFace, textureForFace, topFace, westFace} from "./faces.vel"
+import {emitCross} from "./models.vel"
+import {stableCoordinateOffset} from "./variation.vel"
+
+/// 水草和海带使用独立模型身份表达“位于水体内”，但几何仍是同一份双交叉
+/// cutout 批次；流体表面由所属状态的主模型另外生成。
+export def emitSubmergedCross(
+    batches: Map<string, MutableMeshBatch>,
+    state: ClientMeshSurface,
+    maximumFaces: number,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+): emitCross(batches, state, maximumFaces, x, y, z, worldX, worldY, worldZ)
+
+def rotatedSurfaceU(u: number, v: number, variant: number) -> number:
+    if variant == 0: return u
+    if variant == 1: return 1 - v
+    if variant == 2: return 1 - u
+    return v
+
+def rotatedSurfaceV(u: number, v: number, variant: number) -> number:
+    if variant == 0: return v
+    if variant == 1: return u
+    if variant == 2: return 1 - v
+    return 1 - u
+
+def rotatedSurfaceVectorU(u: number, v: number, variant: number) -> number:
+    if variant == 0: return u
+    if variant == 1: return -v
+    if variant == 2: return -u
+    return v
+
+def rotatedSurfaceVectorV(u: number, v: number, variant: number) -> number:
+    if variant == 0: return v
+    if variant == 1: return u
+    if variant == 2: return -v
+    return -u
+
+/// facing 是从支撑面指向格内的外法线。up 表示支撑在下方，是当前 authored
+/// 底栖内容的默认值；其余五向先由纯 mesher 契约支持。
+def surfaceX(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    const rotatedU = rotatedSurfaceU(u, v, variant)
+    if facing == "east": return height
+    if facing == "west": return 1 - height
+    if facing == "south": return 1 - rotatedU
+    return rotatedU
+
+def surfaceY(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    if facing == "up": return height
+    if facing == "down": return 1 - height
+    return rotatedSurfaceV(u, v, variant)
+
+def surfaceZ(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    const rotatedU = rotatedSurfaceU(u, v, variant)
+    const rotatedV = rotatedSurfaceV(u, v, variant)
+    if facing == "up": return rotatedV
+    if facing == "down": return 1 - rotatedV
+    if facing == "east": return rotatedU
+    if facing == "west": return 1 - rotatedU
+    if facing == "south": return height
+    return 1 - height
+
+def surfaceNormalX(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    const rotatedU = rotatedSurfaceVectorU(u, v, variant)
+    if facing == "east": return height
+    if facing == "west": return -height
+    if facing == "south": return -rotatedU
+    return rotatedU
+
+def surfaceNormalY(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    if facing == "up": return height
+    if facing == "down": return -height
+    return rotatedSurfaceVectorV(u, v, variant)
+
+def surfaceNormalZ(facing: string, u: number, v: number, height: number, variant: number) -> number:
+    const rotatedU = rotatedSurfaceVectorU(u, v, variant)
+    const rotatedV = rotatedSurfaceVectorV(u, v, variant)
+    if facing == "up": return rotatedV
+    if facing == "down": return -rotatedV
+    if facing == "east": return rotatedU
+    if facing == "west": return -rotatedU
+    if facing == "south": return height
+    return -height
+
+def emitSurfaceQuad(
+    batch: MutableMeshBatch,
+    state: ClientMeshSurface,
+    face: MeshFace,
+    texture: ClientTextureVariant,
+    x: number,
+    y: number,
+    z: number,
+    facing: string,
+    variant: number,
+    au: number,
+    av: number,
+    ah: number,
+    bu: number,
+    bv: number,
+    bh: number,
+    cu: number,
+    cv: number,
+    ch: number,
+    du: number,
+    dv: number,
+    dh: number,
+    normalU: number,
+    normalV: number,
+    normalHeight: number,
+): emitQuad(
+    batch,
+    state,
+    face,
+    texture,
+    x + surfaceX(facing, au, av, ah, variant), y + surfaceY(facing, au, av, ah, variant), z + surfaceZ(facing, au, av, ah, variant),
+    x + surfaceX(facing, bu, bv, bh, variant), y + surfaceY(facing, bu, bv, bh, variant), z + surfaceZ(facing, bu, bv, bh, variant),
+    x + surfaceX(facing, cu, cv, ch, variant), y + surfaceY(facing, cu, cv, ch, variant), z + surfaceZ(facing, cu, cv, ch, variant),
+    x + surfaceX(facing, du, dv, dh, variant), y + surfaceY(facing, du, dv, dh, variant), z + surfaceZ(facing, du, dv, dh, variant),
+    surfaceNormalX(facing, normalU, normalV, normalHeight, variant),
+    surfaceNormalY(facing, normalU, normalV, normalHeight, variant),
+    surfaceNormalZ(facing, normalU, normalV, normalHeight, variant),
+)
+
+/// 海胆与海星共享贴面模型：两张短交叉面表现立体轮廓，一张贴面平面表现
+/// 放射状生物。四个纯视觉转角由坐标稳定派生，不占用世界状态位。
+export def emitSubmergedSurface(
+    batches: Map<string, MutableMeshBatch>,
+    state: ClientMeshSurface,
+    maximumFaces: number,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+):
+    const batch = batchFor(batches, state, maximumFaces)
+    const sideTexture = textureForFace(state, southFace, worldX, worldY, worldZ)
+    const topTexture = textureForFace(state, topFace, worldX, worldY, worldZ)
+    const facing = state.facing ?? "up"
+    assert facing in ["up", "down", "north", "east", "south", "west"] else f"Unsupported submerged surface facing {facing}"
+    const variant = stableCoordinateOffset(state.runtimeId, worldX, worldY, worldZ, 0x5bd1, 4)
+    const low = 3 / 8
+    const inset = 1 / 64
+    emitSurfaceQuad(batch, state, southFace, sideTexture, x, y, z, facing, variant, 1 / 8, 1 / 8, 0, 7 / 8, 7 / 8, 0, 7 / 8, 7 / 8, low, 1 / 8, 1 / 8, low, -0.707, 0.707, 0)
+    emitSurfaceQuad(batch, state, northFace, sideTexture, x, y, z, facing, variant, 7 / 8, 1 / 8, 0, 1 / 8, 7 / 8, 0, 1 / 8, 7 / 8, low, 7 / 8, 1 / 8, low, -0.707, -0.707, 0)
+    emitSurfaceQuad(batch, state, topFace, topTexture, x, y, z, facing, variant, 1 / 8, 1 / 8, inset, 1 / 8, 7 / 8, inset, 7 / 8, 7 / 8, inset, 7 / 8, 1 / 8, inset, 0, 0, 1)
+
+/// facing 表示藤蔓所贴的支撑面方向；平面向格内偏移 1/64，避免与支撑方块
+/// 共面闪烁。双面可见性由资源材质声明，不创建独立后端对象。
+export def emitWallOverlay(
+    batches: Map<string, MutableMeshBatch>,
+    state: ClientMeshSurface,
+    maximumFaces: number,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+):
+    const batch = batchFor(batches, state, maximumFaces)
+    const facing = state.facing
+    assert facing != null else "Wall overlay requires a facing state"
+    const inset = 1 / 64
+    if facing == "north":
+        const texture = textureForFace(state, northFace, worldX, worldY, worldZ)
+        emitQuad(batch, state, southFace, texture, x, y, z + inset, x + 1, y, z + inset, x + 1, y + 1, z + inset, x, y + 1, z + inset, 0, 0, 1)
+    else if facing == "south":
+        const texture = textureForFace(state, southFace, worldX, worldY, worldZ)
+        emitQuad(batch, state, northFace, texture, x + 1, y, z + 1 - inset, x, y, z + 1 - inset, x, y + 1, z + 1 - inset, x + 1, y + 1, z + 1 - inset, 0, 0, -1)
+    else if facing == "west":
+        const texture = textureForFace(state, westFace, worldX, worldY, worldZ)
+        emitQuad(batch, state, eastFace, texture, x + inset, y, z + 1, x + inset, y, z, x + inset, y + 1, z, x + inset, y + 1, z + 1, 1, 0, 0)
+    else:
+        assert facing == "east" else f"Unsupported wall overlay facing {facing}"
+        const texture = textureForFace(state, eastFace, worldX, worldY, worldZ)
+        emitQuad(batch, state, westFace, texture, x + 1 - inset, y, z, x + 1 - inset, y, z + 1, x + 1 - inset, y + 1, z + 1, x + 1 - inset, y + 1, z, -1, 0, 0)

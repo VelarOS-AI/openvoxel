@@ -1,16 +1,21 @@
 import {readText} from "velar/fs"
 import {parseYaml} from "@velarscript-labs/yaml"
-import {BlockCatalogManifest} from "../src/definition/catalog.vel"
+import {BuiltinBlockCatalogManifest} from "../src/definition/catalog.vel"
+import {requireBlockCatalogSourcePath} from "./catalog-source-path.vel"
 
 export type BlockCatalogInputs:
     manifestText: string
+    stateMapText: string
     sourceTexts: List<string>
 
 export async def readBlockCatalogInputs() -> BlockCatalogInputs:
     const manifestText = await readText("data/catalog.yml", 64 * 1024)
-    const manifest = BlockCatalogManifest.parse(parseYaml(manifestText))
+    const manifest = BuiltinBlockCatalogManifest.parse(parseYaml(manifestText))
+    const stateMapPath = manifest.stateMap
+    assert Text.matches(stateMapPath, r"^state-maps/[a-z0-9-]+[.]yml$") else f"Invalid block state map path {stateMapPath}"
+    const stateMapText = await readText(f"data/{stateMapPath}", 512 * 1024)
     const sourceTexts: List<string> = []
     for source in manifest.sources:
-        assert Text.matches(source, r"^blocks/[a-z0-9-]+\.yml$") else f"Invalid block source path {source}"
+        requireBlockCatalogSourcePath(source)
         sourceTexts.append(await readText(f"data/{source}", 512 * 1024))
-    return {manifestText, sourceTexts}
+    return {manifestText, stateMapText, sourceTexts}

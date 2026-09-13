@@ -2,41 +2,41 @@ import {BlockPosition, ChunkPosition, LocalPosition, WorldEnvironmentSample} fro
 
 /// 所有实时命令先读取这个最小信封，再按 operation 解析完整数据。
 /// requestId 由客户端生成，服务端在响应和错误中原样返回，允许多个在途批次并发。
-export type RealtimeCommandEnvelope:
-    readonly operation: string
-    readonly requestId: string
+export readonly type RealtimeCommandEnvelope:
+    operation: string
+    requestId: string
 
 /// 客户端只先读取事件名，再选择下面的精确事件类型；MessagePack 文档只解码一次。
-export type RealtimeEventEnvelope:
-    readonly event: string
+export readonly type RealtimeEventEnvelope:
+    event: string
 
-export type RealtimeBlockEdit:
-    readonly position: readonly BlockPosition
-    readonly blockStateRuntimeId: number
+export readonly type RealtimeBlockEdit:
+    position: readonly BlockPosition
+    blockStateRuntimeId: number
 
 export type ApplyBlockEditsCommand extends RealtimeCommandEnvelope:
-    readonly edits: readonly List<readonly RealtimeBlockEdit>
+    readonly edits: readonly List<RealtimeBlockEdit>
 
 export type SyncChunksCommand extends RealtimeCommandEnvelope:
     readonly positions: readonly List<readonly ChunkPosition>
 
-export type RealtimeBlockChange:
-    readonly position: readonly BlockPosition
-    readonly chunk: readonly ChunkPosition
-    readonly local: readonly LocalPosition
-    readonly previousBlockStateRuntimeId: number
-    readonly blockStateRuntimeId: number
-    readonly revision: number
+export readonly type RealtimeBlockChange:
+    position: readonly BlockPosition
+    chunk: readonly ChunkPosition
+    local: readonly LocalPosition
+    previousBlockStateRuntimeId: number
+    blockStateRuntimeId: number
+    revision: number
 
-export type RealtimeBlockOverride:
-    readonly position: readonly LocalPosition
-    readonly blockStateRuntimeId: number
+export readonly type RealtimeBlockOverride:
+    position: readonly LocalPosition
+    blockStateRuntimeId: number
 
-export type RealtimeChunkDelta:
-    readonly position: readonly ChunkPosition
-    readonly revision: number
-    readonly overrides: readonly List<readonly RealtimeBlockOverride>
-    readonly ecologyEpoch: number?
+export readonly type RealtimeChunkDelta:
+    position: readonly ChunkPosition
+    revision: number
+    overrides: readonly List<RealtimeBlockOverride>
+    ecologyEpoch: number?
 
 export type WorldReadyEvent:
     event: string
@@ -47,7 +47,7 @@ export type WorldReadyEvent:
     sequence: number
     /// 建立连接时的世界权威环境锚点。客户端只可从这个世界时间继续确定性采样，
     /// 不能用本机墙钟或渲染器随机数重新决定天气。
-    environment: readonly WorldEnvironmentSample
+    environment: WorldEnvironmentSample
 
 export type ChunksSyncedEvent:
     event: string

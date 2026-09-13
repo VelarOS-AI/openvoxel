@@ -1,0 +1,56 @@
+import {SavedWorld} from "./saved-world.vel"
+
+export type WorldLibraryOperations:
+    createWorld: (world: SavedWorld) -> Promise<SavedWorld>
+    findWorld: (id: string) -> Promise<SavedWorld>
+    close: () -> Promise<null>
+
+export type WorldLibraryLoader = () -> Promise<WorldLibraryOperations>
+
+async def loadOperations() -> WorldLibraryOperations:
+    const implementation = await import("./local-world-library.vel")
+    return implementation.localWorldLibrary()
+
+/// 菜单只加载轻量世界摘要。用户发起操作后才加载 Worker 客户端；页面卸载与
+/// 模块加载竞争时，迟到的实例立即关闭，不能再启动世界请求。
+export def deferredWorldLibrary(loader: WorldLibraryLoader = loadOperations) -> WorldLibraryOperations:
+    let loading: Promise<WorldLibraryOperations>? = null
+    let current: WorldLibraryOperations? = null
+    let closed = false
+
+    async def load() -> WorldLibraryOperations:
+        try:
+            const created = await loader()
+            if closed:
+                await created.close()
+                throw Error("World library page is closed")
+            current = created
+            return created
+        catch error:
+            loading = null
+            throw error
+
+    async def active() -> WorldLibraryOperations:
+        assert not closed else "World library page is closed"
+        if loading == null: loading = load()
+        const pending = loading
+        assert pending != null else "World library load disappeared"
+        return await pending
+
+    async def createWorld(world: SavedWorld) -> SavedWorld:
+        const service = await active()
+        assert not closed else "World library page is closed"
+        return await service.createWorld(world)
+
+    async def findWorld(id: string) -> SavedWorld:
+        const service = await active()
+        assert not closed else "World library page is closed"
+        return await service.findWorld(id)
+
+    async def close():
+        if closed: return
+        closed = true
+        const service = current
+        if service != null: await service.close()
+
+    return {createWorld, findWorld, close}

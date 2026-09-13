@@ -1,6 +1,6 @@
 import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
 import {defaultGenerator} from "@openvoxel/world-generation"
-import {WorldContentIdentity, WorldGameMode, WorldManifest, WorldSpawn, initialChunkEdge, maximumWorldEnvironmentMilliseconds, validateWorldManifest, worldDayMilliseconds, worldFormatVersion} from "@openvoxel/world"
+import {WorldClimateDefinition, WorldContentIdentity, WorldGameMode, WorldManifest, WorldSpawn, initialChunkEdge, maximumWorldEnvironmentMilliseconds, validateWorldManifest, worldDayMilliseconds, worldFormatVersion} from "@openvoxel/world"
 
 /// worldEnvironmentAt(0) 是日出；再经过四分之一个世界日即为正午。
 export const initialWorldMilliseconds = worldDayMilliseconds / 4
@@ -24,10 +24,11 @@ export type CreateWorld:
 /// 创建策略在应用层选择默认 Chunk 尺寸、生成器和基础注册表。
 export def assembleWorldManifest(
     command: CreateWorld,
-    blockRegistry: readonly WorldBlockRegistrySnapshot,
-    content: readonly WorldContentIdentity,
+    blockRegistry: WorldBlockRegistrySnapshot,
+    content: WorldContentIdentity,
     generatorHash: string,
-    spawn: readonly WorldSpawn,
+    climate: WorldClimateDefinition,
+    spawn: WorldSpawn,
     worldTimeOriginMilliseconds: number,
 ) -> WorldManifest:
     const generatorKey = command.generator ?? defaultGenerator
@@ -41,6 +42,7 @@ export def assembleWorldManifest(
         chunkEdge: initialChunkEdge,
         generator: generatorKey,
         generatorHash,
+        climate: WorldClimateDefinition.parse(climate),
         spawn: WorldSpawn.parse(spawn),
         content: WorldContentIdentity.parse(content),
         blockRegistry: WorldBlockRegistrySnapshot.parse(blockRegistry),

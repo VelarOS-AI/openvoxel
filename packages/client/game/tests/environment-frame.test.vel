@@ -18,12 +18,12 @@ def clearSample() -> WorldEnvironmentSample:
 
 def expectUnit(value: number): expect(value >= 0 and value <= 1).toBe(true)
 
-def expectColor(value: readonly WorldGraphicsColor):
+def expectColor(value: WorldGraphicsColor):
     expectUnit(value.red)
     expectUnit(value.green)
     expectUnit(value.blue)
 
-def expectBoundedFrame(frame: readonly WorldGraphicsEnvironmentFrame):
+def expectBoundedFrame(frame: WorldGraphicsEnvironmentFrame):
     expectUnit(frame.daylightIntensity)
     expectUnit(frame.nightIntensity)
     expectUnit(frame.starIntensity)
@@ -40,7 +40,7 @@ def expectBoundedFrame(frame: readonly WorldGraphicsEnvironmentFrame):
     expectColor(frame.ground)
     expectColor(frame.fog)
 
-def vectorLengthSquared(frame: readonly WorldGraphicsEnvironmentFrame, sun: bool) -> number:
+def vectorLengthSquared(frame: WorldGraphicsEnvironmentFrame, sun: bool) -> number:
     const direction = sun ? frame.sunDirection : frame.moonDirection
     return direction.x * direction.x + direction.y * direction.y + direction.z * direction.z
 
@@ -122,6 +122,7 @@ test "rain and snow dim daylight, thicken fog, and keep distinct weather color":
     expect(rain.skyIntensity < clear.skyIntensity).toBe(true)
     expect(rain.fogDensityFactor > clear.fogDensityFactor).toBe(true)
     expect(rain.cloudOpacity > 0.9).toBe(true)
+    expect(rain.fog.blue > 0.5).toBe(true)
     expect(snow.fog.red > rain.fog.red).toBe(true)
     expect(snow.fog.green > rain.fog.green).toBe(true)
     expectBoundedFrame(rain)

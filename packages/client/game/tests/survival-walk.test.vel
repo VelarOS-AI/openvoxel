@@ -21,37 +21,37 @@ const bounds = {minimumY: 0, maximumY: 255}
 const idle = {forward: 0, sideways: 0, jumping: false, sprinting: false, crouching: false}
 const standingEyeY = 1 + worldMovementEyeHeight
 
-def flatGround(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def flatGround(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     return []
 
-def wallAlongZ(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def wallAlongZ(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if x == 1 and (y == 1 or y == 2): return [fullBlock]
     return []
 
-def wallAcrossZ(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def wallAcrossZ(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if z == 1 and (y == 1 or y == 2): return [fullBlock]
     return []
 
-def snowStep(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def snowStep(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if x == 1 and y == 1 and z == 0: return [snowLayer]
     return []
 
-def splitGate(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def splitGate(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if z == 1 and (y == 1 or y == 2): return [leftPost, rightPost]
     return []
 
-def diagonalDoubleStep(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def diagonalDoubleStep(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if x == 1 and y == 1 and z == 0: return [halfBlock]
     if x == 1 and y == 1 and z == 1: return [fullBlock]
     return []
 
-def crouchTunnel(x: number, y: number, z: number) -> readonly List<readonly ClientBlockCollisionBox>:
+def crouchTunnel(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
     if y == 0: return [fullBlock]
     if y == 2: return [lowCeiling]
     return []

@@ -21,25 +21,25 @@ export const localWorkerOperations = {
 
 /// Worker 的唯一请求信封。所有可选载荷都会在 operation 分支内再次收窄；
 /// Worker Runtime Type 先保证跨线程结构只能包含这里声明的数据。
-export type LocalWorkerRequest:
-    readonly operation: string
-    readonly databaseName: string?
-    readonly worldId: string?
-    readonly connectionId: string?
-    readonly requestId: string?
-    readonly command: readonly CreateWorldRequest?
-    readonly positions: readonly List<readonly ChunkPosition>?
-    readonly edits: readonly List<readonly RealtimeBlockEdit>?
+export readonly type LocalWorkerRequest:
+    operation: string
+    databaseName: string?
+    worldId: string?
+    connectionId: string?
+    requestId: string?
+    command: CreateWorldRequest?
+    positions: readonly List<readonly ChunkPosition>?
+    edits: readonly List<RealtimeBlockEdit>?
 
-export type LocalWorkerResponse:
-    readonly operation: string
-    readonly contract: readonly WorldBackendContract?
-    readonly manifest: readonly WorldManifest?
-    readonly bootstrap: readonly WorldBootstrapResponse?
-    readonly content: readonly WorldContentResponse?
-    readonly terrain: readonly ClientTerrainBatchSnapshot?
-    readonly ready: readonly WorldReadyEvent?
-    readonly changed: readonly WorldBlocksChangedEvent?
-    readonly chunks: readonly ChunksSyncedEvent?
-    readonly blocks: readonly BlockEditsAppliedEvent?
-    readonly closed: bool?
+export readonly type LocalWorkerResponse:
+    operation: string
+    contract: WorldBackendContract?
+    manifest: WorldManifest?
+    bootstrap: WorldBootstrapResponse?
+    content: WorldContentResponse?
+    terrain: ClientTerrainBatchSnapshot?
+    ready: readonly WorldReadyEvent?
+    changed: readonly WorldBlocksChangedEvent?
+    chunks: readonly ChunksSyncedEvent?
+    blocks: readonly BlockEditsAppliedEvent?
+    closed: bool?

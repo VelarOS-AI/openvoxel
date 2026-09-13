@@ -43,8 +43,8 @@ async def removeDatabase():
                     replacements.append({position, blockStateRuntimeId: replacement})
                     bases.append({position, blockStateRuntimeId: base})
                     const local = {x: localX, y: localY, z: localZ}
-                    savedWrites.append({position: local, blockStateRuntimeId: replacement})
-                    removedWrites.append({position: local, blockStateRuntimeId: null})
+                    savedWrites.append({position: local, blockStateRuntimeId: replacement, growthOriginEpoch: null})
+                    removedWrites.append({position: local, blockStateRuntimeId: null, growthOriginEpoch: null})
 
         const storageDurations: List<number> = []
         for runIndex in range(5):
@@ -52,7 +52,8 @@ async def removeDatabase():
             const writes = runIndex % 2 == 0 ? savedWrites : removedWrites
             const commits: List<ChunkDeltaCommit> = [{
                 position: {x: 0, y: 1, z: 0},
-                expectedRevision: revision - 1,
+                expectedStorageRevision: revision - 1,
+                storageRevision: revision,
                 revision,
                 writes,
             }]

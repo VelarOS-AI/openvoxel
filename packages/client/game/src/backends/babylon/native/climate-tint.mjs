@@ -1,3 +1,5 @@
+import {climatePaletteColor, climatePaletteShader} from "./climate-palettes.mjs";
+
 const climateTintIntervalMilliseconds = 15_000;
 const maximumClimateNodes = 4096;
 const maximumClimateChunks = 1024;
@@ -8,11 +10,50 @@ const smooth = (minimum, maximum, value) => {
   return amount * amount * (3 - 2 * amount);
 };
 
-export function climateTintVector(sample) {
-  const year = sample.yearProgress;
-  const autumn = smooth(0.46, 0.61, year) * (1 - smooth(0.73, 0.84, year));
-  const coldDormancy = 1 - smooth(-8, 7, sample.temperatureCelsius);
-  return [sample.temperatureCelsius, sample.humidity, autumn, coldDormancy];
+const mix = (left, right, amount) => left + (right - left) * amount;
+const mixColor = (left, right, amount) => left.map((channel, index) => mix(channel, right[index], amount));
+const wrapUnit = (value) => ((value % 1) + 1) % 1;
+
+export const climateTintRoles = Object.freeze({
+  neutral: 0,
+  grass: 1,
+  deciduousFoliage: 2,
+  water: 3,
+  grassCap: 4,
+  evergreenFoliage: 5,
+  drylandFoliage: 6,
+  aquaticFoliage: 7,
+  birchFoliage: 8,
+  poplarFoliage: 9,
+  tallSpruceFoliage: 10,
+});
+
+function seasonalColor(yearProgress, spring, summer, autumn, winter) {
+  const phase = wrapUnit(yearProgress - 0.125) * 4;
+  const amount = smooth(0, 1, phase - Math.floor(phase));
+  if (phase < 1) return mixColor(spring, summer, amount);
+  if (phase < 2) return mixColor(summer, autumn, amount);
+  if (phase < 3) return mixColor(autumn, winter, amount);
+  return mixColor(winter, spring, amount);
+}
+
+export function climateTintVector(sample, elevation = 0) {
+  return [sample.temperatureCelsius, clamp(sample.humidity), wrapUnit(sample.yearProgress), elevation];
+}
+
+/// CPU reference for the shader policy. Tests and future non-Babylon backends use
+/// the same semantic roles without depending on shader source or resource keys.
+export function climateTintColor(role, climate) {
+  if (role === climateTintRoles.neutral) return [1, 1, 1];
+  const base = climatePaletteColor(role, climate[0], clamp(climate[1]));
+  if (role === climateTintRoles.water) return base;
+  const deciduous = [2, 8, 9].includes(role);
+  const evergreen = [5, 6, 7, 10].includes(role);
+  const spring = mixColor(base, [0.63, 1, 0.35], deciduous ? 0.4 : 0.12);
+  const autumnTarget = role === 8 ? [0.92, 0.74, 0.10] : role === 9 ? [0.86, 0.62, 0.12] : [0.85, 0.35, 0.06];
+  const autumn = mixColor(base, autumnTarget, deciduous ? 0.9 : evergreen ? 0.04 : 0.3);
+  const winter = mixColor(base, [0.60, 0.62, 0.58], deciduous ? 0.75 : evergreen ? 0.12 : 0.55);
+  return seasonalColor(climate[2], spring, base, autumn, winter);
 }
 
 function putBounded(cache, key, value, maximum) {
@@ -46,7 +87,7 @@ export class ClimateTintField {
     const key = x + ":" + y + ":" + z;
     const existing = this.nodes.get(key);
     if (existing !== undefined) return existing;
-    const value = climateTintVector(this.sampleAt(this.worldMilliseconds, x, y, z));
+    const value = climateTintVector(this.sampleAt(this.worldMilliseconds, x, y, z), y);
     return putBounded(this.nodes, key, value, maximumClimateNodes);
   }
 
@@ -72,23 +113,26 @@ export class ClimateTintField {
   }
 }
 
-export const climateTintShader = `
+export const climateTintShader = climatePaletteShader + `
+vec3 ovSeasonColor(float yearProgress, vec3 spring, vec3 summer, vec3 autumn, vec3 winter) {
+  float phase = fract(yearProgress - 0.125 + 1.0) * 4.0;
+  float amount = smoothstep(0.0, 1.0, fract(phase));
+  if (phase < 1.0) return mix(spring, summer, amount);
+  if (phase < 2.0) return mix(summer, autumn, amount);
+  if (phase < 3.0) return mix(autumn, winter, amount);
+  return mix(winter, spring, amount);
+}
 vec3 ovClimateColor(float role, vec4 climate) {
-  float warmth = smoothstep(-5.0, 30.0, climate.x);
-  float humidity = clamp(climate.y, 0.0, 1.0);
-  float dry = (1.0 - smoothstep(0.16, 0.62, humidity)) * smoothstep(12.0, 32.0, climate.x);
-  vec3 grass = mix(vec3(0.57, 0.68, 0.48), vec3(0.39, 0.68, 0.25), warmth);
-  grass = mix(grass, vec3(0.27, 0.60, 0.24), humidity * warmth * 0.65);
-  grass = mix(grass, vec3(0.77, 0.67, 0.35), dry);
-  grass = mix(grass, vec3(0.64, 0.64, 0.49), climate.w * 0.65);
-  if (role < 1.5 || role > 3.5) return grass;
-  if (role < 2.5) {
-    vec3 foliage = mix(vec3(0.46, 0.61, 0.33), vec3(0.26, 0.59, 0.23), humidity);
-    vec3 autumn = mix(vec3(0.82, 0.57, 0.18), vec3(0.72, 0.29, 0.11), humidity);
-    foliage = mix(foliage, autumn, climate.z * (1.0 - smoothstep(20.0, 30.0, climate.x)));
-    return mix(foliage, vec3(0.49, 0.55, 0.46), climate.w * 0.66);
-  }
-  return mix(vec3(0.48, 0.80, 0.91), vec3(0.36, 0.68, 0.79), humidity);
+  if (role < 0.5) return vec3(1.0);
+  vec3 base = ovClimatePalette(role, climate);
+  if (role > 2.5 && role < 3.5) return base;
+  bool deciduous = (role > 1.5 && role < 2.5) || (role > 7.5 && role < 9.5);
+  bool evergreen = (role > 4.5 && role < 7.5) || role > 9.5;
+  vec3 spring = mix(base, vec3(0.63, 1.0, 0.35), deciduous ? 0.4 : 0.12);
+  vec3 target = role > 7.5 && role < 8.5 ? vec3(0.92, 0.74, 0.10) : role > 8.5 && role < 9.5 ? vec3(0.86, 0.62, 0.12) : vec3(0.85, 0.35, 0.06);
+  vec3 autumn = mix(base, target, deciduous ? 0.9 : evergreen ? 0.04 : 0.3);
+  vec3 winter = mix(base, vec3(0.60, 0.62, 0.58), deciduous ? 0.75 : evergreen ? 0.12 : 0.55);
+  return ovSeasonColor(climate.z, spring, base, autumn, winter);
 }
 vec3 ovApplyClimateTint(vec3 albedo, float role, vec4 climate) {
   if (role < 0.5) return albedo;
@@ -96,7 +140,7 @@ vec3 ovApplyClimateTint(vec3 albedo, float role, vec4 climate) {
   if (role > 2.5 && role < 3.5) return albedo * color;
   // Authored grass-side green coverage identifies the cap at pixel precision;
   // soil remains in its original RGB and every PBR channel stays untouched.
-  float mask = role > 3.5 ? smoothstep(0.015, 0.075, albedo.g - max(albedo.r, albedo.b)) : 1.0;
+  float mask = role > 3.5 && role < 4.5 ? smoothstep(0.015, 0.075, albedo.g - max(albedo.r, albedo.b)) : 1.0;
   float detail = max(albedo.r, max(albedo.g, albedo.b));
   return mix(albedo, color * clamp(detail * 1.5, 0.0, 1.25), mask);
 }`;

@@ -31,7 +31,7 @@ def contractResponse() -> WorldBackendContract:
         },
     }
 
-def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+def bootstrapResponse(manifest: WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
     return WorldBootstrapResponse.from(manifest, {
         clientContractVersion,
         protocolVersion,
@@ -58,7 +58,7 @@ def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResp
 /// runtime 会对响应所有权做快照并直接 transfer 完整 UInt16Buffer，不展开数字 List。
 def terrainSnapshot(chunk: readonly Chunk) -> ClientTerrainChunkSnapshot: return ClientTerrainChunkSnapshot.from(chunk)
 
-def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
+def blockChanges(batch: BlockChangeBatch) -> List<RealtimeBlockChange>:
     return batch.changes
         .filter(change => change.changed)
         .map(change => RealtimeBlockChange.from(change))
@@ -72,14 +72,14 @@ def required(value: string?, label: string) -> string:
     assert value != null and not value.isBlank() else f"LocalBackend Worker requires {label}"
     return value
 
-def connection(request: readonly LocalWorkerRequest) -> WorkerConnection:
+def connection(request: LocalWorkerRequest) -> WorkerConnection:
     const connectionId = required(request.connectionId, "connectionId")
     const current = connections.get(connectionId)
     assert current != null else f"LocalBackend connection {connectionId} is not open"
     assert not current.overflowed else "LocalBackend event queue overflowed; reconnect the world session"
     return current
 
-def publish(batch: readonly BlockChangeBatch):
+def publish(batch: BlockChangeBatch):
     const event: WorldBlocksChangedEvent = {
         event: "blocks.changed",
         worldId: batch.worldId,
@@ -117,9 +117,9 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const databaseName = required(request.databaseName, "databaseName")
         activeRuntime = worldRuntime(indexedDbWorldStore(databaseName), options={
             activeWorldCapacity: 8,
-            // 客户端的正常驻留窗口为 515 个 Chunk。热增量缓存必须覆盖完整窗口
-            // 及一次流送余量，否则往返探索会让仍可见 Chunk 反复读取 IndexedDB。
-            activeChunkCapacity: 1024,
+            // 热增量缓存同时容纳流送窗口和积雪遮蔽查询的上方列，避免生态查询
+            // 淘汰仍可见 Chunk 的覆盖。真实覆盖另受独立内存预算约束。
+            activeChunkCapacity: 2048,
             activeOverrideCapacity: 32768,
         })
         activeSubscription = runtime().subscribeBlockChanges(publish)
@@ -156,7 +156,7 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const positions = request.positions
         assert positions != null else "LocalBackend terrain-chunks requires positions"
         const generated = await runtime().terrainChunks(worldId, positions, cancellation)
-        const chunks: List<readonly ClientTerrainChunkSnapshot> = []
+        const chunks: List<ClientTerrainChunkSnapshot> = []
         for chunk in generated:
             await cancellation.checkpoint()
             chunks.append(terrainSnapshot(chunk))

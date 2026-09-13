@@ -16,11 +16,11 @@
   },
   "scripts": {
     "compile:mod": "velar run tools/compile-mod.vel",
-    "check": "velar check",
+    "check": "node ../../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
-    "test": "velar test",
-    "build": "velar build"
+    "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
+    "test": "node ../../../tools/run-validation.mjs -- velar test",
+    "build": "node ../../../tools/run-validation.mjs -- velar build"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",
@@ -30,7 +30,7 @@
     "@velarscript-labs/yaml": "0.1.5"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.33.1",
-    "@velarscript/node": "0.33.1"
+    "@velarscript/cli": "0.34.0",
+    "@velarscript/node": "0.34.0"
   }
 }

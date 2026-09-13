@@ -5,15 +5,15 @@ import {openClientWorld} from "./session.vel"
 
 /// 适配器作者复用的可执行契约。它不依赖测试框架，因此同一份流程既能在内存
 /// 测试中运行，也能进入真实 Chromium Worker 验收。
-export type WorldBackendConformanceResult:
-    readonly worldId: string
-    readonly chunk: readonly ChunkPosition
-    readonly initialRuntimeId: number
-    readonly editedRuntimeId: number
-    readonly revision: number
-    readonly generation: number
+export readonly type WorldBackendConformanceResult:
+    worldId: string
+    chunk: readonly ChunkPosition
+    initialRuntimeId: number
+    editedRuntimeId: number
+    revision: number
+    generation: number
 
-export async def verifyWorldBackend(backend: WorldBackend, command: readonly CreateWorldRequest) -> WorldBackendConformanceResult:
+export async def verifyWorldBackend(backend: WorldBackend, command: CreateWorldRequest) -> WorldBackendConformanceResult:
     const created = await backend.createWorld(command)
     assert created.id == command.id else "WorldBackend create returned a different world id"
     assert created.name == command.name else "WorldBackend create returned a different world name"

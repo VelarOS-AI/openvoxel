@@ -1,12 +1,12 @@
 import {BlockTypeSource} from "../definition/block.vel"
 import {BlockCatalogSource, BlockDefinition, BlockStateDefinition, BlockStateMapSource} from "../definition/catalog.vel"
-import {requireUInt32, validateBlockType} from "./block-validation.vel"
+import {requireUInt32, validateBlockType, validateCanonicalFluidBlocks} from "./block-validation.vel"
 import {canonicalStateKey} from "./state-key.vel"
 import {BlockStatePrototype, enumerateBlockStates} from "./state-expansion.vel"
 
 /// 用调用方提供的稳定状态映射装配最终目录。该层只负责索引、ID 绑定和默认状态投影。
 export def assembleBlockCatalog(schemaVersion: number, catalogVersion: string, sourceBlocks: List<BlockTypeSource>, stateMap: BlockStateMapSource) -> BlockCatalogSource:
-    assert schemaVersion == 4 else "Unsupported block catalog schema version"
+    assert schemaVersion == 6 else "Unsupported block catalog schema version"
     assert not catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert stateMap.formatVersion == 2 else "Unsupported block state map format version"
 
@@ -20,6 +20,7 @@ export def assembleBlockCatalog(schemaVersion: number, catalogVersion: string, s
             assert prototypeByKey.get(prototype.stateKey) == null else f"Duplicate block state {prototype.stateKey}"
             prototypeByKey.set(prototype.stateKey, prototype)
     assert sourceByKey.size > 0 else "Block catalog cannot be empty"
+    validateCanonicalFluidBlocks(sourceBlocks)
     assert prototypeByKey.size <= 0x100000000 else "Block catalog exceeds UInt32 state capacity"
 
     const reservedRuntimeIds: Set<number> = Set()

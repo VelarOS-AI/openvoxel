@@ -4,6 +4,7 @@
 
 import {monotonic} from "velar/time"
 import {ChunkPosition} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
 import {columnPlanner, createGenerationFields} from "../src/survival/terrain.vel"
 
 type ColumnBenchmarkResult:
@@ -44,12 +45,13 @@ def measure(positions: List<ChunkPosition>, capacity: number) -> ColumnBenchmark
 
 @main:
     const positions = benchmarkPositions()
+    const productionCapacity = baseWorldGeneratorCatalog.generators[0].sampling.columnCacheCapacity
 
     measure(positions, 1)
-    measure(positions, 64)
+    measure(positions, productionCapacity)
 
     const replayed = measure(positions, 1)
-    const cached = measure(positions, 64)
+    const cached = measure(positions, productionCapacity)
     assert replayed.checksum == cached.checksum else "Column caching changed terrain samples"
     print(f"columns replayed chunks={replayed.chunks} totalMs={replayed.totalMs.round()} averageMs={replayed.averageMs} builds={replayed.builds} checksum={replayed.checksum}")
-    print(f"columns cached chunks={cached.chunks} totalMs={cached.totalMs.round()} averageMs={cached.averageMs} builds={cached.builds} checksum={cached.checksum}")
+    print(f"columns cached capacity={productionCapacity} chunks={cached.chunks} totalMs={cached.totalMs.round()} averageMs={cached.averageMs} builds={cached.builds} checksum={cached.checksum}")

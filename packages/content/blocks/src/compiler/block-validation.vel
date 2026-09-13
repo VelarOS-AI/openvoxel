@@ -1,4 +1,4 @@
-import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockShape, BlockShapeBox, BlockShapeKind, BlockStateProperty, BlockTypeSource} from "../definition/block.vel"
+import {BlockBehavior, BlockBehaviorKind, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockPropertyKind, BlockPropertyValue, BlockRender, BlockRenderAttachment, BlockRenderLayer, BlockShape, BlockShapeBox, BlockShapeKind, BlockStateProperty, BlockTypeSource, CropGrowthBlockBehavior, FluidBlockBehavior} from "../definition/block.vel"
 import {BuiltinBlockIdentities} from "@openvoxel/identities"
 
 /// 该模块集中执行单个方块及其组件的语义验证。
@@ -20,7 +20,7 @@ def requireUnitInterval(value: number, label: string):
 export def requireUInt32(value: number, label: string):
     assert value.isInteger() and value >= 0 and value <= 0xffffffff else f"{label} must be an integer from 0 through 4294967295"
 
-def requireShapeBox(box: BlockShapeBox, label: string, properties: readonly List<readonly BlockPropertyDefinition>):
+def requireShapeBox(box: BlockShapeBox, label: string, properties: readonly List<BlockPropertyDefinition>):
     for bound in [box.minimumX, box.minimumY, box.minimumZ, box.maximumX, box.maximumY, box.maximumZ]:
         requireUnitInterval(bound, f"{label} bound")
     assert box.minimumX < box.maximumX and box.minimumY < box.maximumY and box.minimumZ < box.maximumZ else f"{label} must have positive volume"
@@ -41,7 +41,7 @@ def requireShapeBox(box: BlockShapeBox, label: string, properties: readonly List
 def requireShape(
     shape: BlockShape,
     label: string,
-    properties: readonly List<readonly BlockPropertyDefinition>,
+    properties: readonly List<BlockPropertyDefinition>,
     requiresBox: bool,
 ):
     match shape.kind:
@@ -58,7 +58,7 @@ def requireShape(
             assert shape.key == null else f"{label} built-in shape cannot carry a custom key"
             assert shape.boxes == null else f"{label} built-in shape cannot carry custom boxes"
 
-def requirePhysics(physics: BlockPhysics, blockKey: string, properties: readonly List<readonly BlockPropertyDefinition>):
+def requirePhysics(physics: BlockPhysics, blockKey: string, properties: readonly List<BlockPropertyDefinition>):
     requireShape(physics.collision, f"Block {blockKey} collision", properties, true)
     requireShape(physics.selection, f"Block {blockKey} selection", properties, false)
     requireShape(physics.occlusion, f"Block {blockKey} occlusion", properties, false)
@@ -73,10 +73,36 @@ def requireLight(light: BlockLight, blockKey: string):
 def requireOptionalResource(value: string?, label: string):
     if value != null: requireNamespacedKey(value, label)
 
+def requireFrontFacing(properties: readonly List<BlockPropertyDefinition>, blockKey: string):
+    const facing = properties.find(property => property.name == "facing")
+    assert facing != null else f"Block {blockKey} with a front texture requires a facing property"
+    assert facing.kind == BlockPropertyKind.enumeration else f"Block {blockKey} facing property must be an enum"
+    const directions = Set(facing.values)
+    assert directions.size == 4 and "north" in directions and "east" in directions and "south" in directions and "west" in directions else f"Block {blockKey} facing property must contain north, east, south, and west"
+
+def requireAttachment(attachment: BlockRenderAttachment, blockKey: string, properties: readonly List<BlockPropertyDefinition>):
+    requireNamespacedKey(attachment.model, f"Block {blockKey} attachment model")
+    assert attachment.layer == BlockRenderLayer.cutout else f"Block {blockKey} render attachments must use the cutout layer"
+    requireNamespacedKey(attachment.material, f"Block {blockKey} attachment material")
+    const textures = attachment.textures
+    requireOptionalResource(textures.all, f"Block {blockKey} attachment all texture")
+    requireOptionalResource(textures.top, f"Block {blockKey} attachment top texture")
+    requireOptionalResource(textures.bottom, f"Block {blockKey} attachment bottom texture")
+    requireOptionalResource(textures.side, f"Block {blockKey} attachment side texture")
+    requireOptionalResource(textures.front, f"Block {blockKey} attachment front texture")
+    if textures.front != null: requireFrontFacing(properties, blockKey)
+    const hasUniform = textures.all != null
+    const hasFaces = textures.top != null and textures.bottom != null and textures.side != null
+    assert hasUniform or hasFaces else f"Block attachment {blockKey} requires a uniform texture or top, bottom, and side textures"
+    requireOptionalResource(attachment.tint, f"Block {blockKey} attachment tint")
+    requireOptionalResource(attachment.animation, f"Block {blockKey} attachment animation")
+
 /// 渲染组件要么完全不可见，要么具备模型、渲染层、材质和可用纹理组合。
-def requireRender(render: BlockRender, blockKey: string):
+def requireRender(render: BlockRender, blockKey: string, properties: readonly List<BlockPropertyDefinition>):
+    const attachments = render.attachments ?? []
     if render.model == null:
         assert render.layer == null and render.material == null and render.textures == null and render.tint == null and render.animation == null else f"Non-rendered block {blockKey} cannot declare render resources"
+        assert attachments.size == 0 else f"Non-rendered block {blockKey} cannot declare render attachments"
         return
     requireNamespacedKey(render.model, f"Block {blockKey} model")
     assert render.layer != null else f"Rendered block {blockKey} requires a render layer"
@@ -88,11 +114,14 @@ def requireRender(render: BlockRender, blockKey: string):
     requireOptionalResource(textures.top, f"Block {blockKey} top texture")
     requireOptionalResource(textures.bottom, f"Block {blockKey} bottom texture")
     requireOptionalResource(textures.side, f"Block {blockKey} side texture")
+    requireOptionalResource(textures.front, f"Block {blockKey} front texture")
+    if textures.front != null: requireFrontFacing(properties, blockKey)
     const hasUniform = textures.all != null
     const hasFaces = textures.top != null and textures.bottom != null and textures.side != null
     assert hasUniform or hasFaces else f"Block {blockKey} requires a uniform texture or top, bottom, and side textures"
     requireOptionalResource(render.tint, f"Block {blockKey} tint")
     requireOptionalResource(render.animation, f"Block {blockKey} animation")
+    for attachment in attachments: requireAttachment(attachment, blockKey, properties)
 
 def requireInteraction(interaction: BlockInteraction, blockKey: string):
     assert interaction.hardness.isFinite() and interaction.hardness >= 0 else f"Block {blockKey} hardness must be non-negative"
@@ -116,16 +145,27 @@ export def validateBuiltinBlockIdentities(identities: BuiltinBlockIdentities, so
                 assert variant.interaction.drops == identities.loot.empty else f"Unbreakable block variant {block.key} must use the configured empty loot identity"
 
 /// 根据 kind 验证各行为自己的参数，并检查行为引用的方块属性是否存在。
-def requireBehavior(behavior: BlockBehavior, blockKey: string, propertyNames: Set<string>):
+def requireBehavior(behavior: BlockBehavior, blockKey: string, properties: List<BlockPropertyDefinition>):
+    const propertyNames = Set(properties.map(property => property.name))
     match behavior.kind:
         case BlockBehaviorKind.gravity:
             assert behavior.delayTicks.isInteger() and behavior.delayTicks > 0 else f"Block {blockKey} gravity delay must be a positive integer"
         case BlockBehaviorKind.fluid:
             requireNamespacedKey(behavior.fluidKey, f"Block {blockKey} fluid key")
+            requireNamespacedKey(behavior.canonicalBlock, f"Block {blockKey} canonical fluid block")
             assert behavior.levelProperty in propertyNames else f"Block {blockKey} fluid level property is not declared"
             assert behavior.fallingProperty in propertyNames else f"Block {blockKey} fluid falling property is not declared"
             assert behavior.tickRate.isInteger() and behavior.tickRate > 0 else f"Block {blockKey} fluid tick rate must be a positive integer"
             assert behavior.viscosity.isFinite() and behavior.viscosity > 0 else f"Block {blockKey} fluid viscosity must be positive"
+        case BlockBehaviorKind.cropGrowth:
+            const ageProperty = behavior.ageProperty
+            requirePropertyName(ageProperty, f"Block {blockKey} crop growth age property")
+            const age = properties.find(property => property.name == ageProperty)
+            assert age != null else f"Block {blockKey} crop growth age property is not declared"
+            assert age.kind == BlockPropertyKind.integer else f"Block {blockKey} crop growth age property must be an integer"
+            assert age.minimum < age.maximum else f"Block {blockKey} crop growth requires at least two age states"
+            assert behavior.epochsPerStage.isInteger() and behavior.epochsPerStage > 0 else f"Block {blockKey} crop growth stage duration must be a positive integer"
+            assert behavior.epochsPerStage <= 120 else f"Block {blockKey} crop growth stage duration cannot exceed 120 ecology epochs"
         case BlockBehaviorKind.flammable:
             requireUnitInterval(behavior.ignitionChance, f"Block {blockKey} ignition chance")
             requireUnitInterval(behavior.spreadChance, f"Block {blockKey} spread chance")
@@ -142,12 +182,101 @@ def requireBehavior(behavior: BlockBehavior, blockKey: string, propertyNames: Se
             requireOptionalResource(behavior.supportingTag, f"Block {blockKey} supporting tag")
 
 /// 同一状态最多声明一次同类行为，避免两个流体或两个重力规则互相冲突。
-def requireBehaviors(behaviors: List<BlockBehavior>, blockKey: string, propertyNames: Set<string>):
+def requireBehaviors(behaviors: List<BlockBehavior>, blockKey: string, properties: List<BlockPropertyDefinition>):
     const behaviorKinds: Set<BlockBehaviorKind> = Set()
     for behavior in behaviors:
         assert not (behavior.kind in behaviorKinds) else f"Block {blockKey} repeats behavior {behavior.kind}"
         behaviorKinds.add(behavior.kind)
-        requireBehavior(behavior, blockKey, propertyNames)
+        requireBehavior(behavior, blockKey, properties)
+
+def cropGrowthBehavior(behaviors: readonly List<BlockBehavior>) -> CropGrowthBlockBehavior?:
+    for behavior in behaviors:
+        match behavior.kind:
+            case BlockBehaviorKind.cropGrowth: return behavior
+            case _: pass
+    return null
+
+/// 生长契约属于整个方块家族；状态变体可以替换其他行为，但不能让部分年龄阶段
+/// 丢失生长语义或改变属性和节拍。
+def requireCropGrowthVariantCompatibility(block: readonly BlockTypeSource):
+    const base = cropGrowthBehavior(block.behaviors)
+    for variant in block.variants:
+        const behaviors = variant.behaviors
+        if behaviors == null: continue
+        const replacement = cropGrowthBehavior(behaviors)
+        if base == null:
+            assert replacement == null else f"Block {block.key} crop growth behavior must be declared on the base block"
+            continue
+        assert replacement != null else f"Block {block.key} variants cannot remove crop growth behavior"
+        assert replacement.ageProperty == base.ageProperty and replacement.epochsPerStage == base.epochsPerStage else f"Block {block.key} variants cannot change crop growth behavior"
+
+def fluidBehavior(behaviors: readonly List<BlockBehavior>) -> FluidBlockBehavior?:
+    for behavior in behaviors:
+        match behavior.kind:
+            case BlockBehaviorKind.fluid: return behavior
+            case _: pass
+    return null
+
+def requireFluidPropertyCompatibility(
+    block: readonly BlockTypeSource,
+    behavior: FluidBlockBehavior,
+    canonical: readonly BlockTypeSource,
+    canonicalBehavior: FluidBlockBehavior,
+):
+    assert behavior.levelProperty == canonicalBehavior.levelProperty else f"Block {block.key} fluid level property must match canonical block {canonical.key}"
+    assert behavior.fallingProperty == canonicalBehavior.fallingProperty else f"Block {block.key} fluid falling property must match canonical block {canonical.key}"
+
+    const level = block.properties.find(property => property.name == behavior.levelProperty)
+    const canonicalLevel = canonical.properties.find(property => property.name == canonicalBehavior.levelProperty)
+    assert level != null and level.kind == BlockPropertyKind.integer else f"Block {block.key} fluid level property must be an integer"
+    assert canonicalLevel != null and canonicalLevel.kind == BlockPropertyKind.integer else f"Canonical fluid block {canonical.key} level property must be an integer"
+    assert level.minimum == canonicalLevel.minimum and level.maximum == canonicalLevel.maximum else f"Block {block.key} fluid level range must match canonical block {canonical.key}"
+
+    const falling = block.properties.find(property => property.name == behavior.fallingProperty)
+    const canonicalFalling = canonical.properties.find(property => property.name == canonicalBehavior.fallingProperty)
+    assert falling != null and falling.kind == BlockPropertyKind.boolean else f"Block {block.key} fluid falling property must be boolean"
+    assert canonicalFalling != null and canonicalFalling.kind == BlockPropertyKind.boolean else f"Canonical fluid block {canonical.key} falling property must be boolean"
+
+    const defaultLevel = block.defaultState.find(property => property.name == behavior.levelProperty)
+    const canonicalDefaultLevel = canonical.defaultState.find(property => property.name == canonicalBehavior.levelProperty)
+    assert defaultLevel != null and canonicalDefaultLevel != null and defaultLevel.value == canonicalDefaultLevel.value else f"Block {block.key} default fluid level must map to canonical block {canonical.key}"
+    const defaultFalling = block.defaultState.find(property => property.name == behavior.fallingProperty)
+    const canonicalDefaultFalling = canonical.defaultState.find(property => property.name == canonicalBehavior.fallingProperty)
+    assert defaultFalling != null and canonicalDefaultFalling != null and defaultFalling.value == canonicalDefaultFalling.value else f"Block {block.key} default falling state must map to canonical block {canonical.key}"
+
+def requireCanonicalFluidBehavior(
+    block: readonly BlockTypeSource,
+    behavior: FluidBlockBehavior,
+    sourceByKey: Map<string, readonly BlockTypeSource>,
+):
+    const canonical = sourceByKey.get(behavior.canonicalBlock)
+    assert canonical != null else f"Block {block.key} names unknown canonical fluid block {behavior.canonicalBlock}"
+    const canonicalBehavior = fluidBehavior(canonical.behaviors)
+    assert canonicalBehavior != null else f"Canonical fluid block {canonical.key} must declare a base fluid behavior"
+    assert canonicalBehavior.canonicalBlock == canonical.key else f"Canonical fluid block {canonical.key} must point to itself"
+    assert behavior.fluidKey == canonicalBehavior.fluidKey else f"Block {block.key} fluid key must match canonical block {canonical.key}"
+    assert behavior.tickRate == canonicalBehavior.tickRate else f"Block {block.key} fluid tick rate must match canonical block {canonical.key}"
+    assert behavior.viscosity == canonicalBehavior.viscosity else f"Block {block.key} fluid viscosity must match canonical block {canonical.key}"
+    requireFluidPropertyCompatibility(block, behavior, canonical, canonicalBehavior)
+
+/// 单体结构验证完成后，再用完整目录解析规范流体身份。目标必须直接自指，因而
+/// 链和环都会在进入运行时前被拒绝；复合水体仍可拥有自己的方块与资源身份。
+export def validateCanonicalFluidBlocks(sourceBlocks: readonly List<readonly BlockTypeSource>):
+    const sourceByKey: Map<string, readonly BlockTypeSource> = Map()
+    for block in sourceBlocks:
+        assert sourceByKey.get(block.key) == null else f"Duplicate block key {block.key}"
+        sourceByKey.set(block.key, block)
+    for block in sourceBlocks:
+        const baseFluid = fluidBehavior(block.behaviors)
+        if baseFluid != null: requireCanonicalFluidBehavior(block, baseFluid, sourceByKey)
+        for variant in block.variants:
+            const behaviors = variant.behaviors
+            if behaviors == null: continue
+            const variantFluid = fluidBehavior(behaviors)
+            assert (baseFluid == null) == (variantFluid == null) else f"Block {block.key} variants must preserve the fluid behavior contract"
+            if baseFluid != null and variantFluid != null:
+                assert Json.stableStringify(baseFluid) == Json.stableStringify(variantFluid) else f"Block {block.key} variants must preserve the fluid behavior contract"
+            if variantFluid != null: requireCanonicalFluidBehavior(block, variantFluid, sourceByKey)
 
 /// 检查属性名称、枚举集合和整数范围，保证后续状态展开是有限且确定的。
 def requireProperty(property: BlockPropertyDefinition, blockKey: string):
@@ -203,14 +332,15 @@ export def validateBlockType(block: BlockTypeSource):
     requireStateProperties(block.key, block.properties, block.defaultState, true)
     requirePhysics(block.physics, block.key, block.properties)
     requireLight(block.light, block.key)
-    requireRender(block.render, block.key)
+    requireRender(block.render, block.key, block.properties)
     requireInteraction(block.interaction, block.key)
-    requireBehaviors(block.behaviors, block.key, propertyNames)
+    requireBehaviors(block.behaviors, block.key, block.properties)
     for variant in block.variants:
         assert variant.when.size > 0 else f"Block {block.key} variant requires at least one state condition"
         requireStateProperties(block.key, block.properties, variant.when, false)
         if variant.physics != null: requirePhysics(variant.physics, block.key, block.properties)
         if variant.light != null: requireLight(variant.light, block.key)
-        if variant.render != null: requireRender(variant.render, block.key)
+        if variant.render != null: requireRender(variant.render, block.key, block.properties)
         if variant.interaction != null: requireInteraction(variant.interaction, block.key)
-        if variant.behaviors != null: requireBehaviors(variant.behaviors, block.key, propertyNames)
+        if variant.behaviors != null: requireBehaviors(variant.behaviors, block.key, block.properties)
+    requireCropGrowthVariantCompatibility(block)

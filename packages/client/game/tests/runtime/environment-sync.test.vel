@@ -8,7 +8,7 @@ test "slow ecology synchronization cannot block the sky sampler or its new posit
     const failures: List<string> = []
     let ecologyEntered = false
     let ecologyFinished = false
-    def environment(position: readonly Coordinate3) -> readonly WorldEnvironmentSample:
+    def environment(position: readonly Coordinate3) -> WorldEnvironmentSample:
         return worldEnvironmentAt("environment-owner", 300000, position)
     async def refreshEcology(cancellation: Cancellation? = null) -> bool:
         assert cancellation != null else "Environment owner must forward its cancellation token"
@@ -38,8 +38,7 @@ test "slow ecology synchronization cannot block the sky sampler or its new posit
 test "environment ownership reports sampling failure and still closes both tasks":
     const failures: List<string> = []
     let ecologyCalls = 0
-    def environment(_position: readonly Coordinate3) -> readonly WorldEnvironmentSample:
-        throw Error("bad environment anchor")
+    def environment(_position: readonly Coordinate3) -> WorldEnvironmentSample: throw Error("bad environment anchor")
     async def refreshEcology(_cancellation: Cancellation? = null) -> bool:
         ecologyCalls += 1
         return false

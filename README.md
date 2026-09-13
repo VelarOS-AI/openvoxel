@@ -2,11 +2,11 @@
 
 OpenVoxel 是一个使用 VelarScript 从零构建体素世界的开源教学项目。它先完成没有前端也能独立验收的世界后端，再让浏览器单机模式和 Node 联机模式共享同一套世界模型、生成器和应用运行时。
 
-当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v2` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物、地表和植被。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖和对应 Chunk revision。世界模型还以种子、世界时间和当前采样位置确定性驱动昼夜、月相、空间连续的云/风/雨雪与稳定雷暴，单机 Worker 与联机服务向客户端提供同一种环境锚点。联机服务使用 VelarScript 0.33.1 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
+当前完成的是可在单机与联机间复用的世界纵向切片：创建世界后，`openvoxel:survival-v3` 会确定性生成气候、海岸、河流、丘陵、山地、洞穴、地下流体、七类矿物，以及由六类树形、花草灌木、作物、藤蔓、枯木和水生群落组成的地表生态。生成的 16³ Chunk 随时可以由种子重建；持久化层只保存世界清单、玩家形成的稀疏覆盖、作物生长锚点和对应 Chunk revision。世界模型还以种子、世界时间和当前采样位置确定性驱动昼夜、月相、四季、空间连续的云/风/雨雪与稳定雷暴，单机 Worker 与联机服务向客户端提供同一种环境锚点。联机服务使用 VelarScript 0.33.1 的声明式 ServeApp、WebSocket 路由和类型化实时会话，本地模式则在专用浏览器 Worker 中运行相同 `WorldRuntime`，并把清单和增量保存到 IndexedDB。
 
 ## 开始使用
 
-客户端光照包含太阳/月亮方向光、局部 PCF 阴影和动态天空 IBL。世界一年包含四季、每季八个世界日；草地与树叶按当地温度、湿度和季节染色，自然露天地表会结冰、积雪并在回暖后融化。冰雪由世界运行时提供，碰撞与显示保持一致；玩家放置的冰雪作为持久化修改保留。地形流送采用碰撞安全邻域、三维视区与保守 Portal 连通裁剪，驻留和任务队列具有固定上限。具体边界见 [客户端大世界呈现](docs/architecture/0013-client-world-rendering.md)。
+客户端光照包含太阳/月亮方向光、局部 PCF 阴影和动态天空 IBL。世界一年包含四季、每季八个世界日；草地与树叶按当地温度、湿度和季节染色，自然露天地表会结冰、积雪并在回暖后融化。作物以方块行为声明年龄属性和生长节拍，自然作物与玩家种植都按世界时间确定性推进；水草和贴底生物保留同格水体的透明、反射与波纹。冰雪由世界运行时提供，碰撞与显示保持一致；玩家放置的冰雪作为持久化修改保留。地形流送采用碰撞安全邻域、三维视区与保守 Portal 连通裁剪，驻留和任务队列具有固定上限。具体边界见 [客户端大世界呈现](docs/architecture/0013-client-world-rendering.md)。
 
 需要 Node.js 24 或更高版本。项目不使用 Bun。
 
@@ -16,7 +16,20 @@ npm run validate
 npm start
 ```
 
-`validate` 是面向日常开发的快速门禁，运行生成一致性、结构、格式、编译检查和原生 Node 单测，目标是在常规开发机上 1 分钟内完成。`validate:full` 是完整本地门禁，额外运行全部 Velar 测试、生产构建以及 Chromium GPU 与 Web UI 验收；`validate:static` 和 `validate:browser` 可分别运行完整静态与浏览器门禁。workspace 门禁默认并发数不超过 4，可用 `OPENVOXEL_VALIDATE_JOBS` 调整。CI 始终运行完整静态和浏览器门禁。
+`validate` 运行生成一致性、结构、格式、编译检查和原生 Node 单测。`validate:full` 额外运行全部 Velar 测试、生产构建以及 Chromium GPU 与 Web UI 验收；`validate:static` 和 `validate:browser` 可分别运行完整静态与浏览器门禁。CI 保持完整静态和浏览器覆盖。
+
+验证优先保证开发机可用：workspace 和 Node 测试文件默认并发为 1；子进程降低调度优先级，原生图像工作线程限制为 1。生成、测试、构建和浏览器验收通过本机 `127.0.0.1:19479` 的互斥槽串行执行，嵌套脚本共享同一任务，独立任务遇忙立即退出。该监听只用于任务协调，进程退出后由系统释放。取消顶层验证命令会终止它的子进程组。多工作区门禁可显式用 `OPENVOXEL_VALIDATE_JOBS=2` 提高并发（范围 1–4），日常保持默认值。
+
+开发中优先选择受影响的测试；地形大种子集、GPU 截图与全套验收按需执行：
+
+```sh
+npm run test:file -- packages/world/generation/tests/survival/terrain.test.vel
+npm run test:native -- packages/client/game/tests/climate-tint.test.mjs
+npm run test:workspaces -- @openvoxel/world-generation
+npm run test:terrain -- review --discover
+```
+
+通过 npm 入口运行这些任务，使并发限制和取消清理生效。降低优先级不是 CPU 使用率硬上限；长时间的全量生成或 GPU 验收仍会持续消耗计算资源。
 
 另开一个终端运行 Web 客户端：
 

@@ -1,15 +1,59 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {ClimateTintField, climateTintVector} from "../src/backends/babylon/native/climate-tint.mjs";
+import {ClimateTintField, climateTintColor, climateTintRoles, climateTintVector} from "../src/backends/babylon/native/climate-tint.mjs";
 
-test("climate tint carries local temperature and humidity with seasonal foliage and winter dormancy", () => {
-  const summer = climateTintVector({temperatureCelsius: 24, humidity: 0.8, yearProgress: 0.375});
-  const autumn = climateTintVector({temperatureCelsius: 12, humidity: 0.8, yearProgress: 0.65});
-  const winter = climateTintVector({temperatureCelsius: -12, humidity: 0.8, yearProgress: 0.9});
-  assert.deepEqual(summer, [24, 0.8, 0, 0]);
-  assert.ok(autumn[2] > 0.95);
-  assert.equal(winter[3], 1);
-  assert.equal(winter[2], 0);
+test("climate tint carries local temperature humidity season and elevation", () => {
+  assert.deepEqual(climateTintVector({temperatureCelsius: 24, humidity: 0.8, yearProgress: 0.375}, 96), [24, 0.8, 0.375, 96]);
+  assert.deepEqual(climateTintVector({temperatureCelsius: -12, humidity: 2, yearProgress: 1.1}, -32), [-12, 1, 0.10000000000000009, -32]);
+});
+
+const distance = (left, right) => left.reduce((total, value, index) => total + Math.abs(value - right[index]), 0);
+
+test("birch and poplar have independent climate palettes and golden autumn foliage", () => {
+  const roles = [climateTintRoles.deciduousFoliage, climateTintRoles.birchFoliage, climateTintRoles.poplarFoliage];
+  const summer = roles.map(role => climateTintColor(role, [18, 0.65, 0.375, 72]));
+  assert.ok(distance(summer[0], summer[1]) > 0.1);
+  assert.ok(distance(summer[1], summer[2]) > 0.03);
+  for (const role of roles.slice(1)) {
+    const autumn = climateTintColor(role, [18, 0.65, 0.625, 72]);
+    assert.ok(autumn[0] > autumn[1] && autumn[1] > autumn[2] * 2);
+    for (const boundary of [0.125, 0.375, 0.625, 0.875]) {
+      assert.ok(distance(climateTintColor(role, [18, 0.65, boundary - 0.000001, 72]), climateTintColor(role, [18, 0.65, boundary + 0.000001, 72])) < 0.00001);
+    }
+  }
+});
+
+test("deciduous foliage has a stronger four-season cycle than evergreen foliage", () => {
+  const summer = [18, 0.65, 0.375, 72];
+  const autumn = [18, 0.65, 0.625, 72];
+  const winter = [18, 0.65, 0.875, 72];
+  const deciduousSummer = climateTintColor(climateTintRoles.deciduousFoliage, summer);
+  const deciduousAutumn = climateTintColor(climateTintRoles.deciduousFoliage, autumn);
+  const deciduousWinter = climateTintColor(climateTintRoles.deciduousFoliage, winter);
+  const evergreenSummer = climateTintColor(climateTintRoles.evergreenFoliage, summer);
+  const evergreenAutumn = climateTintColor(climateTintRoles.evergreenFoliage, autumn);
+  const evergreenWinter = climateTintColor(climateTintRoles.evergreenFoliage, winter);
+  assert.ok(deciduousSummer[1] > deciduousSummer[0] + 0.2, "summer midpoint must remain green");
+  assert.ok(deciduousAutumn[0] > deciduousAutumn[1] + 0.2, "deciduous autumn must become visibly warm");
+  assert.ok(distance(deciduousSummer, deciduousWinter) > distance(evergreenSummer, evergreenWinter) * 1.5);
+  assert.ok(evergreenAutumn[1] > evergreenAutumn[0], "evergreen autumn must remain green");
+});
+
+test("grass responds continuously to moisture elevation and all four seasons", () => {
+  const wetLowland = climateTintColor(climateTintRoles.grass, [24, 0.9, 0.375, 24]);
+  const dryLowland = climateTintColor(climateTintRoles.grass, [24, 0.1, 0.375, 24]);
+  const wetHighland = climateTintColor(climateTintRoles.grass, [-6, 0.9, 0.375, 196]);
+  assert.ok(wetLowland[1] - wetLowland[0] > dryLowland[1] - dryLowland[0]);
+  assert.ok(dryLowland[0] > wetLowland[0]);
+  assert.ok(distance(wetLowland, wetHighland) > 0.05);
+  assert.deepEqual(wetLowland, climateTintColor(climateTintRoles.grass, [24, 0.9, 0.375, 196]), "elevation is already applied by the shared climate sampler");
+  const seasons = [0.125, 0.375, 0.625, 0.875].map((year) => climateTintColor(climateTintRoles.grass, [18, 0.6, year, 64]));
+  assert.equal(new Set(seasons.map((color) => color.map((channel) => channel.toFixed(3)).join(":"))).size, 4);
+});
+
+test("season interpolation is continuous across quarter and year boundaries", () => {
+  const color = (year) => climateTintColor(climateTintRoles.deciduousFoliage, [16, 0.6, year, 80]);
+  for (const boundary of [0.125, 0.375, 0.625, 0.875]) assert.ok(distance(color(boundary - 0.000001), color(boundary + 0.000001)) < 0.00001);
 });
 
 test("adjacent horizontal and vertical chunks share exact climate corners without per-frame resampling", () => {

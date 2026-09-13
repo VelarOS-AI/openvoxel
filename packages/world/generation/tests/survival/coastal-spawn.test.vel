@@ -1,0 +1,18 @@
+import {expect} from "velar/test"
+import {Coordinate2} from "@openvoxel/world"
+import {coastalSpawnAffinity} from "../../src/survival/coastal-spawn.vel"
+import {survivalWorldGenerator} from "../../src/survival/generator.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+
+test "coastal preference requires water continuing beyond the near shoreline":
+    expect(coastalSpawnAffinity({x: 0, z: 0}, 64, position => position.x >= 32 ? 58 : 68)).toBe(1)
+    expect(coastalSpawnAffinity({x: 0, z: 0}, 64, position => position.x == 32 ? 58 : 68)).toBe(0)
+    expect(coastalSpawnAffinity({x: 0, z: 0}, 64, position => 68)).toBe(0)
+
+test "fixed seed starts prefer safe dry shores with nearby open water":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    for seed in ["openvoxel", "continental-ridges", "connected-rivers", "climate-extremes", "ui-coast-visual-v1"]:
+        const generator = survivalWorldGenerator(seed, 16)
+        const spawn = generator.findSpawn()
+        expect(spawn.y > profile.world.seaLevel + 1).toBe(true)
+        assert coastalSpawnAffinity(Coordinate2.from(spawn), profile.world.seaLevel, position => generator.sample(position).surfaceY) == 1 else f"Seed {seed} selected an inland start at {spawn.x}, {spawn.z}"

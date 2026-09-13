@@ -11,23 +11,23 @@ export const meshingWorkerCount = 2
 
 export type ChunkMeshWorker:
     initialize: () -> Promise<null>
-    build: (position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> Promise<readonly ChunkMesh>
+    build: (position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> Promise<ChunkMesh>
     close: () -> Promise<null>
 
 export type ChunkMeshSurface:
-    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
 
-export type ChunkMeshingStats:
-    readonly active: number
-    readonly queued: number
-    readonly startupPending: number
-    readonly resident: number
+export readonly type ChunkMeshingStats:
+    active: number
+    queued: number
+    startupPending: number
+    resident: number
 
 export type ChunkMeshing:
     initialize: () -> Promise<null>
     start: () -> null
-    invalidate: (event: readonly ClientWorldChange) -> null
+    invalidate: (event: ClientWorldChange) -> null
     reconcile: (topologyChanged?: bool) -> null
     stats: () -> ChunkMeshingStats
     close: () -> Promise<null>
@@ -40,7 +40,7 @@ export def chunkMeshing(
     startupPositions: readonly List<readonly ChunkPosition>,
     worker: readonly ChunkMeshWorker,
     surface: readonly ChunkMeshSurface,
-    view: () -> readonly MeshPriorityView,
+    view: () -> MeshPriorityView,
     changed: () -> null,
     failed: (message: string) -> null,
     startupReady: () -> null,
@@ -50,7 +50,7 @@ export def chunkMeshing(
     const activeKeys: Set<string> = Set()
     const validity = chunkMeshValidity()
     const sequence = meshTicketSequence()
-    const portals: Map<string, readonly ChunkPortalSummary> = Map()
+    const portals: Map<string, ChunkPortalSummary> = Map()
     const residents: Map<string, readonly ChunkPosition> = Map()
     for position in startupPositions: residents.set(chunkKey(position), position)
     const demand: ChunkMeshDemand = chunkMeshDemand()
@@ -164,7 +164,7 @@ export def chunkMeshing(
         const key = chunkKey(position)
         return (key in residents) and (validity.hasInstalled(key) or (key in activeKeys))
 
-    def invalidate(event: readonly ClientWorldChange):
+    def invalidate(event: ClientWorldChange):
         if closed: return
         if event.kind == ClientWorldChangeKind.synchronizationStarted: return
         if event.kind == ClientWorldChangeKind.terrainLoaded:

@@ -1,0 +1,100 @@
+import {simplex2} from "@velarscript-labs/noise"
+import {Coordinate2, requireCoordinate2} from "../spatial/coordinates.vel"
+
+/// 基础气候是世界的稳定事实；生成器提供参数，清单锁定参数，季节只在其上叠加。
+export readonly type WorldClimateDefinition:
+    temperaturePeriod: number
+    humidityPeriod: number
+    samplingStep: number
+    seaLevel: number
+
+export const defaultWorldClimate: WorldClimateDefinition = {temperaturePeriod: 1024, humidityPeriod: 896, samplingStep: 4, seaLevel: 64}
+export const worldClimateVersion = 1
+
+/// 0..15 连续气候带。地形选择离散生态时取整，渲染与天气保留连续值。
+export readonly type WorldBaseClimateSample:
+    temperature: number
+    humidity: number
+
+export type WorldBaseClimateSampler = (position: readonly Coordinate2) -> WorldBaseClimateSample
+
+export def validateWorldClimateDefinition(definition: WorldClimateDefinition) -> WorldClimateDefinition:
+    assert definition.temperaturePeriod.isFinite() and definition.temperaturePeriod >= 16 and definition.temperaturePeriod <= 1_048_576 else "Climate temperature period must be from 16 through 1048576"
+    assert definition.humidityPeriod.isFinite() and definition.humidityPeriod >= 16 and definition.humidityPeriod <= 1_048_576 else "Climate humidity period must be from 16 through 1048576"
+    assert definition.samplingStep.isInteger() and definition.samplingStep >= 1 and definition.samplingStep <= 16 and 16 % definition.samplingStep == 0 else "Climate sampling step must divide a Chunk edge of 16"
+    assert definition.seaLevel.isInteger() and definition.seaLevel >= 0 and definition.seaLevel <= 255 else "Climate sea level must be inside world height"
+    return definition
+
+def smooth(value: number) -> number: return value * value * (3 - 2 * value)
+
+def mix(left: number, right: number, amount: number) -> number: return left + (right - left) * amount
+
+/// 粗网格节点的唯一量化规则。生成器已有整列网格缓存，可直接批量取节点并
+/// 复用自身通用插值；随机访问采样器则在下面维护有界节点缓存。
+export def createWorldBaseClimateNodeSampler(seed: string, definition: WorldClimateDefinition = defaultWorldClimate) -> WorldBaseClimateSampler:
+    assert not seed.isBlank() and seed.size <= 128 else "Climate seed must contain from 1 through 128 characters"
+    const config = WorldClimateDefinition.parse(validateWorldClimateDefinition(definition))
+    const temperature = simplex2(f"{seed}:climate:temperature")
+    const humidity = simplex2(f"{seed}:climate:humidity")
+
+    def sample(position: readonly Coordinate2) -> WorldBaseClimateSample:
+        assert position.x % config.samplingStep == 0 and position.z % config.samplingStep == 0 else "Climate nodes must lie on the configured sampling grid"
+        return {
+            temperature: Math.clamp(((temperature(position.x / config.temperaturePeriod, position.z / config.temperaturePeriod) * 0.5 + 0.5) * 16).floor(), 0, 15),
+            humidity: Math.clamp(((humidity(position.x / config.humidityPeriod, position.z / config.humidityPeriod) * 0.5 + 0.5) * 16).floor(), 0, 15),
+        }
+
+    return sample
+
+/// 噪声只初始化一次，粗网格节点缓存有界。世界坐标直接定位网格，负坐标和
+/// Chunk 边界不依赖查询顺序；生成器的密度网格不再拥有第二套气候采样规则。
+export def createWorldBaseClimateSampler(seed: string, definition: WorldClimateDefinition = defaultWorldClimate) -> WorldBaseClimateSampler:
+    const config = WorldClimateDefinition.parse(validateWorldClimateDefinition(definition))
+    const sampleNode = createWorldBaseClimateNodeSampler(seed, config)
+    const nodes: Map<string, WorldBaseClimateSample> = Map()
+
+    def node(x: number, z: number) -> WorldBaseClimateSample:
+        const key = f"{x}:{z}"
+        const cached = nodes.get(key)
+        if cached != null: return cached
+        const value = sampleNode({x, z})
+        if nodes.size >= 512:
+            const oldest = nodes.iterator().next()?.value
+            if oldest != null: nodes.remove(oldest)
+        nodes.set(key, value)
+        return value
+
+    def sample(position: readonly Coordinate2) -> WorldBaseClimateSample:
+        requireCoordinate2(position, "Base climate sample")
+        const x = (position.x / config.samplingStep).floor() * config.samplingStep
+        const z = (position.z / config.samplingStep).floor() * config.samplingStep
+        const amountX = smooth((position.x - x) / config.samplingStep)
+        const amountZ = smooth((position.z - z) / config.samplingStep)
+        const a = node(x, z)
+        const b = node(x + config.samplingStep, z)
+        const c = node(x, z + config.samplingStep)
+        const d = node(x + config.samplingStep, z + config.samplingStep)
+        return {
+            temperature: mix(mix(a.temperature, b.temperature, amountX), mix(c.temperature, d.temperature, amountX), amountZ),
+            humidity: mix(mix(a.humidity, b.humidity, amountX), mix(c.humidity, d.humidity, amountX), amountZ),
+        }
+
+    return sample
+
+const samplers: Map<string, WorldBaseClimateSampler> = Map()
+
+export def worldBaseClimateAt(seed: string, position: readonly Coordinate2, definition: WorldClimateDefinition = defaultWorldClimate) -> WorldBaseClimateSample:
+    const key = f"{seed.size}:{seed}:{definition.temperaturePeriod}:{definition.humidityPeriod}:{definition.samplingStep}:{definition.seaLevel}"
+    const cached = samplers.get(key)
+    if cached != null: return cached(position)
+    const sampler = createWorldBaseClimateSampler(seed, definition)
+    if samplers.size >= 32:
+        const oldest = samplers.iterator().next()?.value
+        if oldest != null: samplers.remove(oldest)
+    samplers.set(key, sampler)
+    return sampler(position)
+
+/// 连续海拔温差（单位为气候带）；离散生态选择在最终结果上取整。
+export def worldTemperatureAtHeight(temperature: number, y: number, seaLevel: number) -> number:
+    const elevation = y - seaLevel
+    return temperature - (elevation > 0 ? 0.0008 * elevation * elevation : 0.1 * elevation)

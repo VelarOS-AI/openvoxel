@@ -1,0 +1,24 @@
+import {random} from "velar/random"
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {VegetationConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {groundPlantFeatures} from "../../src/survival/ground-plants.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+
+test "fruit patches retain grassy spaces even inside a pumpkin-dominant community":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const profile = WorldGeneratorDefinition.from(base, {
+        vegetation: VegetationConfig.from(base.vegetation, {groundPlantChance: 1, groundPlantCellSize: 1}),
+    })
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const column = columnPlanner(createGenerationFields("continental-ridges", profile), 16).columns(-48, 16)
+    const features = groundPlantFeatures(profile, blocks, registry, column, random("pumpkin-density"), {cover: (x, z) => 1, species: (x, z) => 9})
+    const fruits = Set([builtinIdentities.blocks.pumpkin, builtinIdentities.blocks.rottenPumpkin])
+    const count = features.filter(feature => fruits.has(registry.requireStateByRuntimeId(feature.writes[0].runtimeId).blockKey)).size
+    expect(features.size >= 20).toBe(true)
+    expect(count > 0 and count < features.size * 0.4).toBe(true)
+    expect(features.some(feature => feature.writes[0].runtimeId == blocks.tallGrass)).toBe(true)

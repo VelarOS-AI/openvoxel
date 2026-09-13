@@ -1,8 +1,8 @@
 import {navigate as frameworkNavigate} from "velar/web"
 
-export type ApplicationNavigationOptions:
-    readonly replace: bool?
-    readonly scroll: bool?
+export readonly type ApplicationNavigationOptions:
+    replace: bool?
+    scroll: bool?
 
 type FrameworkNavigate = (to: string, options: ApplicationNavigationOptions) -> null
 

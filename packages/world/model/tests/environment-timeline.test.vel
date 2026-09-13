@@ -3,7 +3,7 @@ import {Coordinate3} from "../src/spatial/coordinates.vel"
 import {WorldLightningEvent, WorldPrecipitationKind, worldDayMilliseconds} from "../src/environment/environment.vel"
 import {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldWeatherWindowMilliseconds} from "../src/environment/timeline.vel"
 
-def firstLightning(seed: string, samplePosition: readonly Coordinate3) -> readonly WorldLightningEvent:
+def firstLightning(seed: string, samplePosition: readonly Coordinate3) -> WorldLightningEvent:
     for worldMilliseconds in range(0, worldDayMilliseconds * 4, 500):
         const event = worldEnvironmentAt(seed, worldMilliseconds, samplePosition).lightning
         if event != null: return event

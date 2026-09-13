@@ -20,7 +20,7 @@ export type WorldContentSnapshot:
 /// 内容快照只在 LoadedWorld 装配时创建一次。组件压缩、资源聚合和目录哈希都与
 /// 玩家热状态无关，HTTP 请求只读取这份不可变结果。
 export def createWorldContentSnapshot(
-    manifest: readonly WorldManifest,
+    manifest: WorldManifest,
     blocks: readonly WorldBlockRegistry,
     generators: readonly WorldGeneratorRegistry,
 ) -> WorldContentSnapshot:

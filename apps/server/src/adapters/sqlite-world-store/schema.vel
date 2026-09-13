@@ -4,7 +4,7 @@ import {SqliteConnection, SqliteTransaction, sqliteLiteral} from "@velarscript-l
 type DatabaseVersionRow:
     user_version: number
 
-export const sqliteSchemaVersion = 7
+export const sqliteSchemaVersion = 9
 const readSchemaVersion = query(trustedSql("PRAGMA user_version"), DatabaseVersionRow, maximumRows=1)
 
 export async def initializeWorldSchema(database: SqliteConnection):
@@ -18,13 +18,13 @@ export async def initializeWorldSchema(database: SqliteConnection):
         // 新格式直接建表；user_version 为 0 但已有同名表时会明确失败，不猜测、
         // 覆盖或迁移旧结构。
         await execute(executor, command(
-            trustedSql("CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('survival', 'creative')), world_time_origin_milliseconds INTEGER NOT NULL CHECK (world_time_origin_milliseconds >= 0 AND world_time_origin_milliseconds <= 9007199254740991), format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, generator_hash TEXT NOT NULL, spawn_x INTEGER NOT NULL, spawn_y INTEGER NOT NULL, spawn_z INTEGER NOT NULL, content_json TEXT NOT NULL, block_registry_json TEXT NOT NULL)"),
+            trustedSql("CREATE TABLE worlds (id TEXT PRIMARY KEY, name TEXT NOT NULL, seed TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('survival', 'creative')), world_time_origin_milliseconds INTEGER NOT NULL CHECK (world_time_origin_milliseconds >= 0 AND world_time_origin_milliseconds <= 9007199254740991), format_version INTEGER NOT NULL, chunk_edge INTEGER NOT NULL, generator TEXT NOT NULL, generator_hash TEXT NOT NULL, climate_json TEXT NOT NULL, spawn_x INTEGER NOT NULL, spawn_y INTEGER NOT NULL, spawn_z INTEGER NOT NULL, content_json TEXT NOT NULL, block_registry_json TEXT NOT NULL)"),
         ))
         await execute(executor, command(
-            trustedSql("CREATE TABLE chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z), FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE)"),
+            trustedSql("CREATE TABLE chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), storage_revision INTEGER NOT NULL CHECK (storage_revision >= revision), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z), FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE)"),
         ))
         await execute(executor, command(
-            trustedSql("CREATE TABLE block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_state_runtime_id INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z), FOREIGN KEY (world_id, chunk_x, chunk_y, chunk_z) REFERENCES chunk_states(world_id, chunk_x, chunk_y, chunk_z) ON DELETE CASCADE)"),
+            trustedSql("CREATE TABLE block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_state_runtime_id INTEGER NOT NULL, growth_origin_epoch INTEGER CHECK (growth_origin_epoch IS NULL OR growth_origin_epoch >= 0), PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z), FOREIGN KEY (world_id, chunk_x, chunk_y, chunk_z) REFERENCES chunk_states(world_id, chunk_x, chunk_y, chunk_z) ON DELETE CASCADE)"),
         ))
         await execute(executor, command(sqlConcat([
             trustedSql("PRAGMA user_version = "),

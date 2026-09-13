@@ -37,6 +37,7 @@ export enum BlockSkylightMode:
 export enum BlockBehaviorKind:
     gravity
     fluid
+    cropGrowth = "crop_growth"
     flammable
     contactDamage = "contact_damage"
     randomTick = "random_tick"
@@ -61,27 +62,27 @@ export type BlockPropertyValue = string | number | bool
 
 /// 一个具体状态中的“属性名 = 属性值”。
 /// 例如水的 {name: "level", value: 3} 会进入规范状态键 level=3。
-export type BlockStateProperty:
+export readonly type BlockStateProperty:
     /// 对应 BlockPropertyDefinition.name。
     name: string
     /// 当前具体状态采用的值。
     value: BlockPropertyValue
 
 /// 布尔属性适合开关状态，例如是否下落、是否含雪、是否由玩家放置。
-export type BooleanBlockProperty:
+export readonly type BooleanBlockProperty:
     name: string
     kind: BlockPropertyKind.boolean
 
 /// 枚举属性适合方向、轴向等有限字符串集合。
-export type EnumBlockProperty:
+export readonly type EnumBlockProperty:
     name: string
     kind: BlockPropertyKind.enumeration
     /// 允许的全部值，至少需要两个，值的顺序不影响状态键。
-    values: List<string>
+    values: readonly List<string>
 
 /// 整数属性使用包含 minimum 和 maximum 的闭区间。
 /// 例如 minimum=0、maximum=15 会产生 16 个可能值。
-export type IntegerBlockProperty:
+export readonly type IntegerBlockProperty:
     name: string
     kind: BlockPropertyKind.integer
     minimum: number
@@ -93,7 +94,7 @@ export type BlockPropertyDefinition = BooleanBlockProperty | EnumBlockProperty |
 /// 自定义形状由一个或多个规范化局部 AABB 组成。maximumYProperty 用于雪层等
 /// 高度由整数状态属性决定的盒子，最终高度等于属性值乘 maximumYScale，
 /// 并限制在 minimumY 到 maximumY 内。
-export type BlockShapeBox:
+export readonly type BlockShapeBox:
     minimumX: number
     minimumY: number
     minimumZ: number
@@ -104,23 +105,23 @@ export type BlockShapeBox:
     maximumYScale: number?
 
 /// 解析状态属性后的局部 AABB；运行时物理系统只消费这个稳定形状。
-export type ResolvedBlockShapeBox:
-    readonly minimumX: number
-    readonly minimumY: number
-    readonly minimumZ: number
-    readonly maximumX: number
-    readonly maximumY: number
-    readonly maximumZ: number
+export readonly type ResolvedBlockShapeBox:
+    minimumX: number
+    minimumY: number
+    minimumZ: number
+    maximumX: number
+    maximumY: number
+    maximumZ: number
 
 /// 自定义形状的 key 指向 identities.shapes 中的逻辑资源身份；boxes 是物理系统
 /// 可直接消费的几何包围盒。kind 不是 custom 时 key 和 boxes 必须为空。
-export type BlockShape:
+export readonly type BlockShape:
     kind: BlockShapeKind
     key: string?
-    boxes: List<BlockShapeBox>?
+    boxes: readonly List<BlockShapeBox>?
 
 /// 描述实体移动、鼠标选取和面遮挡所需的物理信息。
-export type BlockPhysics:
+export readonly type BlockPhysics:
     /// 实体移动时参与碰撞检测的形状。
     collision: BlockShape
     /// 玩家准星或编辑工具用于选中方块的形状。
@@ -137,7 +138,7 @@ export type BlockPhysics:
     jumpFactor: number
 
 /// 光照数值采用 0 到 15 的等级，与体素光照系统保持一致。
-export type BlockLight:
+export readonly type BlockLight:
     /// 方块自身发出的光照强度，0 表示不发光，15 表示最高亮度。
     emission: number
     /// 方块对传播光的阻挡强度，0 表示完全透光，15 表示完全阻挡。
@@ -148,15 +149,27 @@ export type BlockLight:
     ambientOcclusion: bool
 
 /// 纹理可以统一用于全部面，也可以分别指定顶部、底部和侧面。
-export type BlockTextures:
+/// front 在方块状态声明 facing 时覆盖对应的水平侧面。
+export readonly type BlockTextures:
     /// 非空时所有面共享同一纹理。
     all: string?
     top: string?
     bottom: string?
     side: string?
+    front: string?
+
+/// 同一格中的附属呈现不改变方块身份、物理体积或世界模拟语义。它用于水体中的
+/// 水草、贴底生物和实体方块上的苔藓等视觉组合；主渲染仍拥有流体表面与遮挡。
+export readonly type BlockRenderAttachment:
+    model: string
+    layer: BlockRenderLayer
+    material: string
+    textures: BlockTextures
+    tint: string?
+    animation: string?
 
 /// 渲染组件只保存逻辑资源身份，不保存引擎对象、UV 或 GPU 句柄。
-export type BlockRender:
+export readonly type BlockRender:
     /// 逻辑模型身份；为空表示该方块不生成可见网格，例如空气。
     model: string?
     /// 模型存在时使用的渲染层。
@@ -171,9 +184,12 @@ export type BlockRender:
     animation: string?
     /// 是否允许隐藏与相邻实心方块贴合的不可见面。
     cullFaces: bool
+    /// 与主模型共享一个方块状态、但不参与碰撞和遮挡的可选呈现附件。
+    /// 附件只允许使用 cutout 层，避免产生第二个半透明体积。
+    attachments: readonly List<BlockRenderAttachment>?
 
 /// 描述玩家破坏方块以及反馈资源所需的数据。
-export type BlockInteraction:
+export readonly type BlockInteraction:
     /// false 表示常规玩法不能破坏，例如空气和流体。
     breakable: bool
     /// 影响挖掘耗时；具体速度仍由工具和玩法系统计算。
@@ -188,16 +204,19 @@ export type BlockInteraction:
     sounds: string
 
 /// 重力行为让方块在失去支撑后延迟下落，沙子和沙砾会使用它。
-export type GravityBlockBehavior:
+export readonly type GravityBlockBehavior:
     kind: BlockBehaviorKind.gravity
     /// 检测到悬空后等待多少 tick 再执行下落。
     delayTicks: number
 
 /// 流体行为通过方块属性保存液面等级和下落状态。
-export type FluidBlockBehavior:
+export readonly type FluidBlockBehavior:
     kind: BlockBehaviorKind.fluid
     /// 流体类型身份，用于选择水或岩浆等模拟规则。
     fluidKey: string
+    /// 该状态承载的规范流体方块身份。纯水和岩浆指向自身；水草等复合状态
+    /// 指向纯水，使流体调度、游泳和状态替换不必猜测具体内容身份。
+    canonicalBlock: string
     /// 指向当前方块 integer 属性的名称，例如 level。
     levelProperty: string
     /// 指向当前方块 boolean 属性的名称，例如 falling。
@@ -207,14 +226,22 @@ export type FluidBlockBehavior:
     /// 流动阻力参数；数值越大通常扩散越慢。
     viscosity: number
 
+/// 作物生长行为把有限年龄状态和时间步长绑定为同一份内容契约。生成器与运行时
+/// 都读取这里，不再依赖标签、固定属性名或某个世界生成器的旁路配置。
+export readonly type CropGrowthBlockBehavior:
+    kind: BlockBehaviorKind.cropGrowth
+    ageProperty: string
+    /// 每推进一个年龄状态需要经过的生态 epoch 数。
+    epochsPerStage: number
+
 /// 可燃行为声明被点燃和向邻居传播火焰的概率参数。
-export type FlammableBlockBehavior:
+export readonly type FlammableBlockBehavior:
     kind: BlockBehaviorKind.flammable
     ignitionChance: number
     spreadChance: number
 
 /// 接触伤害行为用于岩浆、仙人掌等会周期性伤害实体的方块。
-export type ContactDamageBlockBehavior:
+export readonly type ContactDamageBlockBehavior:
     kind: BlockBehaviorKind.contactDamage
     /// 每次结算造成的伤害值。
     damage: number
@@ -222,30 +249,30 @@ export type ContactDamageBlockBehavior:
     intervalTicks: number
 
 /// 随机刻由世界调度器抽样触发，handler 指向具体处理逻辑。
-export type RandomTickBlockBehavior:
+export readonly type RandomTickBlockBehavior:
     kind: BlockBehaviorKind.randomTick
     handler: string
 
 /// 计划刻在确定的延迟后触发，适合需要稳定时序的模拟逻辑。
-export type ScheduledTickBlockBehavior:
+export readonly type ScheduledTickBlockBehavior:
     kind: BlockBehaviorKind.scheduledTick
     handler: string
     delayTicks: number
 
 /// 放置行为根据上下文为方向、轴向等属性选择初始值。
-export type PlacementBlockBehavior:
+export readonly type PlacementBlockBehavior:
     kind: BlockBehaviorKind.placement
     strategy: BlockPlacementStrategy
 
 /// 支撑行为在相邻方块变化后检查自身是否仍能存在。
-export type SupportBlockBehavior:
+export readonly type SupportBlockBehavior:
     kind: BlockBehaviorKind.support
     face: BlockSupportFace
     /// 可选标签用于限制支撑方块，例如 plantSupport。
     supportingTag: string?
 
 /// 所有行为记录的联合。kind 字段决定系统读取哪组参数。
-export type BlockBehavior = GravityBlockBehavior | FluidBlockBehavior | FlammableBlockBehavior | ContactDamageBlockBehavior | RandomTickBlockBehavior | ScheduledTickBlockBehavior | PlacementBlockBehavior | SupportBlockBehavior
+export type BlockBehavior = GravityBlockBehavior | FluidBlockBehavior | CropGrowthBlockBehavior | FlammableBlockBehavior | ContactDamageBlockBehavior | RandomTickBlockBehavior | ScheduledTickBlockBehavior | PlacementBlockBehavior | SupportBlockBehavior
 
 /// 状态变体按部分属性匹配，并用声明的完整组件替换基础组件。
 /// when 可以只写关心的属性；同一个具体状态最多命中一个变体。

@@ -1,5 +1,7 @@
-import {BlockPosition, Chunk, ChunkPosition, LocalPosition, WorldManifest, blockIndex, chunkBlock, chunkKey, locateBlock, maximumWorldCoordinate} from "@openvoxel/world"
+import {BlockPosition, ChunkPosition, LocalPosition, WorldManifest, maximumWorldCoordinate, worldEcologyEpoch} from "@openvoxel/world"
 import {BlockOverrideWrite} from "./active-world-state.vel"
+import {commandBlockView} from "./block-command-view.vel"
+import {resolveSupportCascade} from "./block-support.vel"
 import {maximumBlockEditBatchSize} from "./runtime-limits.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
@@ -8,36 +10,36 @@ import {WorldSessionCache} from "./world-sessions.vel"
 ///
 /// 世界身份不放在每一项里：调用者先选择世界，再提交这个世界内的编辑列表。
 /// 这样实时连接绑定世界后不会反复携带、校验可能互相矛盾的 worldId。
-export type BlockEdit:
-    readonly position: readonly BlockPosition
-    readonly blockStateRuntimeId: number
+export readonly type BlockEdit:
+    position: readonly BlockPosition
+    blockStateRuntimeId: number
 
 /// 一项方块修改完成后的应用结果。
 ///
 /// revision 是所属 Chunk 在整个批次提交后的最终版本。同一批次修改同一 Chunk
 /// 的多个方块时，这些结果拥有相同 revision，客户端不会看到批次内部的中间态。
-export type BlockChange:
-    readonly position: readonly BlockPosition
-    readonly chunk: readonly ChunkPosition
-    readonly local: readonly LocalPosition
-    readonly previousBlockStateRuntimeId: number
-    readonly blockStateRuntimeId: number
-    readonly revision: number
-    readonly changed: bool
+export readonly type BlockChange:
+    position: readonly BlockPosition
+    chunk: readonly ChunkPosition
+    local: readonly LocalPosition
+    previousBlockStateRuntimeId: number
+    blockStateRuntimeId: number
+    revision: number
+    changed: bool
 
 /// 一次原子批量修改的完整结果。
-export type BlockChangeBatch:
-    readonly worldId: string
+export readonly type BlockChangeBatch:
+    worldId: string
     /// 同一世界内只对真实变化递增的有序事件号；幂等重放返回当前值。
-    readonly sequence: number
-    readonly changes: readonly List<readonly BlockChange>
+    sequence: number
+    changes: readonly List<BlockChange>
 
 /// 世界命令服务只负责会改变世界状态的应用操作。
 ///
 /// 具体事务和并发写入顺序由 WorldDeltaStore 实现；这里一次解析世界会话、验证
 /// 全部输入并计算稀疏覆盖，任何一项非法都会在写入前拒绝完整批次。
 export type WorldBlockCommands:
-    editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
+    editBlocks: (worldId: string, edits: readonly List<BlockEdit>) -> Promise<BlockChangeBatch>
     drain: (worldId: string) -> Promise<null>
     close: () -> Promise<null>
 
@@ -45,25 +47,24 @@ export type WorldBlockCommands:
 /// 持久化 revision、返回 sequence 和广播入队顺序三者严格一致。
 export def worldBlockCommands(
     sessions: WorldSessionCache,
-    publish: (batch: readonly BlockChangeBatch) -> null,
-    worldMilliseconds: (manifest: readonly WorldManifest) -> number,
+    publish: (batch: BlockChangeBatch) -> null,
+    worldMilliseconds: (manifest: WorldManifest) -> number,
 ) -> WorldBlockCommands:
     const pending: Map<string, Promise<BlockChangeBatch>> = Map()
     let closed = false
 
-    async def performEdit(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
+    async def performEdit(worldId: string, edits: readonly List<BlockEdit>) -> BlockChangeBatch:
         if edits.size < 1: throw WorldRequestError("A block edit batch cannot be empty")
         if edits.size > maximumBlockEditBatchSize:
             throw WorldRequestError(f"A block edit batch cannot exceed {maximumBlockEditBatchSize} entries")
         const lease = await sessions.require(worldId)
         try:
             const world = lease.world
-            const generatedChunks: Map<string, Chunk> = Map()
+            // 一批命令只读取一次权威时钟；可见快照与新种植锚点必须属于同一
+            // ecology epoch，不能因验证或存储等待跨槽而产生半批次时间差。
+            const commandWorldMilliseconds = worldMilliseconds(world.manifest)
+            const commandEcologyEpoch = worldEcologyEpoch(commandWorldMilliseconds)
             const seenPositions: Set<string> = Set()
-            const chunks: List<ChunkPosition> = []
-            const locals: List<LocalPosition> = []
-            const bases: List<number> = []
-            const writes: List<BlockOverrideWrite> = []
 
             for edit in edits:
                 const position = edit.position
@@ -75,49 +76,57 @@ export def worldBlockCommands(
                 world.blocks.registry.requireStateByRuntimeId(edit.blockStateRuntimeId)
                 world.blocks.index.requireRuntimeId(edit.blockStateRuntimeId)
 
-                const located = locateBlock(edit.position, world.manifest.chunkEdge)
-                const positionKey = f"{located.chunk.x}:{located.chunk.y}:{located.chunk.z}:{located.local.x}:{located.local.y}:{located.local.z}"
+                const positionKey = f"{position.x}:{position.y}:{position.z}"
                 if positionKey in seenPositions:
                     throw WorldRequestError(f"A block edit batch contains duplicate position {edit.position.x},{edit.position.y},{edit.position.z}")
                 seenPositions.add(positionKey)
 
-                const generatedKey = chunkKey(located.chunk)
-                let generated = generatedChunks.get(generatedKey)
-                if generated == null:
-                    generated = world.generator.generate(located.chunk)
-                    generatedChunks.set(generatedKey, generated)
-                const baseBlockStateRuntimeId = chunkBlock(generated!, located.local)
-                const seasonal = world.generator.seasonalSurfaces(located.chunk).some(candidate => blockIndex(candidate.position, world.manifest.chunkEdge) == blockIndex(located.local, world.manifest.chunkEdge))
-
-                chunks.append(located.chunk)
-                locals.append(located.local)
-                bases.append(baseBlockStateRuntimeId)
+            const view = commandBlockView(world.manifest.chunkEdge, world.generator, world.ecology, world.state, commandWorldMilliseconds)
+            const resolvedEdits = await resolveSupportCascade(edits, view.blockStateRuntimeIds, world.blocks.registry, maximumBlockEditBatchSize)
+            const snapshots = await view.snapshots(resolvedEdits.map(edit => edit.position))
+            assert snapshots.size == resolvedEdits.size else "Command block view returned an incomplete edit batch"
+            const writes: List<BlockOverrideWrite> = []
+            for edit, index in resolvedEdits:
+                const snapshot = snapshots[index]
+                const visibleRuntimeId = snapshot.visibleBlockStateRuntimeId
+                const stored = snapshot.stored
+                let storedRuntimeId: number? = null
+                let growthOriginEpoch: number? = null
+                if stored != null and edit.blockStateRuntimeId == visibleRuntimeId:
+                    storedRuntimeId = stored.blockStateRuntimeId
+                    if world.ecology.isGrowingCrop(stored.blockStateRuntimeId):
+                        growthOriginEpoch = stored.growthOriginEpoch
+                else:
+                    // 自然生态位置即使写回生成基线也必须保留玩家意图，防止下一
+                    // epoch 覆盖。新种下或显式重置的作物从本批次 epoch 重新计龄。
+                    storedRuntimeId = edit.blockStateRuntimeId == snapshot.baseBlockStateRuntimeId and not snapshot.ecological ? null : edit.blockStateRuntimeId
+                    if storedRuntimeId != null and world.ecology.isGrowingCrop(edit.blockStateRuntimeId):
+                        growthOriginEpoch = commandEcologyEpoch
                 writes.append({
-                    chunk: located.chunk,
-                    local: located.local,
-                    // 恢复到固定地形时删除覆盖，数据库只保存与种子生成结果不同的值。
-                    blockStateRuntimeId: edit.blockStateRuntimeId == baseBlockStateRuntimeId and not seasonal ? null : edit.blockStateRuntimeId,
+                    chunk: snapshot.chunk,
+                    local: snapshot.local,
+                    blockStateRuntimeId: storedRuntimeId,
+                    growthOriginEpoch,
+                    visibleChanged: visibleRuntimeId != edit.blockStateRuntimeId,
                 })
-
-            const visibleDeltas = await world.ecology.deltas(chunks.keyBy(position => chunkKey(position)).values(), worldMilliseconds(world.manifest))
-            const visibleBlocks: Map<string, number> = Map()
-            for delta in visibleDeltas:
-                for entry in delta.overrides:
-                    visibleBlocks.set(f"{chunkKey(delta.position)}:{blockIndex(entry.position, world.manifest.chunkEdge)}", entry.blockStateRuntimeId)
             const commits = await world.state.commitBlocks(writes)
-            assert commits.size == edits.size else "World delta store returned an incomplete block edit batch"
+            assert commits.size == resolvedEdits.size else "World delta store returned an incomplete block edit batch"
             const changes: List<BlockChange> = []
-            for index in range(edits.size):
-                const edit = edits[index]
+            for index in range(resolvedEdits.size):
+                const edit = resolvedEdits[index]
+                const snapshot = snapshots[index]
                 const commit = commits[index]
+                const previousBlockStateRuntimeId = snapshot.visibleBlockStateRuntimeId
                 changes.append({
                     position: edit.position,
-                    chunk: chunks[index],
-                    local: locals[index],
-                    previousBlockStateRuntimeId: visibleBlocks.get(f"{chunkKey(chunks[index])}:{blockIndex(locals[index], world.manifest.chunkEdge)}") ?? bases[index],
+                    chunk: snapshot.chunk,
+                    local: snapshot.local,
+                    previousBlockStateRuntimeId,
                     blockStateRuntimeId: edit.blockStateRuntimeId,
                     revision: commit.revision,
-                    changed: commit.changed,
+                    // 内部 ownership / 生长锚点只推进 storageRevision；公开 revision
+                    // 与 sequence 都仅随可见 runtimeId 改变，旁观者不会看到版本空洞。
+                    changed: previousBlockStateRuntimeId != edit.blockStateRuntimeId,
                 })
             const changed = changes.some(change => change.changed)
             if changed: world.sequence += 1
@@ -126,7 +135,7 @@ export def worldBlockCommands(
             return batch
         finally: await lease.close()
 
-    async def editBlocks(worldId: string, edits: readonly List<readonly BlockEdit>) -> BlockChangeBatch:
+    async def editBlocks(worldId: string, edits: readonly List<BlockEdit>) -> BlockChangeBatch:
         assert not closed else "World block command service is closed"
         const previous = pending.get(worldId)
 

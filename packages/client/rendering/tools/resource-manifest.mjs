@@ -22,6 +22,9 @@ const transformFields = ["rotate", "flipX", "flipY", "shiftX", "shiftY", "hue", 
 const textureFields = ["key", "surface", "file", "maps", "transform", "weight", "variants"];
 const variantFields = ["weight", "transform", "layers"];
 const layerFields = ["albedo", "maps", "mask", "opacity", "blend", "transform"];
+const materialFields = ["key", "precipitationSurface", "materialEffect", "waterOptics", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"];
+const waterOpticsFields = ["indexOfRefraction", "roughness", "normalStrength", "waves"];
+const waterWaveFields = ["normalTexture", "scale", "speed", "directionX", "directionZ"];
 
 function isCategoryPng(file, category) {
   return file.startsWith(`textures/${category}/`)
@@ -91,6 +94,41 @@ function requireOptionalTransform(value, label) {
 function requireSectionEntries(values, label, fields) {
   for (const [index, raw] of requireList(values, label).entries()) {
     requireKnownFields(requireRecord(raw, `${label} entry ${index}`), fields, `${label} entry ${index}`);
+  }
+}
+
+function requireMaterialDefinition(raw, index) {
+  const label = `materials entry ${index}`;
+  const material = requireKnownFields(requireRecord(raw, label), materialFields, label);
+  if (!["none", "solid", "water"].includes(material.precipitationSurface)) {
+    throw new Error(`Material ${material.key} precipitationSurface must be none, solid, or water`);
+  }
+  const materialEffect = requireText(material.materialEffect, `Material ${material.key} materialEffect`);
+  if (!["standard", "water"].includes(materialEffect)) throw new Error(`Material ${material.key} materialEffect must be standard or water`);
+  if (materialEffect === "standard") {
+    if (material.waterOptics !== null) throw new Error(`Standard material ${material.key} must set waterOptics to null`);
+    return;
+  }
+  if (material.precipitationSurface !== "water") throw new Error(`Water material ${material.key} must use the water precipitation surface`);
+  const optics = requireKnownFields(requireRecord(material.waterOptics, `Water material ${material.key} optics`), waterOpticsFields, `Water material ${material.key} optics`);
+  requireNumber(optics.indexOfRefraction, 1, 2, `Water material ${material.key} indexOfRefraction`);
+  requireNumber(optics.roughness, 0, 1, `Water material ${material.key} roughness`);
+  requireNumber(optics.normalStrength, 0, 1, `Water material ${material.key} normalStrength`);
+  const waves = requireList(optics.waves, `Water material ${material.key} waves`);
+  if (waves.length !== 2) throw new RangeError(`Water material ${material.key} must declare exactly two normal waves`);
+  const normalTextures = new Set();
+  for (const [waveIndex, rawWave] of waves.entries()) {
+    const waveLabel = `Water material ${material.key} wave ${waveIndex}`;
+    const wave = requireKnownFields(requireRecord(rawWave, waveLabel), waterWaveFields, waveLabel);
+    const normalTexture = requireText(wave.normalTexture, `${waveLabel} normalTexture`);
+    if (normalTextures.has(normalTexture)) throw new Error(`Water material ${material.key} repeats normal texture ${normalTexture}`);
+    normalTextures.add(normalTexture);
+    requireNumber(wave.scale, 0.001, 4, `${waveLabel} scale`);
+    requireNumber(wave.speed, 0, 4, `${waveLabel} speed`);
+    const directionX = requireNumber(wave.directionX, -1, 1, `${waveLabel} directionX`);
+    const directionZ = requireNumber(wave.directionZ, -1, 1, `${waveLabel} directionZ`);
+    const directionLength = Math.hypot(directionX, directionZ);
+    if (directionLength < 0.999 || directionLength > 1.001) throw new RangeError(`${waveLabel} direction must be normalized`);
   }
 }
 
@@ -199,17 +237,12 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     "tints",
     "animations",
   ], "Client resource pack manifest");
-  if (manifest.formatVersion !== 10) throw new Error("Unsupported client resource pack source format");
+  if (manifest.formatVersion !== 11) throw new Error("Unsupported client resource pack source format");
   const owner = requireText(manifest.owner, "Client resource pack owner");
   if (!/^[a-z][a-z0-9_.-]*$/u.test(owner)) throw new Error("Client resource pack owner is invalid");
   const environment = environmentDefinition(manifest.environment);
-  requireSectionEntries(manifest.models, "models", ["key", "kind"]);
-  requireSectionEntries(manifest.materials, "materials", ["key", "precipitationSurface", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"]);
-  for (const material of manifest.materials) {
-    if (!["none", "solid", "water"].includes(material.precipitationSurface)) {
-      throw new Error(`Material ${material.key} precipitationSurface must be none, solid, or water`);
-    }
-  }
+  requireSectionEntries(manifest.models, "models", ["key", "kind", "geometry"]);
+  for (const [index, material] of requireList(manifest.materials, "materials").entries()) requireMaterialDefinition(material, index);
   requireSectionEntries(manifest.tints, "tints", ["key", "climate", "coverage", "red", "green", "blue"]);
   requireSectionEntries(manifest.animations, "animations", ["key", "frameDurationMs", "frames"]);
 

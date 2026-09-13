@@ -3,34 +3,38 @@ import {selectQuery, sqlAnd, sqlAscending, sqlColumn, sqlColumnEqual, sqlEqual, 
 import {SqliteConnection, SqliteTransaction} from "@velarscript-labs/sqlite"
 import {requireBlockStateRuntimeId} from "@openvoxel/blocks"
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
-import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "@openvoxel/world-runtime"
+import {StoredBlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "@openvoxel/world-runtime"
 
 type ChunkDeltaRow:
     chunkX: number
     chunkY: number
     chunkZ: number
     revision: number
+    storageRevision: number
     localX: number?
     localY: number?
     localZ: number?
     blockStateRuntimeId: number?
+    growthOriginEpoch: number?
 
 type ChunkStateRow:
     chunkX: number
     chunkY: number
     chunkZ: number
     revision: number
+    storageRevision: number
 
 /// SQL 行聚合阶段需要逐项 append；完成后再一次性投影成对外只读 StoredChunkDelta。
 type MutableStoredChunkDelta:
     position: ChunkPosition
     revision: number
-    overrides: List<BlockOverride>
+    storageRevision: number
+    overrides: List<StoredBlockOverride>
 
 def findChunkStatesOperation(worldId: string, coordinates: List<List<unknown>>) -> DatabaseQuery<ChunkStateRow>:
     return query(
         trustedSqlTemplate([
-            `SELECT chunk_x AS "chunkX", chunk_y AS "chunkY", chunk_z AS "chunkZ", revision FROM chunk_states WHERE world_id = `,
+            `SELECT chunk_x AS "chunkX", chunk_y AS "chunkY", chunk_z AS "chunkZ", revision, storage_revision AS "storageRevision" FROM chunk_states WHERE world_id = `,
             " AND (chunk_x, chunk_y, chunk_z) IN (SELECT CAST(json_extract(value, '$[0]') AS INTEGER), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER) FROM json_each(",
             "))",
         ], [worldId, Json.stableStringify(coordinates)]),
@@ -40,8 +44,8 @@ def findChunkStatesOperation(worldId: string, coordinates: List<List<unknown>>) 
 
 def saveChunkStatesOperation(rows: List<List<unknown>>) -> DatabaseCommand:
     return command(trustedSqlTemplate([
-        "INSERT INTO chunk_states (world_id, chunk_x, chunk_y, chunk_z, revision) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER) FROM json_each(",
-        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z) DO UPDATE SET revision = excluded.revision",
+        "INSERT INTO chunk_states (world_id, chunk_x, chunk_y, chunk_z, revision, storage_revision) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER), CAST(json_extract(value, '$[5]') AS INTEGER) FROM json_each(",
+        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z) DO UPDATE SET revision = excluded.revision, storage_revision = excluded.storage_revision",
     ], [Json.stableStringify(rows)]), minimumAffected = rows.size, maximumAffected = rows.size)
 
 def removeBlockOverridesOperation(worldId: string, coordinates: List<List<unknown>>) -> DatabaseCommand:
@@ -53,8 +57,8 @@ def removeBlockOverridesOperation(worldId: string, coordinates: List<List<unknow
 
 def saveBlockOverridesOperation(rows: List<List<unknown>>) -> DatabaseCommand:
     return command(trustedSqlTemplate([
-        "INSERT INTO block_overrides (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z, block_state_runtime_id) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER), CAST(json_extract(value, '$[5]') AS INTEGER), CAST(json_extract(value, '$[6]') AS INTEGER), CAST(json_extract(value, '$[7]') AS INTEGER) FROM json_each(",
-        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) DO UPDATE SET block_state_runtime_id = excluded.block_state_runtime_id",
+        "INSERT INTO block_overrides (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z, block_state_runtime_id, growth_origin_epoch) SELECT CAST(json_extract(value, '$[0]') AS TEXT), CAST(json_extract(value, '$[1]') AS INTEGER), CAST(json_extract(value, '$[2]') AS INTEGER), CAST(json_extract(value, '$[3]') AS INTEGER), CAST(json_extract(value, '$[4]') AS INTEGER), CAST(json_extract(value, '$[5]') AS INTEGER), CAST(json_extract(value, '$[6]') AS INTEGER), CAST(json_extract(value, '$[7]') AS INTEGER), CAST(json_extract(value, '$[8]') AS INTEGER) FROM json_each(",
+        ") WHERE 1 = 1 ON CONFLICT(world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z) DO UPDATE SET block_state_runtime_id = excluded.block_state_runtime_id, growth_origin_epoch = excluded.growth_origin_epoch",
     ], [Json.stableStringify(rows)]), minimumAffected = rows.size, maximumAffected = rows.size)
 
 /// 查询聚合和乐观 revision 提交共同属于玩家增量持久化。
@@ -77,10 +81,12 @@ export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
                 sqlNamedField("chunk_y", alias="chunkY", qualifier="state"),
                 sqlNamedField("chunk_z", alias="chunkZ", qualifier="state"),
                 sqlNamedField("revision", qualifier="state"),
+                sqlNamedField("storage_revision", alias="storageRevision", qualifier="state"),
                 sqlNamedField("local_x", alias="localX", qualifier="override"),
                 sqlNamedField("local_y", alias="localY", qualifier="override"),
                 sqlNamedField("local_z", alias="localZ", qualifier="override"),
                 sqlNamedField("block_state_runtime_id", alias="blockStateRuntimeId", qualifier="override"),
+                sqlNamedField("growth_origin_epoch", alias="growthOriginEpoch", qualifier="override"),
             ],
             ChunkDeltaRow,
             joins=[sqlLeftJoin(overrideTable, sqlAnd([
@@ -117,20 +123,22 @@ export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
             const existingIndex = indices.get(key)
             let deltaIndex = 0
             if existingIndex == null:
-                const overrides: List<BlockOverride> = []
-                deltas.append({position, revision: row.revision, overrides})
+                const overrides: List<StoredBlockOverride> = []
+                deltas.append(MutableStoredChunkDelta.from(row, {position, overrides}))
                 deltaIndex = deltas.size - 1
                 indices.set(key, deltaIndex)
             else: deltaIndex = existingIndex
             if row.localX != null and row.localY != null and row.localZ != null and row.blockStateRuntimeId != null:
                 requireBlockStateRuntimeId(row.blockStateRuntimeId)
+                assert row.growthOriginEpoch == null or (row.growthOriginEpoch.isInteger() and row.growthOriginEpoch >= 0) else "Stored block growth origin epoch must be a non-negative integer or null"
                 deltas[deltaIndex].overrides.append({
                     position: {x: row.localX, y: row.localY, z: row.localZ},
                     blockStateRuntimeId: row.blockStateRuntimeId,
+                    growthOriginEpoch: row.growthOriginEpoch,
                 })
         return deltas.map(delta => StoredChunkDelta.from(delta))
 
-    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+    async def commitChunks(worldId: string, commits: readonly List<ChunkDeltaCommit>):
         if commits.size == 0: return
         const chunkCoordinates: List<List<unknown>> = []
         const chunkStateRows: List<List<unknown>> = []
@@ -138,19 +146,21 @@ export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
         const savedOverrideRows: List<List<unknown>> = []
         const seenChunks: Set<string> = Set()
         for commit in commits:
-            assert commit.expectedRevision.isInteger() and commit.expectedRevision >= 0 else "Expected Chunk revision must be a non-negative integer"
-            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
+            assert commit.expectedStorageRevision.isInteger() and commit.expectedStorageRevision >= 0 else "Expected Chunk storage revision must be a non-negative integer"
+            assert commit.storageRevision == commit.expectedStorageRevision + 1 else "Chunk storage revision must advance exactly once"
+            assert commit.revision.isInteger() and commit.revision >= 0 and commit.revision <= commit.storageRevision else "Chunk visible revision must fit its storage revision"
             const key = chunkKey(commit.position)
             assert key not in seenChunks else f"SQLite Chunk batch contains duplicate position {key}"
             seenChunks.add(key)
             chunkCoordinates.append([commit.position.x, commit.position.y, commit.position.z])
-            chunkStateRows.append([worldId, commit.position.x, commit.position.y, commit.position.z, commit.revision])
+            chunkStateRows.append([worldId, commit.position.x, commit.position.y, commit.position.z, commit.revision, commit.storageRevision])
             const seenLocals: Set<string> = Set()
             for write in commit.writes:
                 const localKey = f"{write.position.x}:{write.position.y}:{write.position.z}"
                 assert localKey not in seenLocals else f"SQLite Chunk commit contains duplicate local position {localKey}"
                 seenLocals.add(localKey)
                 if write.blockStateRuntimeId == null:
+                    assert write.growthOriginEpoch == null else "A removed block override cannot retain a growth origin epoch"
                     removedOverrideCoordinates.append([
                         commit.position.x,
                         commit.position.y,
@@ -161,6 +171,7 @@ export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
                     ])
                 else:
                     requireBlockStateRuntimeId(write.blockStateRuntimeId)
+                    assert write.growthOriginEpoch == null or (write.growthOriginEpoch.isInteger() and write.growthOriginEpoch >= 0) else "Block growth origin epoch must be a non-negative integer or null"
                     savedOverrideRows.append([
                         worldId,
                         commit.position.x,
@@ -170,22 +181,26 @@ export def sqliteWorldDeltas(database: SqliteConnection) -> WorldDeltaStore:
                         write.position.y,
                         write.position.z,
                         write.blockStateRuntimeId,
+                        write.growthOriginEpoch,
                     ])
 
         async def transactionOperation(transaction: SqliteTransaction):
             const executor = transaction.executor()
             // 坐标和值作为一个 JSON 参数交给 SQLite 的 json_each 展开。这样每组
             // 操作都保持固定 SQL 形状，不受 999 个绑定参数限制，也不需要逐项执行。
-            const revisions: Map<string, number> = Map()
+            const revisions: Map<string, readonly ChunkStateRow> = Map()
             const storedStates = await all(executor, findChunkStatesOperation(worldId, chunkCoordinates))
             for state in storedStates:
                 const key = f"{state.chunkX}:{state.chunkY}:{state.chunkZ}"
                 assert revisions.get(key) == null else f"SQLite returned duplicate Chunk state {key}"
-                revisions.set(key, state.revision)
+                revisions.set(key, state)
             for commit in commits:
                 const key = chunkKey(commit.position)
-                const currentRevision = revisions.get(key) ?? 0
-                assert currentRevision == commit.expectedRevision else f"Chunk revision conflict at {key}: expected {commit.expectedRevision}, stored {currentRevision}"
+                const current = revisions.get(key)
+                const currentRevision = current?.revision ?? 0
+                const currentStorageRevision = current?.storageRevision ?? 0
+                assert currentStorageRevision == commit.expectedStorageRevision else f"Chunk storage revision conflict at {key}: expected {commit.expectedStorageRevision}, stored {currentStorageRevision}"
+                assert commit.revision == currentRevision or commit.revision == currentRevision + 1 else f"Chunk visible revision must stay or advance exactly once at {key}"
             // 先建立或推进 Chunk 状态，再写覆盖，满足 block_overrides 外键。
             await execute(executor, saveChunkStatesOperation(chunkStateRows))
             if removedOverrideCoordinates.size > 0:

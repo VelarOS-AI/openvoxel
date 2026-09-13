@@ -29,7 +29,7 @@ test "mesh initialization failure still closes its Worker exactly once":
     let workerClosed = 0
     async def closeWorker(): workerClosed += 1
     async def initialize(): throw Error("worker initialization failed")
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         return mesh(ticket)
     const owner = chunkMeshing(state, 16, [position], {
         initialize, build, close: closeWorker,
@@ -49,7 +49,7 @@ test "mesh initialization failure still closes its Worker exactly once":
 test "a newly streamed Chunk with an unchanged complete delta still enters meshing":
     const state = clientWorldState("mesh-owner", 16)
     let builds = 0
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         builds += 1
         return mesh(ticket)
     const owner = chunkMeshing(state, 16, [], {
@@ -88,9 +88,9 @@ test "superseded GPU commit remains owned and rebuilds with a strictly newer tic
     let releaseFirst = false
     let ready = 0
     def becameReady(): ready += 1
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         return mesh(ticket)
-    async def enqueue(value: readonly ChunkMesh) -> bool:
+    async def enqueue(value: ChunkMesh) -> bool:
         uploads.append(value.ticket)
         if uploads.size == 1:
             while not releaseFirst: await Promise.sleep(0ms)
@@ -123,9 +123,9 @@ test "a late GPU commit for an evicted Chunk is removed after its physical insta
     let release = false
     let installed = false
     let removed = 0
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         return mesh(ticket)
-    async def enqueue(_mesh: readonly ChunkMesh) -> bool:
+    async def enqueue(_mesh: ChunkMesh) -> bool:
         uploading = true
         while not release: await Promise.sleep(0ms)
         installed = true
@@ -161,11 +161,11 @@ test "mesh close rejects late worker work without touching the released Surface"
     const failures: List<string> = []
     async def closeWorker(): workerClosed += 1
     def changed(): changes += 1
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         building = true
         while not release: await Promise.sleep(0ms)
         return mesh(ticket)
-    async def enqueue(_mesh: readonly ChunkMesh) -> bool:
+    async def enqueue(_mesh: ChunkMesh) -> bool:
         uploads += 1
         return true
     const owner = chunkMeshing(state, 16, [position], {
@@ -194,7 +194,7 @@ test "meshing owns resident topology without repeated world-state snapshots":
         return source.trackedPositions()
     const state = ClientWorldState.from(source, {trackedPositions})
     let builds = 0
-    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
         builds += 1
         return mesh(ticket)
     const owner = chunkMeshing(state, 16, [position], {

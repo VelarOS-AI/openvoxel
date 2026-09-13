@@ -1,9 +1,24 @@
-import {ChunkPosition, chunkKey, worldEnvironmentAt} from "@openvoxel/world"
+import {ChunkPosition, WorldClimateDefinition, defaultWorldClimate, chunkKey, worldEnvironmentAt} from "@openvoxel/world"
 import {uint16Buffer} from "velar/binary"
 import {Cancellation, task} from "velar/task"
 import {expect} from "velar/test"
 import {sessionEnvironment} from "../src/session-environment.vel"
 import {clientWorldState} from "../src/world-state.vel"
+
+test "client environment retains custom climate while advancing time and moving the sample position":
+    const climate = WorldClimateDefinition.from(defaultWorldClimate, {temperaturePeriod: 512, humidityPeriod: 640, seaLevel: 80})
+    let now = 0
+    async def synchronize(positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null):
+        return null
+    const environment = sessionEnvironment("custom-climate", clientWorldState("custom-climate", 16), () => now, synchronize, () => true, climate)
+    try:
+        environment.install(worldEnvironmentAt("custom-climate", 40_000, {x: 0, y: 80, z: 0}, climate))
+        now = 50_000
+        const position = {x: -2300, y: 140, z: 1300}
+        const expected = worldEnvironmentAt("custom-climate", 90_000, position, climate)
+        expect(expected.precipitation != worldEnvironmentAt("custom-climate", 90_000, position).precipitation).toBe(true)
+        expect(environment.sample(position)).toEqual(expected)
+    finally: environment.close()
 
 test "ecology forwards its owner's cancellation into pending synchronization and retains retry work":
     const position: ChunkPosition = {x: 0, y: 4, z: 0}
@@ -51,3 +66,48 @@ test "ecology forwards its owner's cancellation into pending synchronization and
     finally:
         await owner.cancel("Ecology test finished")
         ecology.close()
+
+test "ecology refresh converges a 474 Chunk window with bounded batches and epoch fairness":
+    const worldId = "ecology-resident-window"
+    const positions: List<readonly ChunkPosition> = []
+    for index in range(474): positions.append({x: index % 79, y: 4, z: (index / 79).floor()})
+    const emptyIndices = uint16Buffer(4096)
+    const state = clientWorldState(worldId, 16)
+    state.rememberTerrain({
+        worldId,
+        chunks: positions.map(position => {position, edge: 16, palette: [0], indices: emptyIndices}),
+    })
+    const requested: List<string> = []
+    const batchSizes: List<number> = []
+    let now = 0
+
+    async def synchronize(batch: readonly List<readonly ChunkPosition>, _cancellation: Cancellation? = null):
+        batchSizes.append(batch.size)
+        for position in batch: requested.append(chunkKey(position))
+
+    const ecology = sessionEnvironment(worldId, state, () => now, synchronize, () => true)
+    ecology.install(worldEnvironmentAt(worldId, 0, {x: 0, y: 64, z: 0}))
+    try:
+        now = 30_000
+        for _index in range(3): expect(await ecology.refresh()).toBe(true)
+        expect(requested).toEqual(positions.slice(0, 12).map(position => chunkKey(position)))
+
+        // 新 epoch 不会把旧队列中的尾部重新放到队首；尚未处理的 Chunk 先完成，
+        // 已在上一 epoch 处理的十二个 Chunk 才排到队尾。
+        now = 60_000
+        requested.clear()
+        let passes = 0
+        while await ecology.refresh():
+            passes += 1
+            assert passes <= 119 else "A resident ecology window failed to converge"
+        const expected: List<string> = []
+        for position in positions.slice(12): expected.append(chunkKey(position))
+        for position in positions.slice(0, 12): expected.append(chunkKey(position))
+        expect(requested).toEqual(expected)
+        expect(passes).toBe(119)
+        expect(batchSizes.every(size => size > 0 and size <= 4)).toBe(true)
+
+        const completedRequestCount = requested.size
+        expect(await ecology.refresh()).toBe(false)
+        expect(requested.size).toBe(completedRequestCount)
+    finally: ecology.close()

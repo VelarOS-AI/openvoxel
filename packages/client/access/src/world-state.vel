@@ -13,17 +13,17 @@ export enum ClientWorldChangeKind:
 /// 派生视图只订阅已经落入 ClientWorldState 的事实，不接触传输 requestId。
 /// changes 在整块地形/增量替换时为空；实时编辑时保留局部坐标，便于调用方判断
 /// Chunk 边界的相邻网格是否也需要失效。
-export type ClientWorldChange:
-    readonly kind: ClientWorldChangeKind
-    readonly generation: number
-    readonly sequence: number
-    readonly positions: readonly List<readonly ChunkPosition>
-    readonly changes: readonly List<readonly RealtimeBlockChange>
+export readonly type ClientWorldChange:
+    kind: ClientWorldChangeKind
+    generation: number
+    sequence: number
+    positions: readonly List<readonly ChunkPosition>
+    changes: readonly List<RealtimeBlockChange>
 
 export type ClientWorldChangeSubscription:
     close: () -> null
 
-export type ClientWorldChangeListener = (event: readonly ClientWorldChange) -> null
+export type ClientWorldChangeListener = (event: ClientWorldChange) -> null
 
 /// 一个世界在客户端内存中的冷热数据组合状态。
 ///
@@ -32,7 +32,7 @@ export type ClientWorldChangeListener = (event: readonly ClientWorldChange) -> n
 /// 跟踪 Chunk 做完整增量同步即可恢复。
 export type ClientWorldState:
     beginConnection: (event: readonly WorldReadyEvent) -> null
-    rememberTerrain: (response: readonly ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>
+    rememberTerrain: (response: ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>
     forgetChunks: (positions: readonly List<readonly ChunkPosition>) -> null
     replaceDeltas: (event: readonly ChunksSyncedEvent) -> null
     applyChanges: (event: readonly WorldBlocksChangedEvent) -> null
@@ -59,7 +59,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
     def publish(
         kind: ClientWorldChangeKind,
         positions: readonly List<readonly ChunkPosition>,
-        changes: readonly List<readonly RealtimeBlockChange> = [],
+        changes: readonly List<RealtimeBlockChange> = [],
     ):
         if positions.size == 0: return
         const event: ClientWorldChange = {
@@ -97,7 +97,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
             for key in chunks: pendingResyncChunks.add(key)
             publish(ClientWorldChangeKind.synchronizationStarted, trackedPositions())
 
-    def rememberTerrain(response: readonly ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>:
+    def rememberTerrain(response: ClientTerrainBatchSnapshot) -> readonly List<readonly ClientChunkState>:
         assert response.worldId == worldId else "Client terrain response belongs to a different world"
         const output: List<ClientChunkState> = []
         for terrain in response.chunks:
@@ -155,7 +155,7 @@ export def clientWorldState(worldId: string, edge: number) -> ClientWorldState:
         pendingResyncChunks.clear()
         for key in chunks: pendingResyncChunks.add(key)
 
-    def applyBatch(sequence: number, changes: readonly List<readonly RealtimeBlockChange>):
+    def applyBatch(sequence: number, changes: readonly List<RealtimeBlockChange>):
         assert sequence.isInteger() and sequence >= 0 else "Client world sequence must be a non-negative integer"
         // 广播与请求确认会携带同一批次的 sequence；先到的一方已经提交状态，
         // 后到的一方必须幂等丢弃，不能重复发布失效并触发第二次构网。

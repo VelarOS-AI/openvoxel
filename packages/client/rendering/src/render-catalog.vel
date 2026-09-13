@@ -1,20 +1,20 @@
-import {BlockComponentProfile, BlockPropertyValue, BlockRenderLayer, BlockShapeKind, PackedBlockStateDefinition, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {BlockComponentProfile, BlockPropertyValue, BlockRenderAttachment, BlockRenderLayer, BlockShapeKind, BlockTextures, PackedBlockStateDefinition, findFluidBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
-import {ClientBlockCollisionBox, ClientBlockModelKind, ClientClimateTint, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures, ClientTintCoverage} from "./contracts.vel"
-import {ClientAnimationResource, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
+import {ClientBlockCollisionBox, ClientBlockModelKind, ClientClimateTint, ClientRenderAttachment, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures, ClientTintCoverage} from "./contracts.vel"
+import {ClientAnimationResource, ClientMaterialEffect, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
 export type ClientRenderCatalog:
     readonly resourceHash: string
     readonly targetContentHash: string
-    readonly textureBanks: readonly List<readonly ClientTextureBank>
-    readonly environment: readonly ClientResourceEnvironment
-    readonly materials: readonly List<readonly ClientMaterialResource>
-    readonly textures: readonly List<readonly ClientTextureResource>
-    readonly animations: readonly List<readonly ClientAnimationResource>
-    readonly states: readonly List<readonly ClientRenderState>
-    requireState: (runtimeId: number) -> readonly ClientRenderState
+    readonly textureBanks: readonly List<ClientTextureBank>
+    readonly environment: ClientResourceEnvironment
+    readonly materials: readonly List<ClientMaterialResource>
+    readonly textures: readonly List<ClientTextureResource>
+    readonly animations: readonly List<ClientAnimationResource>
+    readonly states: readonly List<ClientRenderState>
+    requireState: (runtimeId: number) -> ClientRenderState
 
-def propertyValue(state: readonly PackedBlockStateDefinition, name: string) -> BlockPropertyValue?:
+def propertyValue(state: PackedBlockStateDefinition, name: string) -> BlockPropertyValue?:
     const property = state.properties.find(candidate => candidate.name == name)
     return property?.value
 
@@ -25,9 +25,9 @@ def optionalNumber(value: BlockPropertyValue?) -> number?: return (value is numb
 def optionalBool(value: BlockPropertyValue?) -> bool?: return (value is bool) ? value : null
 
 def resolvedCollisionBoxes(
-    profile: readonly BlockComponentProfile,
-    state: readonly PackedBlockStateDefinition,
-) -> readonly List<readonly ClientBlockCollisionBox>:
+    profile: BlockComponentProfile,
+    state: PackedBlockStateDefinition,
+) -> readonly List<ClientBlockCollisionBox>:
     const resolved = resolveBlockShapeBoxes(profile.physics.collision, state.properties)
     if profile.physics.collision.kind != BlockShapeKind.empty:
         assert resolved.size > 0 else f"Colliding state {state.stateKey} does not declare resolvable shape boxes"
@@ -37,39 +37,117 @@ def requireCoverage(required: readonly List<string>, available: Set<string>, lab
     for key in required: assert key in available else f"Client resource pack does not provide {label} {key}"
 
 def resolvedTextures(
-    profile: readonly BlockComponentProfile,
-    textures: Map<string, readonly ClientRenderTexture>,
-) -> readonly ClientResolvedBlockTextures?:
-    const declared = profile.render.textures
+    declared: BlockTextures?,
+    textures: Map<string, ClientRenderTexture>,
+) -> ClientResolvedBlockTextures?:
     if declared == null: return null
     const topKey = declared.all ?? declared.top
     const bottomKey = declared.all ?? declared.bottom
     const sideKey = declared.all ?? declared.side
+    const frontKey = declared.front
     assert topKey != null and bottomKey != null and sideKey != null else "Rendered block does not resolve top, bottom, and side textures"
     const top = textures.get(topKey)
     const bottom = textures.get(bottomKey)
     const side = textures.get(sideKey)
+    const front = frontKey == null ? null : textures.get(frontKey)
     assert top != null else f"Client resource pack does not provide texture {topKey}"
     assert bottom != null else f"Client resource pack does not provide texture {bottomKey}"
     assert side != null else f"Client resource pack does not provide texture {sideKey}"
-    return {top, bottom, side}
+    if frontKey != null: assert front != null else f"Client resource pack does not provide texture {frontKey}"
+    return {top, bottom, side, front}
+
+def resolvedAttachment(
+    source: BlockRenderAttachment,
+    state: PackedBlockStateDefinition,
+    emission: number,
+    models: Map<string, ClientModelResource>,
+    materials: Map<string, ClientMaterialResource>,
+    textureBanks: Map<string, ClientTextureBank>,
+    renderTextures: Map<string, ClientRenderTexture>,
+    tints: Map<string, ClientTintResource>,
+    animations: Map<string, ClientAnimationResource>,
+) -> ClientRenderAttachment:
+    assert source.layer == BlockRenderLayer.cutout else f"Render attachment on {state.stateKey} must use the cutout layer"
+    const model = models.get(source.model)
+    assert model != null else f"Render attachment on {state.stateKey} references unknown model {source.model}"
+    assert model.kind in [ClientBlockModelKind.submergedCross, ClientBlockModelKind.submergedSurface, ClientBlockModelKind.wallOverlay] else f"Render attachment on {state.stateKey} uses a volume-owning model"
+    const material = materials.get(source.material)
+    assert material != null else f"Render attachment on {state.stateKey} references unknown material {source.material}"
+    assert material.materialEffect == ClientMaterialEffect.standard else f"Render attachment on {state.stateKey} cannot create a second water volume"
+    const stateTextures = resolvedTextures(source.textures, renderTextures)
+    assert stateTextures != null else f"Render attachment on {state.stateKey} has no textures"
+    const bankKey = stateTextures.top.bankKey
+    assert stateTextures.bottom.bankKey == bankKey and stateTextures.side.bankKey == bankKey else f"Render attachment on {state.stateKey} uses textures from multiple banks"
+    if stateTextures.front != null:
+        assert stateTextures.front.bankKey == bankKey else f"Render attachment on {state.stateKey} uses a front texture from another bank"
+    const textureBank = textureBanks.get(bankKey)
+    assert textureBank != null and textureBank.role == ClientTextureBankRole.cutout else f"Render attachment on {state.stateKey} must use a cutout texture bank"
+    for texture in [stateTextures.top, stateTextures.bottom, stateTextures.side]:
+        assert texture.alphaCutoff == material.alphaCutoff else f"Render attachment on {state.stateKey} texture {texture.key} was filtered for a different alpha cutoff"
+    if stateTextures.front != null:
+        assert stateTextures.front.alphaCutoff == material.alphaCutoff else f"Render attachment on {state.stateKey} front texture was filtered for a different alpha cutoff"
+
+    const tintKey = source.tint
+    const tint = tintKey == null ? null : tints.get(tintKey)
+    if tintKey != null:
+        assert tint != null else f"Render attachment on {state.stateKey} references unknown tint {tintKey}"
+    const animationKey = source.animation
+    const animation = animationKey == null ? null : animations.get(animationKey)
+    if animationKey != null:
+        assert animation != null else f"Render attachment on {state.stateKey} references unknown animation {animationKey}"
+        const firstFrame = animation.frames[0]
+        assert stateTextures.top.key == firstFrame and stateTextures.bottom.key == firstFrame and stateTextures.side.key == firstFrame else f"Animated attachment on {state.stateKey} must use its first frame on every face"
+        if stateTextures.front != null:
+            assert stateTextures.front.key == firstFrame else f"Animated attachment on {state.stateKey} must use its first frame on the front face"
+        for frame in animation.frames:
+            const frameTexture = renderTextures.get(frame)
+            assert frameTexture != null else f"Attachment animation {animation.key} references unknown texture {frame}"
+            assert frameTexture.bankKey == bankKey else f"Attachment animation {animation.key} frame {frame} uses another texture bank"
+            assert frameTexture.alphaCutoff == material.alphaCutoff else f"Attachment animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
+
+    const facing = optionalString(propertyValue(state, "facing"))
+    if model.kind == ClientBlockModelKind.submergedSurface:
+        assert facing == null or facing == "up" else f"Submerged surface {state.stateKey} cannot persist a non-bottom facing until placement and support share that state property"
+
+    return {
+        modelKey: model.key,
+        model: model.kind,
+        geometry: model.geometry,
+        layer: source.layer,
+        materialKey: material.key,
+        bankKey,
+        pipelineKey: f"{source.layer}|{bankKey}|{material.key}|{animationKey ?? "-"}",
+        textures: stateTextures,
+        tintKey,
+        climateTint: tint?.climate ?? ClientClimateTint.neutral,
+        tintCoverage: tint?.coverage ?? ClientTintCoverage.all,
+        tintRed: tint?.red ?? 1,
+        tintGreen: tint?.green ?? 1,
+        tintBlue: tint?.blue ?? 1,
+        animationKey,
+        cullFaces: false,
+        runtimeId: state.runtimeId,
+        emission,
+        axis: optionalString(propertyValue(state, "axis")),
+        facing,
+    }
 
 /// 把世界状态目录与一个兼容资源包联结成不可变 RenderCatalog。这里不读取基础
 /// 方块全局表，因此 Mod 世界和重新分配过 runtimeId 的世界仍以服务端快照为准。
 export def createClientRenderCatalog(
-    content: readonly WorldContentResponse,
-    candidate: readonly ClientResourcePackArtifact,
+    content: WorldContentResponse,
+    candidate: ClientResourcePackArtifact,
 ) -> ClientRenderCatalog:
     const pack = validateClientResourcePack(candidate)
     assert pack.targetContentHash == content.content.contentHash else "Client resource pack targets a different world content build"
 
-    const models: Map<string, readonly ClientModelResource> = Map()
-    const materials: Map<string, readonly ClientMaterialResource> = Map()
-    const textureBanks: Map<string, readonly ClientTextureBank> = Map()
-    const textures: Map<string, readonly ClientTextureResource> = Map()
-    const renderTextures: Map<string, readonly ClientRenderTexture> = Map()
-    const tints: Map<string, readonly ClientTintResource> = Map()
-    const animations: Map<string, readonly ClientAnimationResource> = Map()
+    const models: Map<string, ClientModelResource> = Map()
+    const materials: Map<string, ClientMaterialResource> = Map()
+    const textureBanks: Map<string, ClientTextureBank> = Map()
+    const textures: Map<string, ClientTextureResource> = Map()
+    const renderTextures: Map<string, ClientRenderTexture> = Map()
+    const tints: Map<string, ClientTintResource> = Map()
+    const animations: Map<string, ClientAnimationResource> = Map()
     for value in pack.models:
         assert not models.has(value.key) else f"Client resources repeat model {value.key}"
         models.set(value.key, value)
@@ -101,13 +179,13 @@ export def createClientRenderCatalog(
     requireCoverage(content.resources.tints, Set(tints.keys()), "tint")
     requireCoverage(content.resources.animations, Set(animations.keys()), "animation")
 
-    const profiles: Map<number, readonly BlockComponentProfile> = Map()
+    const profiles: Map<number, BlockComponentProfile> = Map()
     for profile in content.componentProfiles:
         assert not profiles.has(profile.profileId) else f"World content repeats component profile {profile.profileId}"
         profiles.set(profile.profileId, profile)
 
     const states: List<ClientRenderState> = []
-    const byRuntimeId: Map<number, readonly ClientRenderState> = Map()
+    const byRuntimeId: Map<number, ClientRenderState> = Map()
     for state in content.states:
         assert not byRuntimeId.has(state.runtimeId) else f"World content repeats runtimeId {state.runtimeId}"
         const profile = profiles.get(state.componentProfileId)
@@ -115,8 +193,10 @@ export def createClientRenderCatalog(
         const modelKey = profile.render.model
         const modelResource = modelKey == null ? null : models.get(modelKey)
         if modelKey != null: assert modelResource != null else f"Client resource pack does not provide model {modelKey}"
+        if modelResource?.kind in [ClientBlockModelKind.submergedCross, ClientBlockModelKind.submergedSurface]:
+            throw Error(f"Submerged overlay model {modelKey} must be a render attachment on a fluid state")
         const materialKey = profile.render.material
-        let materialResource: readonly ClientMaterialResource? = null
+        let materialResource: ClientMaterialResource? = null
         if materialKey != null:
             materialResource = materials.get(materialKey)
             assert materialResource != null else f"Client resource pack does not provide material {materialKey}"
@@ -129,10 +209,12 @@ export def createClientRenderCatalog(
         if animationKey != null:
             assert animation != null else f"Client resource pack does not provide animation {animationKey}"
 
-        const stateTextures = resolvedTextures(profile, renderTextures)
+        const stateTextures = resolvedTextures(profile.render.textures, renderTextures)
         let bankKey: string? = null
         if stateTextures != null:
             assert stateTextures.top.bankKey == stateTextures.bottom.bankKey and stateTextures.top.bankKey == stateTextures.side.bankKey else f"Rendered state {state.stateKey} uses textures from multiple banks"
+            if stateTextures.front != null:
+                assert stateTextures.top.bankKey == stateTextures.front.bankKey else f"Rendered state {state.stateKey} uses front texture from another bank"
             bankKey = stateTextures.top.bankKey
             const textureBank = textureBanks.get(bankKey)
             assert textureBank != null else f"Rendered state {state.stateKey} references unknown texture bank {bankKey}"
@@ -147,24 +229,49 @@ export def createClientRenderCatalog(
                 assert materialResource != null else f"Cutout state {state.stateKey} has no material"
                 for texture in [stateTextures.top, stateTextures.bottom, stateTextures.side]:
                     assert texture.alphaCutoff == materialResource.alphaCutoff else f"Cutout state {state.stateKey} texture {texture.key} was filtered for a different alpha cutoff"
+                if stateTextures.front != null:
+                    assert stateTextures.front.alphaCutoff == materialResource.alphaCutoff else f"Cutout state {state.stateKey} texture {stateTextures.front.key} was filtered for a different alpha cutoff"
             else:
                 assert textureBank.role == ClientTextureBankRole.translucent else f"Translucent state {state.stateKey} must use a translucent texture bank"
+        if materialResource != null:
+            if materialResource.materialEffect == ClientMaterialEffect.water:
+                assert modelResource?.kind == ClientBlockModelKind.fluid else f"Water material state {state.stateKey} must use the fluid model"
+                assert layer == BlockRenderLayer.translucent else f"Water material state {state.stateKey} must use the translucent render layer"
+                assert stateTextures != null and bankKey != null else f"Water material state {state.stateKey} must resolve fluid textures"
+                const waterBank = textureBanks.get(bankKey)
+                assert waterBank != null and waterBank.role == ClientTextureBankRole.fluid else f"Water material state {state.stateKey} must use a fluid texture bank"
+                const optics = materialResource.waterOptics
+                assert optics != null else f"Water material state {state.stateKey} has no water optics"
+                for wave in optics.waves:
+                    const waveTexture = textures.get(wave.normalTexture)
+                    assert waveTexture != null else f"Water material state {state.stateKey} references unknown wave texture {wave.normalTexture}"
+                    assert waveTexture.bankKey == bankKey else f"Water material state {state.stateKey} wave texture {wave.normalTexture} uses another texture bank"
         if animation != null:
             assert stateTextures != null else f"Animated state {state.stateKey} has no textures"
             const firstFrame = animation.frames[0]
             assert stateTextures.top.key == firstFrame and stateTextures.bottom.key == firstFrame and stateTextures.side.key == firstFrame else f"Animated state {state.stateKey} must use its first animation frame on every face"
+            if stateTextures.front != null:
+                assert stateTextures.front.key == firstFrame else f"Animated state {state.stateKey} must use its first animation frame on the front face"
             for frame in animation.frames:
                 const frameTexture = renderTextures.get(frame)
                 assert frameTexture != null else f"Animation {animation.key} references unknown texture {frame}"
                 if layer == BlockRenderLayer.cutout:
                     assert materialResource != null and frameTexture.alphaCutoff == materialResource.alphaCutoff else f"Animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
         const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
+        const blockEmission = profile.light.emission
+        const attachments = (profile.render.attachments ?? []).map(attachment => resolvedAttachment(
+            attachment, state, blockEmission, models, materials, textureBanks, renderTextures, tints, animations,
+        ))
         const layers = optionalNumber(propertyValue(state, "layers"))
+        const fluid = findFluidBehavior(profile.behaviors)
+        if modelResource?.kind == ClientBlockModelKind.fluid:
+            assert fluid != null else f"Fluid model state {state.stateKey} requires a fluid behavior"
 
         const resolved: ClientRenderState = {
             runtimeId: state.runtimeId,
             modelKey,
             model: modelResource?.kind,
+            geometry: modelResource?.geometry,
             layer,
             materialKey,
             bankKey,
@@ -181,15 +288,18 @@ export def createClientRenderCatalog(
             occludes: profile.physics.occlusion.kind == BlockShapeKind.fullCube,
             emission: profile.light.emission,
             collisionBoxes: resolvedCollisionBoxes(profile, state),
+            attachments,
+            canonicalFluidKey: fluid?.canonicalBlock,
             axis: optionalString(propertyValue(state, "axis")),
-            level: optionalNumber(propertyValue(state, "level")),
-            falling: optionalBool(propertyValue(state, "falling")),
+            facing: optionalString(propertyValue(state, "facing")),
+            level: fluid == null ? null : optionalNumber(propertyValue(state, fluid.levelProperty)),
+            falling: fluid == null ? null : optionalBool(propertyValue(state, fluid.fallingProperty)),
             layers,
         }
         states.append(resolved)
         byRuntimeId.set(state.runtimeId, resolved)
 
-    def requireState(runtimeId: number) -> readonly ClientRenderState:
+    def requireState(runtimeId: number) -> ClientRenderState:
         const state = byRuntimeId.get(runtimeId)
         assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
         return state

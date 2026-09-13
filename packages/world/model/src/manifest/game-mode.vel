@@ -1,0 +1,4 @@
+/// 游戏模式属于世界规则；独立轻量入口供菜单消费，不加载方块目录或世界运行时。
+export enum WorldGameMode:
+    survival
+    creative

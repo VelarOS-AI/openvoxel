@@ -9,63 +9,63 @@ export enum WorldMovementMode:
     creativeFlight = "creative-flight"
     survivalWalk = "survival-walk"
 
-export type WorldNavigationPosition:
-    readonly x: number
-    readonly y: number
-    readonly z: number
+export readonly type WorldNavigationPosition:
+    x: number
+    y: number
+    z: number
 
-export type WorldNavigationStats:
-    readonly navigationMode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly viewX: number
-    readonly viewY: number
-    readonly viewZ: number
-    readonly viewChunkX: number
-    readonly viewChunkY: number
-    readonly viewChunkZ: number
-    readonly forwardX: number
-    readonly forwardY: number
-    readonly forwardZ: number
-    readonly pointerLocked: bool
+export readonly type WorldNavigationStats:
+    navigationMode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    viewX: number
+    viewY: number
+    viewZ: number
+    viewChunkX: number
+    viewChunkY: number
+    viewChunkZ: number
+    forwardX: number
+    forwardY: number
+    forwardZ: number
+    pointerLocked: bool
 
 export type WorldMovementFlightStep = (
-    state: readonly WorldMovementFlightState,
-    intent: readonly WorldMovementFlightIntent,
-    basis: readonly WorldMovementFlightBasis,
+    state: WorldMovementFlightState,
+    intent: WorldMovementFlightIntent,
+    basis: WorldMovementFlightBasis,
     deltaMilliseconds: number,
-    bounds: readonly WorldMovementFlightBounds,
+    bounds: WorldMovementFlightBounds,
 ) -> WorldMovementFlightState
 
 export type WorldMovementWalkStep = (
-    state: readonly WorldMovementWalkState,
-    intent: readonly WorldMovementWalkIntent,
-    basis: readonly WorldMovementWalkBasis,
+    state: WorldMovementWalkState,
+    intent: WorldMovementWalkIntent,
+    basis: WorldMovementWalkBasis,
     deltaMilliseconds: number,
-    bounds: readonly WorldMovementWalkBounds,
+    bounds: WorldMovementWalkBounds,
     collisionAt: WorldMovementCollisionQuery,
 ) -> WorldMovementWalkState
 
 /// Web 宿主适配器只经这些强类型闭包读写相机。原生场景、相机和事件对象
 /// 不进入 VelarScript 领域；移动积分仍由纯 WorldMovement 策略拥有。
-export type WorldNavigationOptions:
-    readonly canvas: CanvasElement
-    readonly mode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly edge: number
-    readonly bounds: readonly WorldMovementFlightBounds
-    readonly initialFlightState: readonly WorldMovementFlightState
-    readonly initialWalkState: readonly WorldMovementWalkState
-    readonly stepFlight: WorldMovementFlightStep
-    readonly stepWalk: WorldMovementWalkStep
-    readonly collisionAt: WorldMovementCollisionQuery
-    readonly readViewPosition: () -> WorldNavigationPosition
-    readonly readViewForward: () -> WorldNavigationPosition
-    readonly readHorizontalBasis: () -> WorldMovementFlightBasis
-    readonly applyFlightState: (state: readonly WorldMovementFlightState) -> null
-    readonly applyWalkState: (state: readonly WorldMovementWalkState) -> null
-    readonly rotateView: (horizontalRadians: number, verticalRadians: number) -> null
-    readonly releaseView: () -> null
-    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+export readonly type WorldNavigationOptions:
+    canvas: CanvasElement
+    mode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    edge: number
+    bounds: WorldMovementFlightBounds
+    initialFlightState: WorldMovementFlightState
+    initialWalkState: WorldMovementWalkState
+    stepFlight: WorldMovementFlightStep
+    stepWalk: WorldMovementWalkStep
+    collisionAt: WorldMovementCollisionQuery
+    readViewPosition: () -> WorldNavigationPosition
+    readViewForward: () -> WorldNavigationPosition
+    readHorizontalBasis: () -> WorldMovementFlightBasis
+    applyFlightState: (state: WorldMovementFlightState) -> null
+    applyWalkState: (state: WorldMovementWalkState) -> null
+    rotateView: (horizontalRadians: number, verticalRadians: number) -> null
+    releaseView: () -> null
+    viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
 
 export type WorldNavigation:
     update: (deltaMilliseconds: number) -> null
@@ -73,12 +73,12 @@ export type WorldNavigation:
     stats: () -> WorldNavigationStats
     release: () -> null
 
-export type WorldNavigationFactory = (options: readonly WorldNavigationOptions) -> WorldNavigation
+export type WorldNavigationFactory = (options: WorldNavigationOptions) -> WorldNavigation
 
 extern module "#openvoxel/game/web-navigation":
-    export def createNavigationAdapter(options: readonly WorldNavigationOptions) -> WorldNavigation
+    export def createNavigationAdapter(options: WorldNavigationOptions) -> WorldNavigation
 
 import js {createNavigationAdapter} from "#openvoxel/game/web-navigation"
 
-export def createWorldNavigation(options: readonly WorldNavigationOptions) -> WorldNavigation:
+export def createWorldNavigation(options: WorldNavigationOptions) -> WorldNavigation:
     return createNavigationAdapter(options)

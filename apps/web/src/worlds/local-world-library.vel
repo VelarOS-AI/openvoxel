@@ -1,0 +1,17 @@
+import {localBackend} from "@openvoxel/client"
+import {SavedWorld, WorldPreset} from "./saved-world.vel"
+import {WorldLibraryOperations} from "./world-library-operations.vel"
+
+/// 世界管理操作的重依赖边界；完整清单只在这里投影为菜单摘要。
+export def localWorldLibrary() -> WorldLibraryOperations:
+    const backend = localBackend()
+
+    async def createWorld(world: SavedWorld) -> SavedWorld:
+        const created = await backend.createWorld({id: world.id, name: world.name, seed: world.seed, mode: world.mode})
+        return SavedWorld.from(created, {mode: created.mode, preset: world.preset, lastPlayed: "Created just now"})
+
+    async def findWorld(id: string) -> SavedWorld:
+        const found = await backend.findWorld(id)
+        return SavedWorld.from(found, {mode: found.mode, preset: WorldPreset.meadow, lastPlayed: "Opened just now"})
+
+    return {createWorld, findWorld, close: backend.close}

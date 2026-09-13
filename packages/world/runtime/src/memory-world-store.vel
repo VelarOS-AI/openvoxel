@@ -1,9 +1,9 @@
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
-import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "./contracts.vel"
+import {StoredBlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "./contracts.vel"
 
 def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
 
-def localOrder(entry: readonly BlockOverride) -> number:
+def localOrder(entry: StoredBlockOverride) -> number:
     return entry.position.x + 1024 * entry.position.z + 1048576 * entry.position.y
 
 export def memoryWorldStore() -> WorldStore:
@@ -23,20 +23,22 @@ export def memoryWorldStore() -> WorldStore:
             if delta != null: found.append(delta)
         return found
 
-    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+    async def commitChunks(worldId: string, commits: readonly List<ChunkDeltaCommit>):
         // 先验证并构建所有 Chunk 的私有副本，最后才一次性发布。任何 revision
         // 冲突都会让整个批次保持原状，这与 SQLite 事务的可见性一致。
         const pending: Map<string, StoredChunkDelta> = Map()
         for commit in commits:
             const key = deltaKey(worldId, commit.position)
-            const current = chunks.get(key) ?? {position: commit.position, revision: 0, overrides: []}
-            assert current.revision == commit.expectedRevision else f"Chunk revision conflict at {chunkKey(commit.position)}"
-            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
-            const byPosition: Map<string, readonly BlockOverride> = Map()
+            const current = chunks.get(key) ?? {position: commit.position, revision: 0, storageRevision: 0, overrides: []}
+            const currentStorageRevision = current.storageRevision ?? current.revision
+            assert currentStorageRevision == commit.expectedStorageRevision else f"Chunk storage revision conflict at {chunkKey(commit.position)}"
+            assert commit.storageRevision == commit.expectedStorageRevision + 1 else "Chunk storage revision must advance exactly once"
+            assert commit.revision == current.revision or commit.revision == current.revision + 1 else "Chunk visible revision must stay or advance exactly once"
+            const byPosition: Map<string, StoredBlockOverride> = Map()
             for entry in current.overrides: byPosition.set(localKey(entry.position), entry)
             for write in commit.writes:
                 if write.blockStateRuntimeId != null:
-                    byPosition.set(localKey(write.position), BlockOverride.from(write, {blockStateRuntimeId: write.blockStateRuntimeId}))
+                    byPosition.set(localKey(write.position), StoredBlockOverride.from(write, {blockStateRuntimeId: write.blockStateRuntimeId}))
                 else: byPosition.remove(localKey(write.position))
             const overrides = byPosition.values().sorted(by=localOrder)
             pending.set(key, StoredChunkDelta.from(commit, {overrides}))

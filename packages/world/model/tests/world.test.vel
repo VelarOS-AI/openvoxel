@@ -1,10 +1,12 @@
+import {defaultWorldClimate} from "../src/environment/base-climate.vel"
 import {expect} from "velar/test"
 import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, blockIndex, chunkBlock, chunkPaletteTemplate, emptyChunk, emptyPaletteChunk, setChunkBlock} from "../src/chunk/chunk.vel"
 import {maximumWorldEnvironmentMilliseconds} from "../src/environment/environment.vel"
 import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/spatial/coordinates.vel"
-import {WorldGameMode, WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
+import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
+import {WorldGameMode} from "../src/manifest/game-mode.vel"
 import {checkWorldCoordinates} from "./support/property-check.vel"
 
 const airBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
@@ -25,6 +27,7 @@ def manifest() -> WorldManifest:
         chunkEdge: initialChunkEdge,
         generator: builtinIdentities.generators.survival,
         generatorHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        climate: defaultWorldClimate,
         spawn: {x: 0, y: 65, z: 0},
         content: {contentHash: "0".repeat(64), packs: []},
         blockRegistry: WorldBlockRegistrySnapshot.parse(baseWorldBlockRegistrySnapshot),
@@ -65,9 +68,9 @@ test "three dimensional lookup crosses chunk boundaries":
 
 test "world manifests carry their complete runtime registry":
     const world = manifest()
-    expect(world.formatVersion).toBe(5)
+    expect(world.formatVersion).toBe(6)
     expect(world.worldTimeOriginMilliseconds).toBe(1_000_000)
-    expect(world.blockRegistry.states.size).toBe(183)
+    expect(world.blockRegistry.states.size).toBe(376)
     expect(world.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
 
 test "world manifests reject invalid world time origins":

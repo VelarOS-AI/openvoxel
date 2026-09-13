@@ -1,0 +1,23 @@
+const coordinateHashModulus = 2_147_483_647
+
+def mixCoordinateHash(value: number, component: number, salt: number) -> number:
+    const normalized = ((component % coordinateHashModulus) + coordinateHashModulus) % coordinateHashModulus
+    return (value * 4093 + normalized * salt + 9973) % coordinateHashModulus
+
+/// 为纯视觉差异生成稳定偏移。结果只取决于持久世界坐标、方块 runtimeId 和
+/// 调用方盐值，因此不会扩大状态目录，也不会随 Chunk 边界或重新构网跳变。
+export def stableCoordinateOffset(
+    runtimeId: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    salt: number,
+    size: number,
+) -> number:
+    assert size.isInteger() and size > 0 else "Coordinate variant size must be a positive integer"
+    let value = runtimeId % coordinateHashModulus
+    value = mixCoordinateHash(value, worldX, 97)
+    value = mixCoordinateHash(value, worldY, 193)
+    value = mixCoordinateHash(value, worldZ, 389)
+    value = mixCoordinateHash(value, salt, 769)
+    return value % size

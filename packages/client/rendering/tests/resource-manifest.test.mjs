@@ -52,7 +52,7 @@ async function imageBytes(format = "png") {
   return format === "webp" ? image.webp().toBuffer() : image.png().toBuffer();
 }
 
-async function fixture(context, {formatVersion = 10, maps = {}, variants = [], texturePipeline = null} = {}) {
+async function fixture(context, {formatVersion = 11, maps = {}, variants = [], texturePipeline = null} = {}) {
   const root = await mkdtemp(join(tmpdir(), "openvoxel-resource-manifest-"));
   context.after(() => rm(root, {recursive: true, force: true}));
   await Promise.all([
@@ -108,7 +108,7 @@ async function updateYaml(path, update) {
   await writeFile(path, stringify(document));
 }
 
-test("author format v10 normalizes explicit PBR fallbacks, optional maps, and array limits", async (context) => {
+test("author format v11 normalizes explicit PBR fallbacks, optional maps, and array limits", async (context) => {
   const maps = {
     height: {file: "textures/terrain/maps/stone.height.png"},
     material: {file: "textures/terrain/maps/stone.material.png"},
@@ -205,7 +205,7 @@ test("author map schema rejects ambiguous, unknown, misplaced, and stale declara
     /texturePipeline contains unknown field atlasPadding/u,
   );
 
-  const stale = await fixture(context, {formatVersion: 9});
+  const stale = await fixture(context, {formatVersion: 10});
   await assert.rejects(loadResourceManifest(stale.root, stale.manifestPath), /Unsupported client resource pack source format/u);
 });
 
@@ -249,7 +249,20 @@ test("surface profiles require closed normal and material fallback policies", as
 
 test("material precipitation surfaces are required finite policies independent of resource names", async (context) => {
   const {root, manifestPath} = await fixture(context);
-  const material = {key: "openvoxel:material/custom", precipitationSurface: "water"};
+  const material = {
+    key: "openvoxel:material/custom",
+    precipitationSurface: "water",
+    materialEffect: "standard",
+    waterOptics: null,
+    alpha: 1,
+    alphaCutoff: 0,
+    doubleSided: false,
+    castsShadows: true,
+    environmentIntensity: 1,
+    clearCoat: 0,
+    clearCoatRoughness: 0,
+    unlit: false,
+  };
   await updateYaml(manifestPath, (document) => { document.materials = [material]; });
   assert.equal((await loadResourceManifest(root, manifestPath)).manifest.materials[0].precipitationSurface, "water");
   await updateYaml(manifestPath, (document) => { document.materials[0].precipitationSurface = "solid"; });
@@ -263,6 +276,48 @@ test("material precipitation surfaces are required finite policies independent o
   }
   await updateYaml(manifestPath, (document) => { delete document.materials[0].precipitationSurface; });
   await assert.rejects(loadResourceManifest(root, manifestPath), /precipitationSurface must be none, solid, or water/u);
+});
+
+test("water material optics are explicit, closed, and continuously wave-driven", async (context) => {
+  const {root, manifestPath} = await fixture(context);
+  const material = {
+    key: "openvoxel:material/custom-water",
+    precipitationSurface: "water",
+    materialEffect: "water",
+    waterOptics: {
+      indexOfRefraction: 1.333,
+      roughness: 0.05,
+      normalStrength: 0.2,
+      waves: [
+        {normalTexture: "openvoxel:texture/block/water", scale: 0.08, speed: 0.018, directionX: 1, directionZ: 0},
+        {normalTexture: "openvoxel:texture/block/water-flow", scale: 0.13, speed: 0.027, directionX: 0, directionZ: 1},
+      ],
+    },
+    alpha: 0.52,
+    alphaCutoff: 0,
+    doubleSided: true,
+    castsShadows: false,
+    environmentIntensity: 1.35,
+    clearCoat: 0,
+    clearCoatRoughness: 0,
+    unlit: false,
+  };
+  await updateYaml(manifestPath, (document) => { document.materials = [material]; });
+  const loaded = await loadResourceManifest(root, manifestPath);
+  assert.deepEqual(loaded.manifest.materials[0].waterOptics, material.waterOptics);
+
+  await updateYaml(manifestPath, (document) => { document.materials[0].waterOptics.waves.pop(); });
+  await assert.rejects(loadResourceManifest(root, manifestPath), /exactly two normal waves/u);
+  await updateYaml(manifestPath, (document) => {
+    document.materials[0].waterOptics.waves = material.waterOptics.waves;
+    document.materials[0].waterOptics.waves[1].normalTexture = material.waterOptics.waves[0].normalTexture;
+  });
+  await assert.rejects(loadResourceManifest(root, manifestPath), /repeats normal texture/u);
+  await updateYaml(manifestPath, (document) => {
+    document.materials[0].waterOptics.waves = material.waterOptics.waves;
+    document.materials[0].waterOptics.waves[0].directionX = 0.5;
+  });
+  await assert.rejects(loadResourceManifest(root, manifestPath), /direction must be normalized/u);
 });
 
 test("material layers own complete PBR inputs and close their image inventory", async (context) => {

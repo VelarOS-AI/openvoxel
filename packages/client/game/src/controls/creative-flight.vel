@@ -2,30 +2,30 @@ import {ChunkPosition, maximumWorldCoordinate, requireChunkEdge} from "@openvoxe
 
 /// 创造模式飞行只保存连续空间状态；键盘、指针锁与相机都属于宿主适配器，
 /// 不能进入这份可确定性测试的移动策略。
-export type WorldMovementFlightState:
-    readonly x: number
-    readonly y: number
-    readonly z: number
-    readonly velocityX: number
-    readonly velocityY: number
-    readonly velocityZ: number
+export readonly type WorldMovementFlightState:
+    x: number
+    y: number
+    z: number
+    velocityX: number
+    velocityY: number
+    velocityZ: number
 
-export type WorldMovementFlightIntent:
-    readonly forward: number
-    readonly sideways: number
-    readonly vertical: number
-    readonly boosted: bool
+export readonly type WorldMovementFlightIntent:
+    forward: number
+    sideways: number
+    vertical: number
+    boosted: bool
 
 /// 由宿主相机投影出的水平单位基。策略不读取原生对象，也不假设左右手坐标系。
-export type WorldMovementFlightBasis:
-    readonly forwardX: number
-    readonly forwardZ: number
-    readonly rightX: number
-    readonly rightZ: number
+export readonly type WorldMovementFlightBasis:
+    forwardX: number
+    forwardZ: number
+    rightX: number
+    rightZ: number
 
-export type WorldMovementFlightBounds:
-    readonly minimumY: number
-    readonly maximumY: number
+export readonly type WorldMovementFlightBounds:
+    minimumY: number
+    maximumY: number
 
 export const worldMovementFlightSpeed = 12
 export const worldMovementFlightBoostSpeed = 36
@@ -33,10 +33,10 @@ export const worldMovementFlightAcceleration = 48
 export const worldMovementFlightBraking = 72
 export const worldMovementFlightMaximumFrameMilliseconds = 50
 
-type WorldMovementFlightVelocity:
-    readonly x: number
-    readonly y: number
-    readonly z: number
+readonly type WorldMovementFlightVelocity:
+    x: number
+    y: number
+    z: number
 
 /// 三维位移使用缩放后的范数，避免先平方大值导致不必要的溢出。
 def hypot3(x: number, y: number, z: number) -> number:
@@ -47,11 +47,11 @@ def hypot3(x: number, y: number, z: number) -> number:
     const normalizedZ = z / scale
     return scale * Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY + normalizedZ * normalizedZ)
 
-def requireFiniteState(state: readonly WorldMovementFlightState):
+def requireFiniteState(state: WorldMovementFlightState):
     assert state.x.isFinite() and state.y.isFinite() and state.z.isFinite() else "Creative flight position must be finite"
     assert state.velocityX.isFinite() and state.velocityY.isFinite() and state.velocityZ.isFinite() else "Creative flight velocity must be finite"
 
-def requireHorizontalBasis(basis: readonly WorldMovementFlightBasis):
+def requireHorizontalBasis(basis: WorldMovementFlightBasis):
     assert basis.forwardX.isFinite() and basis.forwardZ.isFinite() and basis.rightX.isFinite() and basis.rightZ.isFinite() else "Creative flight basis must be finite"
     const forwardLength = Math.hypot(basis.forwardX, basis.forwardZ)
     const rightLength = Math.hypot(basis.rightX, basis.rightZ)
@@ -89,11 +89,11 @@ export def worldMovementFlightState(x: number, y: number, z: number) -> WorldMov
 /// 固定时间步上限防止后台标签页恢复时瞬移；三轴输入统一归一化，使斜向和升降
 /// 组合不会获得额外速度。返回新状态，适配器可以原子替换而不共享可变记录。
 export def stepWorldMovementFlight(
-    state: readonly WorldMovementFlightState,
-    intent: readonly WorldMovementFlightIntent,
-    basis: readonly WorldMovementFlightBasis,
+    state: WorldMovementFlightState,
+    intent: WorldMovementFlightIntent,
+    basis: WorldMovementFlightBasis,
     deltaMilliseconds: number,
-    bounds: readonly WorldMovementFlightBounds,
+    bounds: WorldMovementFlightBounds,
 ) -> WorldMovementFlightState:
     requireFiniteState(state)
     requireHorizontalBasis(basis)
@@ -139,7 +139,7 @@ export def stepWorldMovementFlight(
     requireFiniteState(next)
     return next
 
-export def worldMovementFlightChunk(state: readonly WorldMovementFlightState, edge: number) -> ChunkPosition:
+export def worldMovementFlightChunk(state: WorldMovementFlightState, edge: number) -> ChunkPosition:
     requireFiniteState(state)
     requireChunkEdge(edge)
     return {

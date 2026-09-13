@@ -10,50 +10,50 @@ import {WebSocketClose} from "velar/websocket"
 import {decode, encode} from "@velarscript-labs/msgpack"
 import {clientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
-type OpenApiOperation:
-    readonly operationId: string
+readonly type OpenApiOperation:
+    operationId: string
 
-type OpenApiPathItem:
-    readonly get: readonly OpenApiOperation?
-    readonly post: readonly OpenApiOperation?
-    readonly put: readonly OpenApiOperation?
-    readonly patch: readonly OpenApiOperation?
-    readonly delete: readonly OpenApiOperation?
+readonly type OpenApiPathItem:
+    get: OpenApiOperation?
+    post: OpenApiOperation?
+    put: OpenApiOperation?
+    patch: OpenApiOperation?
+    delete: OpenApiOperation?
 
-type OpenApiDocument:
-    readonly openapi: string
-    readonly paths: readonly Record<readonly OpenApiPathItem>
+readonly type OpenApiDocument:
+    openapi: string
+    paths: readonly Record<OpenApiPathItem>
 
-type DiscoveredOperation:
-    readonly method: string
-    readonly path: string
+readonly type DiscoveredOperation:
+    method: string
+    path: string
 
-type DiscoveredApi:
-    readonly origin: string
-    readonly operations: Map<string, readonly DiscoveredOperation>
+readonly type DiscoveredApi:
+    origin: string
+    operations: readonly Map<string, DiscoveredOperation>
 
 type RealtimeIncoming = readonly WorldReadyEvent | readonly ChunksSyncedEvent | readonly BlockEditsAppliedEvent | readonly WorldBlocksChangedEvent | readonly SocketErrorEvent
-type RealtimeOutgoing = readonly SyncChunksCommand | readonly ApplyBlockEditsCommand
+type RealtimeOutgoing = SyncChunksCommand | ApplyBlockEditsCommand
 
-type OpeningResult:
-    readonly ready: readonly WorldReadyEvent?
-    readonly error: readonly SocketErrorEvent?
-    readonly transportError: string?
+readonly type OpeningResult:
+    ready: readonly WorldReadyEvent?
+    error: readonly SocketErrorEvent?
+    transportError: string?
 
-type PendingResult:
-    readonly chunks: readonly ChunksSyncedEvent?
-    readonly blocks: readonly BlockEditsAppliedEvent?
-    readonly error: readonly SocketErrorEvent?
-    readonly transportError: string?
+readonly type PendingResult:
+    chunks: readonly ChunksSyncedEvent?
+    blocks: readonly BlockEditsAppliedEvent?
+    error: readonly SocketErrorEvent?
+    transportError: string?
 
 /// 把框架生成的 OpenAPI 编译成按 operationId 查询的客户端目录。路径只在服务端
 /// 注解中出现一次；这里保存的是启动时发现的结果，不维护第二套手写路由表。
 async def discoverApi(openApiUrl: string) -> DiscoveredApi:
     const description = await http.get(openApiUrl).parse(OpenApiDocument)
     assert description.openapi.startsWith("3.1.") else "OpenVoxel requires an OpenAPI 3.1 description"
-    const operations: Map<string, readonly DiscoveredOperation> = Map()
+    const operations: Map<string, DiscoveredOperation> = Map()
 
-    def remember(path: string, method: string, operation: readonly OpenApiOperation?):
+    def remember(path: string, method: string, operation: OpenApiOperation?):
         if operation == null: return
         assert not operations.has(operation.operationId) else f"OpenAPI repeats operationId {operation.operationId}"
         operations.set(operation.operationId, {method, path})
@@ -68,20 +68,20 @@ async def discoverApi(openApiUrl: string) -> DiscoveredApi:
     const origin = parseUrl(openApiUrl).origin
     return {origin, operations}
 
-def requireOperation(api: readonly DiscoveredApi, name: string, method: string) -> readonly DiscoveredOperation:
+def requireOperation(api: DiscoveredApi, name: string, method: string) -> DiscoveredOperation:
     const operation = api.operations.get(name)
     assert operation != null else f"OpenAPI does not publish operation {name}"
     assert operation.method == method else f"OpenAPI operation {name} changed its HTTP method"
     return operation
 
-def operationUrl(api: readonly DiscoveredApi, name: string, method: string, worldId: string? = null) -> string:
+def operationUrl(api: DiscoveredApi, name: string, method: string, worldId: string? = null) -> string:
     const operation = requireOperation(api, name, method)
     let path = operation.path
     if worldId != null: path = path.replaceAll("{worldId}", encodeUrl(worldId))
     assert not path.has("{") else f"OpenAPI operation {name} still requires route parameters"
     return joinUrl(api.origin, path)
 
-def realtimeUrl(api: readonly DiscoveredApi, worldId: string) -> string:
+def realtimeUrl(api: DiscoveredApi, worldId: string) -> string:
     const httpUrl = operationUrl(api, apiOperationNames.worldRealtime, "GET", worldId)
     if httpUrl.startsWith("https://"): return f"wss://{httpUrl.slice(8)}"
     assert httpUrl.startsWith("http://") else "OpenVoxel realtime requires an HTTP or HTTPS OpenAPI origin"
@@ -105,7 +105,7 @@ const realtimeCodec: RealtimeCodec<RealtimeIncoming, RealtimeOutgoing> = {
     encode: encodeRealtime,
 }
 
-def responseError(result: readonly PendingResult) -> Error?:
+def responseError(result: PendingResult) -> Error?:
     if result.error != null: return Error(f"{result.error.code}: {result.error.message}")
     if result.transportError != null: return Error(result.transportError)
     return null
@@ -132,7 +132,7 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
         assert response.realtime.encoding == realtimeEncoding else "Backend uses an unsupported realtime encoding"
         return WorldBackendContract.from(response)
 
-    async def createWorld(command: readonly CreateWorldRequest):
+    async def createWorld(command: CreateWorldRequest):
         const routes = await api()
         return await http.post(
             operationUrl(routes, apiOperationNames.createWorld, "POST"),
@@ -256,7 +256,7 @@ export def onlineBackend(openApiUrl: string) -> WorldBackend:
             assert result.chunks.worldId == worldId else "Realtime chunks.sync returned a different world"
             return result.chunks
 
-        async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>):
+        async def applyBlocks(requestId: string, edits: readonly List<RealtimeBlockEdit>):
             const command: ApplyBlockEditsCommand = {operation: "blocks.apply", requestId, edits}
             const result = await request(requestId, command)
             assert result.blocks != null else "Realtime returned the wrong response to blocks.apply"

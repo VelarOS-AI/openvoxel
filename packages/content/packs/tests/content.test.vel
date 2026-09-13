@@ -42,10 +42,11 @@ test "unified Mod compiler builds block content from one owner and identity sour
         tags: [],
         properties: [],
         defaultState: [],
+        behaviors: stone.behaviors.copy(),
         variants: [],
     })
     const blockManifest: BlockCatalogManifest = {
-        schemaVersion: 4,
+        schemaVersion: 6,
         catalogVersion: "farming:catalog-v1",
         sources: ["blocks/crops.yml"],
     }

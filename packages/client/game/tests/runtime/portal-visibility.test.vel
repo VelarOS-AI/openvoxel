@@ -2,9 +2,9 @@ import {ChunkPosition, chunkKey} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {PortalVisibilitySummary, portalVisibilityWorkspace, portalVisibleChunkKeys} from "../../src/runtime/portal-visibility.vel"
 
-type PortalConnection:
-    readonly source: number
-    readonly target: number
+readonly type PortalConnection:
+    source: number
+    target: number
 
 const portalFaceCount = 6
 const westFace = 0
@@ -13,15 +13,15 @@ const southFace = 5
 
 def mask(faces: readonly List<number>) -> number: return faces.map(face => Math.pow(2, face)).sum()
 
-def connections(items: readonly List<readonly PortalConnection>) -> number:
+def connections(items: readonly List<PortalConnection>) -> number:
     return items
         .map(item => Math.pow(2, item.source * portalFaceCount + item.target))
         .sum()
 
 def portal(
     faces: readonly List<number>,
-    paths: readonly List<readonly PortalConnection>,
-) -> readonly PortalVisibilitySummary:
+    paths: readonly List<PortalConnection>,
+) -> PortalVisibilitySummary:
     return {
         empty: false,
         fullyOccluding: false,
@@ -29,7 +29,7 @@ def portal(
         connectedFaces: connections(paths),
     }
 
-def emptyPortal() -> readonly PortalVisibilitySummary:
+def emptyPortal() -> PortalVisibilitySummary:
     return {
         empty: true,
         fullyOccluding: false,
@@ -37,7 +37,7 @@ def emptyPortal() -> readonly PortalVisibilitySummary:
         connectedFaces: Math.pow(2, portalFaceCount * portalFaceCount) - 1,
     }
 
-def solidPortal() -> readonly PortalVisibilitySummary:
+def solidPortal() -> PortalVisibilitySummary:
     return {empty: false, fullyOccluding: true, openFaces: 0, connectedFaces: 0}
 
 def keys(positions: readonly List<readonly ChunkPosition>) -> Set<string>:
@@ -49,7 +49,7 @@ test "portal visibility traverses a chain of empty Chunks":
         {x: 1, y: 0, z: 0},
         {x: 2, y: 0, z: 0},
     ]
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map()
+    const summaries: Map<string, PortalVisibilitySummary> = Map()
     for position in candidates: summaries.set(chunkKey(position), emptyPortal())
 
     expect(portalVisibleChunkKeys(candidates, summaries, candidates[0])).toEqual(keys(candidates))
@@ -59,7 +59,7 @@ test "portal visibility renders a solid boundary without traversing it":
     const wall: ChunkPosition = {x: 1, y: 0, z: 0}
     const hidden: ChunkPosition = {x: 2, y: 0, z: 0}
     const candidates: List<readonly ChunkPosition> = [center, wall, hidden]
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         [chunkKey(center), emptyPortal()],
         [chunkKey(wall), solidPortal()],
         [chunkKey(hidden), emptyPortal()],
@@ -71,7 +71,7 @@ test "portal visibility does not cross disconnected openings in one Chunk":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}
     const split: ChunkPosition = {x: 1, y: 0, z: 0}
     const hidden: ChunkPosition = {x: 2, y: 0, z: 0}
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         [chunkKey(center), emptyPortal()],
         [chunkKey(split), portal(
             [westFace, eastFace],
@@ -86,7 +86,7 @@ test "portal visibility treats a missing summary as connected open space":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}
     const unknown: ChunkPosition = {x: 1, y: 0, z: 0}
     const beyond: ChunkPosition = {x: 2, y: 0, z: 0}
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         [chunkKey(center), emptyPortal()],
         [chunkKey(beyond), emptyPortal()],
     ])
@@ -99,7 +99,7 @@ test "portal visibility expands a Chunk again when a different incoming face bec
     const southPath: ChunkPosition = {x: 0, y: 0, z: 1}
     const southeastPath: ChunkPosition = {x: 1, y: 0, z: 1}
     const revealed: ChunkPosition = {x: 2, y: 0, z: 0}
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         [chunkKey(center), emptyPortal()],
         [chunkKey(junction), portal(
             [westFace, eastFace, southFace],
@@ -134,7 +134,7 @@ test "portal workspace reuses candidate topology while summaries change reachabi
     const boundary: ChunkPosition = {x: 1, y: 0, z: 0}
     const beyond: ChunkPosition = {x: 2, y: 0, z: 0}
     const candidates: List<readonly ChunkPosition> = [center, boundary, beyond]
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         [chunkKey(center), emptyPortal()],
         [chunkKey(boundary), solidPortal()],
         [chunkKey(beyond), emptyPortal()],

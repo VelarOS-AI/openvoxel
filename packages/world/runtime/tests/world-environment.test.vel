@@ -2,6 +2,38 @@ import {worldDayMilliseconds, worldEnvironmentAt} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
 import {worldRuntime} from "../src/index.vel"
+import {createContentCatalog, createContentPackArtifact} from "@openvoxel/content"
+import {WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, baseWorldGeneratorCatalog, worldGeneratorClimate} from "@openvoxel/world-generation"
+
+test "custom generator climate is persisted and used by runtime and retained environment sampling":
+    const definition = WorldGeneratorDefinition.parse(baseWorldGeneratorCatalog.generators[0])
+    definition.key = "climate:survival"
+    definition.palette = "climate:palette"
+    definition.terrain.climate.temperaturePeriod = 512
+    definition.terrain.climate.humidityPeriod = 640
+    definition.sampling.horizontalStep = 8
+    const palette = WorldGeneratorPaletteDefinition.from(baseWorldGeneratorCatalog.palettes[0], {key: "climate:palette"})
+    const pack = createContentPackArtifact("climate", worldGeneration={owner: "climate", catalog: {schemaVersion: 2, generators: [definition], palettes: [palette]}})
+    const catalog = createContentCatalog([pack], ["climate"])
+    const store = memoryWorldStore()
+    const runtime = worldRuntime(store, catalog)
+    const position = {x: 1000, y: 80, z: -1000}
+    try:
+        const manifest = await runtime.createWorld({id: "climate-config", name: "Climate", seed: "config", generator: definition.key})
+        expect(manifest.climate).toEqual(worldGeneratorClimate(definition))
+        const expected = worldEnvironmentAt(manifest.seed, 90_000, position, manifest.climate)
+        expect(expected.precipitationIntensity < worldEnvironmentAt(manifest.seed, 90_000, position).precipitationIntensity).toBe(true)
+        expect(await runtime.environment(manifest.id, 90_000, position)).toEqual(expected)
+        const lease = await runtime.retainWorld(manifest.id)
+        try: expect(lease.environment(90_000, position)).toEqual(expected)
+        finally: await lease.close()
+    finally: await runtime.close()
+    const reopened = worldRuntime(store, catalog)
+    try:
+        const manifest = await reopened.requireWorld("climate-config")
+        expect(manifest.climate).toEqual(worldGeneratorClimate(definition))
+        expect(await reopened.environment(manifest.id, 90_000, position)).toEqual(worldEnvironmentAt(manifest.seed, 90_000, position, manifest.climate))
+    finally: await reopened.close()
 
 test "new worlds begin at noon and preserve their timeline across runtime reconstruction":
     let clockMilliseconds = 1_000_000

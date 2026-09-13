@@ -1,5 +1,32 @@
 import {expect} from "velar/test"
-import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+import {columnPlanner, createGenerationFields, terrainTargetSurfaceY} from "../../src/survival/terrain.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {TerrainConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+
+test "river carving preserves the deep ocean floor and cannot raise terrain":
+    const fields = createGenerationFields("ocean-floor")
+    fields.continentalness = (x, z) => -0.8
+    fields.ridge = (x, z) => -0.5
+    fields.hills = (x, z) => 0
+    fields.river = (x, z) => 0
+    expect(terrainTargetSurfaceY(fields, {x: 0, z: 0}) < 46).toBe(true)
+    fields.river = (x, z) => 1
+    expect(terrainTargetSurfaceY(fields, {x: 0, z: 0}) < 46).toBe(true)
+
+test "regional landform belts preserve plains independently of inland elevation":
+    const fields = createGenerationFields("landform-belts")
+    fields.continentalness = (x, z) => 0.5
+    fields.river = (x, z) => 1
+    fields.hills = (x, z) => 0
+    fields.ridge = (x, z) => -0.4
+    const plain = terrainTargetSurfaceY(fields, {x: 0, z: 0})
+    fields.ridge = (x, z) => 0
+    const hill = terrainTargetSurfaceY(fields, {x: 0, z: 0})
+    fields.ridge = (x, z) => 0.4
+    const mountain = terrainTargetSurfaceY(fields, {x: 0, z: 0})
+    expect(plain < 80).toBe(true)
+    expect(hill > plain).toBe(true)
+    expect(mountain > hill + 25).toBe(true)
 
 test "column caches are reused across vertical chunks":
     const planner = columnPlanner(createGenerationFields("column-cache"), 16, 4)
@@ -25,3 +52,70 @@ test "column cache eviction follows recent horizontal use":
     planner.columns(1, 0)
     expect(planner.columnBuildCount()).toBe(4)
     expect(planner.cachedColumnCount()).toBe(2)
+
+test "surface density and water facts agree across adjacent Chunk halos":
+    const planner = columnPlanner(createGenerationFields("terrain-seam-facts"), 16)
+    const west = planner.columns(0, 0)
+    const east = planner.columns(1, 0)
+
+    for x in range(15, 17):
+        for z in range(0, 16):
+            expect(west.surfaceYAt(x, z)).toBe(east.surfaceYAt(x, z))
+            expect(west.waterLevelAt(x, z)).toBe(east.waterLevelAt(x, z))
+            const surfaceY = west.surfaceYAt(x, z)
+            expect(west.densityAt(x, surfaceY, z)).toBe(east.densityAt(x, surfaceY, z))
+            expect(west.densityAt(x, surfaceY + 1, z)).toBe(east.densityAt(x, surfaceY + 1, z))
+
+test "surface micro-detail preserves a closed surface and breaks long inland terraces":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const profile = WorldGeneratorDefinition.from(base, {terrain: TerrainConfig.from(base.terrain, {mountainAmplitude: 96})})
+    const planner = columnPlanner(createGenerationFields("openvoxel", profile), 16)
+    const unperturbedFields = createGenerationFields("openvoxel", profile)
+    unperturbedFields.surfaceMicroDetail = (x, z) => 0
+    const unperturbed = columnPlanner(unperturbedFields, 16)
+    let longestBand = 0
+    let longestUnperturbedBand = 0
+    let inlandColumns = 0
+
+    for z in range(-96, 97):
+        let previousHeight: number? = null
+        let bandLength = 0
+        for x in range(-96, 97):
+            const plan = planner.columns((x / 16).floor(), (z / 16).floor())
+            const sample = plan.sampleAt(x, z)
+            expect(plan.densityAt(x, sample.surfaceY, z) >= 0).toBe(true)
+            expect(plan.densityAt(x, sample.surfaceY + 1, z) < 0).toBe(true)
+            if sample.terrainType != profile.terrainTypes.plain or sample.surfaceY <= profile.world.seaLevel + 3:
+                previousHeight = null
+                bandLength = 0
+                continue
+            inlandColumns += 1
+            if previousHeight == sample.surfaceY: bandLength += 1
+            else: bandLength = 1
+            previousHeight = sample.surfaceY
+            longestBand = Math.max(longestBand, bandLength)
+
+    assert inlandColumns > 0 else "Expected inland plain columns in the micro-detail test area"
+    for z in range(-96, 97):
+        let previousHeight: number? = null
+        let bandLength = 0
+        for x in range(-96, 97):
+            const sample = unperturbed.columns((x / 16).floor(), (z / 16).floor()).sampleAt(x, z)
+            if sample.terrainType != profile.terrainTypes.plain or sample.surfaceY <= profile.world.seaLevel + 3:
+                previousHeight = null
+                bandLength = 0
+                continue
+            if previousHeight == sample.surfaceY: bandLength += 1
+            else: bandLength = 1
+            previousHeight = sample.surfaceY
+            longestUnperturbedBand = Math.max(longestUnperturbedBand, bandLength)
+    assert longestBand <= 16 else f"Surface micro-detail left an inland terrace {longestBand} columns long"
+    // 细节噪声既会拆开台阶也可能连接局部等高点，单个最长段不保证单调变短。
+    // 有界台阶和与未扰动样本的差异是需要维护的契约。
+    expect(longestUnperturbedBand > 0).toBe(true)
+    let changed = 0
+    for x in range(-64, 65):
+        const a = planner.columns((x / 16).floor(), 2).sampleAt(x, 32)
+        const b = unperturbed.columns((x / 16).floor(), 2).sampleAt(x, 32)
+        if a.surfaceY != b.surfaceY: changed += 1
+    expect(changed > 0).toBe(true)

@@ -13,20 +13,20 @@ import {ClientWorldChangeListener, ClientWorldChangeSubscription, ClientWorldSta
 /// 调用者不直接操作 requestId、sequence 或增量重同步。
 export type ClientWorldSession:
     readonly worldId: string
-    readonly contract: readonly WorldBackendContract
-    readonly bootstrap: readonly WorldBootstrapResponse
-    readonly content: readonly WorldContentResponse
+    readonly contract: WorldBackendContract
+    readonly bootstrap: WorldBootstrapResponse
+    readonly content: WorldContentResponse
     readonly state: ClientWorldState
     /// 从最近一次 world.ready 权威锚点按单调时钟推进；位置默认使用锚点位置，视点
     /// 流送可显式请求大世界中的另一处连续环境场。
-    environment: (samplePosition?: readonly Coordinate3) -> readonly WorldEnvironmentSample
+    environment: (samplePosition?: readonly Coordinate3) -> WorldEnvironmentSample
     /// 宿主可约每 100ms 调用；内部只保留一个请求，每次最多同步四个 Chunk。
     /// 仅时间槽变化或热编辑遮挡失效时入队，同值快照不会触发构网。
     /// 任务取消沿同步请求传到后端；关闭呈现任务不需要先关闭整个世界连接。
     refreshEcology: (cancellation?: Cancellation) -> Promise<bool>
     loadChunks: (positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly ClientChunkState>>
     unloadChunks: (positions: readonly List<readonly ChunkPosition>) -> null
-    applyBlocks: (edits: readonly List<readonly RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
+    applyBlocks: (edits: readonly List<RealtimeBlockEdit>) -> Promise<readonly BlockEditsAppliedEvent>
     subscribeChanges: (listener: ClientWorldChangeListener) -> ClientWorldChangeSubscription
     reconnect: () -> Promise<null>
     close: () -> Promise<null>
@@ -74,7 +74,7 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
     let synchronization: SynchronizationState = {depth: 0, changes: []}
     const loads = chunkLoadOwnership(state)
     const connections = sessionConnection(listener => backend.connect(worldId, listener), installConnection, receiveChanges)
-    const ecology = sessionEnvironment(bootstrap.seed, state, clock, synchronize, () => connections.connected() and synchronization.depth == 0)
+    const ecology = sessionEnvironment(bootstrap.seed, state, clock, synchronize, () => connections.connected() and synchronization.depth == 0, bootstrap.climate)
 
     def installConnection(event: readonly WorldReadyEvent):
         ecology.install(event.environment)
@@ -181,7 +181,7 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
         state.forgetChunks(positions)
         ecology.forget(positions)
 
-    async def applyBlocks(edits: readonly List<readonly RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
+    async def applyBlocks(edits: readonly List<RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
         assert edits.size > 0 else "Client block edit batch cannot be empty"
         const owner = connections.current()
         const event = await owner.applyBlocks(requestId("edit"), edits)

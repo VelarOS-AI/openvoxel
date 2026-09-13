@@ -1,13 +1,21 @@
 import {BlockBehavior, BlockInteraction, BlockLight, BlockPhysics, BlockPropertyDefinition, BlockRender, BlockStateProperty} from "./block.vel"
 
-/// data/catalog.yml 的强类型结构，只描述人工源如何组织。
-/// catalogVersion 本身也是 identities 中的直接路径，生成时解析为稳定版本身份。
+/// 方块目录的通用人工源结构。Mod 只声明自己的来源；最终 runtimeId 由安装它的
+/// 世界注册表分配，因此这里不携带内建状态映射。
 export type BlockCatalogManifest:
     /// 方块目录的数据结构版本；结构发生变化时递增。
     schemaVersion: number
     /// 当前基础内容目录的语义版本。
     catalogVersion: string
     /// 按确定顺序读取的分组方块文件列表。
+    sources: List<string>
+
+/// OpenVoxel 基础目录额外固定一份受版本控制的 runtimeId 映射。它与 Mod 清单
+/// 分开解析，避免把内建兼容职责泄漏给外部内容包。
+export type BuiltinBlockCatalogManifest:
+    schemaVersion: number
+    catalogVersion: string
+    stateMap: string
     sources: List<string>
 
 /// 规范状态键与数字 runtimeId 的一对一映射。
@@ -29,23 +37,23 @@ export type BlockStateMapSource:
 
 /// 编译后的方块家族，主要供类型级查询和默认放置使用。
 /// properties 仍描述全部状态维度，physics 等组件则是默认状态的最终快照。
-export type BlockDefinition:
+export readonly type BlockDefinition:
     /// defaultState 对应的数字 runtimeId，可直接写入 Chunk。
     defaultStateRuntimeId: number
     key: string
     translationKey: string
-    tags: List<string>
-    properties: List<BlockPropertyDefinition>
-    defaultState: List<BlockStateProperty>
+    tags: readonly List<string>
+    properties: readonly List<BlockPropertyDefinition>
+    defaultState: readonly List<BlockStateProperty>
     physics: BlockPhysics
     light: BlockLight
     render: BlockRender
     interaction: BlockInteraction
-    behaviors: List<BlockBehavior>
+    behaviors: readonly List<BlockBehavior>
 
 /// 每个有限属性组合都对应一个独立运行时状态。
 /// 这里保存最终组件快照，运行时查询状态时不需要再次匹配 variants。
-export type BlockStateDefinition:
+export readonly type BlockStateDefinition:
     /// 世界或基础目录中使用的 UInt32 状态身份。
     runtimeId: number
     /// 由 blockKey 和排序后的完整 properties 组成的稳定语义键。
@@ -53,47 +61,47 @@ export type BlockStateDefinition:
     /// 该状态所属的方块家族身份。
     blockKey: string
     /// 当前状态的完整属性集合，不是局部差异。
-    properties: List<BlockStateProperty>
+    properties: readonly List<BlockStateProperty>
     physics: BlockPhysics
     light: BlockLight
     render: BlockRender
     interaction: BlockInteraction
-    behaviors: List<BlockBehavior>
+    behaviors: readonly List<BlockBehavior>
 
 /// 可以直接交给 BlockRegistry 建立索引的完整编译目录。
-export type BlockCatalogSource:
+export readonly type BlockCatalogSource:
     schemaVersion: number
     catalogVersion: string
-    reservedRuntimeIds: List<number>
-    blocks: List<BlockDefinition>
-    states: List<BlockStateDefinition>
+    reservedRuntimeIds: readonly List<number>
+    blocks: readonly List<BlockDefinition>
+    states: readonly List<BlockStateDefinition>
 
 /// 多个状态共享的一组最终组件。生成产物把重复组件只保存一次，运行时再恢复为
 /// BlockStateDefinition 的完整快照；profileId 只属于目录传输格式，不进入状态身份。
-export type BlockComponentProfile:
+export readonly type BlockComponentProfile:
     profileId: number
     physics: BlockPhysics
     light: BlockLight
     render: BlockRender
     interaction: BlockInteraction
-    behaviors: List<BlockBehavior>
+    behaviors: readonly List<BlockBehavior>
 
 /// 压缩状态只保留身份、属性和组件档案引用。
-export type PackedBlockStateDefinition:
+export readonly type PackedBlockStateDefinition:
     runtimeId: number
     stateKey: string
     blockKey: string
-    properties: List<BlockStateProperty>
+    properties: readonly List<BlockStateProperty>
     componentProfileId: number
 
 /// generated JSON 与网络目录共同使用的紧凑格式。
-export type PackedBlockCatalogSource:
+export readonly type PackedBlockCatalogSource:
     schemaVersion: number
     catalogVersion: string
-    reservedRuntimeIds: List<number>
-    blocks: List<BlockDefinition>
-    componentProfiles: List<BlockComponentProfile>
-    states: List<PackedBlockStateDefinition>
+    reservedRuntimeIds: readonly List<number>
+    blocks: readonly List<BlockDefinition>
+    componentProfiles: readonly List<BlockComponentProfile>
+    states: readonly List<PackedBlockStateDefinition>
 
 /// generated/block-catalog.json 的顶层结构。
 /// 唯一 JSON 产物同时携带身份树、编译目录和确定性哈希。
@@ -115,15 +123,15 @@ export type BlockCatalogContribution:
     catalog: BlockCatalogSource
 
 /// 世界快照中的最小持久化单元，只保存数字 ID 与稳定状态键。
-export type WorldBlockStateMapping:
-    readonly runtimeId: number
-    readonly stateKey: string
+export readonly type WorldBlockStateMapping:
+    runtimeId: number
+    stateKey: string
 
 /// 世界快照持久化当前 Content Pack 集合的完整状态映射。
-export type WorldBlockRegistrySnapshot:
+export readonly type WorldBlockRegistrySnapshot:
     /// 世界注册表快照格式版本。
-    readonly formatVersion: number
+    formatVersion: number
     /// 下一个可用于新 Mod 状态的 UInt32 ID。
-    readonly nextModRuntimeId: number
+    nextModRuntimeId: number
     /// 基础状态与当前 Content Pack 中 Mod 状态的完整映射。
-    readonly states: readonly List<readonly WorldBlockStateMapping>
+    states: readonly List<WorldBlockStateMapping>

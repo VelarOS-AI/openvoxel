@@ -15,20 +15,20 @@ export type WorldChunkQueries:
     /// 只返回由世界种子和生成器决定的固定地形，不叠加玩家覆盖。
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
     /// 返回与固定地形分离的当前热状态；缺少覆盖的坐标也会返回 revision 0。
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly WorldChunkSnapshot>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<WorldChunkSnapshot>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
 
 /// 把一个持久化增量覆盖到刚生成的基础 Chunk 上。
 /// 每个 runtimeId 都先经过当前世界注册表验证，损坏或不属于该世界的数据会在
 /// 存储边界附近立即失败，不会悄悄进入后续渲染或网络响应。
-def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: readonly WorldChunkSnapshot):
+def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: WorldChunkSnapshot):
     assert delta.revision.isInteger() and delta.revision >= 0 else "Chunk revision must be a non-negative integer"
     for entry in delta.overrides:
         requireWorldBlockStateRuntimeId(blocks.index, entry.blockStateRuntimeId)
         setChunkBlock(chunk, entry.position, entry.blockStateRuntimeId)
     chunk.revision = delta.revision
 
-export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (manifest: readonly WorldManifest) -> number) -> WorldChunkQueries:
+export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (manifest: WorldManifest) -> number) -> WorldChunkQueries:
     async def checkpoint(cancellation: Cancellation?):
         if cancellation != null: await cancellation.checkpoint()
 
@@ -68,7 +68,7 @@ export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (ma
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> readonly List<readonly WorldChunkSnapshot>:
+    ) -> readonly List<WorldChunkSnapshot>:
         await checkpoint(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)

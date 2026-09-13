@@ -61,19 +61,19 @@ test "mesh demand combines conservative portal visibility with the safety sphere
         {x: 3, y: 0, z: 0},
         {x: 0, y: 0, z: 2},
     ]
-    const open: readonly PortalVisibilitySummary = {
+    const open: PortalVisibilitySummary = {
         empty: true,
         fullyOccluding: false,
         openFaces: Math.pow(2, 6) - 1,
         connectedFaces: Math.pow(2, 36) - 1,
     }
-    const solid: readonly PortalVisibilitySummary = {
+    const solid: PortalVisibilitySummary = {
         empty: false,
         fullyOccluding: true,
         openFaces: 0,
         connectedFaces: 0,
     }
-    const summaries: Map<string, readonly PortalVisibilitySummary> = Map([
+    const summaries: Map<string, PortalVisibilitySummary> = Map([
         ["0:0:0", solid],
         ["1:0:0", open],
         ["2:0:0", solid],

@@ -1,30 +1,42 @@
 import {ChunkPosition, LocalPosition, WorldManifest} from "@openvoxel/world"
 
-export type BlockOverride:
-    readonly position: readonly LocalPosition
-    readonly blockStateRuntimeId: number
+export readonly type BlockOverride:
+    position: readonly LocalPosition
+    blockStateRuntimeId: number
 
-export type StoredChunkDelta:
-    readonly position: readonly ChunkPosition
-    readonly revision: number
-    readonly overrides: readonly List<readonly BlockOverride>
+/// 持久化覆盖在可见方块身份之外保留自然演化所需的内部锚点。这个字段不进入
+/// Chunk 查询和实时协议；null 表示该覆盖没有运行时作物生长语义。
+export readonly type StoredBlockOverride:
+    position: readonly LocalPosition
+    blockStateRuntimeId: number
+    growthOriginEpoch: number?
+
+export readonly type StoredChunkDelta:
+    position: readonly ChunkPosition
+    /// 对外可见的方块内容版本；内部锚点变化不得推进它。
+    revision: number
+    /// 持久化乐观并发版本。旧版 IndexedDB 记录缺失时由适配器从 revision 迁移。
+    storageRevision: number?
+    overrides: readonly List<StoredBlockOverride>
 
 /// ActiveWorldState 在内存中完成比较后，交给持久化适配器的单项变更。
 /// null 表示删除稀疏覆盖，使该位置重新继承固定地形。
-export type BlockOverrideMutation:
-    readonly position: readonly LocalPosition
-    readonly blockStateRuntimeId: number?
+export readonly type BlockOverrideMutation:
+    position: readonly LocalPosition
+    blockStateRuntimeId: number?
+    growthOriginEpoch: number?
 
 /// 一个 Chunk 的乐观并发提交单元。
 ///
-/// expectedRevision 必须与存储中的当前版本完全相等；revision 必须恰好是
-/// expectedRevision + 1。这样 SQLite 和内存适配器只负责可靠落盘，不再各自
-/// 重复推导业务版本，也不会出现同一批次内多个中间 revision。
-export type ChunkDeltaCommit:
-    readonly position: readonly ChunkPosition
-    readonly expectedRevision: number
-    readonly revision: number
-    readonly writes: readonly List<readonly BlockOverrideMutation>
+/// expectedStorageRevision 必须与存储中的当前内部版本完全相等；
+/// storageRevision 必须恰好加一。revision 由运行时按最终可见状态决定：一批
+/// 只有 ownership / growth anchor 的写入保持不变，真实方块变化才恰好加一。
+export readonly type ChunkDeltaCommit:
+    position: readonly ChunkPosition
+    expectedStorageRevision: number
+    storageRevision: number
+    revision: number
+    writes: readonly List<BlockOverrideMutation>
 
 export type WorldManifestStore:
     save: (manifest: WorldManifest) -> Promise<null>
@@ -34,7 +46,7 @@ export type WorldDeltaStore:
     findChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<StoredChunkDelta>>
     /// 在一个存储事务中提交完整 Chunk 批次。任意 Chunk 版本不匹配时拒绝整个
     /// 批次；适配器不得部分写入，也不得自行吞掉冲突后继续覆盖新数据。
-    commitChunks: (worldId: string, commits: readonly List<readonly ChunkDeltaCommit>) -> Promise<null>
+    commitChunks: (worldId: string, commits: readonly List<ChunkDeltaCommit>) -> Promise<null>
 
 export type WorldStore:
     manifests: WorldManifestStore

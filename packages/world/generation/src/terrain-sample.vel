@@ -23,3 +23,8 @@ export type TerrainSample:
     terrainType: string
     /// 在最终高度、坡度和地形类型确定后选出的群系身份。
     biome: string
+    /// 连续地质/沉积/露头场，由生成器填入，供表层与生态共同判断最终基底。
+    geology: number?
+    deposit: number?
+    exposure: number?
+    stoneVein: number?

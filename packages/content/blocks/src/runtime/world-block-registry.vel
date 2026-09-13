@@ -15,7 +15,7 @@ export class UnknownWorldBlockStateRuntimeIdError extends Error:
 /// 快照仍然是唯一持久化事实，索引只在载入世界时建立一次，不进入 JSON 或数据库。
 export type WorldBlockRegistryIndex:
     /// 索引对应的已验证快照。
-    snapshot: readonly WorldBlockRegistrySnapshot
+    snapshot: WorldBlockRegistrySnapshot
     /// UInt32 世界状态 ID 到规范状态键。
     stateKeyForRuntimeId: (runtimeId: number) -> string
     /// 规范状态键到 UInt32 世界状态 ID。
@@ -26,11 +26,11 @@ export type WorldBlockRegistryIndex:
 /// 世界注册表把当前可查询内容与需要持久化的完整快照绑定在一起。
 export type WorldBlockRegistry:
     /// 基础目录与当前世界 Mod 贡献合成后的完整活动定义。
-    source: readonly BlockCatalogSource
+    source: BlockCatalogSource
     /// 只包含当前可用基础内容和已安装 Mod 内容的运行时索引。
     registry: BlockRegistry
     /// 包含活动与缺失映射的完整持久化快照。
-    snapshot: readonly WorldBlockRegistrySnapshot
+    snapshot: WorldBlockRegistrySnapshot
     /// 当前世界完整映射的常数时间索引。
     index: WorldBlockRegistryIndex
 
@@ -41,7 +41,7 @@ def belongsToOwner(key: string, owner: string) -> bool: return key.startsWith(f"
 
 /// 世界快照是持久化边界，载入后先验证 ID 与状态键的唯一性。
 /// Mod ID 还必须小于 nextModRuntimeId，确保追加分配不会回到已使用区间。
-export def validateWorldBlockRegistrySnapshot(snapshot: readonly WorldBlockRegistrySnapshot) -> readonly WorldBlockRegistrySnapshot:
+export def validateWorldBlockRegistrySnapshot(snapshot: WorldBlockRegistrySnapshot) -> WorldBlockRegistrySnapshot:
     assert snapshot.formatVersion == 1 else "Unsupported world block registry format version"
     assert snapshot.nextModRuntimeId.isInteger() and snapshot.nextModRuntimeId >= firstModBlockStateRuntimeId and snapshot.nextModRuntimeId <= 0x100000000 else "World block registry next Mod runtime id is invalid"
     const runtimeIds: Set<number> = Set()
@@ -61,7 +61,7 @@ export def validateWorldBlockRegistrySnapshot(snapshot: readonly WorldBlockRegis
 
 /// 从持久化快照建立不可变查询表。所有唯一性和 UInt32 检查集中发生在这里，
 /// Chunk 恢复、方块写入和协议查询随后都复用同一组 Map，不再逐次扫描 states。
-export def createWorldBlockRegistryIndex(snapshot: readonly WorldBlockRegistrySnapshot) -> WorldBlockRegistryIndex:
+export def createWorldBlockRegistryIndex(snapshot: WorldBlockRegistrySnapshot) -> WorldBlockRegistryIndex:
     const checked = WorldBlockRegistrySnapshot.parse(validateWorldBlockRegistrySnapshot(snapshot))
     const stateKeyByRuntimeId: Map<number, string> = Map()
     const runtimeIdByStateKey: Map<string, number> = Map()
@@ -95,12 +95,12 @@ export def requireWorldBlockStateRuntimeId(index: readonly WorldBlockRegistryInd
 
 /// 把基础或 Mod 目录合并到活动内容索引，并验证 Mod 不能越过自己的命名空间。
 def registerCatalogContent(
-    catalog: readonly BlockCatalogSource,
+    catalog: BlockCatalogSource,
     owner: string?,
-    statesByKey: Map<string, readonly BlockStateDefinition>,
-    blocksByKey: Map<string, readonly BlockDefinition>,
+    statesByKey: Map<string, BlockStateDefinition>,
+    blocksByKey: Map<string, BlockDefinition>,
 ):
-    assert catalog.schemaVersion == 4 else "Unsupported contributed block catalog schema version"
+    assert catalog.schemaVersion == 6 else "Unsupported contributed block catalog schema version"
     for state in catalog.states:
         if owner != null:
             assert belongsToOwner(state.blockKey, owner) else f"Block state {state.stateKey} is outside contribution namespace {owner}"
@@ -116,13 +116,13 @@ def registerCatalogContent(
 /// 合成当前世界的完整注册表。previous 为空表示创建新世界；非空表示打开已有
 /// 世界，并要求快照与清单锁定的 Content Pack 状态集合完全一致。
 export def createWorldBlockRegistry(
-    baseCatalog: readonly BlockCatalogSource,
+    baseCatalog: BlockCatalogSource,
     contributions: readonly List<readonly BlockCatalogContribution> = [],
-    previous: readonly WorldBlockRegistrySnapshot? = null,
+    previous: WorldBlockRegistrySnapshot? = null,
 ) -> WorldBlockRegistry:
     // 第一步：合并基础目录与全部已安装 Mod，建立当前活动内容集合。
-    const statesByKey: Map<string, readonly BlockStateDefinition> = Map()
-    const blocksByKey: Map<string, readonly BlockDefinition> = Map()
+    const statesByKey: Map<string, BlockStateDefinition> = Map()
+    const blocksByKey: Map<string, BlockDefinition> = Map()
     registerCatalogContent(baseCatalog, null, statesByKey, blocksByKey)
     const baseState = baseCatalog.states.find(state => state.runtimeId == 0)
     assert baseState != null else "Base block catalog requires runtime id 0"
@@ -137,7 +137,7 @@ export def createWorldBlockRegistry(
         registerCatalogContent(contribution.catalog, contribution.owner, statesByKey, blocksByKey)
 
     // 第二步：新世界从基础映射开始；已有世界读取清单中的精确快照。
-    const mappings: List<readonly WorldBlockStateMapping> = []
+    const mappings: List<WorldBlockStateMapping> = []
     let nextModRuntimeId = firstModBlockStateRuntimeId
     if previous == null:
         for state in baseCatalog.states:

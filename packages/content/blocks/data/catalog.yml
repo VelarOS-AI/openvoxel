@@ -1,7 +1,11 @@
-schemaVersion: 4
+schemaVersion: 6
 catalogVersion: catalogs.base
+stateMap: state-maps/base-v2.yml
 sources:
   - blocks/terrain.yml
   - blocks/fluids.yml
   - blocks/minerals.yml
-  - blocks/vegetation.yml
+  - blocks/vegetation/trees.yml
+  - blocks/vegetation/ground-plants.yml
+  - blocks/vegetation/crops.yml
+  - blocks/vegetation/aquatic.yml

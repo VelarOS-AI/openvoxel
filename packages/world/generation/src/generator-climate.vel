@@ -1,0 +1,11 @@
+import {WorldClimateDefinition, validateWorldClimateDefinition} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "./definition/catalog.vel"
+
+/// 生成器数据到世界稳定气候契约的唯一投影；创建、重开与地形采样共同使用。
+export def worldGeneratorClimate(definition: readonly WorldGeneratorDefinition) -> WorldClimateDefinition:
+    return validateWorldClimateDefinition({
+        temperaturePeriod: definition.terrain.climate.temperaturePeriod,
+        humidityPeriod: definition.terrain.climate.humidityPeriod,
+        samplingStep: definition.sampling.horizontalStep,
+        seaLevel: definition.world.seaLevel,
+    })

@@ -1,0 +1,39 @@
+import {expect} from "velar/test"
+import {WorldClimateDefinition, createWorldBaseClimateNodeSampler, createWorldBaseClimateSampler, defaultWorldClimate, validateWorldClimateDefinition, worldBaseClimateAt, worldTemperatureAtHeight} from "../src/environment/base-climate.vel"
+import {worldClimateAt, worldYearMilliseconds} from "../src/environment/climate.vel"
+
+test "base climate is shared by seasons and physical temperature at both signs of world coordinates":
+    const config = WorldClimateDefinition.from(defaultWorldClimate, {temperaturePeriod: 512, humidityPeriod: 640, samplingStep: 8, seaLevel: 80})
+    for x in [-1025, -1024, -17, -16, -1, 0, 15, 16, 1023, 1024]:
+        const position = {x, y: 96, z: -x + 1}
+        const base = worldBaseClimateAt("same-world", {x, z: position.z}, config)
+        const spring = worldClimateAt("same-world", 0, position, config)
+        const summer = worldClimateAt("same-world", worldYearMilliseconds * 0.25, position, config)
+        const winter = worldClimateAt("same-world", worldYearMilliseconds * 0.75, position, config)
+        const annual = (worldTemperatureAtHeight(base.temperature, position.y, config.seaLevel) - 3) * 2.5
+        expect((spring.temperatureCelsius - annual).abs() < 0.000001).toBe(true)
+        expect(((summer.temperatureCelsius + winter.temperatureCelsius) / 2 - annual).abs() < 0.000001).toBe(true)
+        expect(spring.humidity).toBe(base.humidity / 15)
+        expect(summer.humidity).toBe(winter.humidity)
+
+test "base climate sampling survives cache eviction and preserves the caller configuration":
+    const config = WorldClimateDefinition.parse(defaultWorldClimate)
+    const sample = createWorldBaseClimateSampler("cache", config)
+    const position = {x: -17, z: 35}
+    const expected = sample(position)
+    for x in range(600): sample({x: x * 16, z: 500})
+    expect(sample(position)).toEqual(expected)
+    for index in range(34): worldBaseClimateAt(f"other-{index}", position)
+    expect(worldBaseClimateAt("cache", position)).toEqual(expected)
+    expect(createWorldBaseClimateSampler("cache")(position)).toEqual(expected)
+
+test "climate definition rejects unsafe periods invalid grid steps and sea levels":
+    const node = createWorldBaseClimateNodeSampler("grid")
+    expect(() => node({x: 1, z: 0})).toThrow()
+    expect(node({x: -16, z: 32})).toEqual(worldBaseClimateAt("grid", {x: -16, z: 32}))
+    for period in [0, -1, Math.infinity, 1_048_577]:
+        expect(() => validateWorldClimateDefinition(WorldClimateDefinition.from(defaultWorldClimate, {temperaturePeriod: period}))).toThrow()
+        expect(() => validateWorldClimateDefinition(WorldClimateDefinition.from(defaultWorldClimate, {humidityPeriod: period}))).toThrow()
+    for samplingStep in [0, 3, 32]:
+        expect(() => validateWorldClimateDefinition(WorldClimateDefinition.from(defaultWorldClimate, {samplingStep}))).toThrow()
+    expect(() => validateWorldClimateDefinition(WorldClimateDefinition.from(defaultWorldClimate, {seaLevel: 256}))).toThrow()

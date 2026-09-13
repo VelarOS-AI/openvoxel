@@ -1,0 +1,27 @@
+import {Coordinate2} from "@openvoxel/world"
+import {TerrainSample} from "../terrain-sample.vel"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+
+const shoreDirections: readonly List<readonly Coordinate2> = [
+    {x: 1, z: 0}, {x: -1, z: 0}, {x: 0, z: 1}, {x: 0, z: -1},
+    {x: 1, z: 1}, {x: -1, z: 1}, {x: 1, z: -1}, {x: -1, z: -1},
+]
+
+/// 两级探针区分开放海岸和狭窄水坑。只影响候选排序，安全检查仍由真实
+/// 地形、脚部和头部碰撞决定；内陆种子保留安全退路。
+export def coastalSpawnAffinity(
+    position: readonly Coordinate2,
+    seaLevel: number,
+    heightAt: (position: readonly Coordinate2) -> number,
+) -> number:
+    for direction in shoreDirections:
+        const near = heightAt({x: position.x + direction.x * 32, z: position.z + direction.z * 32})
+        if near > seaLevel - 1: continue
+        const far = heightAt({x: position.x + direction.x * 64, z: position.z + direction.z * 64})
+        if far <= seaLevel - 2: return 1
+    return 0
+
+export def coastalSpawnScore(profile: readonly WorldGeneratorDefinition, sample: readonly TerrainSample, coast: number) -> number:
+    const distance = Math.hypot(sample.position.x, sample.position.z)
+    const climate = (sample.temperature - 8).abs() + 0.45 * (sample.humidity - 8).abs()
+    return 240 + 160 * coast - 150 * sample.slope - 0.035 * distance - 2.2 * climate + 12 * sample.forestDensity - 3 * (sample.surfaceY - profile.world.seaLevel - 3).abs()

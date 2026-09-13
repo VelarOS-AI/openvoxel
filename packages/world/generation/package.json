@@ -25,18 +25,18 @@
     }
   },
   "scripts": {
-    "generate": "velar run tools/generate.vel",
-    "generate:check": "velar run tools/check-generated.vel",
-    "check": "velar check",
+    "generate": "node ../../../tools/run-validation.mjs -- velar run tools/generate.vel",
+    "generate:check": "node ../../../tools/run-validation.mjs -- velar run tools/check-generated.vel",
+    "check": "node ../../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
-    "test": "velar test",
-    "build": "velar build",
-    "benchmark": "velar run benchmarks/world-generation.vel",
-    "benchmark:caves": "velar run benchmarks/caves.vel",
-    "benchmark:columns": "velar run benchmarks/columns.vel",
-    "benchmark:phases": "velar run benchmarks/phases.vel",
-    "quality": "velar run tools/quality-report.vel"
+    "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
+    "test": "node ../../../tools/run-validation.mjs -- velar test",
+    "build": "node ../../../tools/run-validation.mjs -- velar build",
+    "benchmark": "node ../../../tools/run-validation.mjs -- velar run benchmarks/world-generation.vel",
+    "benchmark:caves": "node ../../../tools/run-validation.mjs -- velar run benchmarks/caves.vel",
+    "benchmark:columns": "node ../../../tools/run-validation.mjs -- velar run benchmarks/columns.vel",
+    "benchmark:phases": "node ../../../tools/run-validation.mjs -- velar run benchmarks/phases.vel",
+    "quality": "node ../../../tools/run-validation.mjs -- velar run tools/quality-report.vel"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",

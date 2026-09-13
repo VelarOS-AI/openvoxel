@@ -2,13 +2,13 @@ import {WorldManifest} from "@openvoxel/world"
 import {WorldGameOwner, closeWorldGameOwners} from "./ownership.vel"
 
 export type WorldGameStage:
-    readonly manifest: readonly WorldManifest
+    readonly manifest: WorldManifest
     prepare: () -> Promise<null>
     start: () -> Promise<WorldGameOwner>
     close: () -> Promise<null>
 
 export type WorldGameExperience:
-    enter: () -> Promise<readonly WorldManifest?>
+    enter: () -> Promise<WorldManifest?>
     close: () -> Promise<null>
 
 /// 进入世界是一次资源获取事务：会话、首屏数据、渲染器依次取得所有权。
@@ -19,7 +19,7 @@ export def worldGameExperience(
 ) -> WorldGameExperience:
     let stage: WorldGameStage? = null
     let game: WorldGameOwner? = null
-    let entering: Promise<readonly WorldManifest?>? = null
+    let entering: Promise<WorldManifest?>? = null
     let closing: Promise<null>? = null
     let closed = false
 
@@ -39,7 +39,7 @@ export def worldGameExperience(
         if closing == null: closing = shutdown()
         return closing!
 
-    async def open() -> readonly WorldManifest?:
+    async def open() -> WorldManifest?:
         try:
             const opened = await openStage()
             stage = opened
@@ -55,7 +55,7 @@ export def worldGameExperience(
         finally:
             if closed: await releaseResources()
 
-    def enter() -> Promise<readonly WorldManifest?>:
+    def enter() -> Promise<WorldManifest?>:
         assert not closed else "World experience is closed"
         if entering == null: entering = open()
         return entering!

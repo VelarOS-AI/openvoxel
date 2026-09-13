@@ -1,5 +1,5 @@
 import {ChunkMesh, ClientAnimationResource, ClientMaterialResource, ClientRenderCatalog, ClientResourceEnvironment, ClientTextureBank, ClientTextureResource} from "@openvoxel/renderer"
-import {WorldClimateSample, WorldEnvironmentSample, worldClimateAt} from "@openvoxel/world"
+import {WorldClimateDefinition, WorldClimateSample, WorldEnvironmentSample, worldClimateAt} from "@openvoxel/world"
 import {WorldMovementFlightState, worldMovementFlightState, stepWorldMovementFlight} from "../controls/creative-flight.vel"
 import {WorldMovementCollisionQuery, WorldMovementWalkState, stepWorldMovementWalk, worldMovementEyeHeight, worldMovementPlayerHeight, worldMovementWalkState} from "../controls/survival-walk.vel"
 import {WorldMovementFlightStep, WorldMovementMode, WorldMovementWalkStep, WorldNavigationFactory, WorldNavigationMode, WorldNavigationStats, createWorldNavigation} from "../controls/world-navigation.vel"
@@ -7,132 +7,136 @@ import {WorldGraphicsEnvironmentFrame, worldGraphicsEnvironmentFrame} from "./en
 
 export {WorldMovementMode, WorldNavigationMode, WorldNavigationStats} from "../controls/world-navigation.vel"
 
-export type WorldGraphicsEnvironmentStats:
-    readonly environmentTextureReady: bool
-    readonly environmentTextureUpdates: number
-    readonly precipitation: string
-    readonly precipitationIntensity: number
-    readonly cloudiness: number
-    readonly activeRainParticles: number
-    readonly activeSnowParticles: number
-    readonly activeRainSplashes: number
-    readonly activeSnowSplashes: number
+export readonly type WorldGraphicsEnvironmentStats:
+    environmentTextureReady: bool
+    environmentTextureUpdates: number
+    precipitation: string
+    precipitationIntensity: number
+    cloudiness: number
+    activeRainParticles: number
+    activeSnowParticles: number
+    activeRainSplashes: number
+    activeSnowSplashes: number
     /// 成功创建的真实碰地粒子累计数，生命周期结束前单调递增。
-    readonly rainSplashContacts: number
-    readonly snowSplashContacts: number
-    readonly rainSplashGrounded: bool
-    readonly rainSplashGroundY: number?
-    readonly shadowCasters: number
-    readonly activeShadowCasters: number
-    readonly sunVisible: bool
-    readonly moonVisible: bool
-    readonly starVisibility: number
-    readonly lightningSequence: number?
+    rainSplashContacts: number
+    snowSplashContacts: number
+    rainSplashGrounded: bool
+    rainSplashGroundY: number?
+    shadowCasters: number
+    activeShadowCasters: number
+    sunVisible: bool
+    moonVisible: bool
+    starVisibility: number
+    lightningSequence: number?
 
-export type WorldGraphicsStats:
-    readonly chunks: number
-    readonly meshes: number
-    readonly quads: number
-    readonly uploadQueuedChunks: number
-    readonly translucentSortQueuedMeshes: number
-    readonly navigationMode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly viewX: number
-    readonly viewY: number
-    readonly viewZ: number
-    readonly viewChunkX: number
-    readonly viewChunkY: number
-    readonly viewChunkZ: number
-    readonly forwardX: number
-    readonly forwardY: number
-    readonly forwardZ: number
-    readonly pointerLocked: bool
+export readonly type WorldGraphicsStats:
+    chunks: number
+    meshes: number
+    quads: number
+    uploadQueuedChunks: number
+    translucentSortQueuedMeshes: number
+    navigationMode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    viewX: number
+    viewY: number
+    viewZ: number
+    viewChunkX: number
+    viewChunkY: number
+    viewChunkZ: number
+    forwardX: number
+    forwardY: number
+    forwardZ: number
+    pointerLocked: bool
 
 /// OpenVoxel 游戏层的稳定图形表面。Chunk 网格和资源目录仍由 Renderer 拥有；
 /// 具体 GPU 后端只实现这组游戏所需操作。
 export type WorldGraphics:
-    setChunkMesh: (mesh: readonly ChunkMesh) -> null
-    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    setChunkMesh: (mesh: ChunkMesh) -> null
+    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
     stats: () -> WorldGraphicsStats
     environmentStats: () -> WorldGraphicsEnvironmentStats
-    setEnvironment: (sample: readonly WorldEnvironmentSample) -> null
+    setEnvironment: (sample: WorldEnvironmentSample) -> null
     close: () -> null
 
-export type WorldGraphicsRequest:
-    readonly canvas: CanvasElement
-    readonly catalog: readonly ClientRenderCatalog
-    readonly edge: number
-    readonly targetX: number
-    readonly targetY: number
-    readonly targetZ: number
-    readonly horizontalChunkRadius: number
-    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
-    readonly initialEnvironment: readonly WorldEnvironmentSample
-    readonly navigationMode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly collisionAt: WorldMovementCollisionQuery
-    readonly minimumWorldY: number
-    readonly maximumWorldY: number
-    readonly worldSeed: string
+export readonly type WorldGraphicsRequest:
+    canvas: CanvasElement
+    minimapCanvas: CanvasElement?
+    catalog: readonly ClientRenderCatalog
+    edge: number
+    targetX: number
+    targetY: number
+    targetZ: number
+    horizontalChunkRadius: number
+    viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+    initialEnvironment: WorldEnvironmentSample
+    navigationMode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    collisionAt: WorldMovementCollisionQuery
+    minimumWorldY: number
+    maximumWorldY: number
+    worldSeed: string
+    worldClimate: WorldClimateDefinition
 
 /// 记录型测试和未来后端替换都注入这一游戏专用工厂，不复制 Renderer 的资源描述。
-export type WorldGraphicsFactory = (request: readonly WorldGraphicsRequest) -> Promise<WorldGraphics>
+export type WorldGraphicsFactory = (request: WorldGraphicsRequest) -> Promise<WorldGraphics>
 
-type NativeWorldGraphicsOptions:
-    readonly textureBanks: readonly List<readonly ClientTextureBank>
-    readonly environmentResources: readonly ClientResourceEnvironment
-    readonly environmentFrame: readonly WorldGraphicsEnvironmentFrame
-    readonly climateAt: (worldMilliseconds: number, x: number, y: number, z: number) -> WorldClimateSample
-    readonly edge: number
-    readonly materials: readonly List<readonly ClientMaterialResource>
-    readonly textures: readonly List<readonly ClientTextureResource>
-    readonly animations: readonly List<readonly ClientAnimationResource>
-    readonly targetX: number
-    readonly targetY: number
-    readonly targetZ: number
-    readonly horizontalChunkRadius: number
-    readonly navigationMode: WorldNavigationMode
-    readonly movementMode: WorldMovementMode
-    readonly collisionAt: WorldMovementCollisionQuery
-    readonly survivalEyeHeight: number
-    readonly survivalPlayerHeight: number
-    readonly minimumWorldY: number
-    readonly maximumWorldY: number
-    readonly viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+readonly type NativeWorldGraphicsOptions:
+    minimapCanvas: CanvasElement?
+    textureBanks: readonly List<ClientTextureBank>
+    environmentResources: ClientResourceEnvironment
+    environmentFrame: WorldGraphicsEnvironmentFrame
+    climateAt: (worldMilliseconds: number, x: number, y: number, z: number) -> WorldClimateSample
+    edge: number
+    materials: readonly List<ClientMaterialResource>
+    textures: readonly List<ClientTextureResource>
+    animations: readonly List<ClientAnimationResource>
+    targetX: number
+    targetY: number
+    targetZ: number
+    horizontalChunkRadius: number
+    navigationMode: WorldNavigationMode
+    movementMode: WorldMovementMode
+    collisionAt: WorldMovementCollisionQuery
+    survivalEyeHeight: number
+    survivalPlayerHeight: number
+    minimumWorldY: number
+    maximumWorldY: number
+    viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
 
-type NativeWorldGraphicsDependencies:
-    readonly createNavigation: WorldNavigationFactory
-    readonly createFlightState: (x: number, y: number, z: number) -> WorldMovementFlightState
-    readonly createWalkState: (x: number, y: number, z: number) -> WorldMovementWalkState
-    readonly stepFlight: WorldMovementFlightStep
-    readonly stepWalk: WorldMovementWalkStep
+readonly type NativeWorldGraphicsDependencies:
+    createNavigation: WorldNavigationFactory
+    createFlightState: (x: number, y: number, z: number) -> WorldMovementFlightState
+    createWalkState: (x: number, y: number, z: number) -> WorldMovementWalkState
+    stepFlight: WorldMovementFlightStep
+    stepWalk: WorldMovementWalkStep
 
 type NativeWorldGraphics:
-    setChunkMesh: (mesh: readonly ChunkMesh) -> null
-    enqueueChunkMesh: (mesh: readonly ChunkMesh) -> Promise<bool>
+    setChunkMesh: (mesh: ChunkMesh) -> null
+    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
     stats: () -> WorldGraphicsStats
     environmentStats: () -> WorldGraphicsEnvironmentStats
-    setEnvironmentFrame: (frame: readonly WorldGraphicsEnvironmentFrame) -> null
+    setEnvironmentFrame: (frame: WorldGraphicsEnvironmentFrame) -> null
     release: () -> null
 
 extern module "#openvoxel/game/babylon-surface":
     export async def createSurfaceAdapter(
         canvas: CanvasElement,
-        options: readonly NativeWorldGraphicsOptions,
-        dependencies: readonly NativeWorldGraphicsDependencies,
+        options: NativeWorldGraphicsOptions,
+        dependencies: NativeWorldGraphicsDependencies,
     ) -> NativeWorldGraphics
 
 import js {createSurfaceAdapter} from "#openvoxel/game/babylon-surface"
 
-async def openDefaultWorldGraphics(request: readonly WorldGraphicsRequest) -> WorldGraphics:
+async def openDefaultWorldGraphics(request: WorldGraphicsRequest) -> WorldGraphics:
     const catalog = request.catalog
     const native = await createSurfaceAdapter(request.canvas, {
+        minimapCanvas: request.minimapCanvas,
         textureBanks: catalog.textureBanks,
         environmentResources: catalog.environment,
         environmentFrame: worldGraphicsEnvironmentFrame(request.initialEnvironment),
-        climateAt: (worldMilliseconds, x, y, z) => worldClimateAt(request.worldSeed, worldMilliseconds, {x, y, z}),
+        climateAt: (worldMilliseconds, x, y, z) => worldClimateAt(request.worldSeed, worldMilliseconds, {x, y, z}, request.worldClimate),
         edge: request.edge,
         materials: catalog.materials,
         textures: catalog.textures,
@@ -157,7 +161,7 @@ async def openDefaultWorldGraphics(request: readonly WorldGraphicsRequest) -> Wo
         stepWalk: stepWorldMovementWalk,
     })
 
-    def setEnvironment(sample: readonly WorldEnvironmentSample):
+    def setEnvironment(sample: WorldEnvironmentSample):
         native.setEnvironmentFrame(worldGraphicsEnvironmentFrame(sample))
 
     return {
@@ -171,9 +175,9 @@ async def openDefaultWorldGraphics(request: readonly WorldGraphicsRequest) -> Wo
     }
 
 export async def openWorldGraphicsWithBackend(
-    request: readonly WorldGraphicsRequest,
+    request: WorldGraphicsRequest,
     factory: WorldGraphicsFactory,
 ) -> WorldGraphics: return await factory(request)
 
-export async def openWorldGraphics(request: readonly WorldGraphicsRequest) -> WorldGraphics:
+export async def openWorldGraphics(request: WorldGraphicsRequest) -> WorldGraphics:
     return await openWorldGraphicsWithBackend(request, openDefaultWorldGraphics)

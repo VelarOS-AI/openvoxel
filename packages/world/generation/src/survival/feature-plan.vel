@@ -38,6 +38,15 @@ export def featureIntersectsChunk(plan: readonly CompiledFeaturePlan, chunk: rea
     const minimumZ = chunkMinimumZ(chunk)
     return plan.bounds.minimumX <= minimumX + chunk.edge - 1 and plan.bounds.maximumX >= minimumX and plan.bounds.minimumY <= minimumY + chunk.edge - 1 and plan.bounds.maximumY >= minimumY and plan.bounds.minimumZ <= minimumZ + chunk.edge - 1 and plan.bounds.maximumZ >= minimumZ
 
+/// 精确比较两份世界特征计划是否写入同一体素。调用方可以先依赖包围盒快速
+/// 排除绝大多数候选，再把原子避让裁决建立在完整特征而不是目标 Chunk 切片上。
+export def featurePlansOverlap(left: readonly CompiledFeaturePlan, right: readonly CompiledFeaturePlan) -> bool:
+    if left.bounds.maximumX < right.bounds.minimumX or left.bounds.minimumX > right.bounds.maximumX: return false
+    if left.bounds.maximumY < right.bounds.minimumY or left.bounds.minimumY > right.bounds.maximumY: return false
+    if left.bounds.maximumZ < right.bounds.minimumZ or left.bounds.minimumZ > right.bounds.maximumZ: return false
+    const occupied = Set(left.writes.map(write => f"{left.origin.x + write.x}:{left.origin.y + write.y}:{left.origin.z + write.z}"))
+    return right.writes.some(write => occupied.has(f"{right.origin.x + write.x}:{right.origin.y + write.y}:{right.origin.z + write.z}"))
+
 def worldIndex(chunk: readonly Chunk, worldX: number, worldY: number, worldZ: number) -> number:
     const localX = worldX - chunkMinimumX(chunk)
     const localY = worldY - chunkMinimumY(chunk)
@@ -88,13 +97,7 @@ export def compiledFeaturePlan(owner: string, origin: Coordinate3, sortKey: stri
         minimumZ = Math.min(minimumZ, worldZ)
         maximumZ = Math.max(maximumZ, worldZ)
         const bucketKey = chunkBucketKey((worldX / 16).floor(), (worldY / 16).floor(), (worldZ / 16).floor())
-        // `get` 的结果可空；直接在 else 中使用收窄后的 List 会按语言安全规则
-        // 重新验证整个桶。先用空桶合并成确定的 List，再在首次出现时写回 Map，
-        // 可让大量特征写入始终保持线性，同时兼容当前已发布的编译器。
-        const existing = buckets.get(bucketKey)
-        const bucket = existing ?? []
-        bucket.append(write)
-        if existing == null: buckets.set(bucketKey, bucket)
+        buckets.getOrSetWith(bucketKey, () => []).append(write)
     def bucket(chunkX: number, chunkY: number, chunkZ: number) -> readonly List<readonly FeatureWrite>:
         return buckets.get(chunkBucketKey(chunkX, chunkY, chunkZ)) ?? []
 

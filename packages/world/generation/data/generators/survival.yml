@@ -13,13 +13,13 @@ sampling:
   horizontalStep: 4
   verticalStep: 8
   halo: 1
-  # 半径五的客户端窗口含 81 个水平列；额外容量留给装饰 halo，使同一列的
-  # 垂直 Chunk 在连续探索期间复用完整地形规划。
-  columnCacheCapacity: 128
+  # 正常驻留窗口约 107 个水平列；容量同时覆盖相邻窗口切换和装饰 feature halo，
+  # 避免玩家移动、转头时共享 ColumnPlanner 的有界 LRU 反复淘汰热列。
+  columnCacheCapacity: 192
 
 terrain:
   continentalness:
-    period: 3072
+    period: 1536
     octaves: 4
     lacunarity: 2
     persistence: 0.5
@@ -29,8 +29,8 @@ terrain:
     lacunarity: 2
     persistence: 0.55
   ridge:
-    period: 512
-    octaves: 4
+    period: 1536
+    octaves: 3
     lacunarity: 2
     persistence: 0.55
   hills:
@@ -49,8 +49,8 @@ terrain:
     lacunarity: 2
     persistence: 0.5
   climate:
-    temperaturePeriod: 1536
-    humidityPeriod: 1280
+    temperaturePeriod: 1024
+    humidityPeriod: 896
   warp:
     continentalAmplitude: 384
     continentalPeriod: 2048
@@ -64,8 +64,11 @@ terrain:
     - {input: 0, output: 68}
     - {input: 0.4, output: 72}
     - {input: 1, output: 78}
-  mountainAmplitude: 96
+  mountainAmplitude: 112
+  foothillAmplitude: 18
   detailAmplitude: 7
+  surfaceMicroDetailAmplitude: 0.9
+  surfaceMicroDetailPeriod: 16
   riverLowlandDepth: 8
   riverHighlandDepth: 18
   riverHalfWidth: 0.055
@@ -90,11 +93,15 @@ biomes:
   tundra: biomes.tundra
 
 surface:
-  rockSlope: 0.72
-  mixedSlope: 0.42
+  rockSlope: 0.45
+  mixedSlope: 0.28
   soilDepth: 4
   wetSoilDepth: 6
   snowTemperature: 0
+  geologyPeriod: 224
+  depositPeriod: 44
+  outcropPeriod: 72
+  veinPeriod: 96
 
 caves:
   tunnelCellSize: 32
@@ -127,9 +134,16 @@ minerals:
 
 vegetation:
   treeCellSize: 4
+  treeHorizontalReach: 4
+  maximumTreeHeight: 23
   cactusCellSize: 8
-  groundPlantCellSize: 2
-  groundPlantChance: 0.22
+  deadwoodCellSize: 12
+  cliffVineCellSize: 8
+  aquaticCellSize: 3
+  groundPlantCellSize: 1
+  groundPlantChance: 0.24
+  groundPatchPeriod: 24
+  aquaticPatchPeriod: 18
   treeMaximumSlope: 0.42
   cactusMaximumSlope: 0.28
 

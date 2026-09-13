@@ -1,0 +1,61 @@
+import {expect} from "velar/test"
+import {channel} from "velar/task"
+import {WorldGameMode} from "@openvoxel/world/game-mode"
+import {SavedWorld, WorldPreset} from "../src/worlds/saved-world.vel"
+import {WorldLibraryOperations, deferredWorldLibrary} from "../src/worlds/world-library-operations.vel"
+
+type Signal = bool
+
+def fixture(calls: List<string>) -> WorldLibraryOperations:
+    async def createWorld(world: SavedWorld) -> SavedWorld:
+        calls.append("create")
+        return world
+    async def findWorld(id: string) -> SavedWorld:
+        calls.append("find")
+        return {id, name: id, seed: id, mode: WorldGameMode.creative, preset: WorldPreset.meadow, lastPlayed: "Now"}
+    async def close(): calls.append("close")
+    return {createWorld, findWorld, close}
+
+test "world library is lazy shares one module load and closes once":
+    const calls: List<string> = []
+    async def load() -> WorldLibraryOperations:
+        calls.append("load")
+        return fixture(calls)
+    const library = deferredWorldLibrary(load)
+    expect(calls).toEqual([])
+    const first = library.findWorld("first")
+    const second = library.findWorld("second")
+    expect((await first).id).toBe("first")
+    expect((await second).id).toBe("second")
+    await library.close()
+    await library.close()
+    expect(calls).toEqual(["load", "find", "find", "close"])
+
+test "world library closes a late loader without sending a world request":
+    const gate = channel(Signal, capacity=1)
+    const calls: List<string> = []
+    async def load() -> WorldLibraryOperations:
+        await gate.next()
+        return fixture(calls)
+    const library = deferredWorldLibrary(load)
+    const opening = library.findWorld("late")
+    await library.close()
+    gate.trySend(true)
+    await expect(opening).toReject()
+    await expect(library.findWorld("closed")).toReject()
+    expect(calls).toEqual(["close"])
+    gate.close()
+
+test "world library retries after a failed module load":
+    const calls: List<string> = []
+    let attempts = 0
+    async def load() -> WorldLibraryOperations:
+        attempts += 1
+        if attempts == 1: throw Error("Temporary module failure")
+        return fixture(calls)
+    const library = deferredWorldLibrary(load)
+    await expect(library.findWorld("first")).toReject()
+    expect((await library.findWorld("retry")).id).toBe("retry")
+    await library.close()
+    expect(attempts).toBe(2)
+    expect(calls).toEqual(["find", "close"])

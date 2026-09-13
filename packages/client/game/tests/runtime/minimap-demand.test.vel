@@ -1,0 +1,24 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {MeshPriorityView, chunkMeshDemand} from "../../src/runtime/mesh-priority.vel"
+import {ChunkWindowView, chunkNeedsMinimap, chunkNeedsResidency, streamedChunkPositions} from "../../src/runtime/render-window.vel"
+
+test "minimap residency is bounded and includes terrain behind the player":
+    const view: ChunkWindowView = {center: {x: 0, y: 5, z: 0}, forwardX: 0, forwardY: 0, forwardZ: -1, minimap: true}
+    expect(chunkNeedsResidency({x: 0, y: 5, z: 3}, view)).toBe(true)
+    expect(chunkNeedsMinimap({x: 0, y: 5, z: 4}, view)).toBe(false)
+    expect(chunkNeedsMinimap({x: 0, y: 9, z: 0}, view)).toBe(false)
+    expect(chunkNeedsMinimap({x: 3, y: 8, z: 0}, view)).toBe(true)
+    const withoutMap = ChunkWindowView.from(view, {minimap: false})
+    expect(chunkNeedsResidency({x: 0, y: 5, z: 3}, withoutMap)).toBe(false)
+    const positions = streamedChunkPositions(view, 0, 15)
+    expect(positions.filter(position => chunkNeedsMinimap(position, view)).size).toBe(203)
+    expect(positions.size < 650).toBe(true)
+
+test "minimap demand survives player-facing portal pruning":
+    const view: MeshPriorityView = {center: {x: 0, y: 5, z: 0}, forwardX: 0, forwardY: 0, forwardZ: -1, minimap: true}
+    const positions: List<readonly ChunkPosition> = [{x: 0, y: 5, z: 0}, {x: 0, y: 5, z: 3}]
+    const demand = chunkMeshDemand()
+    demand.rebuild(positions, view)
+    const keys = demand.demandedKeys(Map())
+    expect(chunkKey(positions[1]) in keys).toBe(true)

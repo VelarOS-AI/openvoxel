@@ -1,0 +1,90 @@
+import {WorldGenerator} from "@openvoxel/world-generation"
+import {BlockPosition, Chunk, ChunkPosition, LocalPosition, blockIndex, chunkBlock, chunkKey, locateBlock} from "@openvoxel/world"
+import {ActiveWorldState} from "./active-world-state.vel"
+import {StoredBlockOverride} from "./contracts.vel"
+import {WorldEcology} from "./world-ecology.vel"
+
+/// 命令开始时固定生态时钟；之后按支撑闭包实际触及的 Chunk 分批加载同一份
+/// “生成基线 -> 生态投影 -> 玩家覆盖”视图。这里没有写入口，级联完成前存储
+/// 始终保持原样。
+export readonly type CommandBlockSnapshot:
+    position: readonly BlockPosition
+    chunk: readonly ChunkPosition
+    local: readonly LocalPosition
+    baseBlockStateRuntimeId: number
+    visibleBlockStateRuntimeId: number
+    stored: StoredBlockOverride?
+    ecological: bool
+
+export type CommandBlockView:
+    blockStateRuntimeIds: (positions: readonly List<readonly BlockPosition>) -> Promise<readonly List<number>>
+    snapshots: (positions: readonly List<readonly BlockPosition>) -> Promise<readonly List<CommandBlockSnapshot>>
+
+def positionKey(chunk: readonly ChunkPosition, local: readonly LocalPosition, edge: number) -> string:
+    return f"{chunkKey(chunk)}:{blockIndex(local, edge)}"
+
+export def commandBlockView(
+    edge: number,
+    generator: WorldGenerator,
+    ecology: WorldEcology,
+    state: ActiveWorldState,
+    worldMilliseconds: number,
+) -> CommandBlockView:
+    const loadedChunks: Set<string> = Set()
+    const generatedChunks: Map<string, Chunk> = Map()
+    const ecologicalIndices: Map<string, readonly Set<number>> = Map()
+    const visibleBlocks: Map<string, number> = Map()
+    const storedBlocks: Map<string, StoredBlockOverride> = Map()
+
+    async def load(positions: readonly List<readonly BlockPosition>):
+        const missing: Map<string, readonly ChunkPosition> = Map()
+        for position in positions:
+            const located = locateBlock(position, edge)
+            const key = chunkKey(located.chunk)
+            if key not in loadedChunks: missing.set(key, located.chunk)
+        if missing.size == 0: return
+
+        const chunks = missing.values().sorted(by=chunkKey)
+        for position in chunks:
+            const key = chunkKey(position)
+            const generated = generator.generate(position)
+            generatedChunks.set(key, generated)
+            const indices: Set<number> = Set()
+            for candidate in generator.ecologyCandidates(position): indices.add(blockIndex(candidate.position, edge))
+            ecologicalIndices.set(key, indices)
+
+        const visibleDeltas = await ecology.deltas(chunks, worldMilliseconds)
+        const storedDeltas = await state.deltas(chunks)
+        for delta in visibleDeltas:
+            for entry in delta.overrides:
+                visibleBlocks.set(positionKey(delta.position, entry.position, edge), entry.blockStateRuntimeId)
+        for delta in storedDeltas:
+            for entry in delta.overrides: storedBlocks.set(positionKey(delta.position, entry.position, edge), entry)
+        for position in chunks: loadedChunks.add(chunkKey(position))
+
+    async def snapshots(positions: readonly List<readonly BlockPosition>) -> readonly List<CommandBlockSnapshot>:
+        await load(positions)
+        const output: List<CommandBlockSnapshot> = []
+        for position in positions:
+            const located = locateBlock(position, edge)
+            const chunkIdentity = chunkKey(located.chunk)
+            const generated = generatedChunks.get(chunkIdentity)
+            const ecology = ecologicalIndices.get(chunkIdentity)
+            assert generated != null and ecology != null else f"Command block view did not load Chunk {chunkIdentity}"
+            const key = positionKey(located.chunk, located.local, edge)
+            const baseline = chunkBlock(generated, located.local)
+            output.append({
+                position,
+                chunk: located.chunk,
+                local: located.local,
+                baseBlockStateRuntimeId: baseline,
+                visibleBlockStateRuntimeId: visibleBlocks.get(key) ?? baseline,
+                stored: storedBlocks.get(key),
+                ecological: blockIndex(located.local, edge) in ecology,
+            })
+        return output
+
+    async def blockStateRuntimeIds(positions: readonly List<readonly BlockPosition>) -> readonly List<number>:
+        return (await snapshots(positions)).map(snapshot => snapshot.visibleBlockStateRuntimeId)
+
+    return {blockStateRuntimeIds, snapshots}

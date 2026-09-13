@@ -4,18 +4,20 @@ import {openSqlite, sqliteIdentifier, sqliteLiteral} from "@velarscript-labs/sql
 import {expect} from "velar/test"
 import {defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {WorldGameMode, chunkBlock} from "@openvoxel/world"
+import {ChunkPosition, WorldGameMode, chunkBlock, worldEcologyEpochMilliseconds} from "@openvoxel/world"
 import {BlockEdit, worldRuntime} from "@openvoxel/world-runtime"
 import {SqliteWorldStoreOptions, sqliteSchemaVersion, sqliteWorldStore, validateSqliteWorldStoreOptions} from "../src/adapters/sqlite-world-store.vel"
 
 const dirtBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
 const stoneBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const cottonBlock = defaultBlockStateRuntimeId(builtinIdentities.blocks.cotton)
 
 type CountRow:
     count: number
 
 type BlockRow:
     blockStateRuntimeId: number
+    growthOriginEpoch: number?
 
 type SchemaVersionRow:
     user_version: number
@@ -30,7 +32,7 @@ def testDatabase(path: string) -> SqliteWorldStoreOptions:
     }
 
 test "SQLite adapter owns its connection limits":
-    expect(sqliteSchemaVersion).toBe(7)
+    expect(sqliteSchemaVersion).toBe(9)
     const invalid = SqliteWorldStoreOptions.from(testDatabase("unused.sqlite"), {queueCapacity: 0})
     expect(() => validateSqliteWorldStoreOptions(invalid)).toThrow()
 
@@ -59,9 +61,15 @@ async def fullChunkTableCount(path: string) -> number:
 
 async def singleStoredBlockStateRuntimeId(path: string) -> number:
     using database = await openSqlite(path)
-    const row = await database.one(trustedSql("SELECT block_state_runtime_id AS blockStateRuntimeId FROM block_overrides"), BlockRow)
+    const row = await database.one(trustedSql("SELECT block_state_runtime_id AS blockStateRuntimeId, growth_origin_epoch AS growthOriginEpoch FROM block_overrides"), BlockRow)
     assert row != null else "Expected one stored block override"
     return row.blockStateRuntimeId
+
+async def singleStoredCrop(path: string) -> BlockRow:
+    using database = await openSqlite(path)
+    const row = await database.one(trustedSql("SELECT block_state_runtime_id AS blockStateRuntimeId, growth_origin_epoch AS growthOriginEpoch FROM block_overrides WHERE growth_origin_epoch IS NOT NULL"), BlockRow)
+    assert row != null else "Expected one stored crop override"
+    return row
 
 async def schemaVersion(path: string) -> number:
     using database = await openSqlite(path)
@@ -165,6 +173,39 @@ test "SQLite adapter restores sparse overrides and removes a reverted override":
         expect(await fullChunkTableCount(databasePath)).toBe(0)
     finally: await removeDatabase(databasePath)
 
+test "SQLite adapter roundtrips player crop growth anchors across runtime reloads":
+    const databasePath = "openvoxel-crop-growth-anchor-test.sqlite"
+    await removeDatabase(databasePath)
+    let clockMilliseconds = 1_000_000
+
+    def environmentClock() -> number: return clockMilliseconds
+
+    const chunkPosition: ChunkPosition = {x: 0, y: 12, z: 0}
+    const local = {x: 0, y: 0, z: 0}
+    try:
+        const first = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)), environmentClock=environmentClock)
+        try:
+            await first.createWorld({id: "sqlite-crop", name: "SQLite Crop", seed: "sqlite-growth"})
+            await first.editBlocks("sqlite-crop", [{position: {x: 0, y: 191, z: 0}, blockStateRuntimeId: dirtBlock}])
+            const planted = (await first.editBlocks("sqlite-crop", [{position: {x: 0, y: 192, z: 0}, blockStateRuntimeId: cottonBlock}])).changes[0]
+            expect(planted.changed).toBe(true)
+            expect(planted.revision).toBe(1)
+        finally: await first.close()
+        expect(await singleStoredCrop(databasePath)).toEqual(BlockRow.from({blockStateRuntimeId: cottonBlock, growthOriginEpoch: 10}))
+
+        clockMilliseconds += worldEcologyEpochMilliseconds * 8
+        const reopened = worldRuntime(await sqliteWorldStore(testDatabase(databasePath)), environmentClock=environmentClock)
+        try:
+            const cottonAge2 = (await reopened.worldContent("sqlite-crop")).catalog.states.find(state => state.blockKey == builtinIdentities.blocks.cotton and state.properties.some(property => property.name == "age" and property.value == 2))
+            assert cottonAge2 != null else "Expected mature cotton state"
+            expect(chunkBlock(await reopened.chunk("sqlite-crop", chunkPosition), local)).toBe(cottonAge2.runtimeId)
+            const replayed = (await reopened.editBlocks("sqlite-crop", [{position: {x: 0, y: 200, z: 0}, blockStateRuntimeId: cottonAge2.runtimeId}])).changes[0]
+            expect(replayed.changed).toBe(false)
+            expect(replayed.revision).toBe(1)
+        finally: await reopened.close()
+        expect(await singleStoredCrop(databasePath)).toEqual(BlockRow.from({blockStateRuntimeId: cottonBlock, growthOriginEpoch: 10}))
+    finally: await removeDatabase(databasePath)
+
 test "SQLite adapter commits a multi-block batch with one Chunk revision":
     const databasePath = "openvoxel-concurrent-overrides-test.sqlite"
     await removeDatabase(databasePath)
@@ -238,7 +279,7 @@ test "SQLite adapter persists the complete world block registry":
             expect(manifest.spawn.y > 0).toBe(true)
             expect(manifest.content.contentHash).toBe(createdContentHash)
             expect(manifest.content.packs.size).toBe(0)
-            expect(manifest.blockRegistry.states.size).toBe(183)
+            expect(manifest.blockRegistry.states.size).toBe(376)
             expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
         finally: await reopened.close()
         expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion)
@@ -291,15 +332,23 @@ test "SQLite adapter rejects databases created by a newer server schema":
         expect(rejected).toBe(true)
     finally: await removeDatabase(databasePath)
 
-test "SQLite adapter reports the previous schema as unsupported":
+test "SQLite adapter rejects an incompatible climate schema without modifying stored overrides":
     const databasePath = "openvoxel-previous-schema-test.sqlite"
     await removeDatabase(databasePath)
     try:
-        using database = await openSqlite(databasePath)
-        await database.execute(sqlConcat([
+        using previous = await openSqlite(databasePath)
+        await previous.execute(trustedSql("CREATE TABLE chunk_states (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z))"))
+        await previous.execute(trustedSql("INSERT INTO chunk_states VALUES ('legacy', 0, 0, 0, 5)"))
+        await previous.execute(trustedSql("CREATE TABLE block_overrides (world_id TEXT NOT NULL, chunk_x INTEGER NOT NULL, chunk_y INTEGER NOT NULL, chunk_z INTEGER NOT NULL, local_x INTEGER NOT NULL, local_y INTEGER NOT NULL, local_z INTEGER NOT NULL, block_state_runtime_id INTEGER NOT NULL, PRIMARY KEY (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z))"))
+        await previous.execute(trustedSqlTemplate([
+            "INSERT INTO block_overrides (world_id, chunk_x, chunk_y, chunk_z, local_x, local_y, local_z, block_state_runtime_id) VALUES ('legacy', 0, 0, 0, 1, 2, 3, ",
+            ")",
+        ], [stoneBlock]))
+        await previous.execute(sqlConcat([
             trustedSql("PRAGMA user_version = "),
             sqliteLiteral(sqliteSchemaVersion - 1),
         ]))
+        await previous.close()
 
         let rejected = false
         try:
@@ -307,4 +356,6 @@ test "SQLite adapter reports the previous schema as unsupported":
             await incompatible.close()
         catch error: rejected = error.message.has("does not match required version")
         expect(rejected).toBe(true)
+        expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion - 1)
+        expect(await tableCount(databasePath, "block_overrides")).toBe(1)
     finally: await removeDatabase(databasePath)

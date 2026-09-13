@@ -2,25 +2,25 @@ import {ChunkPosition, chunkKey, requireChunkPosition} from "@openvoxel/world"
 
 /// `@openvoxel/renderer.ChunkPortalSummary` 在可见性策略内的纯数据投影。
 /// 保持本地结构类型可让单元测试不加载 Babylon 所属的 Web 运行时入口。
-export type PortalVisibilitySummary:
-    readonly empty: bool
-    readonly fullyOccluding: bool
-    readonly openFaces: number
-    readonly connectedFaces: number
+export readonly type PortalVisibilitySummary:
+    empty: bool
+    fullyOccluding: bool
+    openFaces: number
+    connectedFaces: number
 
-type PortalDirection:
-    readonly face: number
-    readonly opposite: number
-    readonly dx: number
-    readonly dy: number
-    readonly dz: number
+readonly type PortalDirection:
+    face: number
+    opposite: number
+    dx: number
+    dy: number
+    dz: number
 
 export type PortalVisibilityWorkspace:
     rebuild: (candidates: readonly List<readonly ChunkPosition>, center: readonly ChunkPosition) -> null
-    visibleChunkKeys: (summaries: readonly Map<string, readonly PortalVisibilitySummary>) -> Set<string>
+    visibleChunkKeys: (summaries: readonly Map<string, PortalVisibilitySummary>) -> Set<string>
 
 const portalFaceCount = 6
-const portalDirections: readonly List<readonly PortalDirection> = [
+const portalDirections: readonly List<PortalDirection> = [
     {face: 0, opposite: 1, dx: -1, dy: 0, dz: 0},
     {face: 1, opposite: 0, dx: 1, dy: 0, dz: 0},
     {face: 2, opposite: 3, dx: 0, dy: -1, dz: 0},
@@ -33,7 +33,7 @@ const allPortalFaces = Math.pow(2, portalFaceCount) - 1
 
 def containsBit(mask: number, bit: number) -> bool: return ((mask / Math.pow(2, bit)).floor() % 2) == 1
 
-def connectedFaceMask(summary: readonly PortalVisibilitySummary, incomingFace: number) -> number:
+def connectedFaceMask(summary: PortalVisibilitySummary, incomingFace: number) -> number:
     let mask = 0
     for direction in portalDirections:
         if containsBit(summary.openFaces, direction.face) and containsBit(
@@ -111,7 +111,7 @@ export def portalVisibilityWorkspace() -> PortalVisibilityWorkspace:
                 else: geometryQueue[queueSize] = neighborIndex
                 queueSize += 1
 
-    def visibleChunkKeys(summaries: readonly Map<string, readonly PortalVisibilitySummary>) -> Set<string>:
+    def visibleChunkKeys(summaries: readonly Map<string, PortalVisibilitySummary>) -> Set<string>:
         visibleKeys.clear()
         const start = centerIndex
         if start == null:
@@ -170,7 +170,7 @@ export def portalVisibilityWorkspace() -> PortalVisibilityWorkspace:
 /// 传播。调用方负责把碰撞安全邻域与结果并集，本策略不拥有驻留半径。
 export def portalVisibleChunkKeys(
     candidates: readonly List<readonly ChunkPosition>,
-    summaries: readonly Map<string, readonly PortalVisibilitySummary>,
+    summaries: readonly Map<string, PortalVisibilitySummary>,
     center: readonly ChunkPosition,
 ) -> Set<string>:
     const workspace = portalVisibilityWorkspace()

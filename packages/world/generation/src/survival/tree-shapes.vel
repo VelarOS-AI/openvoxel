@@ -1,0 +1,244 @@
+import {Random} from "velar/random"
+import {FeatureWrite} from "./feature-plan.vel"
+
+/// 树种选择与方块材质属于生态规划；这里仅拥有树的局部几何。生成结果只包含
+/// 相对坐标和已解析的 runtimeId，因此跨 Chunk 裁剪仍由 FeaturePlan 统一完成。
+export enum TreeShapeKind:
+    oak
+    birch
+    spruce
+    tallSpruce = "tall_spruce"
+    mimosa
+    poplar
+
+export type TreeShapeHeightRange:
+    minimum: number
+    maximum: number
+
+export type TreeShapeImplementationEnvelope:
+    /// 树形写入相对地表原点的最高 Y；不是树干参数本身。
+    maximumHeight: number
+    horizontalReach: number
+
+export const treeShapeKinds: readonly List<TreeShapeKind> = [
+    TreeShapeKind.oak,
+    TreeShapeKind.birch,
+    TreeShapeKind.spruce,
+    TreeShapeKind.tallSpruce,
+    TreeShapeKind.mimosa,
+    TreeShapeKind.poplar,
+]
+
+/// 高度范围属于几何实现，而不是生态选择器。新增树形或调整冠层时只修改
+/// 这一处，候选高度、目录硬边界和高空空 Chunk 判定共享同一份事实。
+export def treeShapeHeightRange(kind: TreeShapeKind) -> TreeShapeHeightRange:
+    match kind:
+        case TreeShapeKind.oak: return {minimum: 6, maximum: 11}
+        case TreeShapeKind.birch: return {minimum: 7, maximum: 11}
+        case TreeShapeKind.spruce: return {minimum: 7, maximum: 12}
+        case TreeShapeKind.tallSpruce: return {minimum: 14, maximum: 21}
+        case TreeShapeKind.mimosa: return {minimum: 5, maximum: 8}
+        case TreeShapeKind.poplar: return {minimum: 10, maximum: 15}
+
+def appendLog(writes: List<FeatureWrite>, x: number, y: number, z: number, runtimeId: number):
+    writes.append({x, y, z, runtimeId})
+
+def appendLeaf(writes: List<FeatureWrite>, x: number, y: number, z: number, runtimeId: number):
+    writes.append({x, y, z, runtimeId})
+
+def appendTrunk(writes: List<FeatureWrite>, height: number, runtimeId: number):
+    for offset in range(height): appendLog(writes, 0, offset + 1, 0, runtimeId)
+
+def canopyEdgeGap(x: number, y: number, z: number, variation: number) -> bool:
+    return (x * 31 + y * 17 + z * 13 + variation * 19).abs() % 7 == 0
+
+def appendRoundedLayer(writes: List<FeatureWrite>, y: number, radius: number, runtimeId: number, variation: number = 0):
+    for x in range(-radius, radius + 1):
+        for z in range(-radius, radius + 1):
+            const distance = x * x + z * z
+            if distance > radius * radius + radius * 0.5: continue
+            if distance > 0 and distance >= radius * radius and canopyEdgeGap(x, y, z, variation): continue
+            appendLeaf(writes, x, y, z, runtimeId)
+
+def appendCrownLobe(writes: List<FeatureWrite>, centerX: number, centerY: number, centerZ: number, radius: number, leaves: number, variation: number):
+    for x in range(-radius, radius + 1):
+        for y in range(-2, 3):
+            for z in range(-radius, radius + 1):
+                const distance = (x * x + z * z) / (radius * radius) + y * y / 4
+                if distance > 1.35: continue
+                if distance > 1 and canopyEdgeGap(x + centerX, y + centerY, z + centerZ, variation): continue
+                appendLeaf(writes, centerX + x, centerY + y, centerZ + z, leaves)
+
+def appendBranch(writes: List<FeatureWrite>, y: number, length: number, direction: number, logX: number, logZ: number):
+    const alongX = direction % 2 == 0
+    const sign = direction < 2 ? 1 : -1
+    for distance in range(1, length + 1):
+        appendLog(writes, alongX ? distance * sign : 0, y, alongX ? 0 : distance * sign, alongX ? logX : logZ)
+
+def oakWrites(height: number, logY: number, logX: number, logZ: number, leaves: number, variation: number) -> List<FeatureWrite>:
+    const writes: List<FeatureWrite> = []
+    const xDirection = variation % 2 == 0 ? -1 : 1
+    const zDirection = variation < 2 ? -1 : 1
+    // 冠层由不同高度的枝端团簇相交，树冠下缘不再是整齐的水平托盘。
+    appendCrownLobe(writes, 0, height - 1, 0, 2, leaves, variation)
+    appendCrownLobe(writes, xDirection * 2, height - 3, 0, 2, leaves, variation)
+    appendCrownLobe(writes, 0, height - 2, zDirection * 2, 2, leaves, variation)
+    // 实木最后写入，枝干在团簇相交处保持连续。
+    appendTrunk(writes, height, logY)
+    for offset in range(1, 3):
+        appendLog(writes, xDirection * offset, height - 3, 0, logX)
+        appendLog(writes, 0, height - 2, zDirection * offset, logZ)
+    return writes
+
+def birchWrites(height: number, logY: number, logX: number, logZ: number, leaves: number, variation: number) -> List<FeatureWrite>:
+    const writes: List<FeatureWrite> = []
+    appendTrunk(writes, height, logY)
+    // 桦树保持细直树干与集中在上半部的卵形树冠。
+    for radius, layer in [1, 2, 2, 2, 1, 0]: appendRoundedLayer(writes, height - 4 + layer, radius, leaves, variation)
+    appendBranch(writes, height - 3, 1, variation, logX, logZ)
+    return writes
+
+def appendConiferLayer(writes: List<FeatureWrite>, y: number, radius: number, leaves: number, variation: number):
+    const extent = radius.ceil()
+    for x in range(-extent, extent + 1):
+        for z in range(-extent, extent + 1):
+            const distance = x * x + z * z
+            if distance > (radius + 0.25) * (radius + 0.25): continue
+            if distance > radius * radius and canopyEdgeGap(x, y, z, variation): continue
+            appendLeaf(writes, x, y, z, leaves)
+
+def spruceWrites(height: number, logY: number, logX: number, logZ: number, leaves: number, tall: bool, variation: number) -> List<FeatureWrite>:
+    const writes: List<FeatureWrite> = []
+    appendTrunk(writes, height - 2, logY)
+    // 连续半径决定收尖轮廓，细枝在冠层内部错层展开；边缘只做局部缺口，
+    // 不周期性清空整层。尖端由针叶覆盖，高云杉保留较长的林下裸干。
+    const crownDepth = tall ? Math.min(12, height - 4) : Math.min(7, height - 2)
+    const maximumRadius = tall ? 3 : 2
+    for depth in range(crownDepth):
+        const y = height + 1 - depth
+        const radius = 0.35 + (maximumRadius - 0.35) * depth / (crownDepth - 1)
+        appendConiferLayer(writes, y, radius, leaves, variation)
+        if depth >= crownDepth * 0.6 and depth % 2 == 0:
+            appendBranch(writes, y, Math.max(1, radius.floor() - 1), (variation + depth) % 4, logX, logZ)
+    appendLeaf(writes, 0, height + 2, 0, leaves)
+    return writes
+
+def poplarWrites(height: number, logY: number, logX: number, logZ: number, leaves: number, variation: number) -> List<FeatureWrite>:
+    const writes: List<FeatureWrite> = []
+    appendTrunk(writes, height, logY)
+    // 白杨的冠幅窄而高，和桦树、橡树在远处也能一眼区分。
+    const crownBottom = Math.max(4, height - 7)
+    for y in range(crownBottom, height + 2):
+        const radius = y == height + 1 ? 0 : (y <= crownBottom + 1 or y == height) ? 1 : 2
+        appendRoundedLayer(writes, y, radius, leaves, variation)
+    appendBranch(writes, crownBottom + 2, 1, variation, logX, logZ)
+    appendBranch(writes, crownBottom + 4, 1, (variation + 2) % 4, logX, logZ)
+    return writes
+
+def appendUmbrellaLobe(writes: List<FeatureWrite>, x: number, y: number, z: number, leaves: number, variation: number):
+    const lobe: List<FeatureWrite> = []
+    for layer in range(-1, 2): appendRoundedLayer(lobe, y + layer, layer == 0 ? 2 : 1, leaves, variation)
+    writes.extend(lobe.map(write => FeatureWrite.from(write, {x: write.x + x, z: write.z + z})))
+
+def mimosaWrites(height: number, logY: number, logX: number, logZ: number, leaves: number, xDirection: number, zDirection: number, variation: number) -> List<FeatureWrite>:
+    const writes: List<FeatureWrite> = []
+    appendTrunk(writes, height - 1, logY)
+    // 金合欢以弯曲分枝承托扁平伞冠，避免继续呈现统一的球形树。
+    appendLog(writes, xDirection, height - 2, 0, logX)
+    appendLog(writes, xDirection * 2, height - 2, 0, logX)
+    appendLog(writes, xDirection * 2, height - 1, 0, logY)
+    appendLog(writes, 0, height - 1, zDirection, logZ)
+    appendLog(writes, 0, height - 1, zDirection * 2, logZ)
+    appendUmbrellaLobe(writes, 0, height - 1, 0, leaves, variation)
+    appendUmbrellaLobe(writes, xDirection * 2, height - 1, 0, leaves, variation)
+    appendUmbrellaLobe(writes, 0, height, zDirection * 2, leaves, variation)
+    return writes
+
+/// 非对称树形把所有几何随机性压缩成有限变体。实现包络可以穷举这份集合，
+/// 而不需要在模块加载时构造一批随机样本树。
+export def treeShapeVariationCount(kind: TreeShapeKind) -> number:
+    match kind:
+        case _: return 4
+
+def rawTreeShapeWrites(
+    kind: TreeShapeKind,
+    height: number,
+    logY: number,
+    logX: number,
+    logZ: number,
+    leaves: number,
+    variation: number,
+) -> List<FeatureWrite>:
+    const heightRange = treeShapeHeightRange(kind)
+    assert height >= heightRange.minimum and height <= heightRange.maximum else f"Tree shape {kind} height must be from {heightRange.minimum} through {heightRange.maximum}"
+    const variationCount = treeShapeVariationCount(kind)
+    assert variation >= 0 and variation < variationCount else f"Tree shape {kind} variation must be from zero through {variationCount - 1}"
+    match kind:
+        case TreeShapeKind.oak: return oakWrites(height, logY, logX, logZ, leaves, variation)
+        case TreeShapeKind.birch: return birchWrites(height, logY, logX, logZ, leaves, variation)
+        case TreeShapeKind.spruce: return spruceWrites(height, logY, logX, logZ, leaves, false, variation)
+        case TreeShapeKind.tallSpruce: return spruceWrites(height, logY, logX, logZ, leaves, true, variation)
+        case TreeShapeKind.mimosa:
+            const xDirection = variation % 2 == 0 ? -1 : 1
+            const zDirection = variation < 2 ? -1 : 1
+            return mimosaWrites(height, logY, logX, logZ, leaves, xDirection, zDirection, variation)
+        case TreeShapeKind.poplar: return poplarWrites(height, logY, logX, logZ, leaves, variation)
+
+/// 合并相交冠簇，每个体素只进入计划一次；枝干拥有其所在格，叶片不能覆盖。
+export def treeShapeWritesAtVariation(
+    kind: TreeShapeKind,
+    height: number,
+    logY: number,
+    logX: number,
+    logZ: number,
+    leaves: number,
+    variation: number,
+) -> List<FeatureWrite>:
+    const occupied: Map<string, FeatureWrite> = Map()
+    for write in rawTreeShapeWrites(kind, height, logY, logX, logZ, leaves, variation):
+        const key = f"{write.x}:{write.y}:{write.z}"
+        if write.runtimeId == leaves and occupied.has(key): continue
+        occupied.set(key, write)
+    return occupied.values()
+
+export def treeShapeWrites(
+    kind: TreeShapeKind,
+    height: number,
+    logY: number,
+    logX: number,
+    logZ: number,
+    leaves: number,
+    stream: Random,
+) -> List<FeatureWrite>:
+    const variationCount = treeShapeVariationCount(kind)
+    const variation = variationCount == 1 ? 0 : stream.int(0, variationCount)
+    return treeShapeWritesAtVariation(kind, height, logY, logX, logZ, leaves, variation)
+
+/// 每一种树形显式声明自身完整写入包络；紧邻的穷举测试会用全部合法高度
+/// 和全部有限变体反证任何越界。生产模块初始化只合并六条元数据。
+export def treeShapeEnvelope(kind: TreeShapeKind) -> TreeShapeImplementationEnvelope:
+    const maximumHeight = treeShapeHeightRange(kind).maximum
+    match kind:
+        case TreeShapeKind.oak: return {maximumHeight: maximumHeight + 1, horizontalReach: 4}
+        case TreeShapeKind.birch: return {maximumHeight: maximumHeight + 1, horizontalReach: 2}
+        case TreeShapeKind.spruce: return {maximumHeight: maximumHeight + 2, horizontalReach: 2}
+        case TreeShapeKind.tallSpruce: return {maximumHeight: maximumHeight + 2, horizontalReach: 3}
+        case TreeShapeKind.mimosa: return {maximumHeight: maximumHeight + 1, horizontalReach: 4}
+        case TreeShapeKind.poplar: return {maximumHeight: maximumHeight + 1, horizontalReach: 2}
+
+def combinedTreeShapeEnvelope() -> TreeShapeImplementationEnvelope:
+    let maximumHeight = 0
+    let horizontalReach = 0
+    for kind in treeShapeKinds:
+        const envelope = treeShapeEnvelope(kind)
+        maximumHeight = Math.max(maximumHeight, envelope.maximumHeight)
+        horizontalReach = Math.max(horizontalReach, envelope.horizontalReach)
+    return {maximumHeight, horizontalReach}
+
+export const treeShapeImplementationEnvelope = combinedTreeShapeEnvelope()
+
+/// YAML 编译和直接运行时构造都调用同一个实现边界；程序化目录不能绕过
+/// 编译器，带着过小的候选 halo 或高空截断进入 Chunk 热路径。
+export def requireTreeShapeEnvelope(maximumTreeHeight: number, treeHorizontalReach: number):
+    assert maximumTreeHeight >= treeShapeImplementationEnvelope.maximumHeight else f"Maximum tree height must be at least {treeShapeImplementationEnvelope.maximumHeight} blocks for implemented tree shapes"
+    assert treeHorizontalReach >= treeShapeImplementationEnvelope.horizontalReach else f"Tree horizontal reach must be at least {treeShapeImplementationEnvelope.horizontalReach} blocks for implemented tree shapes"

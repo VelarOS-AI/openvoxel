@@ -1,0 +1,65 @@
+import {expect} from "velar/test"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {compiledFeaturePlan} from "../../src/survival/feature-plan.vel"
+import {treeShapeEnvelope, treeShapeHeightRange, treeShapeImplementationEnvelope, treeShapeKinds, treeShapeVariationCount, treeShapeWritesAtVariation} from "../../src/survival/tree-shapes.vel"
+import {DecorationPlan, decorationVerticalBounds} from "../../src/survival/vegetation.vel"
+
+test "tree variants contain connected unique cells and preserve their supporting trunks":
+    for kind in treeShapeKinds:
+        const variants: Set<string> = Set()
+        const height = treeShapeHeightRange(kind).minimum
+        for variation in range(treeShapeVariationCount(kind)):
+            const writes = treeShapeWritesAtVariation(kind, height, 1, 2, 3, 4, variation)
+            const cells = writes.keyBy(write => f"{write.x}:{write.y}:{write.z}")
+            expect(cells.size).toBe(writes.size)
+            expect(cells.get("0:1:0")?.runtimeId).toBe(1)
+            const pending = ["0:1:0"]
+            const reached: Set<string> = Set(pending)
+            while pending.size > 0:
+                const cell = cells.get(pending.pop())!
+                const neighbors = [
+                    f"{cell.x - 1}:{cell.y}:{cell.z}", f"{cell.x + 1}:{cell.y}:{cell.z}",
+                    f"{cell.x}:{cell.y - 1}:{cell.z}", f"{cell.x}:{cell.y + 1}:{cell.z}",
+                    f"{cell.x}:{cell.y}:{cell.z - 1}", f"{cell.x}:{cell.y}:{cell.z + 1}",
+                ]
+                for key in neighbors:
+                    if reached.has(key) or not cells.has(key): continue
+                    reached.add(key)
+                    pending.append(key)
+            expect(reached.size).toBe(cells.size)
+            variants.add(Json.stringify(writes))
+        expect(variants.size).toBe(treeShapeVariationCount(kind))
+
+test "tree implementation envelope is measured from every authored shape and height":
+    let maximumHeight = 0
+    let horizontalReach = 0
+    for kind in treeShapeKinds:
+        const heights = treeShapeHeightRange(kind)
+        const declared = treeShapeEnvelope(kind)
+        for height in range(heights.minimum, heights.maximum + 1):
+            for variation in range(treeShapeVariationCount(kind)):
+                const writes = treeShapeWritesAtVariation(kind, height, 1, 2, 3, 4, variation)
+                for write in writes:
+                    expect(write.y <= declared.maximumHeight).toBe(true)
+                    expect(Math.max(write.x.abs(), write.z.abs()) <= declared.horizontalReach).toBe(true)
+                    maximumHeight = Math.max(maximumHeight, write.y)
+                    horizontalReach = Math.max(horizontalReach, Math.max(write.x.abs(), write.z.abs()))
+    expect(treeShapeImplementationEnvelope).toEqual({maximumHeight, horizontalReach})
+    expect(baseWorldGeneratorCatalog.generators[0].vegetation.maximumTreeHeight >= maximumHeight).toBe(true)
+    expect(baseWorldGeneratorCatalog.generators[0].vegetation.treeHorizontalReach >= horizontalReach).toBe(true)
+
+test "the widest authored crown reaches a target Chunk from its neighboring owner":
+    const heights = treeShapeHeightRange(treeShapeKinds[4])
+    const writes = treeShapeWritesAtVariation(treeShapeKinds[4], heights.maximum, 1, 2, 3, 4, 0)
+    const crossing = writes.find(write => Math.max(write.x.abs(), write.z.abs()) == treeShapeImplementationEnvelope.horizontalReach)
+    assert crossing != null else "Expected one authored tree write at the exported horizontal reach"
+    const edgeWrite = crossing
+    let originX = 8 - edgeWrite.x
+    let originZ = 8 - edgeWrite.z
+    if edgeWrite.x.abs() == treeShapeImplementationEnvelope.horizontalReach:
+        originX = edgeWrite.x > 0 ? -edgeWrite.x : 15 - edgeWrite.x
+    else: originZ = edgeWrite.z > 0 ? -edgeWrite.z : 15 - edgeWrite.z
+    const feature = compiledFeaturePlan("tree:neighbor-envelope", {x: originX, y: 112, z: originZ}, "0_structure:tree:neighbor-envelope", writes)
+    const plan: DecorationPlan = {chunkX: 0, chunkZ: 0, features: [feature]}
+    expect(originX < 0 or originX > 15 or originZ < 0 or originZ > 15).toBe(true)
+    expect(decorationVerticalBounds(plan) != null).toBe(true)

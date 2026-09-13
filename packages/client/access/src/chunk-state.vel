@@ -18,8 +18,8 @@ export type ClientChunkState:
     block: (position: readonly LocalPosition) -> number
     snapshotBlocks: () -> UInt32Buffer
     /// 区分旧快照、同值快照和真实变化，重同步只接受后两者。
-    replaceDelta: (delta: readonly RealtimeChunkDelta) -> ClientChunkDeltaResult
-    applyChange: (change: readonly RealtimeBlockChange) -> bool
+    replaceDelta: (delta: RealtimeChunkDelta) -> ClientChunkDeltaResult
+    applyChange: (change: RealtimeBlockChange) -> bool
 
 def sameChunk(left: readonly ChunkPosition, right: readonly ChunkPosition) -> bool:
     return chunkKey(left) == chunkKey(right)
@@ -30,7 +30,7 @@ def requireRuntimeId(value: number):
 /// 从已经在 backend 边界规范化的紧凑地形创建客户端 Chunk。冷索引继续保留为
 /// UInt16Buffer；组合视图只展开一次，随后由热 overrides 增量维护。高频构网和
 /// 碰撞读取因此不再为每个方块重复查询 Map 与 palette。
-export def clientChunkState(terrain: readonly ClientTerrainChunkSnapshot) -> ClientChunkState:
+export def clientChunkState(terrain: ClientTerrainChunkSnapshot) -> ClientChunkState:
     const palette = terrain.palette
     const indices = terrain.indices
     const blocks = uint32Buffer(indices.size)
@@ -53,7 +53,7 @@ export def clientChunkState(terrain: readonly ClientTerrainChunkSnapshot) -> Cli
     /// 失效事件启动下一次任务。
     def snapshotBlocks() -> UInt32Buffer: return blocks.copy()
 
-    def replaceDelta(delta: readonly RealtimeChunkDelta) -> ClientChunkDeltaResult:
+    def replaceDelta(delta: RealtimeChunkDelta) -> ClientChunkDeltaResult:
         assert sameChunk(delta.position, terrain.position) else "Client Chunk delta targets a different Chunk"
         assert delta.revision.isInteger() and delta.revision >= 0 else "Client Chunk revision must be a non-negative integer"
         const epoch = delta.ecologyEpoch ?? 0
@@ -78,7 +78,7 @@ export def clientChunkState(terrain: readonly ClientTerrainChunkSnapshot) -> Cli
 
     /// 返回 false 表示 revision 跨过了至少一个未见版本。当前变化仍会应用，方便
     /// 画面尽快接近服务端；世界状态同时进入 requiresResync，随后用完整增量覆盖。
-    def applyChange(change: readonly RealtimeBlockChange) -> bool:
+    def applyChange(change: RealtimeBlockChange) -> bool:
         assert sameChunk(change.chunk, terrain.position) else "Client block change targets a different Chunk"
         requireRuntimeId(change.blockStateRuntimeId)
         assert change.revision.isInteger() and change.revision >= 0 else "Client block change revision must be a non-negative integer"

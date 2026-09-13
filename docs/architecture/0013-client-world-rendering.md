@@ -8,7 +8,7 @@
 
 VelarScript 文件定义 OpenVoxel 的强类型图形边界、纯策略和游戏组合根。game 的 `src/backends/babylon/` 拥有私有 Babylon/WebGL 实现，`src/host/` 拥有 DOM 与原生输入事件，分别通过 package `imports` 和 `extern module` 接入。每个 JS 入口在自己的宿主边界校验参数，对外只返回 OpenVoxel 契约；移动策略与世界规则由各自的 Velar 模块拥有。
 
-进入世界先加载出生点周围 3×3×3 个 Chunk，建立可交互首帧；随后以全方向半径二的安全球和半径五的完整三维前向视区组成新驻留需求。已有数据使用半径三/六的释放迟滞，转头后可复用刚离开视区的数据。同一 x/z 列的垂直 section 连续请求，使生成器复用一次地形列规划。任一轴跨过 Chunk 边界后只保留最新窗口需求；正在完成的一个小批次不反复取消，批次 load 成功后必须先提交与它配对的 unload，再响应更新的视窗版本。世界本身仍由确定性生成器按坐标寻址；窗口大小只约束客户端驻留量，不成为世界边界。
+进入世界先加载出生点周围 3×3×3 个 Chunk，建立可交互首帧；随后以全方向半径二的安全球和半径六的完整三维前向视区组成新驻留需求。已有数据使用半径三/七的释放迟滞，转头后可复用刚离开视区的数据。同一 x/z 列的垂直 section 连续请求，使生成器复用一次地形列规划；192 项水平 LRU 同时容纳可见列、装饰 halo 和相邻窗口过渡。任一轴跨过 Chunk 边界后只保留最新窗口需求；正在完成的一个小批次不反复取消，批次 load 成功后必须先提交与它配对的 unload，再响应更新的视窗版本。世界本身仍由确定性生成器按坐标寻址；窗口大小只约束客户端驻留量，不成为世界边界。
 
 冷地形到达只建立可组合的 Chunk 状态，不能单独触发构网；首次非过期的完整增量被接受后才表示冷热状态同步完成。即使该增量是 `revision = 0` 且没有覆盖项，新 Chunk 也必须恰好发布一次同步完成事件，随后相同快照不重复使网格失效。这样初始窗口与后续流送窗口共享同一就绪语义，不依赖页面启动时的额外遍历兜底。
 
@@ -27,7 +27,7 @@ Creative 的连续位置与速度更新属于纯 VelarScript 策略；它统一�
 Chunk 数据驻留与可见网格需求是两条不同边界，不能用视锥替代世界真相：
 
 - `resident safety` 使用全方向半径二的近邻球，不依赖朝向，为碰撞、编辑和跨 Chunk 构网提供数据；未知区域阻止生存玩家继续穿入。
-- `visible candidates` 使用完整三维 forward、半径五的扩张球锥和前向优先级；先从驻留数据中选择当前候选，再进入 Portal。
+- `visible candidates` 使用完整三维 forward、半径六的扩张球锥和前向优先级；先从驻留数据中选择当前候选，再进入 Portal。
 - `portal visible` 从相机所在 section 做六面开放区域的保守 BFS，只决定昂贵的构网与 GPU 上传。未知、失效或计算失败的摘要一律按可见且可连通处理，因此优化最多产生额外绘制，不能产生地形空洞。
 
 每个 section 的联通摘要由 Mesher 的 `state.occludes` 事实生成，记录六面是否开放和非遮挡连通分量可到达的面矩阵；叶、水和玻璃可连通，碰撞盒与 `cullFaces` 不能替代遮挡语义。当前面级摘要允许相邻孔洞不重合时多画。离散球锥边缘的几何孤岛、尚未驻留的相机中心和未知摘要都按可见处理。方块编辑使本 section 摘要和网格失效，边界编辑同时重构相邻网格。
@@ -36,7 +36,7 @@ Chunk 数据驻留与可见网格需求是两条不同边界，不能用视锥�
 
 ## 资源与光照
 
-作者格式 v10 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；manifest 及其 catalog、texture、variant、layer、image reference、transform、环境资源均使用闭合字段集，图片使用清单只来自验证后的配方。normal、height、material 与 mask 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。每个 surface profile 必须分别声明 `normalFallback: flat | albedo-height` 与 `materialFallback: uniform | albedo-derived`；缺图时只能采用所声明的确定性策略，不能默认把颜色纹理解释成几何或金属响应。`normalStrength` 同时约束作者 normal、作者 height 与 albedo-height 生成结果，作者 normal 会先缩放切线 XY 再归一化。terrain、vegetation、fluid 是作者资源分类，environment 按 sky 与 weather 保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile 及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
+作者格式 v11 让每个逻辑 texture 由一张独立的 32×32 albedo PNG 和一条 YAML 配方维护，并可附加 normal 或 height、ORM material、emissive 单图；manifest 及其 catalog、texture、variant、layer、image reference、transform、环境资源均使用闭合字段集，图片使用清单只来自验证后的配方。normal、height、material 与 mask 固定为无 ICC profile、非调色板的 8-bit 数据 PNG，emissive 则作为 8-bit sRGB 颜色图归一化，避免数据纹理被隐式颜色管理或量化。每个 surface profile 必须分别声明 `normalFallback: flat | albedo-height` 与 `materialFallback: uniform | albedo-derived`；缺图时只能采用所声明的确定性策略，不能默认把颜色纹理解释成几何或金属响应。`normalStrength` 同时约束作者 normal、作者 height 与 albedo-height 生成结果，作者 normal 会先缩放切线 XY 再归一化。terrain、vegetation、fluid 是作者资源分类，environment 按 sky 与 weather 保存非方块环境图像；这些目录只负责维护体验，不决定 GPU 管线。资源构建器遍历最终方块 component profile、同格附件及其动画帧闭包，按 opaque、cutout、translucent、fluid 的呈现职责确定性生成 texture bank，material 或 model 名称都不能单独替代这项判定。
 
 每个 variant 可按声明顺序叠加至多四个完整 material layer。每层拥有独立 albedo，可选 normal 或 height、ORM material、emissive、灰度乘 alpha mask、局部 transform、opacity 和 albedo blend。base 与 layer 的局部空间变换先作用于 albedo 及作者 map，height 变换完成后才生成切线法线；缺失通道按 surface profile 选择平面/统一值或从变换后的 albedo 推导。高度 Sobel 邻域遇到透明 texel 时延拓当前可见像素高度，不能把 cutout 轮廓制造成高度断崖。随后各层用统一覆盖率合成：albedo 在线性光空间混合；切线法线执行 whiteout detail blend 后归一化；AO 相乘，roughness 与 metallic 插值；emissive 在线性光空间相加并钳制。variant transform 最后作为全局变换作用于合成 surface，颜色操作只改变 albedo，空间操作保持各通道配准并重映射法线方向。
 
@@ -44,7 +44,7 @@ Chunk 数据驻留与可见网格需求是两条不同边界，不能用视锥�
 
 每个 bank 同时生成 layer-major 的 albedo、normal、material、emissive 四通道完整 mip 链，四通道共享每一级尺寸、层数与 layer 顺序，并在生成期逐级转换为 GPU 自下而上的行序。这个存储转换只重排 texel，不改变 normal 的通道值；运行时可以关闭 WebGL unpack Y 翻转并逐级上传数组。albedo 与 emissive 在生成 mip 时先转入线性光空间，normal 以可见覆盖率加权的切线空间向量平均后重归一化。下采样会由平均法线的一致性估算被滤掉的微表面方差并单调补入 perceptual roughness，防止远处法线趋平时镜面反而变尖；恒定法线的 roughness 字节保持不变。material 的 AO 与 metallic 仍保持线性平均。cutout 的每个逻辑纹理从实际使用它的材质取得 `alphaCutoff`，据此跨 mip 保持最接近可表达值的覆盖率；同一纹理不能同时服务不同阈值。material 通道按 R=ambient occlusion、G=roughness、B=metallic 编码；逻辑 texture 保存 bank key、生成阈值和带权重的稳定 layer 变体。最终四通道 alpha 统一取合成 albedo。独立作者纹理是可增删改查的资源源，纹理数组仅是确定性构建产物。
 
-生成 artifact v8 的 `textureBanks` 使用 `storage: texture_2d_array`，把四通道每一级 RGBA8 数组数据与完整环境 WebP 资源嵌入产物。构网仍为每个面写入 0..1 UV，同时以独立的 `textureLayer` 顶点属性选择数组层；纹理层分配不会进入方块目录、世界 runtimeId 或协议身份。bank 角色由已解析模型的 `kind` 与渲染层决定，不依赖某个内建模型资源 key。动画至少有两个互不重复的帧，全部帧必须处在同一 bank 且各自只有一个 layer，运行时只更新材质的 layer 偏移，不重建 Chunk 网格。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道 mip 字节共同计算；YAML 对象字段顺序、texture catalog 及其中独立 texture 条目的声明顺序、源文件与映射的枚举顺序不会产生伪变更，variant、material layer 与动画帧等有语义列表仍保留声明顺序。
+生成 artifact v9 的 `textureBanks` 使用 `storage: texture_2d_array`，把四通道每一级 RGBA8 数组数据与完整环境 WebP 资源嵌入产物。构网仍为每个面写入 0..1 UV，同时以独立的 `textureLayer` 顶点属性选择数组层；纹理层分配不会进入方块目录、世界 runtimeId 或协议身份。bank 角色由已解析模型的 `kind` 与渲染层决定，不依赖某个内建模型资源 key。动画至少有两个互不重复的帧，全部帧必须处在同一 bank 且各自只有一个 layer，运行时只更新材质的 layer 偏移，不重建 Chunk 网格。资源哈希从规范化的资源清单与分类配方、所有被引用源图的路径和字节、逻辑 texture 到 bank 的最终分配，以及不含自引用哈希字段的资源产物和四通道 mip 字节共同计算；YAML 对象字段顺序、texture catalog 及其中独立 texture 条目的声明顺序、源文件与映射的枚举顺序不会产生伪变更，variant、material layer 与动画帧等有语义列表仍保留声明顺序。
 
 运行时要求 WebGL 2，并在创建表面时先验证所有 mip 尺寸、数据、常驻预算，再以设备的 `texture2DArrayMaxLayerCount` 校验每个 bank；不满足能力边界时在提交 GPU 资源前失败。四通道分别上传为 Babylon `RawTexture2DArray`，上下文恢复后从已验证的 CPU 副本重放完整 mip 链；PBR 材质插件通过 `textureLayer` 一次性接入 albedo/alpha、切线空间 normal、AO/roughness/metallic 与 emissive。运行时材质保留 alpha、alpha-cutoff、double-sided、casts-shadows、environment-intensity、clear-coat、clear-coat-roughness、unlit 和 precipitation-surface 语义；emissive 表达表面自身亮度，世界中的方块光传播仍以方块目录的 light emission 为权威。场景使用动态天空与 IBL、天空光、太阳和月亮方向光、PCF 阴影、色调映射、天气距离雾、固定世界尺度的云穹顶、雨雪与溅射粒子和确定性闪电；资源包可阻止交叉植被把整张透明四边形投成黑影，translucent 网格按视点做有位移阈值和时间节流的 facet 深度排序。
 
@@ -93,15 +93,19 @@ Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`Clie
 
 ## 季节与地表生态
 
-气候属于世界模型：`worldClimateAt(seed, worldMilliseconds, position)` 返回季节、年内进度、摄氏温度、湿度、积雪覆盖率与冻结状态。每季八个世界日，全年三十二日；新世界从仲春正午开始。连续空间气候场、季节温差与海拔温降共同决定采样结果，降水形态与自然冰雪使用同一份温度规则。太阳轨道也使用同一年度相位，夏季日长、冬季太阳低。
+气候属于世界模型：`worldClimateAt(seed, worldMilliseconds, position, climate)` 返回季节、年内进度、摄氏温度、湿度、积雪覆盖率与冻结状态。每季八个世界日，全年三十二日；新世界从仲春正午开始。连续空间气候场、季节温差与海拔温降共同决定采样结果，降水形态与自然冰雪使用同一份温度规则，基础湿度同时约束降水强度。太阳轨道也使用同一年度相位，夏季日长、冬季太阳低。
 
-生成器负责缓存自然露天地表候选，Runtime 按三十秒世界时间槽把候选投影为冰、水、雪或空气，再叠加持久化玩家修改。存储中的玩家方块具有最终优先权；自然冰雪可以融化，玩家放置的冰雪保持原样。屋顶判定读取同一水平列上方的持久化修改，不能把客户端尚未驻留的建筑当作空气。组合增量携带独立的 `ecologyEpoch`，不为自然换季消耗玩家修改的 revision 或事件 sequence。客户端拒绝旧 revision 或旧生态时间槽的完整快照。
+`worldBaseClimateAt` 与可复用的 `createWorldBaseClimateSampler` 拥有无季节基础气候。生成器定义通过 `worldGeneratorClimate` 投影温度周期、湿度周期、采样步长和海平面，保存为世界清单的 `climate`；重开同时校验参数与生成器哈希。生成器哈希覆盖 `worldClimateVersion`，气候算法变化必须推进此版本。生成器对连续气候带取整来选择生态，运行时用同源连续值叠加季节与海拔，服务端环境、客户端会话外推、地表生态和 GPU 染色都显式传入该世界配置。每个采样器最多缓存 512 个粗网格节点，随机访问入口最多缓存 32 个采样器；缓存淘汰只影响性能，不影响结果。正负坐标、跨 Chunk 边界、自定义周期/步长/海平面均有采样对等测试。
+
+地形距离雾在 Babylon 适配层由独立 `TerrainFogPlugin` 接入。水平距离决定流送边界的淡出，高度差以 0.35 权重计入；过渡使用平滑透射率，比例不做颜色空间转换。天空与地形雾共享视线方向渐变函数和由 Environment 持有的实时色盘、闪电强度；地形完成 PBR 色调映射与曝光后，再与这份天空颜色合成，远端完全淡出时与背景一致。CPU 距离曲线、后端 shader 接点、色盘更新与真实 GPU 场景分别验收。
+
+生成器负责缓存自然露天地表与作物候选，Runtime 按三十秒世界时间槽把候选投影为冰、水、雪、空气或作物年龄，再叠加持久化玩家修改。`crop_growth` 方块行为是年龄属性和每阶段节拍的唯一契约；玩家种植时把起始生态时间槽与方块覆盖原子保存，查询时投影当前阶段，不为每个成长阶段写数据库。存储中的玩家方块具有最终优先权；自然冰雪可以融化，玩家放置的冰雪保持原样。屋顶判定读取同一水平列上方的持久化修改，不能把客户端尚未驻留的建筑当作空气。组合增量携带独立的 `ecologyEpoch`，自然换季与生长不消耗玩家修改的 revision 或事件 sequence；仅内部所有权变化也不会广播可见伪事件。客户端拒绝旧 revision 或旧生态时间槽的完整快照。
 
 客户端会话以独立的有界刷新队列每次最多同步四个已驻留 Chunk；时间槽更新和相关列的玩家编辑触发检查，方块内容保持相同时不使网格失效。碰撞、渲染与编辑的 previous 值都读取组合后的同一份方块状态。
 
 当前生态候选覆盖种子生成的自然露天地表；玩家屋顶与支撑修改会抑制这些候选。玩家新建表面、砍伐树冠后新露出的下层地表，需要后续的分层支撑与天顶遮挡摘要来建立新候选。
 
-资源 tint 显式声明 `climate`（none、grass、foliage、water）与 `coverage`（all、grass_cap）。artifact v8 和 Chunk 顶点 `tintRoles` 传递此视觉职责，不依赖资源 key 拼写，也不改变方块 runtimeId。草地侧面只给绿色草帽染色，泥土保持作者颜色；草叶保留原始明暗细节，法线、粗糙度和高光通道保持配准。GPU 对共享的八角气候样本做三线性插值，十五秒时间槽只更新材质参数，不重建网格。采样节点与 Chunk 参数缓存各有固定容量，跨水平和高度 Chunk 边界共享格点。
+资源 tint 显式声明 `climate`（none、grass、foliage、evergreen_foliage、dryland_foliage、aquatic_foliage、water）与 `coverage`（all、grass_cap）。artifact v9 和 Chunk 顶点 `tintRoles` 传递此视觉职责，不依赖资源 key 拼写，也不改变方块 runtimeId。每个树种拥有独立作者基础色；落叶、常绿针叶、旱生和水生植物再分别乘以温度、湿度、海拔与连续四季策略，常绿树不会在秋季变成落叶树的橙红色。草地按相同连续气候场区分湿润低地、旱地与高地，侧面只给绿色草帽染色，泥土保持作者颜色；草叶保留原始明暗细节，法线、粗糙度和高光通道保持配准。GPU 对共享的八角气候样本做三线性插值，十五秒时间槽只更新材质参数，不重建网格。采样节点与 Chunk 参数缓存各有固定容量，跨水平和高度 Chunk 边界共享格点。
 
 ## 网格与面剔除
 
@@ -111,6 +115,7 @@ Server 与 Local Worker 都在 `world.ready` 中发送同一权威样本。`Clie
 - 同渲染层、同材质且声明 `cullFaces` 的 cube/column 共享内部边界，即使树叶种类或 runtimeId 不同。
 - cutout 不遮挡相邻不透明方块；cross 植物没有完整体积，不能参与内部面剔除。
 - 相同透明体积共享内部边界；流体液位不同时只保留露出的侧面。
+- 水草与贴底水生物由同一 runtime state 的规范水体主模型和 cutout 附件组成；相邻纯水与复合水体按规范流体身份剔除内部面，附件继续进入独立批次。六向 `submergedSurface` 是通用批量几何能力，当前自然海胆和海星只声明有真实底部支撑的朝上形态；四个视觉转角由 runtimeId 与世界坐标稳定派生，不膨胀方块状态。
 - 盒模型先判断自身表面与相邻格的模型表面是否真正接触：仙人掌内缩侧面不会被隔空剔除，低于格顶的雪面不会被上方实体剔除；相邻雪层按实际高度移除共享部分，只提交高出邻居的侧面条带。
 
 后台内容目录中的每个非空气状态都必须通过真实 RenderCatalog 解析，并在隔离体素测试中至少生成一个批次和一个可见面。这样新增方块若缺模型、材质、纹理或网格实现，会在资源生成或测试阶段失败，而不是进入世界后静默消失。
@@ -122,6 +127,23 @@ game 维护一个仅在测试期间由临时 HTTP 服务承载的无头 GPU 探�
 探针必须覆盖全部可见 runtime state、每个纹理数组 layer 及四个 PBR 通道、动画帧、opaque 与异种树叶的跨 Chunk 接缝，以及 water、magma、ice 与不透明几何共同出现时的双视角透明排序。环境场景另覆盖白昼、夜晚、云层、雨、雪和闪电，断言日月星可见性、粒子活动、事件重放身份及场景截图差异。树叶阴影场景把同一 cutout 材质放入两个 Chunk，既检查共享阴影 Effect 与销毁后的零残留引用，也以临时实心阴影为反例，从实际地面像素证明 alpha 镂空参与投影。验收同时检查 GPU 网格统计、纹理层闭包、浏览器 console/page error、上下文丢失恢复和分区图像度量，并把截图写入忽略版本控制的 `generated/gpu-render-probe` 作为本次运行证据。Web UI 长距离移动验收主动请求浏览器硬件加速并记录实际 renderer；只有硬件后端承担生产帧预算，SwiftShader 回退只验证进度与工作量有界，不能用 CPU 光栅帧时间冒充产品 GPU 性能。根级 `test:gpu` 可独立执行 GPU 门禁，完整 `validate` 在生产构建后再次执行两类浏览器验收。
 
 ## 性能约束
+
+### 游戏小地图
+
+世界页右上角挂载圆形小地图组件，仅显示真实俯视画面、N/E/S/W 与玩家朝向。
+Web 组件拥有位置和尺寸，通过 `WorldGraphicsRequest.minimapCanvas` 交给游戏图形表面。
+Babylon 私有后端使用独立正交相机、256×256 RenderTargetTexture 和圆形 GPU 合成，
+每 200ms 更新一次俯视图，每帧更新玩家箭头。画面直接复用已上传的地形网格和材质，
+包含树冠、水面、季节染色与已同步的玩家修改；显示范围限于当前驻留并构网的世界。
+地图启用时，流送与构网另保留玩家周围水平半径三格、上下三格的有界邻域，
+支撑 64m 地图范围的背向地表。碰撞安全区和主视图优先级仍各自拥有；地下、远高空
+或尚未加载到的表面保持空白，地图不能把未知地形填造成已加载内容。
+
+俯视相机固定北向，忽略天空和天气粒子，并通过材质 uniform 跳过距离雾。
+主相机的雾与光影策略保持独立。渲染结果留在 GPU，合成后恢复深度、混合和 viewport；
+退出时回收相机、渲染目标、合成 Effect 和布局监听。HUD 画布只绘制罗盘与箭头。
+
+世界管理页只消费轻量世界摘要与 `@openvoxel/world/game-mode`。Worker 客户端在用户发起创建或打开操作后延迟加载，页面退出会关闭已创建或迟到的实例。呈现代码通过 `loadBuiltinClientResourcePack()` 加载独立的纹理数组产物分片；菜单、表单和世界代码的静态依赖图不携带这些纹理字节。浏览器门禁分别约束首屏代码、次级路由、世界代码和纹理数据预算，避免增加方块时持续挤占首屏加载时间。
 
 第一人称环境探针另以仰视相机检查云穹顶的四环高度、世界采样尺度和透明混合，并在平视画面的中间视野带对比雨雪粒子开关。四季探针在同一组 GPU Mesh 上更新时间，检查草叶像素变化与 Mesh 身份不变；阴影探针对比投影开关，验证地面实际变暗而不只统计 caster 数量。
 

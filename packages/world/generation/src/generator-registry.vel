@@ -1,11 +1,13 @@
 import {WorldBlockRegistry, baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {Chunk, ChunkPosition, WorldManifest, validateWorldManifest} from "@openvoxel/world"
+import {Chunk, ChunkPosition, WorldManifest, validateWorldManifest, worldClimateVersion} from "@openvoxel/world"
+import {worldGeneratorClimate} from "./generator-climate.vel"
 import {sha256Text} from "velar/hash"
 import {WorldGenerator} from "./contracts.vel"
 import {WorldGeneratorCatalogContribution, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "./definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "./runtime/builtin-catalog.vel"
-import {survivalWorldGenerator} from "./survival/generator.vel"
+import {survivalAlgorithmRevision, survivalWorldGenerator} from "./survival/generator.vel"
+import {requireTreeShapeEnvelope} from "./survival/tree-shapes.vel"
 
 export const defaultGenerator = builtinIdentities.generators.survival
 
@@ -15,10 +17,10 @@ export type WorldGeneratorRegistry:
     palette: (key: string) -> readonly WorldGeneratorPaletteDefinition
     definitionHash: (key: string) -> string
 
-/// 世界哈希同时覆盖算法参数和它绑定的材料调色板。只改方块映射也会让旧世界
-/// 明确拒绝继续生成新区块，避免同一个世界在边界两侧使用不同材料。
+/// 世界哈希覆盖算法实现版本、参数、材料调色板和气候版本，避免一个世界
+/// 在边界两侧使用不同的生成语义。
 export def worldGeneratorDefinitionHash(definition: readonly WorldGeneratorDefinition, palette: readonly WorldGeneratorPaletteDefinition) -> string:
-    return sha256Text(Json.stableStringify({definition, palette}))
+    return sha256Text(Json.stableStringify({algorithmRevision: survivalAlgorithmRevision, definition, palette, worldClimateVersion}))
 
 /// 基础目录和 Mod 贡献按命名空间合成为每世界注册表。相同 key 无论来自基础
 /// 目录还是另一个 Mod 都会被拒绝，不存在依赖加载顺序的隐式覆盖。
@@ -29,6 +31,8 @@ export def createWorldGeneratorRegistry(
     const definitions: Map<string, readonly WorldGeneratorDefinition> = Map()
     const palettes: Map<string, readonly WorldGeneratorPaletteDefinition> = Map()
     for definition in base.generators:
+        worldGeneratorClimate(definition)
+        requireTreeShapeEnvelope(definition.vegetation.maximumTreeHeight, definition.vegetation.treeHorizontalReach)
         assert definitions.get(definition.key) == null else f"Duplicate base world generator {definition.key}"
         definitions.set(definition.key, definition)
     for palette in base.palettes:
@@ -39,6 +43,8 @@ export def createWorldGeneratorRegistry(
         assert not (contribution.owner in owners) else f"Duplicate world generator contribution owner {contribution.owner}"
         owners.add(contribution.owner)
         for definition in contribution.catalog.generators:
+            worldGeneratorClimate(definition)
+            requireTreeShapeEnvelope(definition.vegetation.maximumTreeHeight, definition.vegetation.treeHorizontalReach)
             assert definition.key.split(":")[0] == contribution.owner else f"World generator {definition.key} is outside contribution namespace {contribution.owner}"
             assert definitions.get(definition.key) == null else f"Duplicate world generator {definition.key}"
             definitions.set(definition.key, definition)
@@ -90,14 +96,15 @@ export def instantiateWorldGenerator(
 /// 打开世界时必须同时提供该世界方块注册表和生成器注册表。清单哈希在构造前
 /// 验证，配置已经改变时立即拒绝，避免未生成区域与旧区域形成永久边界断层。
 export def worldGenerator(
-    manifest: readonly WorldManifest,
+    manifest: WorldManifest,
     blocks: readonly WorldBlockRegistry = baseWorldBlockRegistry,
     generators: readonly WorldGeneratorRegistry = baseWorldGeneratorRegistry,
 ) -> WorldGenerator:
     const world = validateWorldManifest(WorldManifest.parse(manifest))
     const activeHash = generators.definitionHash(world.generator)
     assert world.generatorHash == activeHash else f"World generator hash mismatch for {world.generator}"
+    assert Json.stableStringify(world.climate) == Json.stableStringify(worldGeneratorClimate(generators.definition(world.generator))) else "World climate does not match its locked generator definition"
     return instantiateWorldGenerator(world.generator, world.seed, world.chunkEdge, blocks, generators)
 
-export def generateChunk(manifest: readonly WorldManifest, position: ChunkPosition) -> Chunk:
+export def generateChunk(manifest: WorldManifest, position: ChunkPosition) -> Chunk:
     return worldGenerator(manifest).generate(position)

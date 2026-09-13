@@ -9,7 +9,7 @@ def propertyText(value: BlockPropertyValue) -> string:
     if (value is bool): return value ? "true" : "false"
     return str(value)
 
-export def canonicalStateKey(blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> string:
+export def canonicalStateKey(blockKey: string, properties: readonly List<BlockStateProperty>) -> string:
     // 没有属性的方块直接使用方块 key，避免产生多余的空括号。
     if properties.size == 0: return blockKey
     // 排序发生在这里，所以调用者传入属性的先后顺序不会改变状态身份。

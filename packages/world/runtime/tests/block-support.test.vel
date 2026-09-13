@@ -1,0 +1,189 @@
+import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {EcologyCandidate, EcologyCandidateKind, WorldGenerator} from "@openvoxel/world-generation"
+import {BlockPosition, ChunkPosition, Coordinate2, emptyChunk, setChunkBlock, worldEcologyEpoch} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {BlockChangeBatch, WorldBlockCommands, worldBlockCommands} from "../src/block-commands.vel"
+import {resolveSupportCascade} from "../src/block-support.vel"
+import {WorldStore} from "../src/contracts.vel"
+import {LoadedWorld} from "../src/world-context.vel"
+import {worldEcology} from "../src/world-ecology.vel"
+import {initialWorldMilliseconds} from "../src/world-creation.vel"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {WorldSessionCache, worldSessionCache} from "../src/world-sessions.vel"
+
+const registry = baseWorldBlockRegistry.registry
+const air = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const sand = defaultBlockStateRuntimeId(builtinIdentities.blocks.sand)
+const stone = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const dirt = defaultBlockStateRuntimeId(builtinIdentities.blocks.dirt)
+const grass = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
+const cactus = defaultBlockStateRuntimeId(builtinIdentities.blocks.cactus)
+const blueFlower = defaultBlockStateRuntimeId(builtinIdentities.blocks.blueFlower)
+const rye = defaultBlockStateRuntimeId(builtinIdentities.blocks.rye)
+const vine = registry.withProperty(defaultBlockStateRuntimeId(builtinIdentities.blocks.vine), "facing", "west")
+const kelpLevel7 = registry.withProperty(registry.withProperty(defaultBlockStateRuntimeId(builtinIdentities.blocks.kelp), "level", 7), "falling", true)
+const waterLevel7 = registry.withProperty(registry.withProperty(defaultBlockStateRuntimeId(builtinIdentities.blocks.water), "level", 7), "falling", true)
+const lowerChunk: ChunkPosition = {x: 0, y: 0, z: 0}
+const upperChunk: ChunkPosition = {x: 0, y: 1, z: 0}
+const easternChunk: ChunkPosition = {x: 1, y: 1, z: 0}
+
+const ecologyCandidate: EcologyCandidate = {
+    position: {x: 6, y: 0, z: 0},
+    kind: EcologyCandidateKind.water,
+    baselineBlockStateRuntimeId: waterLevel7,
+    warmBlockStateRuntimeId: kelpLevel7,
+    coldBlockStateRuntimeId: kelpLevel7,
+    exposed: false,
+}
+
+def fixtureGenerator() -> WorldGenerator:
+    def generate(position: readonly ChunkPosition):
+        const chunk = emptyChunk(position, 16, air)
+        if position.x == lowerChunk.x and position.y == lowerChunk.y and position.z == lowerChunk.z:
+            setChunkBlock(chunk, {x: 0, y: 15, z: 0}, sand)
+            setChunkBlock(chunk, {x: 4, y: 15, z: 0}, sand)
+            setChunkBlock(chunk, {x: 6, y: 15, z: 0}, sand)
+            setChunkBlock(chunk, {x: 8, y: 15, z: 0}, dirt)
+            setChunkBlock(chunk, {x: 10, y: 15, z: 0}, stone)
+        else if position.x == upperChunk.x and position.y == upperChunk.y and position.z == upperChunk.z:
+            for y in range(3): setChunkBlock(chunk, {x: 0, y, z: 0}, cactus)
+            setChunkBlock(chunk, {x: 4, y: 0, z: 0}, kelpLevel7)
+            setChunkBlock(chunk, {x: 6, y: 0, z: 0}, waterLevel7)
+            setChunkBlock(chunk, {x: 15, y: 4, z: 0}, stone)
+        else if position.x == easternChunk.x and position.y == easternChunk.y and position.z == easternChunk.z:
+            setChunkBlock(chunk, {x: 0, y: 4, z: 0}, vine)
+        return chunk
+
+    return {
+        generate,
+        findSpawn: () => {x: 0, y: 65, z: 0},
+        ecologyCandidates: position => position.x == upperChunk.x and position.y == upperChunk.y and position.z == upperChunk.z ? [ecologyCandidate] : [],
+        sample: position => {position: Coordinate2.from(position), surfaceY: 15, slope: 0, continentalness: 0, erosion: 0, ridge: 0, riverStrength: 0, temperature: 8, humidity: 8, forestDensity: 0, terrainType: "plain", biome: "plains"},
+    }
+
+type SupportHarness:
+    store: WorldStore
+    sessions: WorldSessionCache
+    world: LoadedWorld
+    commands: WorldBlockCommands
+    published: List<BlockChangeBatch>
+    close: () -> Promise<null>
+
+async def supportHarness(worldId: string) -> SupportHarness:
+    const store = memoryWorldStore()
+    const sessions = worldSessionCache(store)
+    const world = sessions.prepareNew({id: worldId, name: worldId, seed: worldId}, 1_000_000)
+    const generator = fixtureGenerator()
+    world.generator = generator
+    world.ecology = worldEcology(world.manifest.seed, 16, 0, 255, generator, world.blocks.registry, world.state, worldEcologyEpoch(initialWorldMilliseconds))
+    await store.manifests.save(world.manifest)
+    await sessions.remember(world)
+    const published: List<BlockChangeBatch> = []
+    const commands = worldBlockCommands(sessions, batch => published.append(batch), _manifest => initialWorldMilliseconds)
+
+    async def close():
+        await commands.close()
+        await sessions.close()
+        await store.close()
+
+    return {store, sessions, world, commands, published, close}
+
+test "same-batch final support view accepts a plant before its replacement soil edit":
+    const harness = await supportHarness("support-final-view")
+    try:
+        const batch = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 10, y: 16, z: 0}, blockStateRuntimeId: blueFlower},
+            {position: {x: 10, y: 15, z: 0}, blockStateRuntimeId: grass},
+        ])
+        expect(batch.changes.size).toBe(2)
+        expect(batch.changes.map(change => change.blockStateRuntimeId)).toEqual([blueFlower, grass])
+        expect(batch.changes.every(change => change.changed and change.revision == 1)).toBe(true)
+        expect(harness.published.size).toBe(1)
+    finally: await harness.close()
+
+test "cactus support cascades deterministically through a vertical Chunk boundary":
+    const harness = await supportHarness("support-cactus")
+    try:
+        const batch = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 0, y: 15, z: 0}, blockStateRuntimeId: air},
+        ])
+        expect(batch.changes.map(change => change.position)).toEqual([
+            {x: 0, y: 15, z: 0},
+            {x: 0, y: 16, z: 0},
+            {x: 0, y: 17, z: 0},
+            {x: 0, y: 18, z: 0},
+        ])
+        expect(batch.changes.every(change => change.changed and change.blockStateRuntimeId == air)).toBe(true)
+        expect(batch.changes[0].revision).toBe(1)
+        expect(batch.changes.slice(1).every(change => change.revision == 1)).toBe(true)
+        expect(harness.published[0].changes.size).toBe(4)
+    finally: await harness.close()
+
+test "side support removal crosses a horizontal Chunk boundary":
+    const harness = await supportHarness("support-vine")
+    try:
+        const batch = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 15, y: 20, z: 0}, blockStateRuntimeId: air},
+        ])
+        expect(batch.changes.size).toBe(2)
+        expect(batch.changes[1].position).toEqual({x: 16, y: 20, z: 0})
+        expect(batch.changes[1].previousBlockStateRuntimeId).toBe(vine)
+        expect(batch.changes[1].blockStateRuntimeId).toBe(air)
+        expect(batch.changes[1].revision).toBe(1)
+    finally: await harness.close()
+
+test "aquatic support loss restores canonical fluid properties and suppresses ecological revival":
+    const harness = await supportHarness("support-aquatic")
+    try:
+        const authored = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 4, y: 15, z: 0}, blockStateRuntimeId: air},
+        ])
+        expect(authored.changes.size).toBe(2)
+        expect(authored.changes[1].previousBlockStateRuntimeId).toBe(kelpLevel7)
+        expect(authored.changes[1].blockStateRuntimeId).toBe(waterLevel7)
+
+        const natural = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 6, y: 15, z: 0}, blockStateRuntimeId: air},
+        ])
+        expect(natural.changes.size).toBe(2)
+        expect(natural.changes[1].previousBlockStateRuntimeId).toBe(kelpLevel7)
+        expect(natural.changes[1].blockStateRuntimeId).toBe(waterLevel7)
+        const stored = (await harness.store.deltas.findChunks(harness.world.manifest.id, [upperChunk]))[0]
+        expect(stored.overrides.some(entry => entry.position.x == 6 and entry.position.y == 0 and entry.blockStateRuntimeId == waterLevel7)).toBe(true)
+        const projected = (await harness.world.ecology.deltas([upperChunk], initialWorldMilliseconds))[0]
+        expect(projected.overrides.some(entry => entry.position.x == 6 and entry.position.y == 0 and entry.blockStateRuntimeId == waterLevel7)).toBe(true)
+    finally: await harness.close()
+
+test "support removal clears a player crop growth anchor":
+    const harness = await supportHarness("support-growth-anchor")
+    try:
+        const planted = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 8, y: 16, z: 0}, blockStateRuntimeId: rye},
+        ])
+        expect(planted.changes[0].blockStateRuntimeId).toBe(rye)
+        let stored = (await harness.store.deltas.findChunks(harness.world.manifest.id, [upperChunk]))[0]
+        expect(stored.overrides.find(entry => entry.position.x == 8 and entry.position.y == 0)?.growthOriginEpoch != null).toBe(true)
+
+        const removed = await harness.commands.editBlocks(harness.world.manifest.id, [
+            {position: {x: 8, y: 15, z: 0}, blockStateRuntimeId: air},
+        ])
+        expect(removed.changes.size).toBe(2)
+        expect(removed.changes[1].previousBlockStateRuntimeId).toBe(rye)
+        expect(removed.changes[1].blockStateRuntimeId).toBe(air)
+        stored = (await harness.store.deltas.findChunks(harness.world.manifest.id, [upperChunk]))[0]
+        expect(stored.overrides.some(entry => entry.position.x == 8 and entry.position.y == 0)).toBe(false)
+    finally: await harness.close()
+
+test "support cascade limit rejects before returning a partial result":
+    const current: Map<string, number> = Map([
+        ["0:0:0", sand],
+        ["0:1:0", cactus],
+    ])
+
+    async def readBlocks(positions: readonly List<readonly BlockPosition>) -> readonly List<number>:
+        return positions.map(position => current.get(f"{position.x}:{position.y}:{position.z}") ?? air)
+
+    await expect(resolveSupportCascade([
+        {position: {x: 0, y: 0, z: 0}, blockStateRuntimeId: air},
+    ], readBlocks, registry, 1)).toReject()

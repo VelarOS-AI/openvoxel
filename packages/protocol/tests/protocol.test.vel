@@ -5,8 +5,8 @@ import {WorldEnvironmentSample, WorldGameMode, WorldPrecipitationKind} from "@op
 
 test "protocol package owns wire facts without duplicating route strings":
     expect(protocolServiceName).toBe("openvoxel")
-    expect(protocolVersion).toBe(13)
-    expect(clientContractVersion).toBe(8)
+    expect(protocolVersion).toBe(14)
+    expect(clientContractVersion).toBe(9)
     expect(httpEncoding).toBe("json")
     expect(realtimeEncoding).toBe("messagepack")
     expect(chunkPaletteEntryEncoding).toBe("uint32-runtime-id")

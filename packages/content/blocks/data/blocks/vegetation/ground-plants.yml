@@ -1,0 +1,127 @@
+blocks:
+  - key: blocks.tallGrass
+    translationKey: translations.block.tallGrass
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.tallGrass}, tint: tints.biomeGrass, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.tallGrass, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []
+
+  - key: blocks.redFlower
+    translationKey: translations.block.redFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.redFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.redFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []
+
+  - key: blocks.purpleFlower
+    translationKey: translations.block.purpleFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.purpleFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.purpleFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []
+
+  - key: blocks.whiteFlower
+    translationKey: translations.block.whiteFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.whiteFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.whiteFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []
+
+  - key: blocks.dryBush
+    translationKey: translations.block.dryBush
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.dryBush}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.dryBush, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.8, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.dryPlantSupport}]
+    variants: []
+
+  - key: blocks.cactus
+    translationKey: translations.block.cactus
+    tags: [tags.plant, tags.damaging, tags.cactusSupport]
+    properties: []
+    defaultState: []
+    physics:
+      collision: {kind: custom, key: shapes.cactus, boxes: [{minimumX: 0.0625, minimumY: 0, minimumZ: 0.0625, maximumX: 0.9375, maximumY: 1, maximumZ: 0.9375}]}
+      selection: {kind: custom, key: shapes.cactus, boxes: [{minimumX: 0.0625, minimumY: 0, minimumZ: 0.0625, maximumX: 0.9375, maximumY: 1, maximumZ: 0.9375}]}
+      occlusion: {kind: none}
+      replaceable: false
+      friction: 0.6
+      speedFactor: 1
+      jumpFactor: 1
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cactus, layer: cutout, material: materials.model, textures: {top: textures.block.cactusTop, bottom: textures.block.cactusTop, side: textures.block.cactus}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0.4, blastResistance: 0.4, toolTag: tools.axe, drops: loot.block.cactus, sounds: sounds.wood}
+    behaviors: [{kind: contact_damage, damage: 1, intervalTicks: 10}, {kind: support, face: below, supportingTag: tags.cactusSupport}]
+    variants: []
+
+  - key: blocks.largeDryBush
+    translationKey: translations.block.largeDryBush
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.largeDryBush}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, toolTag: tools.shears, drops: loot.block.largeDryBush, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.8, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.dryPlantSupport}]
+    variants: []
+
+  - key: blocks.vine
+    translationKey: translations.block.vine
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: [{name: facing, kind: enum, values: [north, east, south, west]}]
+    defaultState: [{name: facing, value: north}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.wallOverlay, layer: cutout, material: materials.cross, textures: {all: textures.block.vine}, tint: tints.deciduousFoliage, cullFaces: false}
+    interaction: {breakable: true, hardness: 0.1, blastResistance: 0.1, toolTag: tools.shears, drops: loot.block.vine, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.55, spreadChance: 0.95}, {kind: placement, strategy: horizontal_facing}, {kind: support, face: sides, supportingTag: tags.vineSupport}]
+    variants: []
+
+  - key: blocks.yellowFlower
+    translationKey: translations.block.yellowFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.yellowFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.yellowFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []
+
+  - key: blocks.blueFlower
+    translationKey: translations.block.blueFlower
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.blueFlower}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.blueFlower, sounds: sounds.grass}
+    behaviors: [{kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.lushPlantSupport}]
+    variants: []

@@ -1,11 +1,14 @@
 import {simplex2, simplex3} from "@velarscript-labs/noise"
 import {Float32Buffer, UInt16Buffer, float32Buffer, uint16Buffer} from "velar/binary"
-import {Coordinate2, requireCoordinate2} from "@openvoxel/world"
+import {Coordinate2, WorldBaseClimateSampler, createWorldBaseClimateNodeSampler, requireCoordinate2, worldTemperatureAtHeight} from "@openvoxel/world"
+import {worldGeneratorClimate} from "../generator-climate.vel"
 import {CurvePoint, FractalNoiseConfig, WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "../runtime/builtin-catalog.vel"
 import {TerrainSample} from "../terrain-sample.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
 import {evictOldest} from "./lru-cache.vel"
+import {surfaceBedrock} from "./surface-materials.vel"
+export {surfaceBlock, subsurfaceBlock} from "./surface-materials.vel"
 
 export type Noise2 = (number, number) -> number
 export type Noise3 = (number, number, number) -> number
@@ -24,12 +27,22 @@ export type GenerationFields:
     continentalWarpZ: Noise2
     riverWarpX: Noise2
     riverWarpZ: Noise2
+    surfaceMicroDetail: Noise2
     detail: Noise3
     aquifer: Noise3
     strata: Noise2
-    temperature: Noise2
-    humidity: Noise2
+    climateNode: WorldBaseClimateSampler
     forest: Noise2
+    geology: Noise2
+    deposit: Noise2
+    exposure: Noise2
+    stoneVein: Noise2
+
+readonly type HorizontalCell:
+    gridX: number
+    gridZ: number
+    amountX: number
+    amountZ: number
 
 type TerrainShape:
     targetSurfaceY: number
@@ -37,6 +50,9 @@ type TerrainShape:
     erosion: number
     ridge: number
     riverStrength: number
+    /// 尚未体素化的连续河面标高。河床与河面同源于平滑的二维地形骨架，
+    /// 不跟随最终整数地表逐列跳动。
+    riverWaterLevel: number
 
 /// 一个水平 Chunk 列的全部地形事实。7×7×33 密度网格覆盖核心区及一个粗采样
 /// 边界；18×18 最终表面则覆盖 16×16 核心区与一格坡度边界。
@@ -46,15 +62,19 @@ export type TerrainColumnPlan:
     minimumZ: number
     densityGrid: Float32Buffer
     surfaceHeights: UInt16Buffer
+    waterLevels: Float32Buffer
     /// 核心 16×16 区域的最终地表范围，供垂直 Chunk 在进入表层、含水层和
     /// 装饰阶段前做常数时间的相交判断。
     minimumSurfaceY: number
     maximumSurfaceY: number
+    minimumWaterLevel: number
+    maximumWaterLevel: number
     samples: readonly List<readonly TerrainSample>
     densityAt: (worldX: number, worldY: number, worldZ: number) -> number
     densityColumnAt: (worldX: number, worldZ: number) -> DensityColumn
     sampleAt: (worldX: number, worldZ: number) -> readonly TerrainSample
     surfaceYAt: (worldX: number, worldZ: number) -> number
+    waterLevelAt: (worldX: number, worldZ: number) -> number
 
 export type ColumnPlanner:
     cachedColumnCount: () -> number
@@ -107,7 +127,9 @@ def terrainShape(fields: GenerationFields, position: readonly Coordinate2) -> Te
     const warpedZ = position.z + terrain.warp.continentalAmplitude * fields.continentalWarpZ(position.x * warpScale, position.z * warpScale)
     const continentalness = signedFractal(fields.continentalness, warpedX, warpedZ, terrain.continentalness)
     const erosion = saturate(signedFractal(fields.erosion, warpedX, warpedZ, terrain.erosion) * 0.5 + 0.5)
-    const ridge = saturate(1 - signedFractal(fields.ridge, warpedX, warpedZ, terrain.ridge).abs())
+    // 地貌带先分配平原、丘陵和山地的空间，再叠加起伏；零等值线不是山脉。
+    // 非零采样原点避免所有种子在 (0, 0) 同时命中噪声的固定零点。
+    const ridge = saturate(0.5 + 1.25 * signedFractal(fields.ridge, warpedX + terrain.ridge.period * 13.37, warpedZ - terrain.ridge.period * 9.41, terrain.ridge))
     const hills = signedFractal(fields.hills, warpedX, warpedZ, terrain.hills)
 
     const riverWarpScale = 1 / terrain.warp.riverPeriod
@@ -118,21 +140,31 @@ def terrainShape(fields: GenerationFields, position: readonly Coordinate2) -> Te
 
     const baseHeight = curve(terrain.continentalHeight, continentalness)
     const inland = smooth(squish(continentalness, -0.08, 0.5))
-    const ridgeMask = smooth(squish(ridge, 0.46, 0.92))
+    const ridgeMask = smooth(squish(ridge, 0.6, 0.9))
     const erosionMask = lerp(1, 0.28, erosion)
     const mountainHeight = terrain.mountainAmplitude * inland * ridgeMask * erosionMask * (0.66 + 0.34 * saturate(hills * 0.5 + 0.5))
-    const hillHeight = 14 * inland * (1 - ridgeMask) * (1 - 0.55 * erosion) * hills
+    // 海岸内侧也有独立丘陵；渐隐带保留海滩，山脊带则交给大尺度山体。
+    const foothills = smooth(squish(continentalness, -0.22, 0.12))
+    const hillBelt = smooth(squish(ridge, 0.35, 0.65)) * (1 - ridgeMask)
+    const hillHeight = terrain.foothillAmplitude * foothills * hillBelt * (1 - 0.55 * erosion) * (0.5 + 0.5 * hills)
     const uncarved = baseHeight + mountainHeight + hillHeight
     const highland = squish(uncarved, fields.profile.world.seaLevel + 18, fields.profile.world.seaLevel + 82)
     const riverDepth = lerp(terrain.riverLowlandDepth, terrain.riverHighlandDepth, highland)
     const riverFloor = fields.profile.world.seaLevel - 2 + highland * 36
-    const carved = Math.max(lerp(uncarved, riverFloor, riverStrength), uncarved - riverDepth)
+    // 完整河槽的床面不依赖横断面上的 riverStrength；后者只负责从岸坡平滑
+    // 过渡到河槽。河面因此跨越相邻河列连续，而不会追随每列最终 surfaceY。
+    const riverChannelFloor = Math.max(riverFloor, uncarved - riverDepth)
+    const riverWaterLevel = Math.clamp(riverChannelFloor + 3, fields.profile.world.seaLevel, fields.profile.world.maximumNaturalSurfaceY)
+    // 河床只能向下侵蚀原地表。把 channelFloor 当全局下界会把深海抬到海平面，
+    // 同时把整条河谷截成平底陡壁；横断面应在岸坡与完整河床之间连续插值。
+    const carved = Math.min(uncarved, lerp(uncarved, riverChannelFloor, riverStrength))
     return {
         targetSurfaceY: Math.clamp(carved, fields.profile.world.minimumY + fields.profile.world.bedrockDepth, fields.profile.world.maximumNaturalSurfaceY),
         continentalness,
         erosion,
         ridge,
         riverStrength,
+        riverWaterLevel,
     }
 
 /// 特征所有者只用这个便宜结果选择大致地下高度。最终是否允许写入仍由目标
@@ -152,12 +184,16 @@ export def createGenerationFields(seed: string, profile: readonly WorldGenerator
         continentalWarpZ: simplex2(f"{seed}:terrain:continental-warp-z"),
         riverWarpX: simplex2(f"{seed}:terrain:river-warp-x"),
         riverWarpZ: simplex2(f"{seed}:terrain:river-warp-z"),
+        surfaceMicroDetail: simplex2(f"{seed}:terrain:surface-micro-detail"),
         detail: simplex3(f"{seed}:terrain:detail"),
         aquifer: simplex3(f"{seed}:underground:aquifer"),
         strata: simplex2(f"{seed}:terrain:strata"),
-        temperature: simplex2(f"{seed}:climate:temperature"),
-        humidity: simplex2(f"{seed}:climate:humidity"),
+        climateNode: createWorldBaseClimateNodeSampler(seed, worldGeneratorClimate(profile)),
         forest: simplex2(f"{seed}:decoration:forest"),
+        geology: simplex2(f"{seed}:surface:geology"),
+        deposit: simplex2(f"{seed}:surface:deposit"),
+        exposure: simplex2(f"{seed}:surface:exposure"),
+        stoneVein: simplex2(f"{seed}:surface:vein"),
     }
 
 def densityForShape(fields: GenerationFields, shape: readonly TerrainShape, worldX: number, worldY: number, worldZ: number) -> number:
@@ -185,9 +221,6 @@ def chooseTerrainType(profile: readonly WorldGeneratorDefinition, surfaceY: numb
     if shape.ridge <= 0.2 and shape.erosion <= 0.48: return profile.terrainTypes.valley
     if slope >= 0.28 or surfaceY >= 82: return profile.terrainTypes.hill
     return profile.terrainTypes.plain
-
-def climateValue(field: Noise2, x: number, z: number, period: number) -> number:
-    return Math.clamp(((field(x / period, z / period) * 0.5 + 0.5) * 16).floor(), 0, 15)
 
 def chooseBiome(profile: readonly WorldGeneratorDefinition, terrainType: string, surfaceY: number, temperature: number, humidity: number) -> string:
     if terrainType == profile.terrainTypes.deepOcean or terrainType == profile.terrainTypes.ocean:
@@ -225,8 +258,9 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
         for gridZ in range(horizontalCount):
             const worldZ = gridMinimumZ + gridZ * horizontalStep
             gridShapes.append(terrainShape(fields, {x: worldX, z: worldZ}))
-            gridTemperatures.append(climateValue(fields.temperature, worldX, worldZ, profile.terrain.climate.temperaturePeriod))
-            gridHumidities.append(climateValue(fields.humidity, worldX, worldZ, profile.terrain.climate.humidityPeriod))
+            const climate = fields.climateNode({x: worldX, z: worldZ})
+            gridTemperatures.append(climate.temperature)
+            gridHumidities.append(climate.humidity)
             gridForests.append(saturate(fields.forest(worldX / 224, worldZ / 224) * 0.5 + 0.5))
     for gridY in range(verticalCount):
         const worldY = profile.world.minimumY + gridY * verticalStep
@@ -242,47 +276,47 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
     def densityColumnAt(worldX: number, worldZ: number) -> DensityColumn:
         const gridX = Math.clamp(((worldX - gridMinimumX) / horizontalStep).floor(), 0, horizontalCount - 2)
         const gridZ = Math.clamp(((worldZ - gridMinimumZ) / horizontalStep).floor(), 0, horizontalCount - 2)
-        const amountX = smooth((worldX - (gridMinimumX + gridX * horizontalStep)) / horizontalStep)
-        const amountZ = smooth((worldZ - (gridMinimumZ + gridZ * horizontalStep)) / horizontalStep)
+        const amountX = saturate((worldX - (gridMinimumX + gridX * horizontalStep)) / horizontalStep)
+        const amountZ = saturate((worldZ - (gridMinimumZ + gridZ * horizontalStep)) / horizontalStep)
+        // 逐列二维微细节直接加入所有消费者共享的密度函数。它不改写已经
+        // 整数化的 surfaceY，因此表面寻找、方块填充与跨 Chunk 查询仍同源。
+        const surfaceMicroDetail = profile.terrain.surfaceMicroDetailAmplitude * fields.surfaceMicroDetail(
+            worldX / profile.terrain.surfaceMicroDetailPeriod,
+            worldZ / profile.terrain.surfaceMicroDetailPeriod,
+        )
 
         def density(worldY: number) -> number:
             if worldY < profile.world.minimumY: return 64
             if worldY > profile.world.maximumY + 1: return -64
             const gridY = Math.clamp(((worldY - profile.world.minimumY) / verticalStep).floor(), 0, verticalCount - 2)
-            const amountY = smooth((worldY - (profile.world.minimumY + gridY * verticalStep)) / verticalStep)
+            const amountY = saturate((worldY - (profile.world.minimumY + gridY * verticalStep)) / verticalStep)
             const lowZ0 = lerp(densityGrid[densityIndex(gridX, gridY, gridZ, horizontalCount)], densityGrid[densityIndex(gridX + 1, gridY, gridZ, horizontalCount)], amountX)
             const lowZ1 = lerp(densityGrid[densityIndex(gridX, gridY, gridZ + 1, horizontalCount)], densityGrid[densityIndex(gridX + 1, gridY, gridZ + 1, horizontalCount)], amountX)
             const highZ0 = lerp(densityGrid[densityIndex(gridX, gridY + 1, gridZ, horizontalCount)], densityGrid[densityIndex(gridX + 1, gridY + 1, gridZ, horizontalCount)], amountX)
             const highZ1 = lerp(densityGrid[densityIndex(gridX, gridY + 1, gridZ + 1, horizontalCount)], densityGrid[densityIndex(gridX + 1, gridY + 1, gridZ + 1, horizontalCount)], amountX)
-            return lerp(lerp(lowZ0, lowZ1, amountZ), lerp(highZ0, highZ1, amountZ), amountY)
+            return lerp(lerp(lowZ0, lowZ1, amountZ), lerp(highZ0, highZ1, amountZ), amountY) + surfaceMicroDetail
 
         return density
 
     def densityAt(worldX: number, worldY: number, worldZ: number) -> number:
         return densityColumnAt(worldX, worldZ)(worldY)
 
-    def horizontalCell(worldX: number, worldZ: number) -> List<number>:
+    def horizontalCell(worldX: number, worldZ: number) -> HorizontalCell:
         const gridX = Math.clamp(((worldX - gridMinimumX) / horizontalStep).floor(), 0, horizontalCount - 2)
         const gridZ = Math.clamp(((worldZ - gridMinimumZ) / horizontalStep).floor(), 0, horizontalCount - 2)
         const amountX = smooth((worldX - (gridMinimumX + gridX * horizontalStep)) / horizontalStep)
         const amountZ = smooth((worldZ - (gridMinimumZ + gridZ * horizontalStep)) / horizontalStep)
-        return [gridX, gridZ, amountX, amountZ]
+        return {gridX, gridZ, amountX, amountZ}
 
-    def interpolateGrid(values: readonly List<number>, cell: readonly List<number>) -> number:
-        const gridX = cell[0]
-        const gridZ = cell[1]
-        const amountX = cell[2]
-        const amountZ = cell[3]
+    def interpolateGrid(values: readonly List<number>, cell: HorizontalCell) -> number:
+        const {gridX, gridZ, amountX, amountZ} = cell
         const back = lerp(values[gridZ + horizontalCount * gridX], values[gridZ + horizontalCount * (gridX + 1)], amountX)
         const front = lerp(values[gridZ + 1 + horizontalCount * gridX], values[gridZ + 1 + horizontalCount * (gridX + 1)], amountX)
         return lerp(back, front, amountZ)
 
     def shapeAt(worldX: number, worldZ: number) -> TerrainShape:
         const cell = horizontalCell(worldX, worldZ)
-        const gridX = cell[0]
-        const gridZ = cell[1]
-        const amountX = cell[2]
-        const amountZ = cell[3]
+        const {gridX, gridZ, amountX, amountZ} = cell
         const backLeft = gridShapes[gridZ + horizontalCount * gridX]
         const backRight = gridShapes[gridZ + horizontalCount * (gridX + 1)]
         const frontLeft = gridShapes[gridZ + 1 + horizontalCount * gridX]
@@ -296,29 +330,42 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
         const erosion = blend(backLeft.erosion, backRight.erosion, frontLeft.erosion, frontRight.erosion)
         const ridge = blend(backLeft.ridge, backRight.ridge, frontLeft.ridge, frontRight.ridge)
         const riverStrength = blend(backLeft.riverStrength, backRight.riverStrength, frontLeft.riverStrength, frontRight.riverStrength)
-        return {targetSurfaceY, continentalness, erosion, ridge, riverStrength}
+        const riverWaterLevel = blend(backLeft.riverWaterLevel, backRight.riverWaterLevel, frontLeft.riverWaterLevel, frontRight.riverWaterLevel)
+        return {targetSurfaceY, continentalness, erosion, ridge, riverStrength, riverWaterLevel}
 
     const sampleEdge = edge + 2 * profile.sampling.halo
     const surfaceHeights = uint16Buffer(sampleEdge * sampleEdge)
+    const waterLevels = float32Buffer(sampleEdge * sampleEdge)
     const sampleShapes: List<TerrainShape> = []
+
+    def surfaceHeightFor(worldX: number, worldZ: number, shape: readonly TerrainShape) -> number:
+        const densityColumn = densityColumnAt(worldX, worldZ)
+        const reach = profile.terrain.detailAmplitude.abs().ceil() + profile.terrain.surfaceMicroDetailAmplitude.ceil() + verticalStep
+        const topY = Math.min(profile.world.maximumNaturalSurfaceY, shape.targetSurfaceY.ceil() + reach)
+        for worldY in range(topY, profile.world.minimumY - 1, -1):
+            if densityColumn(worldY) >= 0: return worldY
+        return profile.world.minimumY
+
     for localX in range(sampleEdge):
         const worldX = minimumX + localX - profile.sampling.halo
         for localZ in range(sampleEdge):
             const worldZ = minimumZ + localZ - profile.sampling.halo
             const shape = shapeAt(worldX, worldZ)
             sampleShapes.append(shape)
-            const densityColumn = densityColumnAt(worldX, worldZ)
-            let surfaceY = profile.world.minimumY
             // 最终密度由“目标地表减 Y”加有限幅 3D 细节组成，所以最高交界面
             // 必定位于目标高度附近。直接在这个有界窗口中向下寻找同一密度场的
             // 最高固体，避免每个采样点从世界顶端跨越 33 个粗网格层。
-            const reach = profile.terrain.detailAmplitude.abs().ceil() + verticalStep
-            const topY = Math.min(profile.world.maximumNaturalSurfaceY, shape.targetSurfaceY.ceil() + reach)
-            for worldY in range(topY, profile.world.minimumY - 1, -1):
-                if densityColumn(worldY) >= 0:
-                    surfaceY = worldY
-                    break
+            const surfaceY = surfaceHeightFor(worldX, worldZ, shape)
             surfaceHeights[sampleIndex(localX, localZ, sampleEdge)] = surfaceY
+
+    // Halo 上的坡度也使用真实左右邻列。截断到边缘会让相同世界坐标在两个
+    // Chunk 中拥有不同坡度，从而出现草皮/碎石接缝及树木支撑判定分歧。
+    def neighborHeight(localX: number, localZ: number) -> number:
+        if localX >= 0 and localX < sampleEdge and localZ >= 0 and localZ < sampleEdge:
+            return surfaceHeights[sampleIndex(localX, localZ, sampleEdge)]
+        const worldX = minimumX + localX - profile.sampling.halo
+        const worldZ = minimumZ + localZ - profile.sampling.halo
+        return surfaceHeightFor(worldX, worldZ, shapeAt(worldX, worldZ))
 
     let minimumSurfaceY = profile.world.maximumY
     let maximumSurfaceY = profile.world.minimumY
@@ -329,23 +376,32 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
             maximumSurfaceY = Math.max(maximumSurfaceY, surfaceY)
 
     const samples: List<TerrainSample> = []
+    let minimumWaterLevel = profile.world.maximumY
+    let maximumWaterLevel = profile.world.minimumY
     for localX in range(sampleEdge):
         const worldX = minimumX + localX - profile.sampling.halo
         for localZ in range(sampleEdge):
             const worldZ = minimumZ + localZ - profile.sampling.halo
             const index = sampleIndex(localX, localZ, sampleEdge)
             const surfaceY = surfaceHeights[index]
-            const left = surfaceHeights[sampleIndex(Math.max(0, localX - 1), localZ, sampleEdge)]
-            const right = surfaceHeights[sampleIndex(Math.min(sampleEdge - 1, localX + 1), localZ, sampleEdge)]
-            const back = surfaceHeights[sampleIndex(localX, Math.max(0, localZ - 1), sampleEdge)]
-            const front = surfaceHeights[sampleIndex(localX, Math.min(sampleEdge - 1, localZ + 1), sampleEdge)]
+            const left = neighborHeight(localX - 1, localZ)
+            const right = neighborHeight(localX + 1, localZ)
+            const back = neighborHeight(localX, localZ - 1)
+            const front = neighborHeight(localX, localZ + 1)
             const slope = saturate(Math.max((right - left).abs(), (front - back).abs()) / 8)
             const cell = horizontalCell(worldX, worldZ)
             const shape = sampleShapes[index]
-            const temperature = Math.clamp(interpolateGrid(gridTemperatures, cell).round(), 0, 15)
-            const humidity = Math.clamp(interpolateGrid(gridHumidities, cell).round(), 0, 15)
+            const temperature = interpolateGrid(gridTemperatures, cell).round()
+            const humidity = interpolateGrid(gridHumidities, cell).round()
             const terrainType = chooseTerrainType(profile, surfaceY, slope, shape)
             const biome = chooseBiome(profile, terrainType, surfaceY, temperature, humidity)
+            // 海洋使用全局海面；河流使用同一二维骨架推导出的连续标高。
+            // 是否真正填水仍由最终 surfaceY < waterLevel 决定，岸列不会被淹没。
+            const waterLevel = terrainType == profile.terrainTypes.river ? shape.riverWaterLevel : profile.world.seaLevel
+            waterLevels[index] = waterLevel
+            if localX >= profile.sampling.halo and localX < profile.sampling.halo + edge and localZ >= profile.sampling.halo and localZ < profile.sampling.halo + edge:
+                minimumWaterLevel = Math.min(minimumWaterLevel, waterLevel)
+                maximumWaterLevel = Math.max(maximumWaterLevel, waterLevel)
             const forestNoise = interpolateGrid(gridForests, cell)
             const forestDensity = saturate(0.7 * forestNoise + 0.5 * squish(humidity, 6, 13) - 0.45 * slope)
             samples.append({
@@ -361,6 +417,10 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
                 forestDensity,
                 terrainType,
                 biome,
+                geology: fields.geology(worldX / profile.surface.geologyPeriod + 13.7, worldZ / profile.surface.geologyPeriod - 8.3),
+                deposit: fields.deposit(worldX / profile.surface.depositPeriod + 3.1, worldZ / profile.surface.depositPeriod + 17.9),
+                exposure: fields.exposure(worldX / profile.surface.outcropPeriod - 9.2, worldZ / profile.surface.outcropPeriod + 5.4),
+                stoneVein: fields.stoneVein(worldX / profile.surface.veinPeriod + 21.6, worldZ / profile.surface.veinPeriod - 4.8),
             })
 
     def requireLocalSample(worldX: number, worldZ: number) -> number:
@@ -374,7 +434,9 @@ export def createTerrainColumnPlan(fields: GenerationFields, chunkX: number, chu
 
     def surfaceYAt(worldX: number, worldZ: number) -> number: return surfaceHeights[requireLocalSample(worldX, worldZ)]
 
-    return {edge, minimumX, minimumZ, densityGrid, surfaceHeights, minimumSurfaceY, maximumSurfaceY, samples, densityAt, densityColumnAt, sampleAt, surfaceYAt}
+    def waterLevelAt(worldX: number, worldZ: number) -> number: return waterLevels[requireLocalSample(worldX, worldZ)]
+
+    return {edge, minimumX, minimumZ, densityGrid, surfaceHeights, waterLevels, minimumSurfaceY, maximumSurfaceY, minimumWaterLevel, maximumWaterLevel, samples, densityAt, densityColumnAt, sampleAt, surfaceYAt, waterLevelAt}
 
 /// LRU 的 key 只有水平 Chunk 坐标。一个列计划包含完整世界高度，所以相同 X/Z
 /// 的十六个垂直 Chunk 只构建一次密度网格和装饰所需表面事实。
@@ -417,31 +479,17 @@ export def findSurfaceY(fields: GenerationFields, position: Coordinate2) -> numb
     return sampleTerrainWithFields(fields, position).surfaceY
 
 export def temperatureAtHeight(profile: readonly WorldGeneratorDefinition, temperature: number, y: number) -> number:
-    if y > profile.world.seaLevel:
-        return temperature - (0.0008 * (y - profile.world.seaLevel) * (y - profile.world.seaLevel)).round()
-    return temperature + (0.1 * (profile.world.seaLevel - y)).round()
+    return worldTemperatureAtHeight(temperature, y, profile.world.seaLevel).round()
 
-export def surfaceBlock(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
-    if sample.slope >= profile.surface.rockSlope: return blocks.stone
-    if sample.slope >= profile.surface.mixedSlope: return sample.humidity <= 5 ? blocks.gravel : blocks.dirt
-    if sample.biome == profile.biomes.ocean: return sample.humidity >= 10 ? blocks.clay : blocks.sand
-    if sample.biome == profile.biomes.coast or sample.biome == profile.biomes.desert: return blocks.sand
-    if sample.biome == profile.biomes.river: return sample.humidity >= 9 ? blocks.clay : blocks.gravel
-    return blocks.grass
-
-export def subsurfaceBlock(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
-    const surface = surfaceBlock(profile, blocks, sample)
-    if surface == blocks.sand: return blocks.sandstone
-    if surface == blocks.clay: return blocks.clay
-    if surface == blocks.gravel or surface == blocks.stone: return blocks.stone
-    return blocks.dirt
-
-export def baseTerrainBlock(fields: GenerationFields, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample, y: number, density: number, strataBase: number) -> number:
+export def baseTerrainBlock(fields: GenerationFields, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample, waterLevel: number, y: number, density: number, strataBase: number) -> number:
     const profile = fields.profile
     if y < profile.world.minimumY or y > profile.world.maximumY: return blocks.air
     if density < 0:
-        if y <= profile.world.seaLevel:
-            if y == profile.world.seaLevel and temperatureAtHeight(profile, sample.temperature, y) <= profile.surface.snowTemperature:
+        // 只填最终地表与连续水位之间的开放水柱。地表以下即使密度为负也
+        // 属于洞穴/悬空腔，不能被表层水文误判成贯穿地下的水体。
+        const fluidSurfaceY = waterLevel.floor()
+        if sample.surfaceY < waterLevel and y > sample.surfaceY and y <= fluidSurfaceY:
+            if y == fluidSurfaceY and temperatureAtHeight(profile, sample.temperature, y) <= profile.surface.snowTemperature:
                 return blocks.ice
             return blocks.water
         return blocks.air
@@ -449,7 +497,8 @@ export def baseTerrainBlock(fields: GenerationFields, blocks: readonly SurvivalB
     const strata = 0.72 * strataBase + 0.28 * Math.sin(y * 0.19 + strataBase * 2.7)
     if y < 32: return blocks.basalt
     if sample.biome == profile.biomes.desert or sample.biome == profile.biomes.coast:
-        if y >= sample.surfaceY - 18: return blocks.sandstone
+        if y >= sample.surfaceY - 18 and (sample.exposure ?? 0) <= 0.3: return blocks.sandstone
+    if y >= sample.surfaceY - 18: return surfaceBedrock(blocks, sample)
     if strata > 0.58: return blocks.limestone
     if strata < -0.58: return blocks.granite
     return blocks.stone

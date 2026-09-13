@@ -23,19 +23,19 @@ export def requireBlockStateRuntimeId(runtimeId: number):
 /// 注册表提供按类型、状态 ID 和规范状态键查询的只读运行时接口。
 export type BlockRegistry:
     /// 返回方块家族目录。
-    catalog: () -> readonly List<readonly BlockDefinition>
+    catalog: () -> readonly List<BlockDefinition>
     /// 返回全部具体状态目录。
-    states: () -> readonly List<readonly BlockStateDefinition>
+    states: () -> readonly List<BlockStateDefinition>
     /// 按命名空间方块 key 查询家族定义。
-    requireTypeByKey: (key: string) -> readonly BlockDefinition
+    requireTypeByKey: (key: string) -> BlockDefinition
     /// 查询方块家族的默认状态 ID。
     defaultStateRuntimeIdForKey: (key: string) -> number
     /// 按 UInt32 ID 查询具体状态。
-    requireStateByRuntimeId: (runtimeId: number) -> readonly BlockStateDefinition
+    requireStateByRuntimeId: (runtimeId: number) -> BlockStateDefinition
     /// 按规范状态键查询具体状态。
-    requireStateByKey: (stateKey: string) -> readonly BlockStateDefinition
+    requireStateByKey: (stateKey: string) -> BlockStateDefinition
     /// 将方块 key 和完整属性集合解析为状态 ID。
-    stateRuntimeIdFor: (blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> number
+    stateRuntimeIdFor: (blockKey: string, properties: readonly List<BlockStateProperty>) -> number
     /// 替换一个属性并解析到另一个已存在的有限状态。
     withProperty: (runtimeId: number, name: string, value: BlockPropertyValue) -> number
     /// 查询状态所属方块家族的标签。
@@ -44,16 +44,16 @@ export type BlockRegistry:
     hasBehavior: (runtimeId: number, kind: BlockBehaviorKind) -> bool
 
 /// 从完整编译目录一次性建立索引，并验证默认状态与状态键的一致性。
-export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegistry:
-    assert source.schemaVersion == 4 else "Unsupported block catalog schema version"
+export def createBlockRegistry(source: BlockCatalogSource) -> BlockRegistry:
+    assert source.schemaVersion == 6 else "Unsupported block catalog schema version"
     assert not source.catalogVersion.isBlank() else "Block catalog version cannot be blank"
     assert source.blocks.size > 0 else "Block catalog cannot be empty"
     assert source.states.size > 0 and source.states.size <= 0x100000000 else "Block state catalog must contain from 1 through 4294967296 states"
     // 同时建立面向查询入口的索引，避免运行时先取完整状态、再沿 blockKey 回查
     // 家族定义。标签与行为是高频分类条件，直接按 runtimeId 命中紧凑 Set。
-    const byBlockKey: Map<string, readonly BlockDefinition> = Map()
-    const byStateId: Map<number, readonly BlockStateDefinition> = Map()
-    const byStateKey: Map<string, readonly BlockStateDefinition> = Map()
+    const byBlockKey: Map<string, BlockDefinition> = Map()
+    const byStateId: Map<number, BlockStateDefinition> = Map()
+    const byStateKey: Map<string, BlockStateDefinition> = Map()
     const tagsByBlockKey: Map<string, readonly Set<string>> = Map()
     const tagsByStateId: Map<number, readonly Set<string>> = Map()
     const behaviorKindsByStateId: Map<number, readonly Set<BlockBehaviorKind>> = Map()
@@ -87,30 +87,30 @@ export def createBlockRegistry(source: readonly BlockCatalogSource) -> BlockRegi
         for behavior in state.behaviors: behaviorKinds.add(behavior.kind)
         behaviorKindsByStateId.set(state.runtimeId, behaviorKinds)
 
-    def catalog() -> readonly List<readonly BlockDefinition>: return source.blocks
+    def catalog() -> readonly List<BlockDefinition>: return source.blocks
 
-    def states() -> readonly List<readonly BlockStateDefinition>: return source.states
+    def states() -> readonly List<BlockStateDefinition>: return source.states
 
-    def requireTypeByKey(key: string) -> readonly BlockDefinition:
+    def requireTypeByKey(key: string) -> BlockDefinition:
         const definition = byBlockKey.get(key)
         assert definition != null else f"Unknown block key {key}"
         return definition
 
     def defaultStateRuntimeIdForKey(key: string) -> number: return requireTypeByKey(key).defaultStateRuntimeId
 
-    def requireStateByRuntimeId(runtimeId: number) -> readonly BlockStateDefinition:
+    def requireStateByRuntimeId(runtimeId: number) -> BlockStateDefinition:
         requireBlockStateRuntimeId(runtimeId)
         if runtimeId in reservedRuntimeIds: throw ReservedBlockStateRuntimeIdError(runtimeId)
         const state = byStateId.get(runtimeId)
         if state == null: throw UnknownBlockStateRuntimeIdError(runtimeId)
         return state
 
-    def requireStateByKey(stateKey: string) -> readonly BlockStateDefinition:
+    def requireStateByKey(stateKey: string) -> BlockStateDefinition:
         const state = byStateKey.get(stateKey)
         assert state != null else f"Unknown block state {stateKey}"
         return state
 
-    def stateRuntimeIdFor(blockKey: string, properties: readonly List<readonly BlockStateProperty>) -> number:
+    def stateRuntimeIdFor(blockKey: string, properties: readonly List<BlockStateProperty>) -> number:
         requireTypeByKey(blockKey)
         return requireStateByKey(canonicalStateKey(blockKey, properties)).runtimeId
 

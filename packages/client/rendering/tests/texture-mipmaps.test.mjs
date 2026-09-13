@@ -272,6 +272,26 @@ test("cutout mips keep sparse visible texels through the final level", () => {
   assert.deepEqual([...levels.at(-1).layers[0].albedo.slice(0, 3)], [220, 40, 20]);
 });
 
+test("cutout coverage breaks equal-alpha ties deterministically", () => {
+  const albedo = solidLayer(8, 8, [0, 0, 0, 0]);
+  for (const [x, y] of [[0, 0], [2, 0], [4, 0], [6, 0], [0, 2], [2, 2], [4, 2], [6, 2]]) {
+    albedo.set([80, 120, 160, 255], (y * 8 + x) * 4);
+  }
+  const defaults = layersFor(8, 8, [{albedo: [0, 0, 0, 0]}]);
+  const levels = buildPbrTextureArrayMipLevels({
+    ...defaults,
+    width: 8,
+    height: 8,
+    albedoLayers: [albedo],
+    alphaCutoffs: [0.45],
+  });
+
+  assert.equal(passingAlphaCount(levels[0].layers[0].albedo), 8);
+  assert.equal(passingAlphaCount(levels[1].layers[0].albedo), 2);
+  assert.equal(passingAlphaCount(levels[2].layers[0].albedo), 1);
+  assert.equal(passingAlphaCount(levels[3].layers[0].albedo), 1);
+});
+
 test("each array layer uses its own material alpha cutoff", () => {
   const albedo = Buffer.from([
     60, 90, 120, 0, 60, 90, 120, 0,

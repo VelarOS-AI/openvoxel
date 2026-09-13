@@ -1,6 +1,6 @@
 import {expect} from "velar/test"
 import {builtinIdentities} from "@openvoxel/identities"
-import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPhysics, BlockPropertyKind, BlockRenderLayer, BlockShapeKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, resolveBlockShapeBoxes, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
+import {BlockBehaviorKind, BlockCatalogContribution, BlockDefinition, BlockPhysics, BlockPropertyKind, BlockRender, BlockRenderLayer, BlockShapeKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, blockCatalog, blockCatalogHash, blockCatalogSchemaVersion, blockCatalogVersion, blockStateCatalog, blockStateDefinition, blockStateMapHash, blockStateRuntimeId, blockTypeDefinition, collectBlockRenderResources, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId, findCropGrowthBehavior, firstModBlockStateRuntimeId, hasBlockBehavior, isFluidBlock, isNaturalRock, packedBlockCatalog, requireBlockState, resolveBlockShapeBoxes, withBlockStateProperty, worldBlockStateRuntimeId} from "../src/index.vel"
 
 const airBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
 const grassBlockState = defaultBlockStateRuntimeId(builtinIdentities.blocks.grass)
@@ -15,21 +15,46 @@ def contributionSource(blockKey: string) -> BlockTypeSource:
         tags: [],
         properties: [],
         defaultState: [],
+        behaviors: sourceBlock.behaviors.copy(),
         variants: [],
     })
 
 def contribution(owner: string, blockKey: string) -> BlockCatalogContribution:
     return compileModBlockCatalogContribution(owner, f"{blockKey}:v1", [contributionSource(blockKey)])
 
+def fluidContributionSource(
+    blockKey: string,
+    canonicalBlock: string,
+    maximumLevel: number = 15,
+    defaultLevel: number = 0,
+) -> BlockTypeSource:
+    const source = contributionSource(blockKey)
+    return BlockTypeSource.from(source, {
+        properties: [
+            {name: "falling", kind: BlockPropertyKind.boolean},
+            {name: "level", kind: BlockPropertyKind.integer, minimum: 0, maximum: maximumLevel},
+        ],
+        defaultState: [{name: "falling", value: false}, {name: "level", value: defaultLevel}],
+        behaviors: [{
+            kind: BlockBehaviorKind.fluid,
+            fluidKey: "farming:fluid/water",
+            canonicalBlock,
+            levelProperty: "level",
+            fallingProperty: "falling",
+            tickRate: 5,
+            viscosity: 1,
+        }],
+    })
+
 test "generated runtime catalog expands finite states with UInt32 identities":
-    expect(blockCatalogSchemaVersion).toBe(4)
+    expect(blockCatalogSchemaVersion).toBe(6)
     expect(blockCatalogVersion).toBe(baseBlockCatalogSource.catalogVersion)
-    expect(blockCatalogHash).toBe("8c1ed3fdbcf4803bf42377ba8b5f729dc747fd02b476c560319ad83a62bb0153")
-    expect(blockStateMapHash).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
-    expect(blockCatalog().size).toBe(38)
-    expect(blockStateCatalog().size).toBe(183)
-    expect(packedBlockCatalog().componentProfiles.size).toBe(38)
-    expect(packedBlockCatalog().states.size).toBe(183)
+    expect(blockCatalogHash).toBe("2cf8d366a7ba492174c4eed35e0df46e9b072e473c91f9a8e1e339a343ed1116")
+    expect(blockStateMapHash).toBe("ffbd052087d27f2c05ea32f5d1646a225b033c991db99a449d3e90e44bdb4a17")
+    expect(blockCatalog().size).toBe(61)
+    expect(blockStateCatalog().size).toBe(376)
+    expect(packedBlockCatalog().componentProfiles.size).toBe(80)
+    expect(packedBlockCatalog().states.size).toBe(376)
     expect(airBlockState).toBe(0)
     expect(stoneBlockState).toBe(147)
     expect(grassBlockState).toBe(28)
@@ -121,6 +146,69 @@ test "Mod compiler expands finite source states before world id allocation":
     expect(farming.catalog.states[0].stateKey).toBe("farming:tomato_crop[age=0]")
     expect(farming.catalog.states[3].stateKey).toBe("farming:tomato_crop[age=3]")
 
+test "crop growth behavior owns its age property and cadence contract":
+    const source = contributionSource("farming:tomato_crop")
+    const crop = BlockTypeSource.from(source, {
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 2, maximum: 5}],
+        defaultState: [{name: "growth_stage", value: 2}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 6}],
+    })
+    const compiled = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [crop])
+    expect(compiled.catalog.states.size).toBe(4)
+    for state in compiled.catalog.states:
+        const growth = findCropGrowthBehavior(state.behaviors)
+        assert growth != null else "Expected compiled crop growth behavior"
+        expect(growth.ageProperty).toBe("growth_stage")
+        expect(growth.epochsPerStage).toBe(6)
+
+test "crop growth behavior rejects missing, non-integer, fixed, and invalid cadence contracts":
+    const source = contributionSource("farming:invalid_crop")
+    const missing = BlockTypeSource.from(source, {
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 4}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [missing])).toThrow()
+
+    const booleanAge = BlockTypeSource.from(source, {
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.boolean}],
+        defaultState: [{name: "growth_stage", value: false}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 4}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [booleanAge])).toThrow()
+
+    const fixedAge = BlockTypeSource.from(source, {
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 0, maximum: 0}],
+        defaultState: [{name: "growth_stage", value: 0}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 4}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [fixedAge])).toThrow()
+
+    const zeroCadence = BlockTypeSource.from(source, {
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 0, maximum: 1}],
+        defaultState: [{name: "growth_stage", value: 0}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 0}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [zeroCadence])).toThrow()
+
+    const excessiveCadence = BlockTypeSource.from(zeroCadence, {
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 121}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [excessiveCadence])).toThrow()
+
+    const baseCrop = BlockTypeSource.from(source, {
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 0, maximum: 1}],
+        defaultState: [{name: "growth_stage", value: 0}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 4}],
+    })
+    const missingVariantBehavior = BlockTypeSource.from(baseCrop, {
+        variants: [{when: [{name: "growth_stage", value: 1}], behaviors: []}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [missingVariantBehavior])).toThrow()
+
+    const changedVariantBehavior = BlockTypeSource.from(baseCrop, {
+        variants: [{when: [{name: "growth_stage", value: 1}], behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 5}]}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [changedVariantBehavior])).toThrow()
+
 test "world registry assigns Mod states above the built-in range and requires exact content":
     const farming = contribution("farming", "farming:tomato_crop")
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [farming])
@@ -138,3 +226,58 @@ test "world registry rejects a renamed state against an existing snapshot":
     const installed = createWorldBlockRegistry(baseBlockCatalogSource, [original])
     const renamed = contribution("farming", "farming:tomato_plant")
     expect(() => createWorldBlockRegistry(baseBlockCatalogSource, [renamed], installed.snapshot)).toThrow()
+
+test "front textures validate and join the rendered resource set":
+    const source = contributionSource("farming:pumpkin")
+    const sideTexture = "farming:texture/block/pumpkin_side"
+    const frontTexture = "farming:texture/block/pumpkin_front"
+    const unoriented = BlockTypeSource.from(source, {
+        render: BlockRender.from(source.render, {textures: {all: sideTexture, front: frontTexture}}),
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [unoriented])).toThrow()
+    const pumpkin = BlockTypeSource.from(source, {
+        properties: [{name: "facing", kind: BlockPropertyKind.enumeration, values: ["north", "east", "south", "west"]}],
+        defaultState: [{name: "facing", value: "north"}],
+        render: BlockRender.from(source.render, {textures: {all: sideTexture, front: frontTexture}}),
+    })
+    const compiled = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [pumpkin])
+    const resources = collectBlockRenderResources(compiled.catalog.states)
+    expect(compiled.catalog.states.size).toBe(4)
+    expect(resources.textures).toEqual([frontTexture, sideTexture])
+
+    const invalid = BlockTypeSource.from(pumpkin, {
+        render: BlockRender.from(pumpkin.render, {textures: {all: sideTexture, front: "Pumpkin front"}}),
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [invalid])).toThrow()
+
+test "fluid composites resolve directly to a compatible self-canonical block":
+    const water = fluidContributionSource("farming:water", "farming:water")
+    const waterGrass = fluidContributionSource("farming:water_grass", "farming:water")
+    const contribution = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [water, waterGrass])
+    const composite = contribution.catalog.blocks.find(block => block.key == "farming:water_grass")
+    assert composite != null else "Expected compiled fluid composite"
+    const behavior = composite.behaviors.find(candidate => candidate.kind == BlockBehaviorKind.fluid)
+    assert behavior != null and behavior.kind == BlockBehaviorKind.fluid else "Expected fluid behavior"
+    expect(behavior.canonicalBlock).toBe("farming:water")
+
+test "fluid composites reject missing, chained, range-incompatible, and unmappable canonical blocks":
+    const water = fluidContributionSource("farming:water", "farming:water")
+    const missing = fluidContributionSource("farming:missing_fluid", "farming:absent")
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [water, missing])).toThrow()
+
+    const chainedWater = fluidContributionSource("farming:water", "farming:water_grass")
+    const chainedGrass = fluidContributionSource("farming:water_grass", "farming:water")
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [chainedWater, chainedGrass])).toThrow()
+
+    const narrow = fluidContributionSource("farming:narrow_water_grass", "farming:water", 7)
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [water, narrow])).toThrow()
+
+    const differentDefault = fluidContributionSource("farming:raised_water_grass", "farming:water", 15, 1)
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [water, differentDefault])).toThrow()
+
+test "fluid state variants preserve volume ownership":
+    const water = fluidContributionSource("farming:water", "farming:water")
+    const dryVariant = BlockTypeSource.from(water, {
+        variants: [{when: [{name: "level", value: 1}], behaviors: []}],
+    })
+    expect(() => compileModBlockCatalogContribution("farming", "farming:catalog-v1", [dryVariant])).toThrow()

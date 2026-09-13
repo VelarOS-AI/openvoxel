@@ -19,7 +19,7 @@ OpenVoxel 采用内容、体素、模拟、网格和渲染边界分离的方块�
 
 ## 人工源与生成链
 
-`data/identities.yml` 集中定义运行时代码需要引用的方块、标签、资源和生成器身份。`data/catalog.yml` 声明 schema、目录版本和有序源文件；`data/blocks/` 按 terrain、fluids、minerals 和 vegetation 分组。方块中的 `blocks.water`、`tags.fluid`、`models.block.fluid` 等引用就是 `identities` 树中的实际位置，生成器只按这些路径逐层取值。完整身份树作为开放数据保留；只被 YAML 引用的新路径自动进入产物，VelarScript 直接点访问的核心路径再经过强类型投影。合并结果通过同一套 runtime type 与语义校验，任一路径不存在或任一身份项无人引用都会中止生成。
+`data/identities.yml` 集中定义运行时代码需要引用的方块、标签、资源和生成器身份。`data/catalog.yml` 声明 schema、目录版本和有序源文件；`data/blocks/` 的第一层按 terrain、fluids、minerals 和 vegetation 分组，较大的 vegetation 再按 trees、ground-plants、crops 与 aquatic 职责拆分。目录只用于维护和导航，不参与状态身份。方块中的 `blocks.water`、`tags.fluid`、`models.block.fluid` 等引用就是 `identities` 树中的实际位置，生成器只按这些路径逐层取值。完整身份树作为开放数据保留；只被 YAML 引用的新路径自动进入产物，VelarScript 直接点访问的核心路径再经过强类型投影。合并结果通过同一套 runtime type 与语义校验，任一路径不存在或任一身份项无人引用都会中止生成。
 
 `npm run generate` 只读取 `data/`，并将身份、完整类型、状态、组件和确定性的基础 `{runtimeId,stateKey}` 映射写入唯一的 `generated/block-catalog.json`。生成产物把相同的物理、光照、渲染、交互和行为组合归并为 `componentProfiles`；状态只保存 `componentProfileId`，运行时装配时再恢复完整不可变快照。
 
@@ -42,9 +42,9 @@ OpenVoxel 采用内容、体素、模拟、网格和渲染边界分离的方块�
 
 - 物理：碰撞、选择、遮挡形状，可替换性，摩擦和移动倍率。
 - 光照：发光、不透明度、天空光模式和环境光遮蔽。
-- 渲染：逻辑模型、渲染层、材质、纹理、染色、动画和面剔除。
+- 渲染：逻辑模型、渲染层、材质、纹理、染色、动画、面剔除和同格纯视觉附件。
 - 交互：破坏、硬度、爆炸抗性、工具标签、掉落表和声音组。
-- 行为：流体、重力、可燃、接触伤害、随机/计划刻、放置与支撑契约。
+- 行为：流体、作物生长、重力、可燃、接触伤害、随机/计划刻、放置与支撑契约。
 
 目录只引用小写命名空间资源 key。标签服务内容分类查询，内建身份通过产物中的 `builtinIdentities` 引用；核心行为使用有类型组件。
 
@@ -66,4 +66,4 @@ Chunk 的 `palette` 保存 UInt32 世界运行时 ID，4096 个 `indices` 使用
 
 ## 强制验证
 
-构建拒绝非法命名空间 key、重复类型/状态/标签/行为、非法默认状态、属性笛卡尔积过大、非法 UInt32、无效形状、越界光照、非法资源引用、缺少流体属性、重叠状态变体和错误空气定义。测试覆盖生成确定性、组件档案归并、核心语义标签、状态转换、Mod 编译与分配、精确内容装配和 Chunk 调色板。
+构建拒绝非法命名空间 key、重复类型/状态/标签/行为、非法默认状态、属性笛卡尔积过大、非法 UInt32、无效形状、越界光照、非法资源引用、缺少或不兼容的规范流体、无效作物年龄/节拍、重叠状态变体和错误空气定义。测试覆盖生成确定性、组件档案归并、核心语义标签、状态转换、Mod 编译与分配、精确内容装配和 Chunk 调色板。

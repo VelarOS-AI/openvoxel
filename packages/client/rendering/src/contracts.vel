@@ -6,6 +6,10 @@ export enum ClientBlockModelKind:
     cube
     column
     cross
+    submergedCross = "submerged_cross"
+    submergedSurface = "submerged_surface"
+    wallOverlay = "wall_overlay"
+    groundCover = "ground_cover"
     cactus
     snowLayer = "snow_layer"
     fluid
@@ -15,6 +19,12 @@ export enum ClientClimateTint:
     grass
     foliage
     water
+    evergreenFoliage = "evergreen_foliage"
+    drylandFoliage = "dryland_foliage"
+    aquaticFoliage = "aquatic_foliage"
+    birchFoliage = "birch_foliage"
+    poplarFoliage = "poplar_foliage"
+    tallSpruceFoliage = "tall_spruce_foliage"
 
 export enum ClientTintCoverage:
     all
@@ -22,71 +32,113 @@ export enum ClientTintCoverage:
 
 /// 客户端玩家碰撞只消费规范化后的局部 AABB，不读取模型网格或材质层。
 /// 坐标均位于一个方块的 [0, 1] 局部空间内。
-export type ClientBlockCollisionBox:
-    readonly minimumX: number
-    readonly minimumY: number
-    readonly minimumZ: number
-    readonly maximumX: number
-    readonly maximumY: number
-    readonly maximumZ: number
+export readonly type ClientBlockCollisionBox:
+    minimumX: number
+    minimumY: number
+    minimumZ: number
+    maximumX: number
+    maximumY: number
+    maximumZ: number
 
-export type ClientTextureVariant:
-    readonly layer: number
-    readonly weight: number
+export readonly type ClientTextureVariant:
+    layer: number
+    weight: number
 
-export type ClientRenderTexture:
-    readonly key: string
-    readonly bankKey: string
-    readonly alphaCutoff: number?
-    readonly variants: readonly List<readonly ClientTextureVariant>
-    readonly totalWeight: number
+export readonly type ClientRenderTexture:
+    key: string
+    bankKey: string
+    alphaCutoff: number?
+    variants: readonly List<ClientTextureVariant>
+    totalWeight: number
 
-export type ClientResolvedBlockTextures:
-    readonly top: readonly ClientRenderTexture
-    readonly bottom: readonly ClientRenderTexture
-    readonly side: readonly ClientRenderTexture
+export readonly type ClientResolvedBlockTextures:
+    top: ClientRenderTexture
+    bottom: ClientRenderTexture
+    side: ClientRenderTexture
+    front: ClientRenderTexture?
+
+/// 导入时烘焙到方块局部坐标；每个顶点为 position.xyz、normal.xyz、uv.xy。
+/// UV 已归一化到单张纹理，不携带外部图集坐标或图形引擎对象。
+export readonly type ClientModelTriangle:
+    face: string
+    vertices: readonly List<number>
+
+export readonly type ClientModelGeometry:
+    color: readonly List<number>
+    triangles: readonly List<ClientModelTriangle>
+
+/// 一格中的附属呈现已经在目录联结时解析完毕。它没有独立 runtimeId、碰撞或
+/// 遮挡语义，只携带 Worker 批量构网需要的纯数据。
+export readonly type ClientRenderAttachment:
+    geometry: ClientModelGeometry?
+    modelKey: string
+    model: ClientBlockModelKind
+    layer: BlockRenderLayer
+    materialKey: string
+    bankKey: string
+    pipelineKey: string
+    textures: ClientResolvedBlockTextures
+    tintKey: string?
+    climateTint: ClientClimateTint
+    tintCoverage: ClientTintCoverage
+    tintRed: number
+    tintGreen: number
+    tintBlue: number
+    animationKey: string?
+    cullFaces: bool
+    /// 纹理变体散列继续使用所属方块的 runtimeId；这些字段只复制目录期事实，
+    /// 不会在每个方块或每帧创建对象。
+    runtimeId: number
+    emission: number
+    axis: string?
+    facing: string?
 
 /// Worker 消费的完整渲染状态只保留构网所需的纯数据，不引用 GPU 材质或资源包。
-export type ClientRenderState:
-    readonly runtimeId: number
-    readonly modelKey: string?
-    readonly model: ClientBlockModelKind?
-    readonly layer: BlockRenderLayer?
-    readonly materialKey: string?
-    readonly bankKey: string?
-    readonly pipelineKey: string?
-    readonly textures: readonly ClientResolvedBlockTextures?
-    readonly tintKey: string?
-    readonly climateTint: ClientClimateTint
-    readonly tintCoverage: ClientTintCoverage
-    readonly tintRed: number
-    readonly tintGreen: number
-    readonly tintBlue: number
-    readonly animationKey: string?
-    readonly cullFaces: bool
-    readonly occludes: bool
-    readonly emission: number
-    readonly collisionBoxes: readonly List<readonly ClientBlockCollisionBox>
-    readonly axis: string?
-    readonly level: number?
-    readonly falling: bool?
-    readonly layers: number?
+export readonly type ClientRenderState:
+    geometry: ClientModelGeometry?
+    runtimeId: number
+    modelKey: string?
+    model: ClientBlockModelKind?
+    layer: BlockRenderLayer?
+    materialKey: string?
+    bankKey: string?
+    pipelineKey: string?
+    textures: ClientResolvedBlockTextures?
+    tintKey: string?
+    climateTint: ClientClimateTint
+    tintCoverage: ClientTintCoverage
+    tintRed: number
+    tintGreen: number
+    tintBlue: number
+    animationKey: string?
+    cullFaces: bool
+    occludes: bool
+    emission: number
+    collisionBoxes: readonly List<ClientBlockCollisionBox>
+    attachments: readonly List<ClientRenderAttachment>
+    /// 规范流体方块身份，独立于资源材质和附着物。
+    canonicalFluidKey: string?
+    axis: string?
+    facing: string?
+    level: number?
+    falling: bool?
+    layers: number?
 
 /// Portal 面索引同时定义两个摘要掩码的稳定线上布局。`openFaces` 的位是
 /// `2 ^ face`；`connectedFaces` 的位是
 /// `2 ^ (source * chunkPortalFaceCount + target)`。
 /// 36 位矩阵仍是 JavaScript 可精确表达的安全整数，不得改用 32 位位运算。
-export type ChunkPortalFaceIndices:
-    readonly west: number
-    readonly east: number
-    readonly bottom: number
-    readonly top: number
-    readonly north: number
-    readonly south: number
+export readonly type ChunkPortalFaceIndices:
+    west: number
+    east: number
+    bottom: number
+    top: number
+    north: number
+    south: number
 
 export const chunkPortalFaceCount = 6
 
-export const chunkPortalFaceIndices: readonly ChunkPortalFaceIndices = {
+export const chunkPortalFaceIndices: ChunkPortalFaceIndices = {
     west: 0,
     east: 1,
     bottom: 2,
@@ -95,39 +147,40 @@ export const chunkPortalFaceIndices: readonly ChunkPortalFaceIndices = {
     south: 5,
 }
 
-export type ChunkPortalSummary:
+export readonly type ChunkPortalSummary:
     /// 中心 Chunk 没有任何带模型的状态；非遮挡的水、玻璃和叶片并不算空。
-    readonly empty: bool
+    empty: bool
     /// 中心 Chunk 的每一个格都使用会遮挡视线的状态。
-    readonly fullyOccluding: bool
+    fullyOccluding: bool
     /// 至少有一个非遮挡分量触及对应的 Chunk 面。
-    readonly openFaces: number
+    openFaces: number
     /// 同一个非遮挡分量所连通的有向面组合；对角位也会记录。
-    readonly connectedFaces: number
+    connectedFaces: number
 
-export type ChunkMeshBatch:
-    readonly pipelineKey: string
-    readonly layer: BlockRenderLayer
-    readonly bankKey: string
-    readonly materialKey: string
-    readonly animationKey: string?
-    readonly positions: Float32Buffer
-    readonly normals: Float32Buffer
-    readonly uvs: Float32Buffer
-    readonly textureLayers: Float32Buffer
-    readonly tintRoles: Float32Buffer
-    readonly colors: Float32Buffer
-    readonly indices: UInt32Buffer
-    readonly quadCount: number
+export readonly type ChunkMeshBatch:
+    pipelineKey: string
+    layer: BlockRenderLayer
+    bankKey: string
+    materialKey: string
+    animationKey: string?
+    positions: Float32Buffer
+    normals: Float32Buffer
+    uvs: Float32Buffer
+    textureLayers: Float32Buffer
+    tintRoles: Float32Buffer
+    colors: Float32Buffer
+    indices: UInt32Buffer
+    triangleCount: number?
+    quadCount: number
 
-export type ChunkMesh:
-    readonly position: readonly ChunkPosition
-    readonly ticket: number
-    readonly portalSummary: readonly ChunkPortalSummary
-    readonly batches: readonly List<readonly ChunkMeshBatch>
-    readonly visibleBlocks: number
-    readonly quadCount: number
-    readonly byteSize: number
+export readonly type ChunkMesh:
+    position: readonly ChunkPosition
+    ticket: number
+    portalSummary: ChunkPortalSummary
+    batches: readonly List<ChunkMeshBatch>
+    visibleBlocks: number
+    quadCount: number
+    byteSize: number
 
 export const meshingWorkerOperations = {
     initialize: "initialize",
@@ -136,15 +189,15 @@ export const meshingWorkerOperations = {
 
 /// 一个 Chunk 的 Worker 输入使用 edge+2 的立方体：中心是当前 Chunk，六个边界
 /// 切片来自已跟踪邻居，棱和角可以为空。这样每次请求只有一块可转移 UInt32Buffer。
-export type MeshingWorkerRequest:
-    readonly operation: string
-    readonly states: readonly List<readonly ClientRenderState>?
-    readonly position: readonly ChunkPosition?
-    readonly edge: number?
-    readonly paddedBlocks: UInt32Buffer?
-    readonly ticket: number?
+export readonly type MeshingWorkerRequest:
+    operation: string
+    states: readonly List<ClientRenderState>?
+    position: readonly ChunkPosition?
+    edge: number?
+    paddedBlocks: UInt32Buffer?
+    ticket: number?
 
-export type MeshingWorkerResponse:
-    readonly operation: string
-    readonly ready: bool?
-    readonly mesh: readonly ChunkMesh?
+export readonly type MeshingWorkerResponse:
+    operation: string
+    ready: bool?
+    mesh: ChunkMesh?

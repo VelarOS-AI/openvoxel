@@ -1,13 +1,13 @@
 import {WorldBlockRegistry, baseBlockCatalogSource, createWorldBlockRegistry, requireWorldBlockStateRuntimeId} from "@openvoxel/blocks"
 import {ContentCatalog, WorldContentSet} from "@openvoxel/content"
-import {WorldGenerator, WorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator, worldGenerator} from "@openvoxel/world-generation"
-import {WorldManifest, initialChunkEdge} from "@openvoxel/world"
+import {WorldGenerator, WorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator, worldGenerator, worldGeneratorClimate} from "@openvoxel/world-generation"
+import {WorldManifest, initialChunkEdge, worldEcologyEpoch} from "@openvoxel/world"
 import {WorldStore} from "./contracts.vel"
 import {ActiveWorldState, activeWorldState} from "./active-world-state.vel"
-import {CreateWorld, assembleWorldManifest, newWorldTimeOriginMilliseconds} from "./world-creation.vel"
+import {CreateWorld, assembleWorldManifest, initialWorldMilliseconds, newWorldTimeOriginMilliseconds} from "./world-creation.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldContentSnapshot, createWorldContentSnapshot} from "./world-content.vel"
-import {WorldSeasonalEcology, worldSeasonalEcology} from "./seasonal-ecology.vel"
+import {WorldEcology, worldEcology} from "./world-ecology.vel"
 
 /// 已加载世界是 world-runtime 内部统一使用的世界上下文。
 ///
@@ -28,7 +28,7 @@ export type LoadedWorld:
     contentSnapshot: readonly WorldContentSnapshot
     /// 玩家增量的世界私有热状态；查询、写入和生命周期都通过这里收口。
     state: ActiveWorldState
-    ecology: WorldSeasonalEcology
+    ecology: WorldEcology
     /// 当前进程内这次世界会话已经发布的热事件序号；会话淘汰后从零开始。
     sequence: number
 
@@ -60,7 +60,7 @@ export def worldContextFactory(
             content: active,
             contentSnapshot: createWorldContentSnapshot(manifest, blocks, generators),
             state,
-            ecology: worldSeasonalEcology(manifest.seed, manifest.chunkEdge, definition.world.minimumY, definition.world.maximumY, generator, blocks.registry, state),
+            ecology: worldEcology(manifest.seed, manifest.chunkEdge, definition.world.minimumY, definition.world.maximumY, generator, blocks.registry, state, worldEcologyEpoch(initialWorldMilliseconds), manifest.climate),
             sequence: 0,
         }
 
@@ -69,7 +69,7 @@ export def worldContextFactory(
 
         return activeWorldState(worldId, store.deltas, activeChunkCapacity, activeOverrideCapacity, validateBlockStateRuntimeId)
 
-    def requireContentSet(manifest: readonly WorldManifest) -> readonly WorldContentSet:
+    def requireContentSet(manifest: WorldManifest) -> readonly WorldContentSet:
         return contentCatalog.resolve(manifest.content)
 
     /// 把世界清单与其锁定的 Content Pack 集合合成为一份原子上下文。目录哈希
@@ -106,7 +106,7 @@ export def worldContextFactory(
             throw WorldRequestError(f"Unknown world generator {generatorKey}")
         const generatorHash = generators.definitionHash(generatorKey)
         const generator = instantiateWorldGenerator(generatorKey, command.seed.trim(), initialChunkEdge, blocks, generators)
-        const manifest = assembleWorldManifest(command, blocks.snapshot, active.identity, generatorHash, generator.findSpawn(), newWorldTimeOriginMilliseconds(wallClockMilliseconds))
+        const manifest = assembleWorldManifest(command, blocks.snapshot, active.identity, generatorHash, worldGeneratorClimate(generators.definition(generatorKey)), generator.findSpawn(), newWorldTimeOriginMilliseconds(wallClockMilliseconds))
         return assemble(manifest, blocks, generators, generator, active)
 
     return {prepare, prepareNew}

@@ -22,7 +22,7 @@ import {generateSurface, surfacePlanner} from "../src/survival/surface.vel"
     const generationChunkPalette = chunkPaletteTemplate(generationPalette.runtimeIds)
     const caves = cavePlanner(fields, seed, blocks)
     const minerals = mineralPlanner(profile, palette, seed, baseWorldBlockRegistry.registry)
-    const decorations = decorationPlanner(profile, seed, blocks, columns)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, baseWorldBlockRegistry.registry)
     const surfaces = surfacePlanner(profile, blocks)
     let minimumMineralY = profile.world.maximumY
     let maximumMineralY = profile.world.minimumY
@@ -68,8 +68,8 @@ import {generateSurface, surfacePlanner} from "../src/survival/surface.vel"
             started = monotonic()
             generateSurface(chunk, surfaces.surface(terrain), blocks, baseWorldBlockRegistry.registry)
             surfaceMs += monotonic() - started
-        if maximumY >= terrain.minimumSurfaceY + 1 and minimumY <= terrain.maximumSurfaceY + 10:
+        if maximumY >= terrain.minimumSurfaceY + 1 and minimumY <= terrain.maximumSurfaceY + profile.vegetation.maximumTreeHeight:
             started = monotonic()
-            generateVegetation(chunk, decorations.decorations(position.x, position.z), blocks)
+            generateVegetation(chunk, decorations.decorations(position.x, position.z), blocks, baseWorldBlockRegistry.registry)
             decorationMs += monotonic() - started
     print(Json.stableStringify({columnsMs, baseMs, cavesMs, aquifersMs, mineralsMs, surfaceMs, decorationMs}, 2))

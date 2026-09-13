@@ -51,7 +51,12 @@ export type TerrainConfig:
     warp: DomainWarpConfig
     continentalHeight: List<CurvePoint>
     mountainAmplitude: number
+    foothillAmplitude: number
     detailAmplitude: number
+    /// 独立于粗地形网格的逐列二维微细节。它在最终密度场中生效，用来打散
+    /// 大尺度平缓地形整数化后形成的长等高带。
+    surfaceMicroDetailAmplitude: number
+    surfaceMicroDetailPeriod: number
     riverLowlandDepth: number
     riverHighlandDepth: number
     riverHalfWidth: number
@@ -84,40 +89,63 @@ export type GeneratorBlockSlots<T>:
     basalt: T
     birchLeaves: T
     birchLog: T
+    birchSapling: T
+    blueFlower: T
     cactus: T
     clay: T
     coalOre: T
     copperOre: T
+    cotton: T
+    deadwood: T
     diamondOre: T
     dirt: T
     dryBush: T
+    fallenLeaves: T
     germaniumOre: T
     granite: T
     grass: T
     gravel: T
     ice: T
     ironOre: T
+    kelp: T
+    largeDryBush: T
     limestone: T
+    marble: T
     magma: T
     mimosaLeaves: T
     mimosaLog: T
+    mimosaSapling: T
     oakLeaves: T
     oakLog: T
+    oakSapling: T
     poplarLeaves: T
     poplarLog: T
+    poplarSapling: T
+    pumpkin: T
+    pumpkinStem: T
     purpleFlower: T
     redFlower: T
+    rye: T
+    rottenPumpkin: T
     saltpeterOre: T
     sand: T
     sandstone: T
+    seaUrchin: T
+    seagrass: T
     snow: T
     spruceLeaves: T
+    tallSpruceLeaves: T
     spruceLog: T
+    spruceSapling: T
+    starfish: T
     stone: T
     sulphurOre: T
     tallGrass: T
     water: T
     whiteFlower: T
+    vine: T
+    wheat: T
+    yellowFlower: T
 
 /// YAML 身份路径编译后得到的方块 key。构造世界生成器时，这些 key 会通过当前
 /// 世界自己的 BlockRegistry 一次性解析，Mod 世界不会依赖基础世界的 runtimeId。
@@ -129,6 +157,10 @@ export type SurfaceConfig:
     soilDepth: number
     wetSoilDepth: number
     snowTemperature: number
+    geologyPeriod: number
+    depositPeriod: number
+    outcropPeriod: number
+    veinPeriod: number
 
 export type CaveConfig:
     tunnelCellSize: number
@@ -176,9 +208,17 @@ export type WorldGeneratorPaletteDefinition:
 
 export type VegetationConfig:
     treeCellSize: number
+    treeHorizontalReach: number
+    /// 树形相对地表的最高写入；树顶上方的积雪候选由季节层额外扩一格。
+    maximumTreeHeight: number
     cactusCellSize: number
+    deadwoodCellSize: number
+    cliffVineCellSize: number
+    aquaticCellSize: number
     groundPlantCellSize: number
     groundPlantChance: number
+    groundPatchPeriod: number
+    aquaticPatchPeriod: number
     treeMaximumSlope: number
     cactusMaximumSlope: number
 

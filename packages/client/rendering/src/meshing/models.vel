@@ -1,16 +1,16 @@
 import {UInt32Buffer} from "velar/binary"
 import {ClientBlockModelKind, ClientRenderState} from "../contracts.vel"
-import {MutableMeshBatch, batchFor, emitQuad} from "./batch.vel"
+import {ClientMeshSurface, MutableMeshBatch, batchFor, emitQuad} from "./batch.vel"
 import {stateAt} from "./catalog.vel"
 import {bottomFace, boxBounds, eastFace, faceVisible, northFace, sameBoxContactVolume, sameTranslucentVolume, southFace, textureForFace, topFace, westFace} from "./faces.vel"
 
 export def emitBox(
     batches: Map<string, MutableMeshBatch>,
-    states: Map<number, readonly ClientRenderState>,
-    blocks: readonly UInt32Buffer,
+    states: Map<number, ClientRenderState>,
+    blocks: UInt32Buffer,
     paddedEdge: number,
     maximumFaces: number,
-    state: readonly ClientRenderState,
+    state: ClientRenderState,
     x: number,
     y: number,
     z: number,
@@ -56,21 +56,24 @@ export def emitBox(
     if faceVisible(state, north, minimumZ == 0, northBounds?.maximumZ == 1):
         emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1)
 
-def snowNeighborFloor(current: readonly ClientRenderState, neighbor: readonly ClientRenderState) -> number:
+def layeredCoverHeight(state: ClientRenderState) -> number:
+    const scale = state.model == ClientBlockModelKind.groundCover ? 1 / 16 : 1 / 8
+    return (state.layers ?? 1) * scale
+
+def layeredCoverNeighborFloor(current: ClientRenderState, neighbor: ClientRenderState) -> number:
     if neighbor.occludes: return 1
-    if neighbor.model == ClientBlockModelKind.snowLayer and sameBoxContactVolume(current, neighbor):
-        return (neighbor.layers ?? 1) / 8
+    if neighbor.model == current.model and sameBoxContactVolume(current, neighbor): return layeredCoverHeight(neighbor)
     return 0
 
-/// 雪层共享侧面按邻居高度裁切。这样同高雪层没有内部面，高低雪层只保留高出
-/// 邻居的条带，同时低于格顶的雪面不会被上方方块隔空剔除。
-export def emitSnowLayer(
+/// 分层地表覆盖共享侧面按同模型邻居高度裁切。雪层和落叶可以采用不同高度
+/// 比例，同时保留相同的边界剔除算法。
+def emitLayeredCover(
     batches: Map<string, MutableMeshBatch>,
-    states: Map<number, readonly ClientRenderState>,
-    blocks: readonly UInt32Buffer,
+    states: Map<number, ClientRenderState>,
+    blocks: UInt32Buffer,
     paddedEdge: number,
     maximumFaces: number,
-    state: readonly ClientRenderState,
+    state: ClientRenderState,
     x: number,
     y: number,
     z: number,
@@ -79,7 +82,7 @@ export def emitSnowLayer(
     worldZ: number,
 ):
     const batch = batchFor(batches, state, maximumFaces)
-    const height = (state.layers ?? 1) / 8
+    const height = layeredCoverHeight(state)
     const above = stateAt(states, blocks, paddedEdge, x + 1, y + 2, z + 1)
     const aboveBounds = boxBounds(above)
     if faceVisible(state, above, height == 1, aboveBounds?.minimumY == 0):
@@ -90,22 +93,52 @@ export def emitSnowLayer(
     if faceVisible(state, below, true, belowBounds?.maximumY == 1):
         emitQuad(batch, state, bottomFace, textureForFace(state, bottomFace, worldX, worldY, worldZ), x, y, z + 1, x, y, z, x + 1, y, z, x + 1, y, z + 1, 0, -1, 0)
 
-    const eastFloor = snowNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 2, y + 1, z + 1))
+    const eastFloor = layeredCoverNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 2, y + 1, z + 1))
     if eastFloor < height:
         emitQuad(batch, state, eastFace, textureForFace(state, eastFace, worldX, worldY, worldZ), x + 1, y + eastFloor, z + 1, x + 1, y + eastFloor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0)
-    const westFloor = snowNeighborFloor(state, stateAt(states, blocks, paddedEdge, x, y + 1, z + 1))
+    const westFloor = layeredCoverNeighborFloor(state, stateAt(states, blocks, paddedEdge, x, y + 1, z + 1))
     if westFloor < height:
         emitQuad(batch, state, westFace, textureForFace(state, westFace, worldX, worldY, worldZ), x, y + westFloor, z, x, y + westFloor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0)
-    const southFloor = snowNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 1, y + 1, z + 2))
+    const southFloor = layeredCoverNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 1, y + 1, z + 2))
     if southFloor < height:
         emitQuad(batch, state, southFace, textureForFace(state, southFace, worldX, worldY, worldZ), x, y + southFloor, z + 1, x + 1, y + southFloor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1)
-    const northFloor = snowNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 1, y + 1, z))
+    const northFloor = layeredCoverNeighborFloor(state, stateAt(states, blocks, paddedEdge, x + 1, y + 1, z))
     if northFloor < height:
         emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x + 1, y + northFloor, z, x, y + northFloor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1)
 
+export def emitSnowLayer(
+    batches: Map<string, MutableMeshBatch>,
+    states: Map<number, ClientRenderState>,
+    blocks: UInt32Buffer,
+    paddedEdge: number,
+    maximumFaces: number,
+    state: ClientRenderState,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+): emitLayeredCover(batches, states, blocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
+
+export def emitGroundCover(
+    batches: Map<string, MutableMeshBatch>,
+    states: Map<number, ClientRenderState>,
+    blocks: UInt32Buffer,
+    paddedEdge: number,
+    maximumFaces: number,
+    state: ClientRenderState,
+    x: number,
+    y: number,
+    z: number,
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+): emitLayeredCover(batches, states, blocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
+
 export def emitCross(
     batches: Map<string, MutableMeshBatch>,
-    state: readonly ClientRenderState,
+    state: ClientMeshSurface,
     maximumFaces: number,
     x: number,
     y: number,
@@ -119,18 +152,18 @@ export def emitCross(
     emitQuad(batch, state, southFace, texture, x, y, z, x + 1, y, z + 1, x + 1, y + 1, z + 1, x, y + 1, z, 0.707, 0, -0.707)
     emitQuad(batch, state, southFace, texture, x + 1, y, z, x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, -0.707, 0, -0.707)
 
-def fluidHeight(state: readonly ClientRenderState) -> number:
+def fluidHeight(state: ClientRenderState) -> number:
     if state.falling == true: return 1
     const level = state.level ?? 0
     return Math.max(1 / 16, 1 - level / 16)
 
 export def emitFluid(
     batches: Map<string, MutableMeshBatch>,
-    states: Map<number, readonly ClientRenderState>,
-    blocks: readonly UInt32Buffer,
+    states: Map<number, ClientRenderState>,
+    blocks: UInt32Buffer,
     paddedEdge: number,
     maximumFaces: number,
-    state: readonly ClientRenderState,
+    state: ClientRenderState,
     x: number,
     y: number,
     z: number,

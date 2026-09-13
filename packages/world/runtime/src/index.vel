@@ -1,4 +1,4 @@
-export {BlockOverride, BlockOverrideMutation, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore, WorldManifestStore, WorldStore} from "./contracts.vel"
+export {BlockOverride, StoredBlockOverride, BlockOverrideMutation, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore, WorldManifestStore, WorldStore} from "./contracts.vel"
 export {memoryWorldStore} from "./memory-world-store.vel"
 export {CreateWorld} from "./world-creation.vel"
 export {maximumBlockEditBatchSize, maximumChunkBatchSize} from "./runtime-limits.vel"

@@ -1,21 +1,35 @@
 import {expect} from "velar/test"
+import {sha256Text} from "velar/hash"
+import {worldClimateVersion} from "@openvoxel/world"
 import {baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {identityTree} from "@openvoxel/identities"
-import {GeneratorBlockIdentities, TerrainConfig, WorldGeneratorCatalogArtifact, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../src/definition/catalog.vel"
+import {DensitySamplingConfig, GeneratorBlockIdentities, TerrainConfig, VegetationConfig, WorldGeneratorCatalogArtifact, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../src/definition/catalog.vel"
 import {compileModWorldGeneratorContribution, compileWorldGeneratorCatalog} from "../src/compiler/catalog-compiler.vel"
 import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+import {createWorldGeneratorRegistry, worldGeneratorDefinitionHash} from "../src/generator-registry.vel"
+import {survivalAlgorithmRevision, survivalWorldGenerator} from "../src/survival/generator.vel"
+import {treeShapeImplementationEnvelope} from "../src/survival/tree-shapes.vel"
 
 const oneSourceManifest = `{"formatVersion":2,"generatorSources":["generators/custom.yml"],"paletteSources":["palettes/custom.yml"]}`
 
 def source(definition: readonly WorldGeneratorDefinition) -> string: return Json.stableStringify(definition)
 def paletteSource(palette: readonly WorldGeneratorPaletteDefinition) -> string: return Json.stableStringify(palette)
 
+test "world generation identity locks implementation semantics as well as parameters":
+    const definition = baseWorldGeneratorCatalog.generators[0]
+    const palette = baseWorldGeneratorCatalog.palettes[0]
+    const expected = sha256Text(Json.stableStringify({algorithmRevision: survivalAlgorithmRevision, definition, palette, worldClimateVersion}))
+    const changed = sha256Text(Json.stableStringify({algorithmRevision: survivalAlgorithmRevision + 1, definition, palette, worldClimateVersion}))
+    expect(worldGeneratorDefinitionHash(definition, palette)).toBe(expected)
+    expect(expected == changed).toBe(false)
+
 test "generator catalog compiler resolves one validated definition":
     const artifact = compileWorldGeneratorCatalog(oneSourceManifest, [source(baseWorldGeneratorCatalog.generators[0])], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)
     expect(WorldGeneratorCatalogArtifact.is(artifact)).toBe(true)
     expect(artifact.contentHash.size).toBe(64)
     expect(artifact.catalog.generators.size).toBe(1)
+    expect(artifact.catalog.generators[0].sampling.columnCacheCapacity).toBe(192)
 
 test "generator catalog compiler rejects unknown identities illegal curves and duplicate generators":
     const unknownIdentity = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "generators.missing"})
@@ -35,6 +49,30 @@ test "generator catalog compiler rejects unknown identities illegal curves and d
     const duplicateManifest = `{"formatVersion":2,"generatorSources":["generators/a.yml","generators/b.yml"],"paletteSources":["palettes/custom.yml"]}`
     const definitionText = source(baseWorldGeneratorCatalog.generators[0])
     expect(() => compileWorldGeneratorCatalog(duplicateManifest, [definitionText, definitionText], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+    const excessiveCache = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {
+        sampling: DensitySamplingConfig.from(baseWorldGeneratorCatalog.generators[0].sampling, {columnCacheCapacity: 1025}),
+    })
+    expect(() => compileWorldGeneratorCatalog(oneSourceManifest, [source(excessiveCache)], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const shortTrees = WorldGeneratorDefinition.from(base, {
+        vegetation: VegetationConfig.from(base.vegetation, {maximumTreeHeight: treeShapeImplementationEnvelope.maximumHeight - 1}),
+    })
+    const narrowTrees = WorldGeneratorDefinition.from(base, {
+        vegetation: VegetationConfig.from(base.vegetation, {treeHorizontalReach: treeShapeImplementationEnvelope.horizontalReach - 1}),
+    })
+    expect(() => compileWorldGeneratorCatalog(oneSourceManifest, [source(shortTrees)], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+    expect(() => compileWorldGeneratorCatalog(oneSourceManifest, [source(narrowTrees)], [paletteSource(baseWorldGeneratorCatalog.palettes[0])], identityTree)).toThrow()
+
+test "programmatic registry and direct survival construction enforce the implemented tree envelope":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const shortTrees = WorldGeneratorDefinition.from(base, {
+        vegetation: VegetationConfig.from(base.vegetation, {maximumTreeHeight: treeShapeImplementationEnvelope.maximumHeight - 1}),
+    })
+    const invalidCatalog = WorldGeneratorCatalogSource.from(baseWorldGeneratorCatalog, {generators: [shortTrees]})
+    expect(() => createWorldGeneratorRegistry(invalidCatalog)).toThrow()
+    expect(() => survivalWorldGenerator("short-tree-envelope", 16, baseWorldBlockRegistry, shortTrees, baseWorldGeneratorCatalog.palettes[0])).toThrow()
 
 test "Mod generator compiler enforces generator palette ownership and current world blocks":
     const definition = WorldGeneratorDefinition.from(baseWorldGeneratorCatalog.generators[0], {key: "terrainmod:survival", palette: "terrainmod:palette"})

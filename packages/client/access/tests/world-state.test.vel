@@ -18,7 +18,7 @@ def terrain(position: readonly ChunkPosition = chunkPosition) -> ClientTerrainCh
         indices,
     }
 
-const environment: readonly WorldEnvironmentSample = {
+const environment: WorldEnvironmentSample = {
     worldMilliseconds: 120000,
     samplePosition: {x: 0, y: 64, z: 0},
     timeOfDay: 0.1,
@@ -34,7 +34,7 @@ const environment: readonly WorldEnvironmentSample = {
 def ready(sequence: number = 0) -> WorldReadyEvent:
     return {event: "world.ready", worldId, protocolVersion, sequence, environment}
 
-def delta(revision: number, overrides: readonly List<readonly RealtimeBlockOverride>) -> RealtimeChunkDelta:
+def delta(revision: number, overrides: readonly List<RealtimeBlockOverride>) -> RealtimeChunkDelta:
     return {position: chunkPosition, revision, overrides}
 
 def change(

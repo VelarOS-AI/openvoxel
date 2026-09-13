@@ -1,0 +1,96 @@
+import {Random} from "velar/random"
+import {BlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Coordinate3} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {CompiledFeaturePlan, compiledFeaturePlan} from "./feature-plan.vel"
+import {TerrainColumnPlan, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+import {EcologyPatterns} from "./ecology-patterns.vel"
+
+def groundFeature(owner: string, position: Coordinate3, block: number) -> CompiledFeaturePlan:
+    return compiledFeaturePlan(owner, position, f"2_ground:{owner}", [{x: 0, y: 0, z: 0, runtimeId: block}])
+
+def facingState(registry: readonly BlockRegistry, runtimeId: number, choice: number) -> number:
+    if choice == 0: return registry.withProperty(runtimeId, "facing", "north")
+    if choice == 1: return registry.withProperty(runtimeId, "facing", "east")
+    if choice == 2: return registry.withProperty(runtimeId, "facing", "south")
+    return registry.withProperty(runtimeId, "facing", "west")
+
+/// 相邻位置共享群落优势种和覆盖度，单株随机流只负责混生与年龄；支撑标签
+/// 和气候仍是最终准入条件。只写当前水平 Chunk，跨区不依赖生成顺序。
+export def groundPlantFeatures(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    registry: readonly BlockRegistry,
+    core: readonly TerrainColumnPlan,
+    root: Random,
+    patterns: readonly EcologyPatterns,
+) -> List<CompiledFeaturePlan>:
+    const output: List<CompiledFeaturePlan> = []
+    const minimumX = core.minimumX
+    const minimumZ = core.minimumZ
+    // 草甸覆盖度和优势种共享连续世界场；逐株抖动决定混生与成熟度。
+    // 实际地表材质是最终准入条件，方块标签声明各类植物的支撑能力。
+    const plantSize = profile.vegetation.groundPlantCellSize
+    const firstPlantX = (minimumX / plantSize).floor()
+    const lastPlantX = ((minimumX + 15) / plantSize).floor()
+    const firstPlantZ = (minimumZ / plantSize).floor()
+    const lastPlantZ = ((minimumZ + 15) / plantSize).floor()
+    for cellX in range(firstPlantX, lastPlantX + 1):
+        for cellZ in range(firstPlantZ, lastPlantZ + 1):
+            const stream = root.fork(f"ground:{cellX}:{cellZ}")
+            const x = cellX * plantSize + stream.int(0, plantSize)
+            const z = cellZ * plantSize + stream.int(0, plantSize)
+            if x < minimumX or x > minimumX + 15 or z < minimumZ or z > minimumZ + 15: continue
+            const sample = core.sampleAt(x, z)
+            const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
+            if adjustedTemperature <= profile.surface.snowTemperature: continue
+            const position = {x, y: sample.surfaceY + 1, z}
+            const groundBlock = surfaceBlock(profile, blocks, sample)
+            if sample.biome == profile.biomes.desert:
+                if not registry.hasTag(groundBlock, builtinIdentities.tags.dryPlantSupport): continue
+                if stream.bool(0.018):
+                    output.append(groundFeature(f"large-bush:{x}:{z}", position, blocks.largeDryBush))
+                else if stream.bool(0.06): output.append(groundFeature(f"bush:{x}:{z}", position, blocks.dryBush))
+                continue
+            const cover = Math.clamp(patterns.cover(x, z), 0, 1)
+            const chance = Math.clamp(profile.vegetation.groundPlantChance * Math.clamp(sample.humidity / 12, 0.25, 1) * (0.3 + 1.4 * cover), 0, 1)
+            if sample.slope > profile.vegetation.treeMaximumSlope or not stream.bool(chance): continue
+            const choice = stream.bool(0.68) ? patterns.species(x, z) : stream.int(0, 64)
+            let plant = blocks.tallGrass
+            let supportTag = builtinIdentities.tags.lushPlantSupport
+            if choice == 0: plant = blocks.redFlower
+            else if choice == 1: plant = blocks.purpleFlower
+            else if choice == 2: plant = blocks.whiteFlower
+            else if choice == 3: plant = blocks.yellowFlower
+            else if choice == 4: plant = blocks.blueFlower
+            else if choice == 5 and adjustedTemperature >= 4 and sample.humidity >= 5:
+                plant = registry.withProperty(blocks.rye, "age", stream.int(4, 8))
+                supportTag = builtinIdentities.tags.cropSupport
+            else if choice == 6 and adjustedTemperature >= 4 and sample.humidity >= 6:
+                plant = registry.withProperty(blocks.wheat, "age", stream.int(0, 8))
+                supportTag = builtinIdentities.tags.cropSupport
+            else if choice == 7 and adjustedTemperature >= 8 and sample.humidity >= 8:
+                plant = registry.withProperty(blocks.cotton, "age", stream.int(1, 3))
+                supportTag = builtinIdentities.tags.cropSupport
+            else if choice == 8 and adjustedTemperature >= 6 and sample.humidity >= 6:
+                plant = registry.withProperty(blocks.pumpkinStem, "age", stream.int(0, 4))
+                supportTag = builtinIdentities.tags.cropSupport
+            else if (choice == 9 or choice == 12) and adjustedTemperature >= 6 and sample.humidity >= 6 and stream.bool(0.22):
+                const pumpkin = stream.bool(0.25) ? blocks.rottenPumpkin : blocks.pumpkin
+                plant = facingState(registry, pumpkin, stream.int(0, 4))
+                supportTag = builtinIdentities.tags.cropSupport
+            else if choice == 10:
+                plant = blocks.oakSapling
+                if adjustedTemperature <= 4: plant = blocks.spruceSapling
+                else if sample.humidity >= 11: plant = blocks.poplarSapling
+                else if adjustedTemperature <= 11 and stream.bool(0.42): plant = blocks.birchSapling
+                else if sample.humidity <= 6: plant = blocks.mimosaSapling
+                supportTag = builtinIdentities.tags.treeSupport
+            else if choice == 11 and sample.biome == profile.biomes.forest and sample.humidity >= 8:
+                plant = registry.withProperty(blocks.fallenLeaves, "layers", stream.int(1, 5))
+            if not registry.hasTag(groundBlock, supportTag): continue
+            output.append(groundFeature(f"plant:{x}:{z}", position, plant))
+
+    return output

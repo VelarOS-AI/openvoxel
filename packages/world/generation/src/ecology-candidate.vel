@@ -1,0 +1,37 @@
+import {LocalPosition} from "@openvoxel/world"
+
+/// 生成器声明自然世界中会随生态时间改变的稀疏位置。运行时只投影当前
+/// epoch，不会把这些可重建结果写进玩家增量。
+export enum EcologyCandidateKind:
+    snow
+    water
+    cropGrowth = "crop_growth"
+
+export readonly type SnowEcologyCandidate:
+    position: readonly LocalPosition
+    kind: EcologyCandidateKind.snow
+    baselineBlockStateRuntimeId: number
+    warmBlockStateRuntimeId: number
+    coldBlockStateRuntimeId: number
+    exposed: bool
+
+export readonly type WaterEcologyCandidate:
+    position: readonly LocalPosition
+    kind: EcologyCandidateKind.water
+    baselineBlockStateRuntimeId: number
+    warmBlockStateRuntimeId: number
+    coldBlockStateRuntimeId: number
+    exposed: bool
+
+/// 生长候选保存生成时的阶段和有限状态边界。自世界初始 epoch 经过的确定性
+/// 时间决定当前阶段，因而重载、请求乱序和 Chunk 淘汰都不会改变结果。
+export readonly type CropGrowthEcologyCandidate:
+    position: readonly LocalPosition
+    kind: EcologyCandidateKind.cropGrowth
+    baselineBlockStateRuntimeId: number
+    ageProperty: string
+    baselineAge: number
+    maximumAge: number
+    epochsPerStage: number
+
+export type EcologyCandidate = SnowEcologyCandidate | WaterEcologyCandidate | CropGrowthEcologyCandidate

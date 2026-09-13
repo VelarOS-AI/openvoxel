@@ -3,16 +3,27 @@ import {PBRMaterial} from "@babylonjs/core/Materials/PBR/pbrMaterial.js";
 import {Material} from "@babylonjs/core/Materials/material.js";
 import {SharedShadowDepthWrapper} from "./shared-shadow-depth-wrapper.mjs";
 import {VoxelTextureArrayPlugin} from "./texture-bank.mjs";
+import {VoxelWaterSurfacePlugin, WaterSurfaceRuntime} from "./water-surface.mjs";
+import {TerrainFogPlugin} from "./terrain-fog.mjs";
+
+function finiteNumber(value, minimum, maximum, label) {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new RangeError(label + " must be a finite number from " + minimum + " through " + maximum);
+  }
+  return value;
+}
 
 // Resource recipes are resolved once per material pipeline. Upload validation
 // and PBR construction consume the same result, including animation layer ownership.
 export class VoxelMaterialLibrary {
-  constructor(scene, options, textureBanks, climateTintField) {
+  constructor(scene, options, textureBanks, climateTintField, atmosphere) {
     this.scene = scene;
     this.textureBanks = textureBanks;
     this.climateTintField = climateTintField;
+    this.atmosphere = atmosphere;
     this.pipelines = new Map();
     this.animationClockMs = 0;
+    this.waterSurfaceRuntime = new WaterSurfaceRuntime();
     this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
     this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
     this.animationDefinitions = new Map(options.animations.map((definition) => [definition.key, definition]));
@@ -55,6 +66,48 @@ export class VoxelMaterialLibrary {
     if (!["none", "solid", "water"].includes(materialDefinition.precipitationSurface)) {
       throw new RangeError("Voxel material precipitation surface must be none, solid, or water");
     }
+    if (!["standard", "water"].includes(materialDefinition.materialEffect)) {
+      throw new RangeError("Voxel material effect must be standard or water");
+    }
+    let waterOptics = null;
+    if (materialDefinition.materialEffect === "standard") {
+      if (materialDefinition.waterOptics !== null) throw new Error("Standard voxel material cannot declare water optics");
+    } else {
+      if (materialDefinition.precipitationSurface !== "water") throw new Error("Water voxel material must use the water precipitation surface");
+      if (batch.layer !== "translucent" || textureBank.role !== "fluid") throw new Error("Water voxel material must use a translucent fluid texture bank");
+      const optics = materialDefinition.waterOptics;
+      if (typeof optics !== "object" || optics === null || !Array.isArray(optics.waves) || optics.waves.length !== 2) {
+        throw new TypeError("Water voxel material must declare exactly two normal waves");
+      }
+      const normalTextures = new Set();
+      waterOptics = {
+        indexOfRefraction: finiteNumber(optics.indexOfRefraction, 1, 2, "Water index of refraction"),
+        roughness: finiteNumber(optics.roughness, 0, 1, "Water roughness"),
+        normalStrength: finiteNumber(optics.normalStrength, 0, 1, "Water normal strength"),
+        waves: optics.waves.map((wave, waveIndex) => {
+          if (typeof wave !== "object" || wave === null || typeof wave.normalTexture !== "string" || wave.normalTexture.length === 0) {
+            throw new TypeError("Water normal wave " + waveIndex + " must reference a texture");
+          }
+          if (normalTextures.has(wave.normalTexture)) throw new Error("Water normal waves must reference distinct textures");
+          normalTextures.add(wave.normalTexture);
+          const texture = this.textureDefinitions.get(wave.normalTexture);
+          if (texture === undefined || texture.bankKey !== batch.bankKey || texture.variants.length !== 1) {
+            throw new Error("Water normal texture must resolve to one layer in its fluid texture bank: " + wave.normalTexture);
+          }
+          const directionX = finiteNumber(wave.directionX, -1, 1, "Water wave direction x");
+          const directionZ = finiteNumber(wave.directionZ, -1, 1, "Water wave direction z");
+          const directionLength = Math.hypot(directionX, directionZ);
+          if (directionLength < 0.999 || directionLength > 1.001) throw new RangeError("Water wave direction must be normalized");
+          return {
+            layer: texture.variants[0].layer,
+            scale: finiteNumber(wave.scale, 0.001, 4, "Water wave scale"),
+            speed: finiteNumber(wave.speed, 0, 4, "Water wave speed"),
+            directionX,
+            directionZ,
+          };
+        }),
+      };
+    }
     let animationBaseLayer = null;
     let animation = null;
     const frames = [];
@@ -72,7 +125,7 @@ export class VoxelMaterialLibrary {
         frames.push({layerOffset: texture.variants[0].layer - animationBaseLayer});
       }
     }
-    const pipeline = {textureBank, materialDefinition, animationBaseLayer, animation, frames};
+    const pipeline = {textureBank, materialDefinition, waterOptics, animationBaseLayer, animation, frames};
     this.pipelines.set(expectedKey, pipeline);
     return pipeline;
   }
@@ -82,15 +135,18 @@ export class VoxelMaterialLibrary {
     const key = batch.pipelineKey;
     const existing = this.materials.get(key);
     if (existing !== undefined) return existing;
-    const {materialDefinition: definition, textureBank, animation, frames} = pipeline;
+    const {materialDefinition: definition, waterOptics, textureBank, animation, frames} = pipeline;
+    const isWater = definition.materialEffect === "water";
     const material = new PBRMaterial("material:" + key, this.scene);
     try {
-      const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField);
+      const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField, {neutralSurface: isWater});
+      new TerrainFogPlugin(material, this.atmosphere);
+      if (isWater) new VoxelWaterSurfacePlugin(material, textureBank.normal, waterOptics, this.waterSurfaceRuntime);
       material.albedoColor = Color3.White();
       material.ambientColor = new Color3(0.38, 0.4, 0.38);
       material.emissiveColor = Color3.Black();
-      material.metallic = 1;
-      material.roughness = 1;
+      material.metallic = isWater ? 0 : 1;
+      material.roughness = isWater ? waterOptics.roughness : 1;
       material.environmentIntensity = definition.environmentIntensity;
       material.clearCoat.isEnabled = definition.clearCoat > 0;
       material.clearCoat.intensity = definition.clearCoat;
@@ -102,6 +158,17 @@ export class VoxelMaterialLibrary {
       material.backFaceCulling = !definition.doubleSided;
       material.twoSidedLighting = definition.doubleSided;
       material.separateCullingPass = definition.doubleSided;
+      if (isWater) {
+        // Babylon's PBR reflection path consumes scene.environmentTexture, so every
+        // water batch reuses the scene IBL without allocating per-Chunk render targets.
+        material.indexOfRefraction = waterOptics.indexOfRefraction;
+        material.forceIrradianceInFragment = true;
+        material.useSpecularOverAlpha = true;
+        material.useRadianceOverAlpha = true;
+        material.useLinearAlphaFresnel = true;
+        material.enableSpecularAntiAliasing = true;
+        material.separateCullingPass = false;
+      }
       if (batch.layer === "cutout") {
         material.transparencyMode = Material.MATERIAL_ALPHATEST;
         material.alphaCutOff = definition.alphaCutoff;
@@ -115,7 +182,7 @@ export class VoxelMaterialLibrary {
       if (batch.layer === "cutout" && definition.castsShadows) {
         material.shadowDepthWrapper = new SharedShadowDepthWrapper(material, this.scene);
       }
-      if (animation !== null && frames.length > 1) {
+      if (!isWater && animation !== null && frames.length > 1) {
         this.animatedMaterials.push({frameDurationMs: animation.frameDurationMs, frames, frameIndex: -1, plugin: texturePlugin});
       }
       this.materials.set(key, material);
@@ -129,6 +196,7 @@ export class VoxelMaterialLibrary {
   }
 
   update(deltaMs) {
+    this.waterSurfaceRuntime.update(deltaMs);
     if (this.animatedMaterials.length === 0) return;
     this.animationClockMs += deltaMs;
     for (const animation of this.animatedMaterials) {
@@ -149,5 +217,6 @@ export class VoxelMaterialLibrary {
     }
     this.materials.clear();
     this.pipelines.clear();
+    this.waterSurfaceRuntime.dispose();
   }
 }

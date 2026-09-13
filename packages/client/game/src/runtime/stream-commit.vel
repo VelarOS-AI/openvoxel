@@ -7,7 +7,7 @@ export type ChunkBatchUnloader = (positions: readonly List<readonly ChunkPositio
 /// 一次地形 load 成功后，配对 unload 就属于同一个不可拆分的容量提交。
 /// `current` 只决定是否继续旧目标，不允许在两者之间提前返回。
 export async def commitStreamBatch(
-    batch: readonly ChunkWindowBatch,
+    batch: ChunkWindowBatch,
     load: ChunkBatchLoader,
     unload: ChunkBatchUnloader,
     current: () -> bool,

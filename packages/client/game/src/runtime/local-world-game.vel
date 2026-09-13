@@ -9,8 +9,9 @@ import {WorldGameExperience, WorldGameStage, worldGameExperience} from "./world-
 export def openLocalWorldGame(
     worldId: string,
     canvas: () -> CanvasElement,
-    changed: (stats: readonly WorldGameStats) -> null,
+    changed: (stats: WorldGameStats) -> null,
     failed: (message: string) -> null,
+    minimapCanvas: () -> CanvasElement? = () => null,
 ) -> WorldGameExperience:
     const backend = localBackend()
 
@@ -26,7 +27,7 @@ export def openLocalWorldGame(
         return {
             manifest,
             prepare,
-            start: () => openWorldGameRuntime(canvas(), session, manifest, changed, failed),
+            start: () => openWorldGameRuntime(canvas(), session, manifest, changed, failed, minimapCanvas()),
             close: () => session.close(),
         }
 

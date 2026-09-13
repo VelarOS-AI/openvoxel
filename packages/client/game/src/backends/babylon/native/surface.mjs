@@ -18,6 +18,7 @@ import {createNavigationCamera, createNavigation} from "./camera.mjs";
 import {createEnvironmentAdapter} from "./environment.mjs";
 import {chunkKey, requireCanvas, requireInteger, requireSurfaceDependencies, requireSurfaceOptions, validateChunkMesh} from "./surface-contract.mjs";
 import {SurfaceLifetime} from "./surface-lifetime.mjs";
+import {WorldMinimapRenderer} from "./minimap.mjs";
 
 const surfaces = new WeakSet();
 
@@ -34,7 +35,7 @@ export class BabylonWorldGraphics {
     this.climateTintField = new ClimateTintField(options.edge, options.climateAt);
     this.climateTintField.setTime(options.environmentFrame.worldMilliseconds);
     this.lifetime = lifetime;
-    this.materialLibrary = new VoxelMaterialLibrary(scene, options, textureBanks, this.climateTintField);
+    this.materialLibrary = new VoxelMaterialLibrary(scene, options, textureBanks, this.climateTintField, environment.atmosphere);
     lifetime.defer(() => this.materialLibrary.dispose());
     lifetime.defer(() => this.climateTintField.clear());
     this.chunks = new Map();
@@ -53,6 +54,8 @@ export class BabylonWorldGraphics {
     this.meshCount = 0;
     this.quadCount = 0;
     this.translucentMeshes = new Set();
+    this.minimap = options.minimapCanvas == null ? null : new WorldMinimapRenderer(scene, engine, camera, canvas, options.minimapCanvas, this.terrainMeshes, options);
+    lifetime.defer(() => this.minimap?.dispose());
     this.chunkUploadQueue = new LatestFrameWorkQueue((chunk) => this.setChunkMesh(chunk));
     this.translucentSortScheduler = new TranslucentSortScheduler({
       positionFor: (mesh) => mesh.position,
@@ -76,7 +79,9 @@ export class BabylonWorldGraphics {
         null,
         this.weatherGroundAt,
       );
+      this.minimap?.update(deltaMs);
       scene.render();
+      this.minimap?.draw();
     };
     lifetime.defer(() => engine.stopRenderLoop(this.render));
     engine.runRenderLoop(this.render);

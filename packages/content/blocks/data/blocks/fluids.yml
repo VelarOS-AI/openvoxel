@@ -23,11 +23,10 @@ blocks:
       material: materials.water
       textures: {all: textures.block.water}
       tint: tints.biomeWater
-      animation: animations.water
       cullFaces: true
     interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
     behaviors:
-      - {kind: fluid, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}
+      - {kind: fluid, canonicalBlock: blocks.water, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}
     variants: []
 
   - key: blocks.magma
@@ -57,6 +56,6 @@ blocks:
       cullFaces: true
     interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.magma}
     behaviors:
-      - {kind: fluid, fluidKey: fluids.magma, levelProperty: level, fallingProperty: falling, tickRate: 30, viscosity: 6}
+      - {kind: fluid, canonicalBlock: blocks.magma, fluidKey: fluids.magma, levelProperty: level, fallingProperty: falling, tickRate: 30, viscosity: 6}
       - {kind: contact_damage, damage: 4, intervalTicks: 10}
     variants: []

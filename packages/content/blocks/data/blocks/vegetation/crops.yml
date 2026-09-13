@@ -1,0 +1,91 @@
+blocks:
+  - key: blocks.rye
+    translationKey: translations.block.rye
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: [{name: age, kind: integer, minimum: 0, maximum: 7}]
+    defaultState: [{name: age, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye0}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, toolTag: tools.shears, drops: loot.block.rye, sounds: sounds.grass}
+    behaviors: [{kind: crop_growth, ageProperty: age, epochsPerStage: 4}, {kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants:
+      - {when: [{name: age, value: 1}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye1}, cullFaces: false}}
+      - {when: [{name: age, value: 2}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye2}, cullFaces: false}}
+      - {when: [{name: age, value: 3}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye3}, cullFaces: false}}
+      - {when: [{name: age, value: 4}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye4}, cullFaces: false}}
+      - {when: [{name: age, value: 5}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye5}, cullFaces: false}}
+      - {when: [{name: age, value: 6}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye6}, cullFaces: false}}
+      - {when: [{name: age, value: 7}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.rye7}, cullFaces: false}}
+
+  - key: blocks.cotton
+    translationKey: translations.block.cotton
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: [{name: age, kind: integer, minimum: 0, maximum: 2}]
+    defaultState: [{name: age, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.cotton0}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, toolTag: tools.shears, drops: loot.block.cotton, sounds: sounds.grass}
+    behaviors: [{kind: crop_growth, ageProperty: age, epochsPerStage: 4}, {kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants:
+      - {when: [{name: age, value: 1}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.cotton1}, cullFaces: false}}
+      - {when: [{name: age, value: 2}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.cotton2}, cullFaces: false}}
+
+  - key: blocks.pumpkin
+    translationKey: translations.block.pumpkin
+    tags: [tags.plant, tags.flammable]
+    properties: [{name: facing, kind: enum, values: [north, east, south, west]}]
+    defaultState: [{name: facing, value: north}]
+    physics: {collision: {kind: custom, key: shapes.pumpkin, boxes: [{minimumX: 0.125, minimumY: 0, minimumZ: 0.125, maximumX: 0.875, maximumY: 0.65, maximumZ: 0.875}]}, selection: {kind: custom, key: shapes.pumpkin, boxes: [{minimumX: 0.125, minimumY: 0, minimumZ: 0.125, maximumX: 0.875, maximumY: 0.65, maximumZ: 0.875}]}, occlusion: {kind: none}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.pumpkin, layer: opaque, material: materials.terrain, textures: {top: textures.block.pumpkinTop, bottom: textures.block.pumpkinTop, side: textures.block.pumpkinSide, front: textures.block.pumpkinFront}, cullFaces: false}
+    interaction: {breakable: true, hardness: 1, blastResistance: 1, toolTag: tools.axe, drops: loot.block.pumpkin, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.3, spreadChance: 0.5}, {kind: placement, strategy: horizontal_facing}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants: []
+
+  - key: blocks.wheat
+    translationKey: translations.block.wheat
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: [{name: age, kind: integer, minimum: 0, maximum: 7}]
+    defaultState: [{name: age, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat0}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.wheat, sounds: sounds.grass}
+    behaviors: [{kind: crop_growth, ageProperty: age, epochsPerStage: 4}, {kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants:
+      - {when: [{name: age, value: 1}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat1}, cullFaces: false}}
+      - {when: [{name: age, value: 2}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat2}, cullFaces: false}}
+      - {when: [{name: age, value: 3}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat3}, cullFaces: false}}
+      - {when: [{name: age, value: 4}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat4}, cullFaces: false}}
+      - {when: [{name: age, value: 5}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat5}, cullFaces: false}}
+      - {when: [{name: age, value: 6}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat6}, cullFaces: false}}
+      - {when: [{name: age, value: 7}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.wheat7}, cullFaces: false}}
+
+  - key: blocks.pumpkinStem
+    translationKey: translations.block.pumpkinStem
+    tags: [tags.plant, tags.replaceable, tags.flammable]
+    properties: [{name: age, kind: integer, minimum: 0, maximum: 3}]
+    defaultState: [{name: age, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.pumpkinStem0}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0, blastResistance: 0, drops: loot.block.pumpkinStem, sounds: sounds.grass}
+    behaviors: [{kind: crop_growth, ageProperty: age, epochsPerStage: 4}, {kind: flammable, ignitionChance: 0.6, spreadChance: 1}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants:
+      - {when: [{name: age, value: 1}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.pumpkinStem1}, cullFaces: false}}
+      - {when: [{name: age, value: 2}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.pumpkinStem2}, cullFaces: false}}
+      - {when: [{name: age, value: 3}], render: {model: models.block.cross, layer: cutout, material: materials.cross, textures: {all: textures.block.pumpkinStem3}, cullFaces: false}}
+
+  - key: blocks.rottenPumpkin
+    translationKey: translations.block.rottenPumpkin
+    tags: [tags.plant, tags.flammable]
+    properties: [{name: facing, kind: enum, values: [north, east, south, west]}]
+    defaultState: [{name: facing, value: north}]
+    physics: {collision: {kind: custom, key: shapes.pumpkin, boxes: [{minimumX: 0.125, minimumY: 0, minimumZ: 0.125, maximumX: 0.875, maximumY: 0.65, maximumZ: 0.875}]}, selection: {kind: custom, key: shapes.pumpkin, boxes: [{minimumX: 0.125, minimumY: 0, minimumZ: 0.125, maximumX: 0.875, maximumY: 0.65, maximumZ: 0.875}]}, occlusion: {kind: none}, replaceable: false, friction: 0.58, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
+    render: {model: models.block.pumpkin, layer: opaque, material: materials.terrain, textures: {top: textures.block.rottenPumpkinTop, bottom: textures.block.rottenPumpkinTop, side: textures.block.rottenPumpkinSide, front: textures.block.rottenPumpkinFront}, cullFaces: false}
+    interaction: {breakable: true, hardness: 0.5, blastResistance: 0.4, toolTag: tools.axe, drops: loot.block.rottenPumpkin, sounds: sounds.wood}
+    behaviors: [{kind: flammable, ignitionChance: 0.45, spreadChance: 0.65}, {kind: placement, strategy: horizontal_facing}, {kind: support, face: below, supportingTag: tags.cropSupport}]
+    variants: []

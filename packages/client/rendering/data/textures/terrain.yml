@@ -14,6 +14,7 @@ textures:
   - {key: openvoxel:texture/block/ice, surface: ice, file: textures/terrain/ice.png, maps: {height: {file: textures/terrain/maps/ice.height.png}, material: {file: textures/terrain/maps/ice.material.png}}}
   - {key: openvoxel:texture/block/iron_ore, surface: metallic-mineral, file: textures/terrain/iron_ore.png}
   - {key: openvoxel:texture/block/limestone, surface: rock, file: textures/terrain/limestone.png}
+  - {key: openvoxel:texture/block/marble, surface: rock, file: textures/terrain/marble.png}
   - {key: openvoxel:texture/block/saltpeter_ore, surface: mineral, file: textures/terrain/saltpeter_ore.png}
   - {key: openvoxel:texture/block/sand, surface: soil, file: textures/terrain/sand.png, weight: 5, variants: [{weight: 1, transform: {shiftX: 9, shiftY: 7, brightness: 0.97, contrast: 1.02}}, {weight: 1, transform: {shiftX: 3, shiftY: 15, brightness: 1.04, contrast: 0.98}}]}
   - {key: openvoxel:texture/block/sandstone, surface: rock, file: textures/terrain/sandstone.png}

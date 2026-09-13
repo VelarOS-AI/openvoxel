@@ -6,40 +6,63 @@ blocks:
   basalt: blocks.basalt
   birchLeaves: blocks.birchLeaves
   birchLog: blocks.birchLog
+  birchSapling: blocks.birchSapling
+  blueFlower: blocks.blueFlower
   cactus: blocks.cactus
   clay: blocks.clay
   coalOre: blocks.coalOre
   copperOre: blocks.copperOre
+  cotton: blocks.cotton
+  deadwood: blocks.deadwood
   diamondOre: blocks.diamondOre
   dirt: blocks.dirt
   dryBush: blocks.dryBush
+  fallenLeaves: blocks.fallenLeaves
   germaniumOre: blocks.germaniumOre
   granite: blocks.granite
   grass: blocks.grass
   gravel: blocks.gravel
   ice: blocks.ice
   ironOre: blocks.ironOre
+  kelp: blocks.kelp
+  largeDryBush: blocks.largeDryBush
   limestone: blocks.limestone
+  marble: blocks.marble
   magma: blocks.magma
   mimosaLeaves: blocks.mimosaLeaves
   mimosaLog: blocks.mimosaLog
+  mimosaSapling: blocks.mimosaSapling
   oakLeaves: blocks.oakLeaves
   oakLog: blocks.oakLog
+  oakSapling: blocks.oakSapling
   poplarLeaves: blocks.poplarLeaves
   poplarLog: blocks.poplarLog
+  poplarSapling: blocks.poplarSapling
+  pumpkin: blocks.pumpkin
+  pumpkinStem: blocks.pumpkinStem
   purpleFlower: blocks.purpleFlower
   redFlower: blocks.redFlower
+  rye: blocks.rye
+  rottenPumpkin: blocks.rottenPumpkin
   saltpeterOre: blocks.saltpeterOre
   sand: blocks.sand
   sandstone: blocks.sandstone
+  seaUrchin: blocks.seaUrchin
+  seagrass: blocks.seagrass
   snow: blocks.snow
   spruceLeaves: blocks.spruceLeaves
+  tallSpruceLeaves: blocks.tallSpruceLeaves
   spruceLog: blocks.spruceLog
+  spruceSapling: blocks.spruceSapling
+  starfish: blocks.starfish
   stone: blocks.stone
   sulphurOre: blocks.sulphurOre
   tallGrass: blocks.tallGrass
   water: blocks.water
   whiteFlower: blocks.whiteFlower
+  vine: blocks.vine
+  wheat: blocks.wheat
+  yellowFlower: blocks.yellowFlower
 
 minerals:
   - {key: coal, block: blocks.coalOre, source: blocks.stone}

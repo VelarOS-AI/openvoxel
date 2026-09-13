@@ -1,0 +1,202 @@
+import {random} from "velar/random"
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry, findCropGrowthBehavior} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {TerrainConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {baseTerrainBlock, columnPlanner, createGenerationFields, surfaceBlock} from "../../src/survival/terrain.vel"
+import {TreeShapeKind, treeShapeWrites} from "../../src/survival/tree-shapes.vel"
+import {decorationPlanner} from "../../src/survival/vegetation.vel"
+
+test "vegetation plans admit each feature only on its final substrate":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const ecologySeed = "continental-ridges"
+    const columns = columnPlanner(createGenerationFields(ecologySeed, profile), 16)
+    const planner = decorationPlanner(profile, ecologySeed, blocks, columns, registry)
+    let treeCount = 0
+    let tallSpruceCount = 0
+    let cactusCount = 0
+    let plantCount = 0
+    let dryBushCount = 0
+    let priorityOverlapCount = 0
+
+    for chunkX in range(-12, 13):
+        for chunkZ in range(-12, 13):
+            const plan = planner.decorations(chunkX, chunkZ)
+            const structuralRoots: Set<string> = Set()
+            const livingStructureWrites: Set<string> = Set()
+            let groundFeatureSeen = false
+            for feature in plan.features:
+                if feature.owner.startsWith("tree:") or feature.owner.startsWith("cactus:"):
+                    for write in feature.writes:
+                        livingStructureWrites.add(f"{feature.origin.x + write.x}:{feature.origin.y + write.y}:{feature.origin.z + write.z}")
+            for feature in plan.features:
+                if feature.owner.startsWith("deadwood:"):
+                    for write in feature.writes:
+                        expect(f"{feature.origin.x + write.x}:{feature.origin.y + write.y}:{feature.origin.z + write.z}" in livingStructureWrites).toBe(false)
+                const sample = columns.columns((feature.origin.x / 16).floor(), (feature.origin.z / 16).floor()).sampleAt(feature.origin.x, feature.origin.z)
+                const ground = surfaceBlock(profile, blocks, sample)
+                if feature.owner.startsWith("tree:"):
+                    expect(groundFeatureSeen).toBe(false)
+                    expect(feature.sortKey.startsWith("0_structure:")).toBe(true)
+                    const root = feature.writes[0]
+                    structuralRoots.add(f"{feature.origin.x + root.x}:{feature.origin.y + root.y}:{feature.origin.z + root.z}")
+                    treeCount += 1
+                    if feature.writes.some(write => write.runtimeId == blocks.tallSpruceLeaves):
+                        tallSpruceCount += 1
+                        expect(feature.writes.some(write => write.runtimeId == blocks.spruceLeaves)).toBe(false)
+                    expect(registry.hasTag(ground, builtinIdentities.tags.treeSupport)).toBe(true)
+                else if feature.owner.startsWith("cactus:"):
+                    expect(groundFeatureSeen).toBe(false)
+                    expect(feature.sortKey.startsWith("0_structure:")).toBe(true)
+                    const root = feature.writes[0]
+                    structuralRoots.add(f"{feature.origin.x + root.x}:{feature.origin.y + root.y}:{feature.origin.z + root.z}")
+                    cactusCount += 1
+                    expect(registry.hasTag(ground, builtinIdentities.tags.cactusSupport)).toBe(true)
+                else if feature.owner.startsWith("snow:"): expect(feature.sortKey.startsWith("1_surface:")).toBe(true)
+                else if feature.owner.startsWith("plant:"):
+                    groundFeatureSeen = true
+                    expect(feature.sortKey.startsWith("2_ground:")).toBe(true)
+                    const write = feature.writes[0]
+                    const target = f"{feature.origin.x + write.x}:{feature.origin.y + write.y}:{feature.origin.z + write.z}"
+                    if target in structuralRoots: priorityOverlapCount += 1
+                    plantCount += 1
+                    const state = registry.requireStateByRuntimeId(write.runtimeId)
+                    const crop = findCropGrowthBehavior(state.behaviors) != null or state.blockKey == builtinIdentities.blocks.pumpkin or state.blockKey == builtinIdentities.blocks.rottenPumpkin
+                    const sapling = state.blockKey in Set([
+                        builtinIdentities.blocks.oakSapling,
+                        builtinIdentities.blocks.birchSapling,
+                        builtinIdentities.blocks.spruceSapling,
+                        builtinIdentities.blocks.mimosaSapling,
+                        builtinIdentities.blocks.poplarSapling,
+                    ])
+                    const supportTag = crop ? builtinIdentities.tags.cropSupport : (sapling ? builtinIdentities.tags.treeSupport : builtinIdentities.tags.lushPlantSupport)
+                    expect(registry.hasTag(ground, supportTag)).toBe(true)
+                else if feature.owner.startsWith("bush:") or feature.owner.startsWith("large-bush:"):
+                    groundFeatureSeen = true
+                    expect(feature.sortKey.startsWith("2_ground:")).toBe(true)
+                    const write = feature.writes[0]
+                    const target = f"{feature.origin.x + write.x}:{feature.origin.y + write.y}:{feature.origin.z + write.z}"
+                    if target in structuralRoots: priorityOverlapCount += 1
+                    dryBushCount += 1
+                    expect(registry.hasTag(ground, builtinIdentities.tags.dryPlantSupport)).toBe(true)
+
+    expect(treeCount > 0).toBe(true)
+    expect(tallSpruceCount > 0).toBe(true)
+    expect(cactusCount > 0).toBe(true)
+    expect(plantCount > 0).toBe(true)
+    expect(dryBushCount > 0).toBe(true)
+    expect(priorityOverlapCount > 0).toBe(true)
+
+test "wild vegetation exposes crop stages and horizontal pumpkin states":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields("ecology-variety", profile), 16)
+    const planner = decorationPlanner(profile, "ecology-variety", blocks, columns, registry)
+    const cropAges: Set<number> = Set()
+    const pumpkinFacings: Set<string> = Set()
+
+    for chunkX in range(-16, 17):
+        for chunkZ in range(-16, 17):
+            for feature in planner.decorations(chunkX, chunkZ).features:
+                if not feature.owner.startsWith("plant:"): continue
+                const state = registry.requireStateByRuntimeId(feature.writes[0].runtimeId)
+                const growth = findCropGrowthBehavior(state.behaviors)
+                const crop = growth != null
+                const pumpkin = state.blockKey == builtinIdentities.blocks.pumpkin or state.blockKey == builtinIdentities.blocks.rottenPumpkin
+                if crop or pumpkin:
+                    const sample = columns.columns((feature.origin.x / 16).floor(), (feature.origin.z / 16).floor()).sampleAt(feature.origin.x, feature.origin.z)
+                    const ground = surfaceBlock(profile, blocks, sample)
+                    expect(registry.hasTag(ground, builtinIdentities.tags.cropSupport)).toBe(true)
+                if crop:
+                    const ageProperty = growth!.ageProperty
+                    const age = state.properties.find(property => property.name == ageProperty)?.value
+                    if age is number: cropAges.add(age)
+                if pumpkin:
+                    const facing = state.properties.find(property => property.name == "facing")?.value
+                    if facing is string: pumpkinFacings.add(facing)
+
+    expect(cropAges.size >= 4).toBe(true)
+    expect(pumpkinFacings).toEqual(Set(["north", "east", "south", "west"]))
+
+test "highland rivers share coherent water levels and do not flood buried cavities":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    // 固定该回归场景的山体幅度，测试的是河面与床面边界而非默认地貌版本。
+    const profile = WorldGeneratorDefinition.from(base, {terrain: TerrainConfig.from(base.terrain, {mountainAmplitude: 96})})
+    const fields = createGenerationFields("openvoxel", profile)
+    fields.continentalness = (x, z) => 0.4
+    fields.ridge = (x, z) => 0.35
+    fields.hills = (x, z) => 0
+    fields.river = (x, z) => 0
+    fields.erosion = (x, z) => 0
+    fields.detail = (x, y, z) => Math.sin(x * 48) * 0.1
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(fields, 16)
+    const surfaceYs: Set<number> = Set()
+    let previousWaterLevel: number? = null
+    // 固定高地河槽穿过 Chunk 边界，床面可被密度细节扰动，河面来自二维骨架。
+    for x in range(-498, -493):
+        const z = -484
+        const plan = columns.columns((x / 16).floor(), (z / 16).floor())
+        const sample = plan.sampleAt(x, z)
+        const waterLevel = plan.waterLevelAt(x, z)
+        expect(sample.biome).toBe(profile.biomes.river)
+        expect(sample.surfaceY > profile.world.seaLevel).toBe(true)
+        expect(sample.surfaceY < waterLevel).toBe(true)
+        if previousWaterLevel != null:
+            expect((waterLevel - previousWaterLevel).abs() < 1).toBe(true)
+            expect(waterLevel.floor()).toBe(previousWaterLevel.floor())
+        previousWaterLevel = waterLevel
+        surfaceYs.add(sample.surfaceY)
+        const surfaceFluid = baseTerrainBlock(fields, blocks, sample, waterLevel, waterLevel.floor(), -1, 0)
+        expect(surfaceFluid == blocks.water or surfaceFluid == blocks.ice).toBe(true)
+        expect(baseTerrainBlock(fields, blocks, sample, waterLevel, sample.surfaceY - 1, -1, 0)).toBe(blocks.air)
+    expect(surfaceYs.size > 0).toBe(true)
+
+type TreeShapeEnvelope:
+    width: number
+    height: number
+    depth: number
+    maximumY: number
+    horizontalReach: number
+
+def shapeEnvelope(kind: TreeShapeKind, height: number) -> TreeShapeEnvelope:
+    const writes = treeShapeWrites(kind, height, 1, 2, 3, 4, random(f"shape:{kind}"))
+    let minimumX = 0
+    let maximumX = 0
+    let minimumY = 0
+    let maximumY = 0
+    let minimumZ = 0
+    let maximumZ = 0
+    for write in writes:
+        minimumX = Math.min(minimumX, write.x)
+        maximumX = Math.max(maximumX, write.x)
+        minimumY = Math.min(minimumY, write.y)
+        maximumY = Math.max(maximumY, write.y)
+        minimumZ = Math.min(minimumZ, write.z)
+        maximumZ = Math.max(maximumZ, write.z)
+    expect(writes.some(write => write.runtimeId == 2 or write.runtimeId == 3)).toBe(kind == TreeShapeKind.oak or kind == TreeShapeKind.mimosa)
+    const horizontalReach = Math.max(minimumX.abs(), Math.max(maximumX.abs(), Math.max(minimumZ.abs(), maximumZ.abs())))
+    return {width: maximumX - minimumX + 1, height: maximumY - minimumY + 1, depth: maximumZ - minimumZ + 1, maximumY, horizontalReach}
+
+test "tree archetypes keep visibly distinct crowns and oriented branches":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const oak = shapeEnvelope(TreeShapeKind.oak, 11)
+    const birch = shapeEnvelope(TreeShapeKind.birch, 11)
+    const spruce = shapeEnvelope(TreeShapeKind.spruce, 12)
+    const tallSpruce = shapeEnvelope(TreeShapeKind.tallSpruce, 21)
+    const mimosa = shapeEnvelope(TreeShapeKind.mimosa, 8)
+    const poplar = shapeEnvelope(TreeShapeKind.poplar, 15)
+
+    for shape in [oak, birch, spruce, tallSpruce, mimosa, poplar]:
+        assert shape.maximumY <= profile.vegetation.maximumTreeHeight else f"Tree shape maximum y {shape.maximumY} exceeds the configured generation envelope"
+        assert shape.horizontalReach <= profile.vegetation.treeHorizontalReach else f"Tree shape horizontal reach {shape.horizontalReach} exceeds the configured candidate halo"
+
+    expect(oak.width > birch.width).toBe(true)
+    expect(tallSpruce.height > spruce.height).toBe(true)
+    expect(mimosa.width > poplar.width or mimosa.depth > poplar.depth).toBe(true)
+    expect(poplar.height > poplar.width * 2).toBe(true)

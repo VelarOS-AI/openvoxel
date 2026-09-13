@@ -1,0 +1,286 @@
+import {Random, random} from "velar/random"
+import {BlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Coordinate3} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {CompiledFeaturePlan, FeatureWrite, compiledFeaturePlan, featurePlansOverlap} from "./feature-plan.vel"
+import {ColumnPlanner, TerrainColumnPlan, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+import {EcologyPatterns, createEcologyPatterns} from "./ecology-patterns.vel"
+
+/// 最长倒木写入四个水平方块；装饰规划器用同一包络扩展结构候选，保证
+/// 跨 Chunk 的整组避让决策只依赖同一组世界坐标所有者。
+export const naturalEcologyHorizontalReach = 4
+
+type HorizontalAttachment:
+    x: number
+    z: number
+    facing: string
+
+type CliffSupport:
+    x: number
+    z: number
+    facing: string
+    surfaceY: number
+
+def planAt(columns: ColumnPlanner, x: number, z: number) -> readonly TerrainColumnPlan:
+    return columns.columns((x / 16).floor(), (z / 16).floor())
+
+def horizontalAttachment(choice: number) -> HorizontalAttachment:
+    if choice == 0: return {x: 0, z: 1, facing: "north"}
+    if choice == 1: return {x: -1, z: 0, facing: "east"}
+    if choice == 2: return {x: 0, z: -1, facing: "south"}
+    return {x: 1, z: 0, facing: "west"}
+
+def facingState(registry: readonly BlockRegistry, block: number, facing: string) -> number:
+    return registry.withProperty(block, "facing", facing)
+
+def featureSortKey(layer: string, owner: string) -> string: return f"{layer}:{owner}"
+
+def overlapsTarget(feature: readonly CompiledFeaturePlan, minimumX: number, minimumZ: number) -> bool:
+    return feature.bounds.minimumX <= minimumX + 15 and feature.bounds.maximumX >= minimumX and feature.bounds.minimumZ <= minimumZ + 15 and feature.bounds.maximumZ >= minimumZ
+
+/// 藤蔓与树共享树候选的世界坐标所有者。一次候选只构造一条 Random 子流，
+/// 向下延伸使用同一个长度结果，不按藤蔓体素创建随机对象。
+export def treeVineFeature(
+    owner: string,
+    ground: Coordinate3,
+    height: number,
+    humidity: number,
+    vine: number,
+    registry: readonly BlockRegistry,
+    stream: Random,
+    tree: readonly CompiledFeaturePlan,
+) -> CompiledFeaturePlan?:
+    if humidity < 9 or not stream.bool(0.48): return null
+    const attachment = horizontalAttachment(stream.int(0, 4))
+    const occupied = Set(tree.writes.map(write => f"{write.x}:{write.y}:{write.z}"))
+    let start = height - 1
+    // 先找到树形真正外露的树干侧面。叶冠包住的位置不会成为藤蔓起点。
+    while start >= 3 and ((f"{attachment.x}:{start}:{attachment.z}" in occupied) or not (f"0:{start}:0" in occupied)):
+        start -= 1
+    if start < 3: return null
+    const length = Math.min(start, stream.int(2, 6))
+    const state = facingState(registry, vine, attachment.facing)
+    const writes: List<FeatureWrite> = []
+    for offset in range(length):
+        const y = start - offset
+        if f"{attachment.x}:{y}:{attachment.z}" in occupied: break
+        writes.append(FeatureWrite.from(attachment, {y, runtimeId: state}))
+    const vineOwner = f"vine-tree:{owner}"
+    return compiledFeaturePlan(vineOwner, ground, featureSortKey("0_structure", vineOwner), writes)
+
+def deadwoodFeature(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    cellX: number,
+    cellZ: number,
+    stream: Random,
+) -> CompiledFeaturePlan?:
+    const size = profile.vegetation.deadwoodCellSize
+    const x = cellX * size + stream.int(0, size)
+    const z = cellZ * size + stream.int(0, size)
+    const plan = planAt(columns, x, z)
+    const sample = plan.sampleAt(x, z)
+    if sample.surfaceY <= profile.world.seaLevel or sample.slope > profile.vegetation.treeMaximumSlope: return null
+    const ground = surfaceBlock(profile, blocks, sample)
+    if not registry.hasTag(ground, builtinIdentities.tags.treeSupport): return null
+    let chance = 0.025
+    if sample.biome == profile.biomes.forest: chance = 0.16 + sample.forestDensity * 0.18
+    else if sample.humidity >= 7: chance = 0.08
+    if not stream.bool(chance): return null
+
+    const owner = f"deadwood:{cellX}:{cellZ}"
+    const writes: List<FeatureWrite> = []
+    if stream.bool(0.3):
+        for y in range(1, stream.int(2, 4)): writes.append({x: 0, y, z: 0, runtimeId: blocks.deadwood})
+    else:
+        const alongX = stream.bool()
+        const length = stream.int(2, 5)
+        const axis = alongX ? "x" : "z"
+        const state = registry.withProperty(blocks.deadwood, "axis", axis)
+        for offset in range(length):
+            const blockX = alongX ? x + offset : x
+            const blockZ = alongX ? z : z + offset
+            const blockSample = planAt(columns, blockX, blockZ).sampleAt(blockX, blockZ)
+            const support = surfaceBlock(profile, blocks, blockSample)
+            if blockSample.surfaceY != sample.surfaceY or not registry.hasTag(support, builtinIdentities.tags.treeSupport):
+                return null
+            writes.append({x: alongX ? offset : 0, y: 1, z: alongX ? 0 : offset, runtimeId: state})
+    return compiledFeaturePlan(owner, {x, y: sample.surfaceY, z}, featureSortKey("0_structure", owner), writes)
+
+def deadwoodOwnerPrecedes(leftX: number, leftZ: number, rightX: number, rightZ: number) -> bool:
+    return leftX < rightX or (leftX == rightX and leftZ < rightZ)
+
+/// 枯木先在世界 owner-cell 邻域内得到唯一裁决，目标 Chunk 随后只能裁剪结果。
+/// 只比较拥有更小坐标序的原始候选，让每个候选的 admit/reject 不依赖扫描起点，
+/// 也不通过一串已入选候选把决策传播到无界邻域。
+def deadwoodOwnsOverlaps(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    cellX: number,
+    cellZ: number,
+    feature: readonly CompiledFeaturePlan,
+    root: Random,
+) -> bool:
+    const cellRadius = Math.max(1, ((naturalEcologyHorizontalReach * 2) / profile.vegetation.deadwoodCellSize).ceil())
+    for neighborX in range(cellX - cellRadius, cellX + cellRadius + 1):
+        for neighborZ in range(cellZ - cellRadius, cellZ + cellRadius + 1):
+            if not deadwoodOwnerPrecedes(neighborX, neighborZ, cellX, cellZ): continue
+            const owner = f"deadwood:{neighborX}:{neighborZ}"
+            const neighbor = deadwoodFeature(profile, blocks, columns, registry, neighborX, neighborZ, root.fork(owner))
+            if neighbor != null and featurePlansOverlap(neighbor, feature): return false
+    return true
+
+def cliffSupport(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    x: number,
+    z: number,
+    firstDirection: number,
+) -> CliffSupport?:
+    const low = planAt(columns, x, z).sampleAt(x, z)
+    for offset in range(4):
+        const attachment = horizontalAttachment((firstDirection + offset) % 4)
+        const supportX = x - attachment.x
+        const supportZ = z - attachment.z
+        const supportSample = planAt(columns, supportX, supportZ).sampleAt(supportX, supportZ)
+        if supportSample.surfaceY - low.surfaceY < 3: continue
+        const support = surfaceBlock(profile, blocks, supportSample)
+        if not registry.hasTag(support, builtinIdentities.tags.vineSupport): continue
+        return {x: attachment.x, z: attachment.z, facing: attachment.facing, surfaceY: supportSample.surfaceY}
+    return null
+
+def cliffVineFeature(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    cellX: number,
+    cellZ: number,
+    stream: Random,
+) -> CompiledFeaturePlan?:
+    const size = profile.vegetation.cliffVineCellSize
+    const x = cellX * size + stream.int(0, size)
+    const z = cellZ * size + stream.int(0, size)
+    const sample = planAt(columns, x, z).sampleAt(x, z)
+    const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
+    if sample.humidity < 10 or adjustedTemperature <= 2 or not stream.bool(0.32): return null
+    const support = cliffSupport(profile, blocks, columns, registry, x, z, stream.int(0, 4))
+    if support == null: return null
+    const selected: CliffSupport = support
+    const available = selected.surfaceY - sample.surfaceY - 1
+    const length = Math.min(available, stream.int(1, 4))
+    if length <= 0: return null
+    const state = facingState(registry, blocks.vine, selected.facing)
+    const writes: List<FeatureWrite> = range(0, length).map(offset => ({x: 0, y: -offset, z: 0, runtimeId: state}))
+    const owner = f"vine-cliff:{cellX}:{cellZ}"
+    return compiledFeaturePlan(owner, {x, y: selected.surfaceY, z}, featureSortKey("1_surface", owner), writes)
+
+def aquaticFeature(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    cellX: number,
+    cellZ: number,
+    stream: Random,
+    patterns: readonly EcologyPatterns,
+) -> CompiledFeaturePlan?:
+    const size = profile.vegetation.aquaticCellSize
+    const x = cellX * size + stream.int(0, size)
+    const z = cellZ * size + stream.int(0, size)
+    const plan = planAt(columns, x, z)
+    const sample = plan.sampleAt(x, z)
+    const waterTop = plan.waterLevelAt(x, z).floor()
+    const depth = waterTop - sample.surfaceY
+    if depth < 2 or depth > 16: return null
+    const saltWater = sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast
+    if not saltWater and sample.biome != profile.biomes.river: return null
+    const cover = patterns.cover(x, z)
+    const chance = cover > 0.5 ? 0.25 + cover * 0.65 : 0.05
+    if not stream.bool(saltWater ? chance : chance * 0.7): return null
+    const substrate = surfaceBlock(profile, blocks, sample)
+    const aquaticSupport = registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)
+    const bottomSupport = registry.hasTag(substrate, builtinIdentities.tags.bottomDwellerSupport)
+    const choice = stream.bool(0.7) ? patterns.species(x, z) * 8 : stream.int(0, 100)
+    let block = blocks.seagrass
+    let height = 1
+    let kind = "seagrass"
+    if saltWater and depth >= 4 and aquaticSupport and choice < 42:
+        block = blocks.kelp
+        height = stream.int(Math.max(2, depth - 3), depth)
+        kind = "kelp"
+    else if aquaticSupport and choice < 78:
+        block = blocks.seagrass
+        height = stream.bool(0.3) ? 2 : 1
+    else if saltWater and bottomSupport and choice < 90:
+        block = blocks.seaUrchin
+        kind = "sea-urchin"
+    else if saltWater and bottomSupport:
+        block = blocks.starfish
+        kind = "starfish"
+    else: return null
+
+    const writes: List<FeatureWrite> = range(1, height + 1).map(y => ({x: 0, y, z: 0, runtimeId: block}))
+    const owner = f"{kind}:{cellX}:{cellZ}"
+    return compiledFeaturePlan(owner, {x, y: sample.surfaceY, z}, featureSortKey("1_surface", owner), writes)
+
+/// 枯木、岩壁藤蔓和水下生态都按有界二维候选格采样。浅水覆盖度与优势种
+/// 来自连续世界场，海带向水面延伸并保留一格水层。目标 Chunk 只查看其
+/// 水平包络可能相交的所有者；不扫描历史 Chunk、不遍历全高度，也不维护第二份缓存。
+export def naturalEcologyFeatures(
+    profile: readonly WorldGeneratorDefinition,
+    seed: string,
+    blocks: readonly SurvivalBlockPalette,
+    columns: ColumnPlanner,
+    registry: readonly BlockRegistry,
+    chunkX: number,
+    chunkZ: number,
+    patterns: readonly EcologyPatterns = createEcologyPatterns(seed, "aquatic", profile.vegetation.aquaticPatchPeriod),
+) -> List<CompiledFeaturePlan>:
+    const root = random(seed).fork("natural-ecology")
+    const output: List<CompiledFeaturePlan> = []
+    const minimumX = chunkX * 16
+    const minimumZ = chunkZ * 16
+
+    const deadwoodSize = profile.vegetation.deadwoodCellSize
+    const reach = naturalEcologyHorizontalReach
+    const firstDeadwoodX = ((minimumX - reach) / deadwoodSize).floor()
+    const lastDeadwoodX = ((minimumX + 15 + reach) / deadwoodSize).floor()
+    const firstDeadwoodZ = ((minimumZ - reach) / deadwoodSize).floor()
+    const lastDeadwoodZ = ((minimumZ + 15 + reach) / deadwoodSize).floor()
+    for cellX in range(firstDeadwoodX, lastDeadwoodX + 1):
+        for cellZ in range(firstDeadwoodZ, lastDeadwoodZ + 1):
+            const feature = deadwoodFeature(profile, blocks, columns, registry, cellX, cellZ, root.fork(f"deadwood:{cellX}:{cellZ}"))
+            if feature == null: continue
+            if not deadwoodOwnsOverlaps(profile, blocks, columns, registry, cellX, cellZ, feature, root): continue
+            if overlapsTarget(feature, minimumX, minimumZ): output.append(feature)
+
+    const cliffSize = profile.vegetation.cliffVineCellSize
+    const firstCliffX = (minimumX / cliffSize).floor()
+    const lastCliffX = ((minimumX + 15) / cliffSize).floor()
+    const firstCliffZ = (minimumZ / cliffSize).floor()
+    const lastCliffZ = ((minimumZ + 15) / cliffSize).floor()
+    for cellX in range(firstCliffX, lastCliffX + 1):
+        for cellZ in range(firstCliffZ, lastCliffZ + 1):
+            const feature = cliffVineFeature(profile, blocks, columns, registry, cellX, cellZ, root.fork(f"cliff-vine:{cellX}:{cellZ}"))
+            if feature != null and overlapsTarget(feature, minimumX, minimumZ): output.append(feature)
+
+    const aquaticSize = profile.vegetation.aquaticCellSize
+    const firstAquaticX = (minimumX / aquaticSize).floor()
+    const lastAquaticX = ((minimumX + 15) / aquaticSize).floor()
+    const firstAquaticZ = (minimumZ / aquaticSize).floor()
+    const lastAquaticZ = ((minimumZ + 15) / aquaticSize).floor()
+    for cellX in range(firstAquaticX, lastAquaticX + 1):
+        for cellZ in range(firstAquaticZ, lastAquaticZ + 1):
+            const feature = aquaticFeature(profile, blocks, columns, registry, cellX, cellZ, root.fork(f"aquatic:{cellX}:{cellZ}"), patterns)
+            if feature != null: output.append(feature)
+
+    return output

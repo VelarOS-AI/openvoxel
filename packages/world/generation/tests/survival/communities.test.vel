@@ -1,0 +1,113 @@
+import {random} from "velar/random"
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Chunk, chunkBlock, chunkKey, locateBlock} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {createEcologyPatterns} from "../../src/survival/ecology-patterns.vel"
+import {compiledFeaturePlan} from "../../src/survival/feature-plan.vel"
+import {survivalWorldGenerator} from "../../src/survival/generator.vel"
+import {treeVineFeature} from "../../src/survival/natural-ecology.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+import {TreeShapeKind, treeShapeWrites} from "../../src/survival/tree-shapes.vel"
+import {decorationPlanner} from "../../src/survival/vegetation.vel"
+
+test "nearby final Chunks contain visible communities rather than only rare catalog entries":
+    const seed = "ui-coast-visual-v1"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const planner = decorationPlanner(profile, seed, blocks, columns, registry)
+    const generator = survivalWorldGenerator(seed, 16)
+    const flowerKeys = Set([builtinIdentities.blocks.redFlower, builtinIdentities.blocks.purpleFlower, builtinIdentities.blocks.whiteFlower, builtinIdentities.blocks.yellowFlower, builtinIdentities.blocks.blueFlower])
+    const flowers: Map<string, string> = Map()
+    let plants = 0
+    let crops = 0
+    let adjacentFlowers = 0
+    // 固定陆地草甸样区；地质改版后的旧坐标已转为碎石和海岸过渡带。
+    for chunkX in range(-8, -4):
+        for chunkZ in range(8, 12):
+            const chunks: Map<string, Chunk> = Map()
+            for feature in planner.decorations(chunkX, chunkZ).features:
+                if not feature.owner.startsWith("plant:"): continue
+                const located = locateBlock(feature.origin, 16)
+                const key = chunkKey(located.chunk)
+                if not chunks.has(key): chunks.set(key, generator.generate(located.chunk))
+                const actual = chunkBlock(chunks.get(key)!, located.local)
+                if actual != feature.writes[0].runtimeId: continue
+                plants += 1
+                const state = registry.requireStateByRuntimeId(actual)
+                if state.blockKey in flowerKeys: flowers.set(f"{feature.origin.x}:{feature.origin.z}", state.blockKey)
+                if state.blockKey == builtinIdentities.blocks.wheat or state.blockKey == builtinIdentities.blocks.rye or state.blockKey == builtinIdentities.blocks.cotton:
+                    crops += 1
+    for chunkX in range(-8 * 16, -4 * 16):
+        for chunkZ in range(8 * 16, 12 * 16):
+            const flower = flowers.get(f"{chunkX}:{chunkZ}")
+            if flower != null and (flower == flowers.get(f"{chunkX + 1}:{chunkZ}") or flower == flowers.get(f"{chunkX}:{chunkZ + 1}")):
+                adjacentFlowers += 1
+    expect(plants >= 250 and plants <= 1400).toBe(true)
+    expect(flowers.size >= 30).toBe(true)
+    expect(crops >= 30).toBe(true)
+    expect(adjacentFlowers >= 3).toBe(true)
+
+test "tree vines select exposed support and cannot disappear inside their own canopy":
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const writes = treeShapeWrites(TreeShapeKind.oak, 8, blocks.oakLog, blocks.oakLog, blocks.oakLog, blocks.oakLeaves, random("vine-tree"))
+    const occupied = Set(writes.map(write => f"{write.x}:{write.y}:{write.z}"))
+    const tree = compiledFeaturePlan("tree:0:0", {x: 0, y: 80, z: 0}, "0_structure:tree:0:0", writes)
+    let admitted = 0
+    for index in range(20):
+        const vine = treeVineFeature(tree.owner, tree.origin, 8, 12, blocks.vine, registry, random(f"vine:{index}"), tree)
+        if vine == null: continue
+        admitted += 1
+        expect(vine.writes.size >= 2).toBe(true)
+        for write in vine.writes:
+            expect(f"{write.x}:{write.y}:{write.z}" in occupied).toBe(false)
+            expect(f"0:{write.y}:0" in occupied).toBe(true)
+    expect(admitted > 0).toBe(true)
+
+test "community fields are continuous across Chunk seams and deterministic far away":
+    const first = createEcologyPatterns("communities", "ground", 24)
+    const second = createEcologyPatterns("communities", "ground", 24)
+    for x in [-1000000, -32, -16, 0, 16, 32, 1000000]:
+        const before = first.cover(x - 0.001, 17)
+        const after = first.cover(x + 0.001, 17)
+        expect((before - after).abs() < 0.01).toBe(true)
+        expect(second.cover(x, 17)).toBe(first.cover(x, 17))
+        expect(second.species(x, 17)).toBe(first.species(x, 17))
+
+test "shallow water communities survive into final Chunks and kelp leaves water above":
+    const seed = "continental-ridges"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const planner = decorationPlanner(profile, seed, blocks, columns, registry)
+    const generator = survivalWorldGenerator(seed, 16)
+    const actualCounts: Map<string, number> = Map()
+    for chunkX in range(-4, 4):
+        for chunkZ in range(-4, 4):
+            const chunks: Map<string, Chunk> = Map()
+            for feature in planner.decorations(chunkX, chunkZ).features:
+                const first = feature.writes[0]
+                if not registry.hasTag(first.runtimeId, builtinIdentities.tags.aquatic): continue
+                const plan = columns.columns((feature.origin.x / 16).floor(), (feature.origin.z / 16).floor())
+                const depth = plan.waterLevelAt(feature.origin.x, feature.origin.z).floor() - feature.origin.y
+                expect(depth >= 2 and depth <= 16).toBe(true)
+                if first.runtimeId == blocks.kelp:
+                    expect(feature.writes.size >= depth - 3).toBe(true)
+                    expect(feature.bounds.maximumY < feature.origin.y + depth).toBe(true)
+                for write in feature.writes:
+                    const located = locateBlock({x: feature.origin.x + write.x, y: feature.origin.y + write.y, z: feature.origin.z + write.z}, 16)
+                    if located.chunk.x != chunkX or located.chunk.z != chunkZ: continue
+                    const key = chunkKey(located.chunk)
+                    if not chunks.has(key): chunks.set(key, generator.generate(located.chunk))
+                    const actual = chunkBlock(chunks.get(key)!, located.local)
+                    expect(actual).toBe(write.runtimeId)
+                    const family = registry.requireStateByRuntimeId(actual).blockKey
+                    actualCounts.set(family, (actualCounts.get(family) ?? 0) + 1)
+    for family in [builtinIdentities.blocks.kelp, builtinIdentities.blocks.seagrass, builtinIdentities.blocks.seaUrchin, builtinIdentities.blocks.starfish]:
+        expect((actualCounts.get(family) ?? 0) > 0).toBe(true)

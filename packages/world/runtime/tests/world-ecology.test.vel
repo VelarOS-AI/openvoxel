@@ -1,0 +1,228 @@
+import {expect} from "velar/test"
+import {BlockBehaviorKind, BlockDefinition, BlockPropertyKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {EcologyCandidate, EcologyCandidateKind, WorldGenerator} from "@openvoxel/world-generation"
+import {ChunkPosition, Coordinate2, emptyChunk, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds, worldYearMilliseconds} from "@openvoxel/world"
+import {activeWorldState} from "../src/active-world-state.vel"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldEcology} from "../src/world-ecology.vel"
+import {initialWorldMilliseconds} from "../src/world-creation.vel"
+import {WorldChunkSnapshot} from "../src/world-chunk-snapshot.vel"
+
+const air = defaultBlockStateRuntimeId(builtinIdentities.blocks.air)
+const water = defaultBlockStateRuntimeId(builtinIdentities.blocks.water)
+const ice = defaultBlockStateRuntimeId(builtinIdentities.blocks.ice)
+const snow = defaultBlockStateRuntimeId(builtinIdentities.blocks.snow)
+const stone = defaultBlockStateRuntimeId(builtinIdentities.blocks.stone)
+const rye = defaultBlockStateRuntimeId(builtinIdentities.blocks.rye)
+const cotton = defaultBlockStateRuntimeId(builtinIdentities.blocks.cotton)
+const pumpkin = defaultBlockStateRuntimeId(builtinIdentities.blocks.pumpkin)
+const kelp = defaultBlockStateRuntimeId(builtinIdentities.blocks.kelp)
+const seagrass = defaultBlockStateRuntimeId(builtinIdentities.blocks.seagrass)
+const ryeAge3 = baseWorldBlockRegistry.registry.withProperty(rye, "age", 3)
+const cottonAge1 = baseWorldBlockRegistry.registry.withProperty(cotton, "age", 1)
+const position: ChunkPosition = {x: 0, y: 4, z: 0}
+const summer = worldYearMilliseconds * 0.25
+const winter = worldYearMilliseconds * 0.75
+const naturalGrowthOriginEpoch = worldEcologyEpoch(initialWorldMilliseconds)
+
+def coldSeed() -> string:
+    for index in range(100):
+        const seed = f"ecology-{index}"
+        const climate = worldClimateAt(seed, winter, {x: 0, y: 64, z: 0})
+        if climate.frozenWater and climate.snowCover >= 0.3: return seed
+    throw Error("Ecology fixture requires a freezing humid region")
+
+const candidates: readonly List<EcologyCandidate> = [
+    {position: {x: 0, y: 0, z: 0}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: water, warmBlockStateRuntimeId: water, coldBlockStateRuntimeId: ice, exposed: true},
+    {position: {x: 1, y: 1, z: 0}, kind: EcologyCandidateKind.snow, baselineBlockStateRuntimeId: air, warmBlockStateRuntimeId: air, coldBlockStateRuntimeId: snow, exposed: true},
+    {position: {x: 2, y: 1, z: 0}, kind: EcologyCandidateKind.snow, baselineBlockStateRuntimeId: snow, warmBlockStateRuntimeId: air, coldBlockStateRuntimeId: snow, exposed: false},
+    {position: {x: 3, y: 0, z: 0}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: ice, warmBlockStateRuntimeId: water, coldBlockStateRuntimeId: ice, exposed: true},
+    {position: {x: 4, y: 0, z: 0}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: kelp, warmBlockStateRuntimeId: kelp, coldBlockStateRuntimeId: ice, exposed: true},
+    {position: {x: 5, y: 0, z: 0}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: seagrass, warmBlockStateRuntimeId: seagrass, coldBlockStateRuntimeId: ice, exposed: true},
+]
+
+const growthCandidates: readonly List<EcologyCandidate> = [
+    {position: {x: 4, y: 1, z: 0}, kind: EcologyCandidateKind.cropGrowth, baselineBlockStateRuntimeId: rye, ageProperty: "age", baselineAge: 0, maximumAge: 7, epochsPerStage: 4},
+    {position: {x: 5, y: 1, z: 0}, kind: EcologyCandidateKind.cropGrowth, baselineBlockStateRuntimeId: cottonAge1, ageProperty: "age", baselineAge: 1, maximumAge: 2, epochsPerStage: 4},
+    {position: {x: 6, y: 1, z: 0}, kind: EcologyCandidateKind.cropGrowth, baselineBlockStateRuntimeId: cotton, ageProperty: "age", baselineAge: 0, maximumAge: 2, epochsPerStage: 4},
+    ]
+
+def generator(natural: readonly List<EcologyCandidate> = candidates) -> WorldGenerator:
+    return {
+        generate: position => emptyChunk(position, 16, air),
+        findSpawn: () => {x: 0, y: 65, z: 0},
+        ecologyCandidates: position => position.x == 0 and position.y == 4 and position.z == 0 ? natural : [],
+        sample: position => {position: Coordinate2.from(position), surfaceY: 64, slope: 0, continentalness: 0, erosion: 0, ridge: 0, riverStrength: 0, temperature: 8, humidity: 8, forestDensity: 0, terrainType: "plain", biome: "plains"},
+    }
+
+def validateRuntimeId(runtimeId: number): baseWorldBlockRegistry.registry.requireStateByRuntimeId(runtimeId)
+
+test "seasonal ice and exposed snow freeze thaw and preserve player edits without persistence":
+    const store = memoryWorldStore()
+    const state = activeWorldState("ecology", store.deltas, 64, 1024, validateRuntimeId)
+    const ecology = worldEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state, naturalGrowthOriginEpoch)
+    const frozen = (await ecology.deltas([position], winter))[0]
+    expect(frozen.ecologyEpoch).toBe(worldEcologyEpoch(winter))
+    expect(frozen.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 4 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 5 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 2 and entry.blockStateRuntimeId == air)).toBe(true)
+    expect((await state.deltas([position]))[0].overrides).toEqual([])
+
+    const thawed = (await ecology.deltas([position], summer))[0]
+    expect(thawed.overrides.some(entry => entry.position.x == 0)).toBe(false)
+    expect(thawed.overrides.some(entry => entry.position.x == 1)).toBe(false)
+    expect(thawed.overrides.some(entry => entry.position.x == 3 and entry.blockStateRuntimeId == water)).toBe(true)
+    expect(thawed.overrides.some(entry => entry.position.x == 4)).toBe(false)
+    expect(thawed.overrides.some(entry => entry.position.x == 5)).toBe(false)
+    await state.commitBlocks([
+        {chunk: position, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: ice, growthOriginEpoch: null, visibleChanged: true},
+        {chunk: position, local: {x: 1, y: 1, z: 0}, blockStateRuntimeId: snow, growthOriginEpoch: null, visibleChanged: true},
+    ])
+    const preserved = (await ecology.deltas([position], summer))[0]
+    expect(preserved.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(true)
+    expect(preserved.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
+    await state.close()
+    await store.close()
+
+test "snapshot epochs belong to visible ecology while storage keeps only player deltas":
+    const store = memoryWorldStore()
+    const state = activeWorldState("snapshots", store.deltas, 64, 1024, validateRuntimeId)
+    try:
+        const ecology = worldEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state, naturalGrowthOriginEpoch)
+        const underground = {x: 0, y: 1, z: 0}
+        await state.commitBlocks([{chunk: underground, local: {x: 1, y: 1, z: 1}, blockStateRuntimeId: stone, growthOriginEpoch: null, visibleChanged: true}])
+        const stored = (await state.deltas([underground]))[0]
+        const visible = (await ecology.deltas([underground], winter))[0]
+        expect(visible.ecologyEpoch).toBe(worldEcologyEpoch(winter))
+        expect(visible.revision).toBe(stored.revision)
+        expect(visible.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == stone)).toBe(true)
+        expect(WorldChunkSnapshot.is(stored)).toBe(false)
+        expect(Json.stringify(stored).has("ecologyEpoch")).toBe(false)
+        expect(Json.stringify(visible).has("growthOriginEpoch")).toBe(false)
+        const persisted = (await store.deltas.findChunks("snapshots", [underground]))[0]
+        expect(Json.stringify(persisted).has("ecologyEpoch")).toBe(false)
+    finally:
+        await state.close()
+        await store.close()
+
+test "remote player roofs and removed ground suppress natural snow and water freezing":
+    const store = memoryWorldStore()
+    const state = activeWorldState("shelter", store.deltas, 64, 1024, validateRuntimeId)
+    const ecology = worldEcology(coldSeed(), 16, 0, 255, generator(), baseWorldBlockRegistry.registry, state, naturalGrowthOriginEpoch)
+    const roof = {x: 0, y: 10, z: 0}
+    await state.commitBlocks([
+        {chunk: roof, local: {x: 0, y: 0, z: 0}, blockStateRuntimeId: stone, growthOriginEpoch: null, visibleChanged: true},
+        {chunk: roof, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: stone, growthOriginEpoch: null, visibleChanged: true},
+    ])
+    const sheltered = (await ecology.deltas([position], winter))[0]
+    expect(sheltered.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(false)
+    expect(sheltered.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(false)
+    await state.commitBlocks([
+        {chunk: roof, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: null, growthOriginEpoch: null, visibleChanged: true},
+        {chunk: position, local: {x: 1, y: 0, z: 0}, blockStateRuntimeId: air, growthOriginEpoch: null, visibleChanged: true},
+    ])
+    const unsupported = (await ecology.deltas([position], winter))[0]
+    expect(unsupported.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(false)
+    await state.close()
+    await store.close()
+
+test "crop growth is a deterministic epoch projection while player states remain authoritative":
+    const store = memoryWorldStore()
+    const firstState = activeWorldState("growth", store.deltas, 64, 1024, validateRuntimeId)
+    const firstEcology = worldEcology("growth-seed", 16, 0, 255, generator(growthCandidates), baseWorldBlockRegistry.registry, firstState, naturalGrowthOriginEpoch)
+    const initial = (await firstEcology.deltas([position], initialWorldMilliseconds))[0]
+    expect(initial.overrides).toEqual([])
+    expect((await firstState.deltas([position]))[0].overrides).toEqual([])
+    expect(firstState.cachedChunkCount()).toBe(1)
+
+    const oneStageTime = initialWorldMilliseconds + worldEcologyEpochMilliseconds * 4
+    const grownAfterUnrelatedQuery = (await firstEcology.deltas([{x: 1, y: 4, z: 0}, position], oneStageTime))[1]
+    expect(grownAfterUnrelatedQuery.overrides.some(entry => entry.position.x == 4 and entry.blockStateRuntimeId == baseWorldBlockRegistry.registry.withProperty(rye, "age", 1))).toBe(true)
+    expect(grownAfterUnrelatedQuery.overrides.some(entry => entry.position.x == 5 and entry.blockStateRuntimeId == baseWorldBlockRegistry.registry.withProperty(cotton, "age", 2))).toBe(true)
+    expect(grownAfterUnrelatedQuery.overrides.some(entry => entry.position.x == 6 and entry.blockStateRuntimeId == cottonAge1)).toBe(true)
+    expect((await firstState.deltas([position]))[0].overrides).toEqual([])
+    await firstState.close()
+
+    const reloadedState = activeWorldState("growth", store.deltas, 64, 1024, validateRuntimeId)
+    try:
+        const reloadedEcology = worldEcology("growth-seed", 16, 0, 255, generator(growthCandidates), baseWorldBlockRegistry.registry, reloadedState, naturalGrowthOriginEpoch)
+        const reloaded = (await reloadedEcology.deltas([position], oneStageTime))[0]
+        expect(reloaded).toEqual(grownAfterUnrelatedQuery)
+
+        await reloadedState.commitBlocks([
+            {chunk: position, local: {x: 4, y: 1, z: 0}, blockStateRuntimeId: ryeAge3, growthOriginEpoch: null, visibleChanged: true},
+            {chunk: position, local: {x: 5, y: 1, z: 0}, blockStateRuntimeId: pumpkin, growthOriginEpoch: null, visibleChanged: true},
+        ])
+        const playerOwned = (await reloadedEcology.deltas([position], initialWorldMilliseconds + worldEcologyEpochMilliseconds * 40))[0]
+        expect(playerOwned.overrides.some(entry => entry.position.x == 4 and entry.blockStateRuntimeId == ryeAge3)).toBe(true)
+        expect(playerOwned.overrides.some(entry => entry.position.x == 5 and entry.blockStateRuntimeId == pumpkin)).toBe(true)
+        const persisted = (await store.deltas.findChunks("growth", [position]))[0]
+        expect(persisted.overrides.size).toBe(2)
+        expect(Json.stringify(persisted).has("ecologyEpoch")).toBe(false)
+    finally:
+        await reloadedState.close()
+        await store.close()
+
+test "crop phases start at the new-world epoch and spread work inside each stage window":
+    const phasedCandidates: List<EcologyCandidate> = []
+    for x in range(16):
+        phasedCandidates.append({
+            position: {x, y: 1, z: 0},
+            kind: EcologyCandidateKind.cropGrowth,
+            baselineBlockStateRuntimeId: rye,
+            ageProperty: "age",
+            baselineAge: 0,
+            maximumAge: 7,
+            epochsPerStage: 4,
+        })
+    const store = memoryWorldStore()
+    const state = activeWorldState("growth-phases", store.deltas, 64, 1024, validateRuntimeId)
+    try:
+        const ecology = worldEcology("growth-phase-seed", 16, 0, 255, generator(phasedCandidates), baseWorldBlockRegistry.registry, state, naturalGrowthOriginEpoch)
+        expect(worldEcologyEpoch(initialWorldMilliseconds)).toBe(10)
+        expect((await ecology.deltas([position], initialWorldMilliseconds))[0].overrides).toEqual([])
+        const age1 = baseWorldBlockRegistry.registry.withProperty(rye, "age", 1)
+        const firstEpoch = (await ecology.deltas([position], initialWorldMilliseconds + worldEcologyEpochMilliseconds))[0]
+        expect(firstEpoch.overrides.size > 0 and firstEpoch.overrides.size < phasedCandidates.size).toBe(true)
+        expect(firstEpoch.overrides.every(entry => entry.blockStateRuntimeId == age1)).toBe(true)
+        const completeStage = (await ecology.deltas([position], initialWorldMilliseconds + worldEcologyEpochMilliseconds * 4))[0]
+        expect(completeStage.overrides.size).toBe(phasedCandidates.size)
+        expect(completeStage.overrides.every(entry => entry.blockStateRuntimeId == age1)).toBe(true)
+    finally:
+        await state.close()
+        await store.close()
+
+test "player crop projection reads Mod age property and cadence from block behavior":
+    const baseRye = BlockDefinition.parse(baseWorldBlockRegistry.registry.requireTypeByKey(builtinIdentities.blocks.rye))
+    const tomato = BlockTypeSource.from(baseRye, {
+        key: "farming:tomato_crop",
+        translationKey: "block.farming.tomato_crop",
+        tags: [],
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 2, maximum: 5}],
+        defaultState: [{name: "growth_stage", value: 2}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 6}],
+        variants: [],
+    })
+    const farming = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [tomato])
+    const registry = createWorldBlockRegistry(baseBlockCatalogSource, [farming]).registry
+    const planted = registry.defaultStateRuntimeIdForKey("farming:tomato_crop")
+    const grown = registry.withProperty(planted, "growth_stage", 3)
+    const store = memoryWorldStore()
+
+    def validateModRuntimeId(runtimeId: number): registry.requireStateByRuntimeId(runtimeId)
+
+    const state = activeWorldState("mod-growth", store.deltas, 64, 1024, validateModRuntimeId)
+    const originEpoch = 10
+    try:
+        await state.commitBlocks([{chunk: position, local: {x: 7, y: 1, z: 0}, blockStateRuntimeId: planted, growthOriginEpoch: originEpoch, visibleChanged: true}])
+        const ecology = worldEcology("mod-growth-seed", 16, 0, 255, generator([]), registry, state, originEpoch)
+        const initial = (await ecology.deltas([position], originEpoch * worldEcologyEpochMilliseconds))[0]
+        expect(initial.overrides).toEqual([{position: {x: 7, y: 1, z: 0}, blockStateRuntimeId: planted}])
+        const nextStage = (await ecology.deltas([position], (originEpoch + 6) * worldEcologyEpochMilliseconds))[0]
+        expect(nextStage.overrides).toEqual([{position: {x: 7, y: 1, z: 0}, blockStateRuntimeId: grown}])
+    finally:
+        await state.close()
+        await store.close()

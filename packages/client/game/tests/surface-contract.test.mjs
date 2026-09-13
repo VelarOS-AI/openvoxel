@@ -68,7 +68,7 @@ test("surface normalization preserves callback identity without mutating its inp
   const checked = requireSurfaceOptions(input);
   assert.notEqual(checked, input);
   assert.equal(checked.climateAt, input.climateAt);
-  assert.deepEqual(checked, input);
+  assert.deepEqual(checked, {...input, minimapCanvas: null});
 });
 
 test("surface construction and release unwind all acquisitions once in reverse order", () => {
@@ -92,7 +92,11 @@ function materialLibrary(animation = false) {
   const textures = [{key: "test:first", bankKey: "test:bank", alphaCutoff: animation ? 0.5 : null, variants: [{layer: 0}]}];
   if (animation) textures.push({key: "test:next", bankKey: "test:bank", alphaCutoff: 0.5, variants: [{layer: 1}]});
   return new VoxelMaterialLibrary(null, {
-    materials: [{key: "test:material", precipitationSurface: "solid", alphaCutoff: 0.5}],
+    materials: [{
+      key: "test:material", precipitationSurface: "solid", materialEffect: "standard", waterOptics: null,
+      alpha: 1, alphaCutoff: 0.5, doubleSided: false, castsShadows: true,
+      environmentIntensity: 1, clearCoat: 0, clearCoatRoughness: 0, unlit: false,
+    }],
     textures,
     animations: animation ? [{key: "test:animation", frames: ["test:first", "test:next"], frameDurationMs: 100}] : [],
   }, new Map([["test:bank", {role: layer, layerCount: textures.length}]]), null);
@@ -163,6 +167,13 @@ test("mesh validation preserves full-storage buffers and rejects invalid topolog
   batch.tintRoles[1] = 2;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /interpolates between climate tint roles/);
   batch.tintRoles[1] = 0;
+  batch.tintRoles.fill(7);
+  assert.equal(validateChunkMesh(chunk, 16, library).batches[0].tintRoles[0], 7);
+  batch.tintRoles.fill(9);
+  assert.equal(validateChunkMesh(chunk, 16, library).batches[0].tintRoles[0], 9);
+  batch.tintRoles.fill(11);
+  assert.throws(() => validateChunkMesh(chunk, 16, library), /Chunk mesh tint role/u);
+  batch.tintRoles.fill(0);
   batch.indices[0] = 3;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /canonical quad topology/);
   batch.indices[0] = 0;

@@ -1,0 +1,54 @@
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Chunk, chunkBlock, chunkKey, locateBlock} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+import {survivalWorldGenerator} from "../src/survival/generator.vel"
+import {columnPlanner, createGenerationFields, surfaceBlock} from "../src/survival/terrain.vel"
+import {decorationPlanner} from "../src/survival/vegetation.vel"
+
+/// 对玩家附近的真实生成结果验收，而不是只检查目录或候选中存在某个名字。
+/// 每个水平位置只统计一次；最终状态必须与装饰写入一致，结构遮挡另计。
+def survey(seed: string, centerX: number, centerZ: number):
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, registry)
+    const generator = survivalWorldGenerator(seed, 16)
+    const counts: Map<string, number> = Map()
+    const planned: Map<string, number> = Map()
+    const biomes: Map<string, number> = Map()
+    let lushSupportColumns = 0
+    let overwritten = 0
+    for chunkX in range(centerX - 4, centerX + 4):
+        for chunkZ in range(centerZ - 4, centerZ + 4):
+            const chunks: Map<string, Chunk> = Map()
+            const plan = columns.columns(chunkX, chunkZ)
+            for x in range(chunkX * 16, chunkX * 16 + 16):
+                for z in range(chunkZ * 16, chunkZ * 16 + 16):
+                    const sample = plan.sampleAt(x, z)
+                    biomes.set(sample.biome, (biomes.get(sample.biome) ?? 0) + 1)
+                    if registry.hasTag(surfaceBlock(profile, blocks, sample), builtinIdentities.tags.lushPlantSupport):
+                        lushSupportColumns += 1
+            for feature in decorations.decorations(chunkX, chunkZ).features:
+                for write in feature.writes:
+                    const position = {x: feature.origin.x + write.x, y: feature.origin.y + write.y, z: feature.origin.z + write.z}
+                    const located = locateBlock(position, 16)
+                    if located.chunk.x != chunkX or located.chunk.z != chunkZ: continue
+                    const key = chunkKey(located.chunk)
+                    if not chunks.has(key): chunks.set(key, generator.generate(located.chunk))
+                    const blockKey = registry.requireStateByRuntimeId(write.runtimeId).blockKey
+                    planned.set(blockKey, (planned.get(blockKey) ?? 0) + 1)
+                    if chunkBlock(chunks.get(key)!, located.local) == write.runtimeId:
+                        counts.set(blockKey, (counts.get(blockKey) ?? 0) + 1)
+                    else: overwritten += 1
+    print(Json.stableStringify({
+        seed, centerX: centerX * 16, centerZ: centerZ * 16, sampledColumns: 16384, lushSupportColumns, overwritten,
+        biomes: biomes.keys().sorted().map(key => ({key, columns: biomes.get(key)!})),
+        blocks: planned.keys().sorted().map(key => ({key, planned: planned.get(key)!, placed: counts.get(key) ?? 0})),
+    }, 2))
+
+@main:
+    survey("ui-coast-visual-v1", 8, 13)
+    survey("continental-ridges", 0, 0)

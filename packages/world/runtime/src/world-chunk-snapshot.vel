@@ -3,8 +3,8 @@ import {BlockOverride} from "./contracts.vel"
 
 /// 当前可见世界相对于固定地形的快照；自然生态先合成，玩家覆盖最后应用。
 /// ecologyEpoch 与 revision 分别标识自然时间槽和持久化玩家修改版本。
-export type WorldChunkSnapshot:
-    readonly position: readonly ChunkPosition
-    readonly revision: number
-    readonly overrides: readonly List<readonly BlockOverride>
-    readonly ecologyEpoch: number
+export readonly type WorldChunkSnapshot:
+    position: readonly ChunkPosition
+    revision: number
+    overrides: readonly List<BlockOverride>
+    ecologyEpoch: number

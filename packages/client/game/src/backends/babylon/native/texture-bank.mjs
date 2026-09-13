@@ -93,7 +93,7 @@ function decodeRgba8(data, expectedLength, label) {
   return bytes;
 }
 
-function uploadTextureMipLevels(scene, texture, levels, label) {
+function uploadTextureMipLevels(scene, texture, levels, label, smooth = false) {
   const engine = scene.getEngine();
   const internalTexture = texture.getInternalTexture();
   const gl = engine._gl;
@@ -114,7 +114,9 @@ function uploadTextureMipLevels(scene, texture, levels, label) {
   internalTexture.useMipMaps = levels.length > 1;
   internalTexture.generateMipMaps = false;
   internalTexture.mipLevelCount = levels.length;
-  const samplingMode = levels.length > 1 ? Texture.NEAREST_NEAREST_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
+  const samplingMode = smooth
+    ? Texture.TRILINEAR_SAMPLINGMODE
+    : levels.length > 1 ? Texture.NEAREST_NEAREST_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
   engine.updateTextureSamplingMode(samplingMode, internalTexture, false);
 }
 
@@ -137,6 +139,7 @@ export function loadTextureBank(scene, definition, maximumLayers) {
   const textures = [];
   const create = (channel, label) => {
     const levels = decodedLevels.map((level) => ({width: level.width, height: level.height, data: level[channel]}));
+    const smooth = definition.role === "fluid" && channel === "normal";
     const texture = RawTexture2DArray.CreateRGBATexture(
       levels[0].data,
       base.width,
@@ -145,11 +148,11 @@ export function loadTextureBank(scene, definition, maximumLayers) {
       scene,
       false,
       false,
-      Texture.NEAREST_SAMPLINGMODE,
+      smooth ? Texture.TRILINEAR_SAMPLINGMODE : Texture.NEAREST_SAMPLINGMODE,
     );
     textures.push(texture);
     texture.name = "texture-bank:" + definition.key + ":" + label;
-    uploadTextureMipLevels(scene, texture, levels, texture.name);
+    uploadTextureMipLevels(scene, texture, levels, texture.name, smooth);
     texture.wrapU = Texture.WRAP_ADDRESSMODE;
     texture.wrapV = Texture.WRAP_ADDRESSMODE;
     texture.anisotropicFilteringLevel = 1;
@@ -169,7 +172,7 @@ export function loadTextureBank(scene, definition, maximumLayers) {
     }
     const restore = () => {
       uploadTextureMipLevels(scene, albedo, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.albedo})), albedo.name);
-      uploadTextureMipLevels(scene, normal, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.normal})), normal.name);
+      uploadTextureMipLevels(scene, normal, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.normal})), normal.name, definition.role === "fluid");
       uploadTextureMipLevels(scene, material, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.material})), material.name);
       uploadTextureMipLevels(scene, emissive, decodedLevels.map((level) => ({width: level.width, height: level.height, data: level.emissive})), emissive.name);
     };
@@ -182,11 +185,13 @@ export function loadTextureBank(scene, definition, maximumLayers) {
 
 
 export class VoxelTextureArrayPlugin extends MaterialPluginBase {
-  constructor(material, textureBank, climateField = null) {
+  constructor(material, textureBank, climateField = null, {neutralSurface = false} = {}) {
     super(material, "OpenVoxelTextureArray", 200, {}, true, false, true);
+    if (typeof neutralSurface !== "boolean") throw new TypeError("Voxel texture neutralSurface must be boolean");
     this.registerForExtraEvents = true;
     this.textureBank = textureBank;
     this.climateField = climateField;
+    this.neutralSurface = neutralSurface;
     this.animationLayerOffset = 0;
     this._enable(true);
   }
@@ -200,6 +205,7 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
   }
 
   isReadyForSubMesh() {
+    if (this.neutralSurface) return true;
     return this.textureBank.albedo.isReady()
       && this.textureBank.normal.isReady()
       && this.textureBank.material.isReady()
@@ -207,27 +213,32 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
   }
 
   prepareDefinesBeforeAttributes(defines) {
+    if (this.neutralSurface) return;
     defines._needUVs = true;
     defines.MAINUV1 = true;
   }
 
   getAttributes(attributes) {
-    attributes.push("textureLayer", "tintRole");
+    if (this.neutralSurface) attributes.push("tintRole");
+    else attributes.push("textureLayer", "tintRole");
   }
 
   getSamplers(samplers) {
+    if (this.neutralSurface) return;
     samplers.push("ovAlbedoSampler", "ovNormalSampler", "ovMaterialSampler", "ovEmissiveSampler");
   }
 
   getUniforms() {
-    return {ubo: [
-      {name: "ovAnimationLayerOffset", size: 1, type: "float"},
+    const ubo = [
       {name: "ovClimateBounds", size: 4, type: "vec4"},
       ...Array.from({length: 8}, (_, index) => ({name: "ovClimate" + index, size: 4, type: "vec4"})),
-    ]};
+    ];
+    if (!this.neutralSurface) ubo.unshift({name: "ovAnimationLayerOffset", size: 1, type: "float"});
+    return {ubo};
   }
 
   bindForSubMesh(uniformBuffer) {
+    if (this.neutralSurface) return;
     uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
     uniformBuffer.setTexture("ovAlbedoSampler", this.textureBank.albedo);
     uniformBuffer.setTexture("ovNormalSampler", this.textureBank.normal);
@@ -236,7 +247,7 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
   }
 
   hardBindForSubMesh(uniformBuffer, _scene, _engine, subMesh) {
-    uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
+    if (!this.neutralSurface) uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
     const mesh = subMesh.getRenderingMesh();
     if (this.climateField === null || !mesh.hasClimateTint) return;
     const climate = this.climateField.forPosition(mesh.position);
@@ -245,6 +256,7 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
   }
 
   hasTexture(texture) {
+    if (this.neutralSurface) return false;
     return texture === this.textureBank.albedo
       || texture === this.textureBank.normal
       || texture === this.textureBank.material
@@ -252,10 +264,40 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
   }
 
   getActiveTextures(textures) {
+    if (this.neutralSurface) return;
     textures.push(this.textureBank.albedo, this.textureBank.normal, this.textureBank.material, this.textureBank.emissive);
   }
 
   getCustomCode(shaderType) {
+    if (this.neutralSurface) {
+      if (shaderType === "vertex") {
+        return {
+          CUSTOM_VERTEX_DEFINITIONS: `
+attribute float tintRole;
+varying float ovTintRole;`,
+          CUSTOM_VERTEX_MAIN_END: `
+ovTintRole = tintRole;`,
+        };
+      }
+      if (shaderType !== "fragment") return null;
+      return {
+        CUSTOM_FRAGMENT_DEFINITIONS: `
+varying float ovTintRole;
+uniform vec4 ovClimateBounds;
+${Array.from({length: 8}, (_, index) => "uniform vec4 ovClimate" + index + ";").join("\n")}
+${climateTintShader}`,
+        CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
+vec4 ovClimateSample = vec4(18.0, 0.6, 0.375, 0.0);
+if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
+  vec3 amount = clamp((vPositionW - ovClimateBounds.xyz) / ovClimateBounds.w, 0.0, 1.0);
+  ovClimateSample = mix(
+    mix(mix(ovClimate0, ovClimate1, amount.x), mix(ovClimate2, ovClimate3, amount.x), amount.z),
+    mix(mix(ovClimate4, ovClimate5, amount.x), mix(ovClimate6, ovClimate7, amount.x), amount.z),
+    amount.y);
+}
+surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(vec3(1.0), ovTintRole, ovClimateSample));`,
+      };
+    }
     if (shaderType === "vertex") {
       return {
         CUSTOM_VERTEX_DEFINITIONS: `
@@ -310,7 +352,7 @@ ovNormalSample = texture(ovNormalSampler, ovTextureCoordinate);
 ovMaterialSample = texture(ovMaterialSampler, ovTextureCoordinate);
 ovEmissiveSample = texture(ovEmissiveSampler, ovTextureCoordinate);`,
       CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
-vec4 ovClimateSample = vec4(18.0, 0.6, 0.0, 0.0);
+vec4 ovClimateSample = vec4(18.0, 0.6, 0.375, 0.0);
 if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
   vec3 amount = clamp((vPositionW - ovClimateBounds.xyz) / ovClimateBounds.w, 0.0, 1.0);
   ovClimateSample = mix(

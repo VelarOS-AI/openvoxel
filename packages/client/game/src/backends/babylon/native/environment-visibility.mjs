@@ -1,8 +1,8 @@
 const maximumFogDensityFactor = 4.4;
 const clearFogStartRatio = 0.66;
 const clearFogEndRatio = 0.9;
-const severeFogStartRatio = 0.54;
-const severeFogEndRatio = 0.78;
+const severeFogStartRatio = 0.6;
+const severeFogEndRatio = 0.83;
 
 function requirePositiveFinite(value, label) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -13,12 +13,12 @@ function requirePositiveFinite(value, label) {
 
 /**
  * Keeps weather haze inside the streamed terrain horizon. `renderDistance`
- * is the nominal Chunk-window radius measured in world units. The radius-five
- * spherical window keeps same-height terrain complete for at least four Chunk
- * edges from any point in the current Chunk. Haze begins before that boundary
- * and finishes gradually beyond it, preserving a useful landscape view instead
- * of turning ordinary weather into a wall. Sky, clouds and celestial meshes
- * bypass scene fog separately.
+ * is the nominal Chunk-window radius measured in world units. The radius-six
+ * forward window keeps same-height terrain complete for at least five Chunk
+ * edges from any point in the current Chunk. Even severe weather starts beyond
+ * the near landscape and fades through the streamed boundary, so rain reads as
+ * depth instead of a gray wall. Sky, clouds and celestial meshes bypass scene
+ * fog separately.
  */
 export function environmentFogRange(renderDistance, densityFactor) {
   renderDistance = requirePositiveFinite(renderDistance, "Environment render distance");

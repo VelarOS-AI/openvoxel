@@ -61,6 +61,65 @@ test("texture bank roles follow model behavior instead of a reserved model key",
   );
 });
 
+test("front textures participate in texture bank planning", () => {
+  const model = "example:model/oriented-cube";
+  const side = "example:texture/oriented-side";
+  const front = "example:texture/oriented-front";
+  const blockCatalog = {catalog: {componentProfiles: [{render: {
+    model,
+    material: "example:material/terrain",
+    layer: "opaque",
+    textures: {all: side, front},
+    animation: null,
+  }}]}};
+  const plan = planTextureBanks(blockCatalog, [], [], [{key: model, kind: "cube"}]);
+
+  assert.equal(plan.assignments.get(side), "opaque");
+  assert.equal(plan.assignments.get(front), "opaque");
+});
+
+test("attachment textures use their own cutout bank without changing the host fluid bank", () => {
+  const fluidModel = "example:model/fluid";
+  const attachmentModel = "example:model/submerged-cross";
+  const fluidTexture = "example:texture/water";
+  const attachmentTexture = "example:texture/seagrass";
+  const blockCatalog = {catalog: {componentProfiles: [{render: {
+    model: fluidModel,
+    material: "example:material/water",
+    layer: "translucent",
+    textures: {all: fluidTexture},
+    attachments: [{
+      model: attachmentModel,
+      material: "example:material/cross",
+      layer: "cutout",
+      textures: {all: attachmentTexture},
+    }],
+  }}]}};
+  const plan = planTextureBanks(
+    blockCatalog,
+    [],
+    [{key: "example:material/cross", alphaCutoff: 0.45}],
+    [{key: fluidModel, kind: "fluid"}, {key: attachmentModel, kind: "submerged_cross"}],
+  );
+
+  assert.equal(plan.assignments.get(fluidTexture), "fluid");
+  assert.equal(plan.assignments.get(attachmentTexture), "cutout");
+  assert.equal(plan.textureAlphaCutoffs.get(attachmentTexture), 0.45);
+});
+
+test("water normal waves are pinned to the shared fluid bank independently of block animation", () => {
+  const water = "example:texture/water-normal";
+  const flow = "example:texture/water-flow-normal";
+  const plan = planTextureBanks(
+    {catalog: {componentProfiles: []}},
+    [],
+    [{materialEffect: "water", waterOptics: {waves: [{normalTexture: water}, {normalTexture: flow}]}}],
+    [],
+  );
+  assert.equal(plan.assignments.get(water), "fluid");
+  assert.equal(plan.assignments.get(flow), "fluid");
+});
+
 test("texture array storage converts RGBA8 layers to GPU row order without changing channels", () => {
   const topToBottom = Buffer.from([
     1, 2, 3, 4, 5, 6, 7, 8,
@@ -145,7 +204,7 @@ function identityLevel(name, width, height) {
 function identityFixture(overrides = {}) {
   return {
     manifest: {
-      formatVersion: 10,
+      formatVersion: 11,
       owner: "openvoxel",
       textureCatalogs: ["textures/terrain.yml", "textures/fluid.yml"],
       texturePipeline: {tileSize: 32, maximumArrayLayers: 256, mipmaps: true},
@@ -174,7 +233,7 @@ function identityFixture(overrides = {}) {
       ["openvoxel:texture/block/stone", "opaque"],
       ["openvoxel:texture/block/dirt", "opaque"],
     ]),
-    payload: {artifactVersion: 8, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
+    payload: {artifactVersion: 9, textureBanks: [{key: "openvoxel:texture-bank/opaque"}]},
     bankChannels: [
       {role: "opaque", levels: [identityLevel("opaque-0", 2, 2), identityLevel("opaque-1", 1, 1)]},
       {role: "cutout", levels: [identityLevel("cutout-0", 2, 2), identityLevel("cutout-1", 1, 1)]},
@@ -296,12 +355,21 @@ test("generated material metadata distinguishes water, solid, and permeable prec
     "openvoxel:material/water": "water",
   };
   assert.deepEqual(Object.fromEntries(artifact.materials.map((material) => [material.key, material.precipitationSurface])), expected);
+  const water = artifact.materials.find((material) => material.key === "openvoxel:material/water");
+  assert.equal(water.materialEffect, "water");
+  assert.equal(water.waterOptics.indexOfRefraction, 1.333);
+  assert.equal(water.waterOptics.waves.length, 2);
+  assert.equal(new Set(water.waterOptics.waves.map((wave) => wave.normalTexture)).size, 2);
+  assert.ok(artifact.materials.filter((material) => material !== water)
+    .every((material) => material.materialEffect === "standard" && material.waterOptics === null));
+  const textures = new Map(artifact.textures.map((texture) => [texture.key, texture]));
+  assert.ok(water.waterOptics.waves.every((wave) => textures.get(wave.normalTexture)?.bankKey === "openvoxel:texture-bank/fluid"));
 });
 
 test("resource pack exposes four generated texture arrays and a closed authoring inventory", async () => {
   const {artifact, audit, bankChannels} = await outputPromise;
-  assert.equal(artifact.artifactVersion, 8);
-  assert.equal(artifact.formatVersion, 8);
+  assert.equal(artifact.artifactVersion, 9);
+  assert.equal(artifact.formatVersion, 9);
   assert.equal(audit.formatVersion, 4);
   assert.deepEqual(Object.keys(artifact.environment), ["sky", "clouds", "precipitation"]);
   assert.deepEqual(Object.keys(artifact.environment.sky), ["sunDataUrl", "glowDataUrl", "starDataUrl", "moonDataUrls"]);
@@ -321,8 +389,8 @@ test("resource pack exposes four generated texture arrays and a closed authoring
   assert.equal(artifact.textureBanks.length, 4);
   assert.deepEqual(artifact.textureBanks.map((bank) => bank.role), roles);
   assert.deepEqual(bankChannels.map((bank) => bank.role), roles);
-  assert.equal(artifact.textures.length, 45);
-  assert.equal(artifact.textures.reduce((total, texture) => total + texture.variants.length, 0), 57);
+  assert.equal(artifact.textures.length, 93);
+  assert.equal(artifact.textures.reduce((total, texture) => total + texture.variants.length, 0), 105);
   assert.deepEqual(
     artifact.textures.map(({key}) => key),
     artifact.textures.map(({key}) => key).sort(),
@@ -356,9 +424,9 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     else assert.equal(texture.alphaCutoff, null, `${texture.key} non-cutout alpha cutoff`);
   }
 
-  assert.equal(audit.sourceImages.length, 94);
-  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 94);
-  assert.equal(audit.sourceImages.filter((source) => source.path.startsWith("textures/")).length, 79);
+  assert.equal(audit.sourceImages.length, 142);
+  assert.equal(new Set(audit.sourceImages.map((source) => source.path)).size, 142);
+  assert.equal(audit.sourceImages.filter((source) => source.path.startsWith("textures/")).length, 127);
   assert.equal(audit.sourceImages.filter((source) => source.path.includes("/maps/")).length, 34);
   for (const source of audit.sourceImages.filter((candidate) => candidate.path.startsWith("textures/"))) {
     assert.equal(source.width, 32, `${source.path} width`);
@@ -404,12 +472,12 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     residentBytes: expectedEnvironmentDecodedRgbaBytes + expectedEnvironmentEncodedHeapBytes,
   });
   assert.deepEqual(audit.unusedFiles, []);
-  assert.equal(audit.textureCount, 45);
-  assert.equal(audit.variantCount, 57);
-  assert.deepEqual(audit.categories, {terrain: 20, vegetation: 21, fluid: 4});
+  assert.equal(audit.textureCount, 93);
+  assert.equal(audit.variantCount, 105);
+  assert.deepEqual(audit.categories, {terrain: 21, vegetation: 68, fluid: 4});
   assert.deepEqual(
     Object.fromEntries(audit.banks.map((bank) => [bank.role, bank.variantCount])),
-    {opaque: 40, cutout: 12, translucent: 1, fluid: 4},
+    {opaque: 49, cutout: 51, translucent: 1, fluid: 4},
   );
   for (const bank of audit.banks) {
     assert.equal(bank.storage, "texture_2d_array");
@@ -438,20 +506,20 @@ test("resource pack exposes four generated texture arrays and a closed authoring
     normal: {
       "authored-height": 19,
       "authored-normal": 4,
-      "fallback-albedo-height": 25,
-      "fallback-flat": 8,
+      "fallback-albedo-height": 29,
+      "fallback-flat": 52,
       composed: 1,
     },
     material: {
       "authored-material": 23,
-      "fallback-albedo-derived": 19,
-      "fallback-uniform": 14,
+      "fallback-albedo-derived": 23,
+      "fallback-uniform": 58,
       composed: 1,
     },
-    emissive: {"authored-emissive": 2, composed: 1, generated: 54},
+    emissive: {"authored-emissive": 2, composed: 1, generated: 102},
   });
   const auditedVariants = audit.banks.flatMap((bank) => bank.variants);
-  assert.equal(auditedVariants.length, 57);
+  assert.equal(auditedVariants.length, 105);
   const stoneLayer = auditedVariants.find((variant) => variant.textureKey === "openvoxel:texture/block/stone" && variant.variantIndex === 1);
   assert.ok(stoneLayer != null, "Stone composed variant must be individually auditable");
   assert.deepEqual(stoneLayer.channels.albedo, {mode: "composed", inputs: ["authored-albedo"]});
@@ -479,7 +547,7 @@ test("resource hash is deterministic and covers every authoring and generated bo
       textureCatalogs: [...fixture.manifest.textureCatalogs].reverse(),
       environment: fixture.manifest.environment,
       owner: "openvoxel",
-      formatVersion: 10,
+      formatVersion: 11,
     },
     catalogs: [...fixture.catalogs].reverse().map((catalog) => ({
       ...catalog,
@@ -514,7 +582,7 @@ test("resource hash is deterministic and covers every authoring and generated bo
       ["openvoxel:texture/block/stone", "cutout"],
       ["openvoxel:texture/block/dirt", "opaque"],
     ])}],
-    ["artifact payload", {payload: {artifactVersion: 8, textureBanks: [{key: "changed"}]}}],
+    ["artifact payload", {payload: {artifactVersion: 9, textureBanks: [{key: "changed"}]}}],
     ["base generated bank bytes", {bankChannels: fixture.bankChannels.map((bank) => bank.role === "opaque"
       ? {...bank, levels: [{...bank.levels[0], albedoBytes: Buffer.from("changed")}, bank.levels[1]]}
       : bank)}],
@@ -531,8 +599,9 @@ test("resource hash is deterministic and covers every authoring and generated bo
 });
 
 test("resource pack identity is reproducible across complete builds", async () => {
-  const [first, second] = await Promise.all([outputPromise, buildResourcePack()]);
-  assert.equal(second.artifact.resourceHash, first.artifact.resourceHash);
+  const expectedHash = (await outputPromise).artifact.resourceHash;
+  const second = await buildResourcePack();
+  assert.equal(second.artifact.resourceHash, expectedHash);
 });
 
 test("every bank keeps complete mip levels and four RGBA8 channels aligned by layer", async () => {

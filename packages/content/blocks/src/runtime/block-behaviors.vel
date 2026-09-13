@@ -1,0 +1,51 @@
+import {builtinBlockIdentities} from "@openvoxel/identities"
+import {BlockBehavior, BlockBehaviorKind, BlockStateProperty, CropGrowthBlockBehavior, FluidBlockBehavior, SupportBlockBehavior} from "../definition/block.vel"
+import {BlockRegistry} from "./block-registry.vel"
+
+/// 返回一组已验证行为中的作物生长契约。目录编译器保证同类行为唯一，调用方
+/// 因而不需要重复猜测 age 属性名或阶段时长。
+export def findCropGrowthBehavior(behaviors: readonly List<BlockBehavior>) -> CropGrowthBlockBehavior?:
+    for behavior in behaviors:
+        match behavior.kind:
+            case BlockBehaviorKind.cropGrowth: return behavior
+            case _: pass
+    return null
+
+/// 返回流体身份及其有限状态属性契约。复合水体失去附件支撑时使用这份声明
+/// 回到规范流体，而不是把 level / falling 猜成固定属性名。
+export def findFluidBehavior(behaviors: readonly List<BlockBehavior>) -> FluidBlockBehavior?:
+    for behavior in behaviors:
+        match behavior.kind:
+            case BlockBehaviorKind.fluid: return behavior
+            case _: pass
+    return null
+
+/// 返回相邻方块变化后需要重新验证的支撑契约。
+export def findSupportBehavior(behaviors: readonly List<BlockBehavior>) -> SupportBlockBehavior?:
+    for behavior in behaviors:
+        match behavior.kind:
+            case BlockBehaviorKind.support: return behavior
+            case _: pass
+    return null
+
+def propertyValue(state: readonly List<BlockStateProperty>, name: string):
+    const property = state.find(entry => entry.name == name)
+    assert property != null else f"Supported fluid state is missing property {name}"
+    return property.value
+
+/// 失去支撑的普通附件变为空气；承载规范流体的复合方块只移除附件，并把
+/// 液面等级与下落状态逐项投影到 canonicalBlock。
+export def unsupportedBlockStateRuntimeId(registry: readonly BlockRegistry, runtimeId: number) -> number:
+    const state = registry.requireStateByRuntimeId(runtimeId)
+    const fluid = findFluidBehavior(state.behaviors)
+    if fluid == null: return registry.defaultStateRuntimeIdForKey(builtinBlockIdentities.blocks.air)
+    if fluid.canonicalBlock == state.blockKey: return runtimeId
+
+    const canonical = registry.requireTypeByKey(fluid.canonicalBlock)
+    const level = propertyValue(state.properties, fluid.levelProperty)
+    const falling = propertyValue(state.properties, fluid.fallingProperty)
+    const properties = canonical.defaultState.copy()
+    for property, index in properties:
+        if property.name == fluid.levelProperty: properties[index] = {name: property.name, value: level}
+        else if property.name == fluid.fallingProperty: properties[index] = {name: property.name, value: falling}
+    return registry.stateRuntimeIdFor(canonical.key, properties)

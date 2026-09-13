@@ -70,19 +70,35 @@ function textureCategory(texture, bankByKey) {
   return "terrain";
 }
 
-function stateOwnsTexture(state, textureKey, animations) {
-  if (state.pipelineKey === null || state.pipelineKey === undefined) return false;
-  const textures = state.textures;
+function renderOwnerOwnsTexture(owner, textureKey, animations) {
+  const textures = owner.textures;
   if (textures !== null && textures !== undefined
-    && [textures.top.key, textures.bottom.key, textures.side.key].includes(textureKey)) return true;
-  if (state.animationKey === null || state.animationKey === undefined) return false;
-  return animations.get(state.animationKey)?.frames.includes(textureKey) === true;
+    && [textures.top.key, textures.bottom.key, textures.side.key, textures.front?.key].includes(textureKey)) return true;
+  if (owner.animationKey === null || owner.animationKey === undefined) return false;
+  return animations.get(owner.animationKey)?.frames.includes(textureKey) === true;
 }
 
-function pipelineOwner(catalog, texture, animations) {
-  const owners = catalog.states
-    .filter((state) => stateOwnsTexture(state, texture.key, animations))
+function renderOwners(catalog) {
+  return catalog.states.flatMap((state) => {
+    const owners = state.pipelineKey === null || state.pipelineKey === undefined ? [] : [state];
+    return owners.concat(state.attachments);
+  });
+}
+
+export function materialYardPipelineOwner(catalog, texture, animations, materials) {
+  const candidates = renderOwners(catalog);
+  let owners = candidates
+    .filter((owner) => renderOwnerOwnsTexture(owner, texture.key, animations))
     .sort((left, right) => left.runtimeId - right.runtimeId);
+  if (owners.length === 0) {
+    const effectMaterialKeys = new Set(materials
+      .filter((material) => material.materialEffect === "water"
+        && material.waterOptics.waves.some((wave) => wave.normalTexture === texture.key))
+      .map((material) => material.key));
+    owners = candidates
+      .filter((owner) => effectMaterialKeys.has(owner.materialKey))
+      .sort((left, right) => left.runtimeId - right.runtimeId);
+  }
   const owner = owners[0];
   if (owner === undefined || owner.layer === null || owner.layer === undefined
     || owner.bankKey === null || owner.bankKey === undefined
@@ -197,7 +213,7 @@ export function createMaterialYardScene(catalog, resourcePack, channelView = "pb
     const zStart = nextZ;
     const textureSamples = new Map(textures.map((texture) => [texture.key, []]));
     for (const [index, {texture, variant}] of physicalSamples.entries()) {
-      const owner = pipelineOwner(catalog, texture, animationByKey);
+      const owner = materialYardPipelineOwner(catalog, texture, animationByKey, resourcePack.materials);
       const pipelineKey = `${owner.layer}|${owner.bankKey}|${owner.materialKey}|-`;
       let batch = groups.get(pipelineKey);
       if (batch === undefined) {
@@ -224,7 +240,7 @@ export function createMaterialYardScene(catalog, resourcePack, channelView = "pb
       sampleCount += 1;
     }
     for (const texture of textures) {
-      const owner = pipelineOwner(catalog, texture, animationByKey);
+      const owner = materialYardPipelineOwner(catalog, texture, animationByKey, resourcePack.materials);
       textureEvidence.push({
         key: texture.key,
         category,

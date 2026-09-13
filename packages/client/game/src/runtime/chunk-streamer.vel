@@ -9,14 +9,14 @@ export type ChunkStreamSource:
     unload: (positions: readonly List<readonly ChunkPosition>) -> null
 
 export type ChunkStreamer:
-    request: (view: readonly ChunkWindowView) -> null
+    request: (view: ChunkWindowView) -> null
     resume: () -> null
     pending: () -> number
     close: () -> Promise<null>
 
-type RequestedChunkWindow:
-    readonly view: readonly ChunkWindowView
-    readonly version: number
+readonly type RequestedChunkWindow:
+    view: ChunkWindowView
+    version: number
 
 /// 一个流送所有者只保留最新目标。正在提交的有界批次完成 load/unload 配对后
 /// 才切到新目标，既不会因持续移动饿死生成，也不会先挖空当前驻留窗口。
@@ -29,15 +29,15 @@ export def chunkStreamer(
     failed: (message: string) -> null,
     batchSize: number = 4,
 ) -> ChunkStreamer:
-    let requested: readonly RequestedChunkWindow? = null
-    let previousView: readonly ChunkWindowView? = null
+    let requested: RequestedChunkWindow? = null
+    let previousView: ChunkWindowView? = null
     let version = 0
     let loading = 0
     let owner: Task<null>? = null
     let closed = false
     let closing: Promise<null>? = null
 
-    async def stream(request: readonly RequestedChunkWindow, cancellation: Cancellation):
+    async def stream(request: RequestedChunkWindow, cancellation: Cancellation):
         const tracked = source.trackedPositions()
         const desired = streamedChunkPositions(request.view, minimumChunkY, maximumChunkY, tracked)
         const plan = planChunkWindow(desired, tracked)
@@ -83,7 +83,7 @@ export def chunkStreamer(
         if closed or not ready() or owner != null or requested == null: return
         owner = task(pump)
 
-    def request(view: readonly ChunkWindowView):
+    def request(view: ChunkWindowView):
         if closed or not shouldRefreshChunkWindow(previousView, view): return
         previousView = view
         version += 1

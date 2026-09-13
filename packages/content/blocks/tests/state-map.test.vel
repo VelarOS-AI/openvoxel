@@ -1,0 +1,62 @@
+import {expect} from "velar/test"
+import {sha256Text} from "velar/hash"
+import {blockStateCatalog, blockStateRuntimeId} from "../src/index.vel"
+
+type StateIdMapping:
+    runtimeId: number
+    stateKey: string
+
+def stateMappingsFrom(runtimeId: number) -> List<StateIdMapping>:
+    return blockStateCatalog()
+        .filter(state => state.runtimeId >= runtimeId)
+        .map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
+
+test "built-in state map preserves the legacy range and appends new states":
+    const legacyMappings: List<StateIdMapping> = blockStateCatalog()
+        .filter(state => state.runtimeId < 183)
+        .map(state => ({runtimeId: state.runtimeId, stateKey: state.stateKey}))
+    expect(legacyMappings.size).toBe(183)
+    expect(sha256Text(Json.stableStringify(legacyMappings))).toBe("e6e74b3af819c55d563a4688f7945ef5319369e5b6721cb5b26e268879e81832")
+    expect(stateMappingsFrom(183).filter(mapping => mapping.runtimeId < 199)).toEqual([
+        {runtimeId: 183, stateKey: "openvoxel:cotton[age=0]"},
+        {runtimeId: 184, stateKey: "openvoxel:cotton[age=1]"},
+        {runtimeId: 185, stateKey: "openvoxel:cotton[age=2]"},
+        {runtimeId: 186, stateKey: "openvoxel:large_dry_bush"},
+        {runtimeId: 187, stateKey: "openvoxel:pumpkin[facing=east]"},
+        {runtimeId: 188, stateKey: "openvoxel:pumpkin[facing=north]"},
+        {runtimeId: 189, stateKey: "openvoxel:pumpkin[facing=south]"},
+        {runtimeId: 190, stateKey: "openvoxel:pumpkin[facing=west]"},
+        {runtimeId: 191, stateKey: "openvoxel:rye[age=0]"},
+        {runtimeId: 192, stateKey: "openvoxel:rye[age=1]"},
+        {runtimeId: 193, stateKey: "openvoxel:rye[age=2]"},
+        {runtimeId: 194, stateKey: "openvoxel:rye[age=3]"},
+        {runtimeId: 195, stateKey: "openvoxel:rye[age=4]"},
+        {runtimeId: 196, stateKey: "openvoxel:rye[age=5]"},
+        {runtimeId: 197, stateKey: "openvoxel:rye[age=6]"},
+        {runtimeId: 198, stateKey: "openvoxel:rye[age=7]"},
+    ])
+    const ecologyMappings = stateMappingsFrom(199).filter(mapping => mapping.runtimeId < 361)
+    expect(ecologyMappings.size).toBe(162)
+    for mapping, index in ecologyMappings: expect(mapping.runtimeId).toBe(199 + index)
+    expect(sha256Text(Json.stableStringify(ecologyMappings))).toBe("d1780a13398ce04fe7d44b8098dd5c09b79cab8b7bdc0fe2d1eb0a6babc502ee")
+    expect(stateMappingsFrom(361)).toEqual([
+        {runtimeId: 361, stateKey: "openvoxel:tall_spruce_leaves[distance=1,persistent=false]"},
+        {runtimeId: 362, stateKey: "openvoxel:tall_spruce_leaves[distance=1,persistent=true]"},
+        {runtimeId: 363, stateKey: "openvoxel:tall_spruce_leaves[distance=2,persistent=false]"},
+        {runtimeId: 364, stateKey: "openvoxel:tall_spruce_leaves[distance=2,persistent=true]"},
+        {runtimeId: 365, stateKey: "openvoxel:tall_spruce_leaves[distance=3,persistent=false]"},
+        {runtimeId: 366, stateKey: "openvoxel:tall_spruce_leaves[distance=3,persistent=true]"},
+        {runtimeId: 367, stateKey: "openvoxel:tall_spruce_leaves[distance=4,persistent=false]"},
+        {runtimeId: 368, stateKey: "openvoxel:tall_spruce_leaves[distance=4,persistent=true]"},
+        {runtimeId: 369, stateKey: "openvoxel:tall_spruce_leaves[distance=5,persistent=false]"},
+        {runtimeId: 370, stateKey: "openvoxel:tall_spruce_leaves[distance=5,persistent=true]"},
+        {runtimeId: 371, stateKey: "openvoxel:tall_spruce_leaves[distance=6,persistent=false]"},
+        {runtimeId: 372, stateKey: "openvoxel:tall_spruce_leaves[distance=6,persistent=true]"},
+        {runtimeId: 373, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=false]"},
+        {runtimeId: 374, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=true]"},
+        {runtimeId: 375, stateKey: "openvoxel:marble"},
+    ])
+    expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "east"}])).toBe(187)
+    expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "north"}])).toBe(188)
+    expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "south"}])).toBe(189)
+    expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "west"}])).toBe(190)

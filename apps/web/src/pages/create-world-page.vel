@@ -1,6 +1,5 @@
-import {localBackend} from "@openvoxel/client"
-import {CreateWorldRequest} from "@openvoxel/protocol"
-import {WorldGameMode} from "@openvoxel/world"
+import {deferredWorldLibrary} from "../worlds/world-library-operations.vel"
+import {WorldGameMode} from "@openvoxel/world/game-mode"
 import {Head} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
@@ -15,7 +14,7 @@ import {presetName, worldCover} from "../worlds/world-presentation.vel"
 import {worldRoute} from "../worlds/world-route.vel"
 
 export component CreateWorldPage:
-    const backend = localBackend()
+    const backend = deferredWorldLibrary()
     const lifetime = asyncPageLifetime()
     state name = "New World"
     state seed = ""
@@ -44,14 +43,10 @@ export component CreateWorldPage:
             const requestedId = worldId.trim()
             const id = requestedId.isBlank() ? worldIdFromName(cleanName) : requestedId
             const cleanSeed = seed.trim().isBlank() ? id : seed.trim()
-            const command: CreateWorldRequest = {id, name: cleanName, seed: cleanSeed, mode}
+            const command: SavedWorld = {id, name: cleanName, seed: cleanSeed, mode, preset, lastPlayed: "Created just now"}
             const created = await backend.createWorld(command)
             if not lifetime.owns(generation): return
-            rememberWorld(SavedWorld.from(created, {
-                mode: created.mode,
-                preset,
-                lastPlayed: "Created just now",
-            }))
+            rememberWorld(created)
             navigate(worldRoute(created.id))
         catch error:
             if lifetime.owns(generation): failure = error.message

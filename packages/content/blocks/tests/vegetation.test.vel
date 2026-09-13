@@ -1,0 +1,71 @@
+import {BlockBehaviorKind, blockStateCatalog, blockStateDefinition, blockStateRuntimeId, blockTypeDefinition, defaultBlockStateRuntimeId, hasBlockBehavior, hasBlockTag} from "../src/index.vel"
+import {builtinIdentities} from "@openvoxel/identities"
+import {expect} from "velar/test"
+
+test "crop ages select every authored stage texture":
+    const ryeTextures = [
+        builtinIdentities.textures.block.rye0,
+        builtinIdentities.textures.block.rye1,
+        builtinIdentities.textures.block.rye2,
+        builtinIdentities.textures.block.rye3,
+        builtinIdentities.textures.block.rye4,
+        builtinIdentities.textures.block.rye5,
+        builtinIdentities.textures.block.rye6,
+        builtinIdentities.textures.block.rye7,
+    ]
+    for texture, age in ryeTextures:
+        const state = blockStateDefinition(blockStateRuntimeId(builtinIdentities.blocks.rye, [{name: "age", value: age}]))
+        expect(state.render.textures?.all).toBe(texture)
+    expect(blockStateCatalog().filter(state => state.blockKey == builtinIdentities.blocks.rye).size).toBe(8)
+
+    const cottonTextures = [
+        builtinIdentities.textures.block.cotton0,
+        builtinIdentities.textures.block.cotton1,
+        builtinIdentities.textures.block.cotton2,
+    ]
+    for texture, age in cottonTextures:
+        const state = blockStateDefinition(blockStateRuntimeId(builtinIdentities.blocks.cotton, [{name: "age", value: age}]))
+        expect(state.render.textures?.all).toBe(texture)
+    expect(blockStateCatalog().filter(state => state.blockKey == builtinIdentities.blocks.cotton).size).toBe(3)
+    expect(hasBlockBehavior(defaultBlockStateRuntimeId(builtinIdentities.blocks.rye), BlockBehaviorKind.support)).toBe(true)
+    expect(hasBlockBehavior(defaultBlockStateRuntimeId(builtinIdentities.blocks.cotton), BlockBehaviorKind.support)).toBe(true)
+
+test "tree species use distinct climate tint policies":
+    expect(blockTypeDefinition(builtinIdentities.blocks.oakLeaves).render.tint).toBe(builtinIdentities.tints.deciduousFoliage)
+    expect(blockTypeDefinition(builtinIdentities.blocks.birchLeaves).render.tint).toBe(builtinIdentities.tints.birchFoliage)
+    expect(blockTypeDefinition(builtinIdentities.blocks.poplarLeaves).render.tint).toBe(builtinIdentities.tints.poplarFoliage)
+    expect(blockTypeDefinition(builtinIdentities.blocks.spruceLeaves).render.tint).toBe(builtinIdentities.tints.evergreenFoliage)
+    expect(blockTypeDefinition(builtinIdentities.blocks.tallSpruceLeaves).render.tint).toBe(builtinIdentities.tints.tallSpruceFoliage)
+    expect(blockTypeDefinition(builtinIdentities.blocks.tallSpruceLeaves).render.textures?.all).toBe(builtinIdentities.textures.block.tallSpruceLeaves)
+    expect(blockTypeDefinition(builtinIdentities.blocks.mimosaLeaves).render.tint).toBe(builtinIdentities.tints.drylandFoliage)
+    const leafTints = [
+        builtinIdentities.blocks.oakLeaves,
+        builtinIdentities.blocks.birchLeaves,
+        builtinIdentities.blocks.spruceLeaves,
+        builtinIdentities.blocks.tallSpruceLeaves,
+        builtinIdentities.blocks.mimosaLeaves,
+        builtinIdentities.blocks.poplarLeaves,
+    ].map(block => blockTypeDefinition(block).render.tint)
+    expect(Set(leafTints).size).toBe(6)
+
+test "tree leaves support seasonal snow":
+    for blockKey in [
+        builtinIdentities.blocks.oakLeaves,
+        builtinIdentities.blocks.birchLeaves,
+        builtinIdentities.blocks.spruceLeaves,
+        builtinIdentities.blocks.tallSpruceLeaves,
+        builtinIdentities.blocks.mimosaLeaves,
+        builtinIdentities.blocks.poplarLeaves,
+    ]: expect(hasBlockTag(defaultBlockStateRuntimeId(blockKey), builtinIdentities.tags.snowSupport)).toBe(true)
+
+test "cactus blocks support the segment directly above them":
+    expect(hasBlockTag(defaultBlockStateRuntimeId(builtinIdentities.blocks.cactus), builtinIdentities.tags.cactusSupport)).toBe(true)
+
+test "pumpkin exposes four horizontal states and a dedicated front texture":
+    for facing in ["north", "east", "south", "west"]:
+        const state = blockStateDefinition(blockStateRuntimeId(builtinIdentities.blocks.pumpkin, [{name: "facing", value: facing}]))
+        expect(state.render.textures?.top).toBe(builtinIdentities.textures.block.pumpkinTop)
+        expect(state.render.textures?.side).toBe(builtinIdentities.textures.block.pumpkinSide)
+        expect(state.render.textures?.front).toBe(builtinIdentities.textures.block.pumpkinFront)
+    expect(blockStateCatalog().filter(state => state.blockKey == builtinIdentities.blocks.pumpkin).size).toBe(4)
+    expect(blockTypeDefinition(builtinIdentities.blocks.largeDryBush).render.textures?.all).toBe(builtinIdentities.textures.block.largeDryBush)

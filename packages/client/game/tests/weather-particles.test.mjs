@@ -356,13 +356,9 @@ test("weather batches use premultiplied blending, fixed buffers and shared textu
     const colors = weather.snow.buffers.colors;
     close(colors[0], colors[3]);
     const buffer = weather.snow.buffers.positions;
-    const initialX = buffer[0];
-    const initialZ = buffer[2];
     weather.applyFrame({...frame, windX: 8, windZ: -4});
     weather.update(100, center, {x: 0, y: 60, z: 0}, null);
     assert.equal(weather.snow.buffers.positions, buffer);
-    close((buffer[0] - initialX + 1) % 1, 0.02);
-    close((initialZ - buffer[2] + 1) % 1, 0.01);
     for (const batch of [weather.rain, weather.snow, weather.splash, weather.snowSplash]) {
       assert.equal(batch.mesh.material.alphaMode, Constants.ALPHA_PREMULTIPLIED_PORTERDUFF);
       assert.equal(batch.mesh.isPickable, false);

@@ -1,0 +1,145 @@
+import {BlockBehaviorKind, BlockPropertyKind, BlockRegistry, findCropGrowthBehavior} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {Chunk, ChunkPosition, chunkBlockAtIndex} from "@openvoxel/world"
+import {EcologyCandidate, EcologyCandidateKind} from "../ecology-candidate.vel"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {SurvivalBlockPalette} from "./block-palette.vel"
+import {ColumnPlanner} from "./terrain.vel"
+import {DecorationPlanner, decorationVerticalBounds} from "./vegetation.vel"
+import {evictOldest} from "./lru-cache.vel"
+
+export type EcologyCandidatePlanner:
+    candidates: (position: readonly ChunkPosition) -> readonly List<EcologyCandidate>
+    remember: (chunk: readonly Chunk) -> readonly List<EcologyCandidate>
+
+type CropGrowthState:
+    ageProperty: string
+    age: number
+    maximumAge: number
+    epochsPerStage: number
+
+/// 生态候选缓存和地形列缓存有相同的有界生命周期；时间推进只重算投影，
+/// 不重新采样密度场、洞穴或树木。冰雪与作物复用同一份 Chunk 扫描和缓存，
+/// 因而每个生态 epoch 只投影稀疏状态，不重新执行生成阶段。
+export def ecologyCandidatePlanner(
+    profile: readonly WorldGeneratorDefinition,
+    blocks: readonly SurvivalBlockPalette,
+    registry: readonly BlockRegistry,
+    columns: ColumnPlanner,
+    decorations: DecorationPlanner,
+    generate: (position: readonly ChunkPosition) -> Chunk,
+) -> EcologyCandidatePlanner:
+    const cache: Map<string, readonly List<EcologyCandidate>> = Map()
+    // maximumTreeHeight 只覆盖树形的最高写入；季节候选还要观察它上方一格，
+    // 才能在树顶恰好越过 section 边界时生成积雪。
+    const maximumEcologyDecorationHeight = profile.vegetation.maximumTreeHeight + 1
+    const snowSupports: Set<number> = Set()
+    const canonicalWaterKey = registry.requireStateByRuntimeId(blocks.water).blockKey
+    const waterVolumeStates: Set<number> = Set()
+    for state in registry.states():
+        if registry.hasTag(state.runtimeId, builtinIdentities.tags.snowSupport): snowSupports.add(state.runtimeId)
+        for behavior in state.behaviors:
+            match behavior.kind:
+                case BlockBehaviorKind.fluid:
+                    if behavior.canonicalBlock == canonicalWaterKey: waterVolumeStates.add(state.runtimeId)
+                case _: pass
+
+    // 生长属性和节拍由方块行为直接声明；新增 Content Pack 作物无需修改生成器。
+    const cropGrowthStates: Map<number, CropGrowthState> = Map()
+    for state in registry.states():
+        const behavior = findCropGrowthBehavior(state.behaviors)
+        if behavior == null: continue
+        const ageProperty = behavior.ageProperty
+        const definition = registry.requireTypeByKey(state.blockKey)
+        const ageDefinition = definition.properties.find(property => property.name == ageProperty)
+        assert ageDefinition != null and ageDefinition.kind == BlockPropertyKind.integer else f"Crop {state.blockKey} requires its declared integer age property"
+        const age = state.properties.find(property => property.name == ageProperty)?.value
+        assert (age is number) and age.isInteger() and age >= ageDefinition.minimum and age <= ageDefinition.maximum else f"Crop {state.blockKey} has an invalid age state"
+        cropGrowthStates.set(state.runtimeId, {ageProperty, age, maximumAge: ageDefinition.maximum, epochsPerStage: behavior.epochsPerStage})
+
+    def remember(chunk: readonly Chunk) -> readonly List<EcologyCandidate>:
+        const position = chunk.position
+        const minimumY = position.y * 16
+        const maximumY = minimumY + 15
+        if minimumY > Math.max(profile.world.maximumNaturalSurfaceY + maximumEcologyDecorationHeight, profile.world.seaLevel) or maximumY < profile.world.minimumY:
+            return []
+        const key = f"{position.x}:{position.y}:{position.z}"
+        const existing = cache.get(key)
+        if existing != null:
+            cache.remove(key)
+            cache.set(key, existing)
+            return existing
+        const plan = columns.columns(position.x, position.z)
+        const decoration = decorations.decorations(position.x, position.z)
+        const decorationBounds = decorationVerticalBounds(decoration)
+        let minimumContentY = Math.min(plan.minimumSurfaceY, plan.minimumWaterLevel.floor())
+        let maximumContentY = Math.max(plan.maximumSurfaceY, plan.maximumWaterLevel.floor())
+        if decorationBounds != null:
+            minimumContentY = Math.min(minimumContentY, decorationBounds.minimumY)
+            maximumContentY = Math.max(maximumContentY, decorationBounds.maximumY + 1)
+        if maximumY < minimumContentY or minimumY > maximumContentY: return []
+        const topHeights: List<number> = []
+        for localZ in range(16):
+            for localX in range(16):
+                const sample = plan.sampleAt(plan.minimumX + localX, plan.minimumZ + localZ)
+                topHeights.append(Math.max(sample.surfaceY, plan.waterLevelAt(plan.minimumX + localX, plan.minimumZ + localZ).floor()))
+        for feature in decoration.features:
+            for write in feature.writes:
+                if (write.runtimeId not in snowSupports) or write.runtimeId == blocks.snow: continue
+                const x = feature.origin.x + write.x - plan.minimumX
+                const z = feature.origin.z + write.z - plan.minimumZ
+                if x < 0 or x >= 16 or z < 0 or z >= 16: continue
+                const index = x + z * 16
+                topHeights[index] = Math.max(topHeights[index], feature.origin.y + write.y)
+        let below: Chunk? = null
+        const output: List<EcologyCandidate> = []
+        for index in range(chunk.indices.size):
+            const runtimeId = chunkBlockAtIndex(chunk, index)
+            const x = index % 16
+            const y = (index / 256).floor()
+            const z = ((index % 256) / 16).floor()
+            const worldY = minimumY + y
+            const top = topHeights[x + z * 16]
+            if runtimeId == blocks.ice or ((runtimeId in waterVolumeStates) and worldY == top):
+                const warmState = runtimeId == blocks.ice ? blocks.water : runtimeId
+                output.append({position: {x, y, z}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: runtimeId, warmBlockStateRuntimeId: warmState, coldBlockStateRuntimeId: blocks.ice, exposed: worldY == top})
+            else if runtimeId == blocks.snow or (runtimeId == blocks.air and worldY == top + 1):
+                let support = blocks.air
+                if y > 0: support = chunkBlockAtIndex(chunk, index - 256)
+                else:
+                    if below == null: below = generate({x: position.x, y: position.y - 1, z: position.z})
+                    support = chunkBlockAtIndex(below!, x + 16 * z + 256 * 15)
+                output.append({position: {x, y, z}, kind: EcologyCandidateKind.snow, baselineBlockStateRuntimeId: runtimeId, warmBlockStateRuntimeId: blocks.air, coldBlockStateRuntimeId: blocks.snow, exposed: worldY == top + 1 and (support in snowSupports) and support != blocks.ice})
+            const growth = cropGrowthStates.get(runtimeId)
+            if growth != null:
+                output.append({
+                    position: {x, y, z},
+                    kind: EcologyCandidateKind.cropGrowth,
+                    baselineBlockStateRuntimeId: runtimeId,
+                    ageProperty: growth.ageProperty,
+                    baselineAge: growth.age,
+                    maximumAge: growth.maximumAge,
+                    epochsPerStage: growth.epochsPerStage,
+                })
+        if cache.size >= profile.sampling.columnCacheCapacity * 4: evictOldest(cache)
+        cache.set(key, output)
+        return output
+
+    def candidates(position: readonly ChunkPosition) -> readonly List<EcologyCandidate>:
+        const key = f"{position.x}:{position.y}:{position.z}"
+        const existing = cache.get(key)
+        if existing != null: return existing
+        const minimumY = position.y * 16
+        if minimumY > Math.max(profile.world.maximumNaturalSurfaceY + maximumEcologyDecorationHeight, profile.world.seaLevel) or minimumY + 15 < profile.world.minimumY:
+            return []
+        const plan = columns.columns(position.x, position.z)
+        const decorationBounds = decorationVerticalBounds(decorations.decorations(position.x, position.z))
+        let minimumContentY = Math.min(plan.minimumSurfaceY, plan.minimumWaterLevel.floor())
+        let maximumContentY = Math.max(plan.maximumSurfaceY, plan.maximumWaterLevel.floor())
+        if decorationBounds != null:
+            minimumContentY = Math.min(minimumContentY, decorationBounds.minimumY)
+            maximumContentY = Math.max(maximumContentY, decorationBounds.maximumY + 1)
+        if minimumY + 15 < minimumContentY or minimumY > maximumContentY: return []
+        return remember(generate(position))
+
+    return {candidates, remember}

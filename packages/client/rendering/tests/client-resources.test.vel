@@ -1,4 +1,4 @@
-import {BlockRenderLayer, basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
+import {BlockBehaviorKind, BlockComponentProfile, BlockRender, BlockRenderLayer, BlockStateProperty, PackedBlockStateDefinition, basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
 import {uint32Buffer} from "velar/binary"
 import {expect} from "velar/test"
@@ -6,7 +6,7 @@ import {builtinClientResourcePack} from "../src/builtin-resource-pack.vel"
 import {meshChunk} from "../src/mesher.vel"
 import {createClientRenderCatalog} from "../src/render-catalog.vel"
 import {ClientBlockModelKind} from "../src/contracts.vel"
-import {ClientAnimationResource, ClientMaterialResource, ClientPrecipitationSurface, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankLevel, ClientTextureBankRole, ClientTextureBankStorage, ClientTextureResource, validateClientResourcePack} from "../src/resource-pack.vel"
+import {ClientAnimationResource, ClientMaterialEffect, ClientMaterialResource, ClientModelResource, ClientPrecipitationSurface, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankLevel, ClientTextureBankRole, ClientTextureBankStorage, ClientTextureResource, ClientWaterNormalWave, ClientWaterOptics, validateClientResourcePack} from "../src/resource-pack.vel"
 
 def contentResponse() -> WorldContentResponse:
     return {
@@ -37,6 +37,91 @@ test "built-in resources resolve every world state without using catalog order a
     expect(catalog.requireState(cube.runtimeId).model).toBe(ClientBlockModelKind.cube)
     expect(cube.textures == null).toBe(false)
 
+test "render catalog projects facing and resolves the optional front texture":
+    const content = contentResponse()
+    const catalog = createClientRenderCatalog(content, builtinClientResourcePack)
+    const pumpkinStates = content.states.filter(state => state.blockKey == "openvoxel:pumpkin")
+    expect(pumpkinStates.size).toBe(4)
+    for state in pumpkinStates:
+        const facing = state.properties.find(property => property.name == "facing")?.value
+        assert facing is string else "Pumpkin state requires a facing"
+        expect(facing in ["north", "east", "south", "west"]).toBe(true)
+        const resolved = catalog.requireState(state.runtimeId)
+        expect(resolved.facing).toBe(facing)
+        const textures = resolved.textures
+        assert textures != null else "Pumpkin state requires resolved textures"
+        const front = textures.front
+        assert front != null else "Pumpkin state requires a front texture"
+        expect(front.key).toBe("openvoxel:texture/block/pumpkin_front")
+        expect(textures.side.key).toBe("openvoxel:texture/block/pumpkin_side")
+
+test "aquatic states retain fluid optics and resolve batched cutout attachments":
+    const content = contentResponse()
+    const catalog = createClientRenderCatalog(content, builtinClientResourcePack)
+    const expectations = [
+        {blockKey: "openvoxel:kelp", attachment: ClientBlockModelKind.submergedCross},
+        {blockKey: "openvoxel:seagrass", attachment: ClientBlockModelKind.submergedCross},
+        {blockKey: "openvoxel:sea_urchin", attachment: ClientBlockModelKind.submergedSurface},
+        {blockKey: "openvoxel:starfish", attachment: ClientBlockModelKind.submergedSurface},
+    ]
+    for expected in expectations:
+        const packedStates = content.states.filter(state => state.blockKey == expected.blockKey)
+        if expected.attachment == ClientBlockModelKind.submergedSurface:
+            expect(packedStates.size).toBe(32)
+            expect(packedStates.every(state => state.properties.every(property => property.name != "facing"))).toBe(true)
+        assert packedStates.size > 0 else f"Expected aquatic state {expected.blockKey}"
+        const packed = packedStates[0]
+        const state = catalog.requireState(packed.runtimeId)
+        expect(state.model).toBe(ClientBlockModelKind.fluid)
+        expect(state.canonicalFluidKey).toBe("openvoxel:water")
+        expect(state.level == packed.properties.find(property => property.name == "level")?.value).toBe(true)
+        expect(state.falling == packed.properties.find(property => property.name == "falling")?.value).toBe(true)
+        expect(state.layer).toBe(BlockRenderLayer.translucent)
+        expect(state.attachments.size).toBe(1)
+        expect(state.attachments[0].model).toBe(expected.attachment)
+        expect(state.attachments[0].layer).toBe(BlockRenderLayer.cutout)
+
+test "fluid projection follows declared property names":
+    const content = contentResponse()
+    const packed = content.states.find(state => state.blockKey == "openvoxel:water")
+    assert packed != null else "Expected water state"
+    const profileId = packed.componentProfileId
+    const runtimeId = packed.runtimeId
+    const renamed = WorldContentResponse.from(content, {
+        componentProfiles: content.componentProfiles.map(profile => profile.profileId == profileId ? BlockComponentProfile.from(BlockComponentProfile.parse(profile), {
+            behaviors: [{kind: BlockBehaviorKind.fluid, fluidKey: "test:water", canonicalBlock: "openvoxel:water", levelProperty: "depth", fallingProperty: "descending", tickRate: 5, viscosity: 1}],
+        }): profile),
+        states: content.states.map(state => state.runtimeId == runtimeId ? PackedBlockStateDefinition.from(state, {
+            properties: [{name: "depth", value: 7}, {name: "descending", value: true}],
+        }): state),
+    })
+    const resolved = createClientRenderCatalog(renamed, builtinClientResourcePack).requireState(packed.runtimeId)
+    expect(resolved.level).toBe(7)
+    expect(resolved.falling).toBe(true)
+
+test "authored submerged surfaces cannot request non-bottom facing before support owns it":
+    const content = contentResponse()
+    const packed = content.states.find(state => state.blockKey == "openvoxel:sea_urchin")
+    assert packed != null else "Expected sea urchin state"
+    const properties: List<BlockStateProperty> = packed.properties.map(property => BlockStateProperty.from(property))
+    properties.append({name: "facing", value: "north"})
+    const oriented = PackedBlockStateDefinition.from(packed, {
+        properties,
+    })
+    const invalid = WorldContentResponse.from(content, {
+        states: content.states.map(state => state.runtimeId == oriented.runtimeId ? oriented : state),
+    })
+    expect(() => createClientRenderCatalog(invalid, builtinClientResourcePack)).toThrow()
+
+test "submerged overlay models cannot replace the primary fluid volume":
+    const fluidModelKey = "openvoxel:model/block/fluid"
+    const invalid = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        models: builtinClientResourcePack.models.map(model => model.key == fluidModelKey
+            ? ClientModelResource.from(model, {kind: ClientBlockModelKind.submergedSurface})
+            : model),
+    })
+    expect(() => createClientRenderCatalog(contentResponse(), invalid)).toThrow()
+
 test "every rendered backend state produces visible geometry":
     const catalog = createClientRenderCatalog(contentResponse(), builtinClientResourcePack)
     const edge = 4
@@ -48,7 +133,7 @@ test "every rendered backend state produces visible geometry":
         volume[2 + paddedEdge * (2 + paddedEdge * 2)] = state.runtimeId
         const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, catalog.states, state.runtimeId)
         expect(mesh.visibleBlocks).toBe(1)
-        expect(mesh.quadCount > 0).toBe(true)
+        expect(mesh.batches.some(batch => batch.indices.size > 0)).toBe(true)
         expect(mesh.batches.size > 0).toBe(true)
         renderedStates += 1
     expect(renderedStates > 0).toBe(true)
@@ -101,8 +186,8 @@ test "resource packs fail before rendering when their target content build diffe
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
 test "built-in resources expose role-scoped generated texture arrays":
-    expect(builtinClientResourcePack.artifactVersion).toBe(8)
-    expect(builtinClientResourcePack.formatVersion).toBe(8)
+    expect(builtinClientResourcePack.artifactVersion).toBe(9)
+    expect(builtinClientResourcePack.formatVersion).toBe(9)
     expect(builtinClientResourcePack.textureBanks.size).toBe(4)
     const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
     expect(ClientTextureBankRole.opaque in roles).toBe(true)
@@ -147,8 +232,15 @@ test "material families preserve lighting, shadow, and PBR response semantics":
     expect(water.unlit).toBe(false)
     expect(magma.unlit).toBe(false)
     expect(water.environmentIntensity > terrain.environmentIntensity).toBe(true)
-    expect(water.clearCoat > terrain.clearCoat).toBe(true)
-    expect(water.clearCoatRoughness < magma.clearCoatRoughness).toBe(true)
+    expect(water.materialEffect).toBe(ClientMaterialEffect.water)
+    expect(terrain.materialEffect).toBe(ClientMaterialEffect.standard)
+    expect(terrain.waterOptics).toBe(null)
+    const waterOptics = water.waterOptics
+    assert waterOptics != null else "Expected dedicated water optics"
+    expect(waterOptics.indexOfRefraction).toBe(1.333)
+    expect(waterOptics.roughness).toBe(0.055)
+    expect(waterOptics.waves.size).toBe(2)
+    expect(Set(waterOptics.waves.map(wave => wave.normalTexture)).size).toBe(2)
     expect(cross.castsShadows).toBe(false)
     expect(terrain.castsShadows).toBe(true)
     expect(water.castsShadows).toBe(false)
@@ -175,6 +267,8 @@ test "material parsing rejects unrecognized precipitation surface values":
     const invalid: unknown = {
         key: material.key,
         precipitationSurface: "liquid",
+        materialEffect: material.materialEffect,
+        waterOptics: material.waterOptics,
         alpha: material.alpha,
         alphaCutoff: material.alphaCutoff,
         doubleSided: material.doubleSided,
@@ -186,10 +280,95 @@ test "material parsing rejects unrecognized precipitation surface values":
     }
     expect(() => ClientMaterialResource.parse(invalid)).toThrow()
 
+test "resource pack validation rejects malformed water optics":
+    const water = builtinClientResourcePack.materials.find(material => material.materialEffect == ClientMaterialEffect.water)
+    assert water != null else "Expected a water material"
+    const optics = water.waterOptics
+    assert optics != null else "Expected water optics"
+    const repeatedWave = ClientWaterNormalWave.from(optics.waves[1], {normalTexture: optics.waves[0].normalTexture})
+    const repeatedOptics = ClientWaterOptics.from(optics, {waves: [optics.waves[0], repeatedWave]})
+    const invalidWater = ClientMaterialResource.from(water, {waterOptics: repeatedOptics})
+    const waterKey = water.key
+    const pack = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        materials: builtinClientResourcePack.materials.map(material => material.key == waterKey ? invalidWater : material),
+    })
+    expect(() => validateClientResourcePack(pack)).toThrow()
+
+test "render catalog rejects water effects joined to non-fluid states":
+    const content = contentResponse()
+    const water = builtinClientResourcePack.materials.find(material => material.materialEffect == ClientMaterialEffect.water)
+    const opaque = content.componentProfiles.find(profile => profile.render.layer == BlockRenderLayer.opaque and profile.render.model != null)
+    assert water != null and opaque != null else "Expected water and opaque rendering resources"
+    const waterMaterial: ClientMaterialResource = water
+    const opaqueProfile: BlockComponentProfile = opaque
+    const invalidProfile = BlockComponentProfile.parse({
+        profileId: opaqueProfile.profileId,
+        physics: opaqueProfile.physics,
+        light: opaqueProfile.light,
+        render: BlockRender.parse({
+            model: opaqueProfile.render.model,
+            layer: opaqueProfile.render.layer,
+            material: waterMaterial.key,
+            textures: opaqueProfile.render.textures,
+            tint: opaqueProfile.render.tint,
+            animation: opaqueProfile.render.animation,
+            cullFaces: opaqueProfile.render.cullFaces,
+        }),
+        interaction: opaqueProfile.interaction,
+        behaviors: opaqueProfile.behaviors,
+    })
+    const invalidContent = WorldContentResponse.from(content, {
+        componentProfiles: content.componentProfiles.map(profile => profile.profileId == opaqueProfile.profileId ? invalidProfile : profile),
+    })
+    expect(() => createClientRenderCatalog(invalidContent, builtinClientResourcePack)).toThrow()
+
+test "render catalog rejects water waves stored outside the joined surface bank":
+    const water = builtinClientResourcePack.materials.find(material => material.materialEffect == ClientMaterialEffect.water)
+    assert water != null else "Expected a water material"
+    const waterMaterial: ClientMaterialResource = water
+    const optics = waterMaterial.waterOptics
+    assert optics != null else "Expected water optics"
+    const waterOptics: ClientWaterOptics = optics
+    const fluidBank = builtinClientResourcePack.textureBanks.find(bank => bank.role == ClientTextureBankRole.fluid)
+    assert fluidBank != null else "Expected a fluid texture bank"
+    const sourceFluidBank: ClientTextureBank = fluidBank
+    const alternateBankKey = "openvoxel:texture-bank/water-wave-test"
+    const alternateBank = ClientTextureBank.from(sourceFluidBank, {key: alternateBankKey})
+    const alternateTextures: List<ClientTextureResource> = []
+    for texture, index in builtinClientResourcePack.textures.filter(texture => texture.bankKey == sourceFluidBank.key):
+        alternateTextures.append(ClientTextureResource.from(texture, {
+            key: f"openvoxel:texture/testing/water_wave_{index}",
+            bankKey: alternateBankKey,
+        }))
+    const alternateWaves: List<ClientWaterNormalWave> = []
+    for wave in waterOptics.waves:
+        const sourceTexture = builtinClientResourcePack.textures.find(texture => texture.key == wave.normalTexture)
+        assert sourceTexture != null else "Expected a source water wave texture"
+        const selectedSourceTexture: ClientTextureResource = sourceTexture
+        const alternateTexture = alternateTextures.find(texture => texture.variants[0].layer == selectedSourceTexture.variants[0].layer)
+        assert alternateTexture != null else "Expected an alternate water wave texture"
+        alternateWaves.append(ClientWaterNormalWave.from(wave, {normalTexture: alternateTexture.key}))
+    const changedWater = ClientMaterialResource.from(waterMaterial, {
+        waterOptics: ClientWaterOptics.from(waterOptics, {waves: alternateWaves}),
+    })
+    const textureBanks: List<ClientTextureBank> = []
+    for bank in builtinClientResourcePack.textureBanks: textureBanks.append(bank)
+    textureBanks.append(alternateBank)
+    const textures: List<ClientTextureResource> = []
+    for texture in builtinClientResourcePack.textures: textures.append(texture)
+    for texture in alternateTextures: textures.append(texture)
+    const pack = ClientResourcePackArtifact.from(builtinClientResourcePack, {
+        textureBanks,
+        textures,
+        materials: builtinClientResourcePack.materials.map(material => material.key == waterMaterial.key ? changedWater : material),
+    })
+    validateClientResourcePack(pack)
+    expect(() => createClientRenderCatalog(contentResponse(), pack)).toThrow()
+
 test "resource pack validation rejects malformed array bytes and inert animations":
     const bank = builtinClientResourcePack.textureBanks[0]
     const firstLevel = bank.levels[0]
-    const malformedLevel = ClientTextureBankLevel.from(firstLevel, {albedoData: firstLevel.albedoData.replace("==", "A=")})
+    const malformedLevel = ClientTextureBankLevel.from(firstLevel, {albedoData: f"!{firstLevel.albedoData.slice(1)}"})
     const malformedBank = ClientTextureBank.from(bank, {
         levels: bank.levels.map((level, index) => index == 0 ? malformedLevel : level),
     })
@@ -198,7 +377,7 @@ test "resource pack validation rejects malformed array bytes and inert animation
     })
     expect(() => validateClientResourcePack(malformedData)).toThrow()
 
-    const repeatedLevels: List<readonly ClientTextureBankLevel> = []
+    const repeatedLevels: List<ClientTextureBankLevel> = []
     for level in bank.levels: repeatedLevels.append(level)
     repeatedLevels.append(bank.levels[bank.levels.size - 1])
     const repeatedFinalMip = ClientTextureBank.from(bank, {levels: repeatedLevels})
@@ -210,7 +389,7 @@ test "resource pack validation rejects malformed array bytes and inert animation
     const animation = builtinClientResourcePack.animations[0]
     const singleFrame = ClientAnimationResource.from(animation, {frames: [animation.frames[0]]})
     const repeatedFrame = ClientAnimationResource.from(animation, {frames: [animation.frames[0], animation.frames[0]]})
-    const withAnimation = (replacement: readonly ClientAnimationResource) => ClientResourcePackArtifact.from(builtinClientResourcePack, {
+    const withAnimation = (replacement: ClientAnimationResource) => ClientResourcePackArtifact.from(builtinClientResourcePack, {
         animations: builtinClientResourcePack.animations.map(current => current.key == animation.key ? replacement : current),
     })
     expect(() => validateClientResourcePack(withAnimation(singleFrame))).toThrow()

@@ -1,0 +1,15 @@
+import {ClientMeshSurface, MutableMeshBatch, batchFor, emitModelTriangle} from "./batch.vel"
+import {climateTintRole, southFace, textureForFace, topFace} from "./faces.vel"
+
+/// 资源模型在目录边界已经校验并解析；热路径只旋转顶点和追加到已有材质批次。
+export def emitAuthoredModel(batches: Map<string, MutableMeshBatch>, state: ClientMeshSurface, maximumFaces: number, x: number, y: number, z: number, worldX: number, worldY: number, worldZ: number):
+    const geometry = state.geometry
+    assert geometry != null else "Authored model requires geometry"
+    const facing = state.facing
+    const cosine = facing == "south" ? -1 : (facing == "east" or facing == "west" ? 0 : 1)
+    const sine = facing == "east" ? 1 : (facing == "west" ? -1 : 0)
+    const batch = batchFor(batches, state, maximumFaces)
+    for triangle in geometry.triangles:
+        const face = triangle.face == "top" ? topFace : southFace
+        const texture = textureForFace(state, face, worldX, worldY, worldZ)
+        emitModelTriangle(batch, state, triangle, texture, x, y, z, cosine, sine, climateTintRole(state, face))

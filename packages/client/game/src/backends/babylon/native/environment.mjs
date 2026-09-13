@@ -224,6 +224,8 @@ class BabylonVoxelEnvironment {
     this.sky.material.setColor3("ovHorizon", frame.horizon);
     this.sky.material.setColor3("ovGround", frame.ground);
     this.sky.material.setFloat("ovFlash", flash);
+    this.atmosphere ??= {};
+    Object.assign(this.atmosphere, {skyTop: frame.skyTop, horizon: frame.horizon, ground: frame.ground, flash});
 
     this.skyLight.intensity = 0.06 + frame.skyIntensity * 0.28 + flash * 0.2;
     this.skyLight.diffuse = Color3.Lerp(new Color3(0.22, 0.28, 0.48), new Color3(0.96, 0.98, 1), frame.daylightIntensity);

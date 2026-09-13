@@ -5,8 +5,8 @@ import {ChunkPosition, Coordinate2, WorldContentIdentity, WorldGameMode, WorldMa
 ///
 /// 路由不是协议包里的字符串常量。HTTP 路由由服务端注解直接声明，并由框架生成
 /// OpenAPI；这个包只拥有可以在网络上传输的数据形状和稳定版本事实。
-export const protocolVersion = 13
-export const clientContractVersion = 8
+export const protocolVersion = 14
+export const clientContractVersion = 9
 export const chunkBlockIndexOrder = "x + edge * (z + edge * y)"
 export const protocolServiceName = "openvoxel"
 export const httpEncoding = "json"
@@ -64,61 +64,61 @@ export type ClientContractResponse:
 
 /// 创建世界的 HTTP 输入。协议层只描述线上可传输字段；默认生成器、内容集合和
 /// 清单装配仍由 WorldRuntime 的创建用例决定。
-export type CreateWorldRequest:
-    readonly id: string
-    readonly name: string
-    readonly seed: string
-    readonly mode: WorldGameMode
-    readonly generator: string?
-    readonly contentPacks: readonly List<string>?
+export readonly type CreateWorldRequest:
+    id: string
+    name: string
+    seed: string
+    mode: WorldGameMode
+    generator: string?
+    contentPacks: readonly List<string>?
 
-export type TerrainChunkBatchRequest:
-    readonly positions: readonly List<readonly ChunkPosition>
+export readonly type TerrainChunkBatchRequest:
+    positions: readonly List<readonly ChunkPosition>
 
-export type TerrainChunkResponse:
-    readonly position: readonly ChunkPosition
-    readonly edge: number
-    readonly palette: readonly List<number>
-    readonly indices: readonly List<number>
+export readonly type TerrainChunkResponse:
+    position: readonly ChunkPosition
+    edge: number
+    palette: readonly List<number>
+    indices: readonly List<number>
 
-export type TerrainChunkBatchResponse:
-    readonly worldId: string
-    readonly chunks: readonly List<readonly TerrainChunkResponse>
+export readonly type TerrainChunkBatchResponse:
+    worldId: string
+    chunks: readonly List<TerrainChunkResponse>
 
 /// 地形采样的线上数据形状。
 ///
 /// 这里显式列出可公开字段，避免协议包依赖完整生成器实现。服务端 presentation
 /// 层负责把当前 TerrainSample 投影成这份稳定的传输契约。
-export type GenerationSampleResponse:
-    readonly worldId: string
-    readonly position: readonly Coordinate2
-    readonly surfaceY: number
-    readonly slope: number
-    readonly continentalness: number
-    readonly erosion: number
-    readonly ridge: number
-    readonly riverStrength: number
-    readonly temperature: number
-    readonly humidity: number
-    readonly forestDensity: number
-    readonly terrainType: string
-    readonly biome: string
+export readonly type GenerationSampleResponse:
+    worldId: string
+    position: readonly Coordinate2
+    surfaceY: number
+    slope: number
+    continentalness: number
+    erosion: number
+    ridge: number
+    riverStrength: number
+    temperature: number
+    humidity: number
+    forestDensity: number
+    terrainType: string
+    biome: string
 
-export type WorldContentResponse:
-    readonly content: readonly WorldContentIdentity
-    readonly schemaVersion: number
-    readonly catalogVersion: string
-    readonly stateMapHash: string
-    readonly generator: string
-    readonly generatorHash: string
-    readonly generatorCatalogHash: string
-    readonly minimumWorldY: number
-    readonly maximumWorldY: number
-    readonly seaLevel: number
-    readonly resources: readonly BlockRenderResources
-    readonly blocks: readonly List<readonly BlockDefinition>
-    readonly componentProfiles: readonly List<readonly BlockComponentProfile>
-    readonly states: readonly List<readonly PackedBlockStateDefinition>
+export readonly type WorldContentResponse:
+    content: WorldContentIdentity
+    schemaVersion: number
+    catalogVersion: string
+    stateMapHash: string
+    generator: string
+    generatorHash: string
+    generatorCatalogHash: string
+    minimumWorldY: number
+    maximumWorldY: number
+    seaLevel: number
+    resources: BlockRenderResources
+    blocks: readonly List<BlockDefinition>
+    componentProfiles: readonly List<BlockComponentProfile>
+    states: readonly List<PackedBlockStateDefinition>
 
 /// 世界启动数据只携带需要校验的事实，不发布另一套手写路由模板。
 export type WorldBootstrapResponse extends WorldManifest:

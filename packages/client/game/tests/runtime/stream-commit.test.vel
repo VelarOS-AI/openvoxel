@@ -79,7 +79,7 @@ test "repeated movement during batch completion keeps residence bounded and conv
         interruptAfterLoad = step != 256
         for batch in transition.batches:
             if not await commitStreamBatch(batch, load, unload, () => current): break
-        expect(resident.size <= 524).toBe(true)
+        expect(resident.size <= 771).toBe(true)
         if step == 256: expect(Set(resident.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
 
-    expect(peak <= 528).toBe(true)
+    expect(peak <= 775).toBe(true)

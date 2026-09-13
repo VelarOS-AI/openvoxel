@@ -1,30 +1,30 @@
 import {WorldEnvironmentSample, WorldPrecipitationKind, validateWorldEnvironmentSample, worldYearProgress} from "@openvoxel/world"
 
-export type WorldGraphicsVector3:
-    readonly x: number
-    readonly y: number
-    readonly z: number
+export readonly type WorldGraphicsVector3:
+    x: number
+    y: number
+    z: number
 
-export type WorldGraphicsColor:
-    readonly red: number
-    readonly green: number
-    readonly blue: number
+export readonly type WorldGraphicsColor:
+    red: number
+    green: number
+    blue: number
 
 /// 每帧只投影图形后端真正消费的有界数值。sunDirection 和 moonDirection 是
 /// 光线传播方向；天空中的天体位置使用其相反方向。
 export type WorldGraphicsEnvironmentFrame extends WorldEnvironmentSample:
-    readonly sunDirection: readonly WorldGraphicsVector3
-    readonly moonDirection: readonly WorldGraphicsVector3
+    readonly sunDirection: WorldGraphicsVector3
+    readonly moonDirection: WorldGraphicsVector3
     readonly daylightIntensity: number
     readonly nightIntensity: number
     readonly starIntensity: number
     readonly sunIntensity: number
     readonly moonIntensity: number
     readonly skyIntensity: number
-    readonly skyTop: readonly WorldGraphicsColor
-    readonly horizon: readonly WorldGraphicsColor
-    readonly ground: readonly WorldGraphicsColor
-    readonly fog: readonly WorldGraphicsColor
+    readonly skyTop: WorldGraphicsColor
+    readonly horizon: WorldGraphicsColor
+    readonly ground: WorldGraphicsColor
+    readonly fog: WorldGraphicsColor
     readonly fogDensityFactor: number
     readonly cloudOpacity: number
     readonly cloudBrightness: number
@@ -42,7 +42,7 @@ def color(red: number, green: number, blue: number) -> WorldGraphicsColor:
 
 def mix(left: number, right: number, amount: number) -> number: return left + (right - left) * amount
 
-def mixColor(left: readonly WorldGraphicsColor, right: readonly WorldGraphicsColor, amount: number) -> WorldGraphicsColor:
+def mixColor(left: WorldGraphicsColor, right: WorldGraphicsColor, amount: number) -> WorldGraphicsColor:
     const bounded = saturate(amount)
     return color(
         mix(left.red, right.red, bounded),
@@ -50,10 +50,10 @@ def mixColor(left: readonly WorldGraphicsColor, right: readonly WorldGraphicsCol
         mix(left.blue, right.blue, bounded),
     )
 
-def scaleColor(value: readonly WorldGraphicsColor, factor: number) -> WorldGraphicsColor:
+def scaleColor(value: WorldGraphicsColor, factor: number) -> WorldGraphicsColor:
     return color(value.red * factor, value.green * factor, value.blue * factor)
 
-def flashedColor(value: readonly WorldGraphicsColor, flash: number) -> WorldGraphicsColor:
+def flashedColor(value: WorldGraphicsColor, flash: number) -> WorldGraphicsColor:
     // 闪电应瞬时抬高环境亮度，同时保留天空和地形的色彩层次；过强的白色混合
     // 会让整帧在色调映射前饱和，反而看不见雷雨场景本身。
     return mixColor(value, color(0.82, 0.88, 1), flash * 0.3)
@@ -64,7 +64,7 @@ def weatherFogColor(kind: WorldPrecipitationKind) -> WorldGraphicsColor:
         case WorldPrecipitationKind.snow: return color(0.72, 0.76, 0.8)
         case WorldPrecipitationKind.clear: return color(0.62, 0.76, 0.9)
 
-def lightningFlash(sample: readonly WorldEnvironmentSample) -> number:
+def lightningFlash(sample: WorldEnvironmentSample) -> number:
     const lightning = sample.lightning
     if lightning == null: return 0
     const ageSeconds = (sample.worldMilliseconds - lightning.occurredAtWorldMilliseconds) / 1000
@@ -72,7 +72,7 @@ def lightningFlash(sample: readonly WorldEnvironmentSample) -> number:
 
 /// 把权威世界环境样本投影为纯渲染参数。闪电年龄只由世界时间计算，重复应用同一
 /// 样本或网络重连都不会把已经衰减的闪光重置到零时刻。
-export def worldGraphicsEnvironmentFrame(sample: readonly WorldEnvironmentSample) -> WorldGraphicsEnvironmentFrame:
+export def worldGraphicsEnvironmentFrame(sample: WorldEnvironmentSample) -> WorldGraphicsEnvironmentFrame:
     const current = validateWorldEnvironmentSample(sample)
 
     // 0 为午夜、0.5 为正午。35° 纬度下太阳沿季节升降，夏季日长、冬季日短；
@@ -122,7 +122,9 @@ export def worldGraphicsEnvironmentFrame(sample: readonly WorldEnvironmentSample
     horizon = flashedColor(horizon, flash)
     ground = flashedColor(ground, flash)
 
-    const fogWeatherMix = saturate(current.cloudiness * 0.16 + current.precipitationIntensity * 0.68)
+    // 地平线已经受到天气影响，这里只轻量叠加雨雪颜色，避免远景重复混灰。
+    // 可见距离与透射曲线由图形后端独立控制。
+    const fogWeatherMix = saturate(current.cloudiness * 0.03 + current.precipitationIntensity * 0.08)
     const fog = flashedColor(mixColor(horizon, weatherFog, fogWeatherMix), flash)
     const fogDensityFactor = Math.clamp(1 + current.cloudiness * 0.9 + current.precipitationIntensity * 2.5, 1, 4.4)
     const cloudOpacity = saturate(current.cloudiness * 0.9 + current.precipitationIntensity * 0.2)

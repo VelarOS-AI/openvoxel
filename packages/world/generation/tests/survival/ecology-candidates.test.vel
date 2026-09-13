@@ -1,0 +1,185 @@
+import {expect} from "velar/test"
+import {BlockBehaviorKind, BlockDefinition, BlockPropertyKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, compileModBlockCatalogContribution, createWorldBlockRegistry, findCropGrowthBehavior} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {ChunkPosition, Coordinate2, emptyChunk, locateBlock, setChunkBlock} from "@openvoxel/world"
+import {VegetationConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+import {CropGrowthEcologyCandidate, EcologyCandidateKind} from "../../src/ecology-candidate.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {compiledFeaturePlan} from "../../src/survival/feature-plan.vel"
+import {survivalWorldGenerator} from "../../src/survival/generator.vel"
+import {ecologyCandidatePlanner} from "../../src/survival/ecology-candidates.vel"
+import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+import {DecorationPlan, DecorationPlanner, decorationPlanner} from "../../src/survival/vegetation.vel"
+
+test "highland river water remains an exposed seasonal surface above its bed":
+    const seed = "openvoxel"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const generator = survivalWorldGenerator(seed, 16)
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const x = -400
+    const z = 14
+    const sample = generator.sample(Coordinate2.from({x, z}))
+    const plan = columns.columns((x / 16).floor(), (z / 16).floor())
+    const waterLevel = plan.waterLevelAt(x, z)
+    expect(sample.biome).toBe(profile.biomes.river)
+    expect(sample.surfaceY < waterLevel).toBe(true)
+    const water = locateBlock({x, y: waterLevel.floor(), z}, 16)
+    const candidate = generator.ecologyCandidates(water.chunk).find(surface =>
+        surface.kind == EcologyCandidateKind.water and
+        surface.position.x == water.local.x and
+        surface.position.y == water.local.y and
+        surface.position.z == water.local.z
+    )
+    assert candidate != null and candidate.kind == EcologyCandidateKind.water else "Continuous river water level was not exposed to the ecology candidate planner"
+    const waterRuntimeId = baseWorldBlockRegistry.registry.defaultStateRuntimeIdForKey(builtinIdentities.blocks.water)
+    const iceRuntimeId = baseWorldBlockRegistry.registry.defaultStateRuntimeIdForKey(builtinIdentities.blocks.ice)
+    expect(candidate.baselineBlockStateRuntimeId == waterRuntimeId or candidate.baselineBlockStateRuntimeId == iceRuntimeId).toBe(true)
+    expect(candidate.exposed).toBe(true)
+
+test "exposed aquatic water freezes to ice and thaws back to its overlay identity":
+    const seed = "openvoxel"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const generator = survivalWorldGenerator(seed, 16)
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, registry)
+    const x = -400
+    const z = 14
+    const waterY = columns.columns((x / 16).floor(), (z / 16).floor()).waterLevelAt(x, z).floor()
+    const location = locateBlock({x, y: waterY, z}, 16)
+
+    for aquatic in [blocks.kelp, blocks.seagrass]:
+        const chunk = generator.generate(location.chunk)
+        setChunkBlock(chunk, location.local, aquatic)
+        const planner = ecologyCandidatePlanner(profile, blocks, registry, columns, decorations, generator.generate)
+        const candidate = planner.remember(chunk).find(surface =>
+            surface.kind == EcologyCandidateKind.water and
+            surface.position.x == location.local.x and
+            surface.position.y == location.local.y and
+            surface.position.z == location.local.z
+        )
+        assert candidate != null and candidate.kind == EcologyCandidateKind.water else "Aquatic water volume was not exposed to seasonal projection"
+        expect(candidate.baselineBlockStateRuntimeId).toBe(aquatic)
+        expect(candidate.warmBlockStateRuntimeId).toBe(aquatic)
+        expect(candidate.coldBlockStateRuntimeId).toBe(blocks.ice)
+        expect(candidate.exposed).toBe(true)
+
+test "seasonal surface envelope includes snow above the tallest configured tree write":
+    const seed = "seasonal-envelope-boundary"
+    const baseProfile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields(seed, baseProfile), 16)
+    const terrain = columns.columns(0, 0)
+    const offsetToNextSection = 15 - terrain.maximumSurfaceY % 16
+    const maximumTreeHeight = offsetToNextSection == 0 ? 16 : offsetToNextSection
+    const profile = WorldGeneratorDefinition.from(baseProfile, {
+        vegetation: VegetationConfig.from(baseProfile.vegetation, {maximumTreeHeight}),
+    })
+    const origin = {x: 0, y: terrain.maximumSurfaceY, z: 0}
+    const treeTop = locateBlock({x: 0, y: origin.y + maximumTreeHeight, z: 0}, 16)
+    const snow = locateBlock({x: 0, y: origin.y + maximumTreeHeight + 1, z: 0}, 16)
+    const feature = compiledFeaturePlan("tree:boundary", origin, "tree:boundary", [{x: 0, y: maximumTreeHeight, z: 0, runtimeId: blocks.stone}])
+
+    def plannedDecorations(chunkX: number, chunkZ: number) -> readonly DecorationPlan:
+        return {chunkX, chunkZ, features: [feature]}
+
+    const decorations: DecorationPlanner = {
+        cachedPlanCount: () => 1,
+        planBuildCount: () => 1,
+        decorations: plannedDecorations,
+    }
+
+    def generate(position: readonly ChunkPosition):
+        const chunk = emptyChunk(position, 16, blocks.air)
+        if position.x == treeTop.chunk.x and position.y == treeTop.chunk.y and position.z == treeTop.chunk.z:
+            setChunkBlock(chunk, treeTop.local, blocks.stone)
+        return chunk
+
+    expect(snow.local.y).toBe(0)
+    const planner = ecologyCandidatePlanner(profile, blocks, registry, columns, decorations, generate)
+    const candidate = planner.candidates(snow.chunk).find(surface =>
+        surface.kind == EcologyCandidateKind.snow and
+        surface.position.x == snow.local.x and
+        surface.position.y == snow.local.y and
+        surface.position.z == snow.local.z
+    )
+    assert candidate != null and candidate.kind == EcologyCandidateKind.snow else "Ecology candidate planner dropped the snow slot above the configured tree envelope"
+    expect(candidate.exposed).toBe(true)
+    expect(candidate.coldBlockStateRuntimeId).toBe(blocks.snow)
+
+test "ecology candidate scan discovers every crop behavior and leaves pumpkin facing outside growth":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields("growth-candidates", profile), 16)
+    const decorations = decorationPlanner(profile, "growth-candidates", blocks, columns, registry)
+    const position: ChunkPosition = {x: 0, y: 4, z: 0}
+    const chunk = emptyChunk(position, 16, blocks.air)
+    const expectedRuntimeIds: List<number> = []
+    const expectedAgeProperties: List<string> = []
+    const expectedAges: List<number> = []
+    const expectedMaximumAges: List<number> = []
+    const expectedCadences: List<number> = []
+    for definition in registry.catalog():
+        const behavior = findCropGrowthBehavior(definition.behaviors)
+        if behavior == null: continue
+        const ageProperty = behavior.ageProperty
+        const ageDefinition = definition.properties.find(property => property.name == ageProperty)
+        assert ageDefinition != null and ageDefinition.kind == BlockPropertyKind.integer else f"Crop {definition.key} must declare its age property"
+        const age = ageDefinition.minimum + 1
+        const runtimeId = registry.withProperty(definition.defaultStateRuntimeId, ageProperty, age)
+        const index = expectedRuntimeIds.size
+        assert index < 255 else "Ecology candidate fixture exceeds one Chunk"
+        setChunkBlock(chunk, {x: index % 16, y: 1, z: (index / 16).floor()}, runtimeId)
+        expectedRuntimeIds.append(runtimeId)
+        expectedAgeProperties.append(ageProperty)
+        expectedAges.append(age)
+        expectedMaximumAges.append(ageDefinition.maximum)
+        expectedCadences.append(behavior.epochsPerStage)
+    expect(expectedRuntimeIds.size > 0).toBe(true)
+    const pumpkinWest = registry.withProperty(blocks.pumpkin, "facing", "west")
+    setChunkBlock(chunk, {x: 15, y: 1, z: 15}, pumpkinWest)
+    const planner = ecologyCandidatePlanner(profile, blocks, registry, columns, decorations, target => emptyChunk(target, 16, blocks.air))
+    const growth: List<CropGrowthEcologyCandidate> = []
+    for candidate in planner.remember(chunk):
+        if candidate.kind == EcologyCandidateKind.cropGrowth: growth.append(candidate)
+    expect(growth.size).toBe(expectedRuntimeIds.size)
+    expect(growth.map(candidate => candidate.baselineBlockStateRuntimeId)).toEqual(expectedRuntimeIds)
+    expect(growth.map(candidate => candidate.ageProperty)).toEqual(expectedAgeProperties)
+    expect(growth.map(candidate => candidate.baselineAge)).toEqual(expectedAges)
+    expect(growth.map(candidate => candidate.maximumAge)).toEqual(expectedMaximumAges)
+    expect(growth.map(candidate => candidate.epochsPerStage)).toEqual(expectedCadences)
+    expect(growth.some(candidate => candidate.baselineBlockStateRuntimeId == pumpkinWest)).toBe(false)
+
+test "ecology candidate scan consumes Mod crop property and cadence without generator configuration":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const baseRye = BlockDefinition.parse(baseWorldBlockRegistry.registry.requireTypeByKey(builtinIdentities.blocks.rye))
+    const tomato = BlockTypeSource.from(baseRye, {
+        key: "farming:tomato_crop",
+        translationKey: "block.farming.tomato_crop",
+        tags: [],
+        properties: [{name: "growth_stage", kind: BlockPropertyKind.integer, minimum: 2, maximum: 5}],
+        defaultState: [{name: "growth_stage", value: 2}],
+        behaviors: [{kind: BlockBehaviorKind.cropGrowth, ageProperty: "growth_stage", epochsPerStage: 6}],
+        variants: [],
+    })
+    const farming = compileModBlockCatalogContribution("farming", "farming:catalog-v1", [tomato])
+    const registry = createWorldBlockRegistry(baseBlockCatalogSource, [farming]).registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(createGenerationFields("mod-growth-candidates", profile), 16)
+    const decorations = decorationPlanner(profile, "mod-growth-candidates", blocks, columns, registry)
+    const chunk = emptyChunk({x: 0, y: 4, z: 0}, 16, blocks.air)
+    const tomatoAge3 = registry.withProperty(registry.defaultStateRuntimeIdForKey("farming:tomato_crop"), "growth_stage", 3)
+    setChunkBlock(chunk, {x: 0, y: 1, z: 0}, tomatoAge3)
+
+    const planner = ecologyCandidatePlanner(profile, blocks, registry, columns, decorations, target => emptyChunk(target, 16, blocks.air))
+    const candidate = planner.remember(chunk).find(entry => entry.kind == EcologyCandidateKind.cropGrowth)
+    assert candidate != null and candidate.kind == EcologyCandidateKind.cropGrowth else "Expected Mod crop ecology candidate"
+    expect(candidate.baselineBlockStateRuntimeId).toBe(tomatoAge3)
+    expect(candidate.ageProperty).toBe("growth_stage")
+    expect(candidate.baselineAge).toBe(3)
+    expect(candidate.maximumAge).toBe(5)
+    expect(candidate.epochsPerStage).toBe(6)

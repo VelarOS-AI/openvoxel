@@ -1,6 +1,7 @@
 import {Coordinate3, maximumWorldCoordinate, requireCoordinate3} from "../spatial/coordinates.vel"
 import {WorldEnvironmentSample, WorldLightningEvent, WorldPrecipitationKind, maximumWorldEnvironmentMilliseconds, validateWorldEnvironmentSample, worldDayMilliseconds} from "./environment.vel"
 import {random} from "velar/random"
+import {WorldClimateDefinition, defaultWorldClimate} from "./base-climate.vel"
 import {worldClimateAt} from "./climate.vel"
 
 /// 天气与闪电是世界模型中的确定性时空场，不属于某一种服务器运行时。
@@ -77,15 +78,16 @@ def spatialWeatherTarget(seed: string, windowIndex: number, position: readonly C
 
 /// 云量、风和短期温度在窗口锚点间连续插值。降水在窗口边界、湿度阈值和冰点
 /// 附近都平滑归零，再改变有无降水或雨雪种类。
-def weatherAt(seed: string, worldMilliseconds: number, position: readonly Coordinate3) -> WorldWeatherSample:
+def weatherAt(seed: string, worldMilliseconds: number, position: readonly Coordinate3, climate: WorldClimateDefinition) -> WorldWeatherSample:
     const windowIndex = (worldMilliseconds / worldWeatherWindowMilliseconds).floor()
     const windowPhase = (worldMilliseconds - windowIndex * worldWeatherWindowMilliseconds) / worldWeatherWindowMilliseconds
     const current = spatialWeatherTarget(seed, windowIndex, position)
     const following = spatialWeatherTarget(seed, windowIndex + 1, position)
     const blend = smoothstep(0, 1, windowPhase)
     const envelope = smoothstep(0.04, 0.22, windowPhase) * (1 - smoothstep(0.78, 0.96, windowPhase))
-    const temperature = worldClimateAt(seed, worldMilliseconds, position).temperatureCelsius / 30 + interpolate(current.temperatureAnomaly, following.temperatureAnomaly, blend)
-    const moisture = smoothstep(0.38, 0.76, current.precipitationPotential)
+    const localClimate = worldClimateAt(seed, worldMilliseconds, position, climate)
+    const temperature = localClimate.temperatureCelsius / 30 + interpolate(current.temperatureAnomaly, following.temperatureAnomaly, blend)
+    const moisture = smoothstep(0.38, 0.76, current.precipitationPotential) * smoothstep(0.08, 0.6, localClimate.humidity)
     const freezingTransition = smoothstep(0.015, 0.09, temperature.abs())
     const candidatePrecipitationIntensity = moisture * envelope * freezingTransition
     const precipitationIntensity = candidatePrecipitationIntensity > minimumPrecipitationIntensity ? candidatePrecipitationIntensity : 0
@@ -114,7 +116,7 @@ def lightningCellPosition(position: readonly Coordinate3) -> Coordinate3:
         z: Math.clamp(cellZ * worldLightningHorizontalCellSize + worldLightningHorizontalCellSize / 2, -maximumWorldCoordinate, maximumWorldCoordinate),
     }
 
-def lightningForSlot(seed: string, slotIndex: number, samplePosition: readonly Coordinate3) -> WorldLightningEvent?:
+def lightningForSlot(seed: string, slotIndex: number, samplePosition: readonly Coordinate3, climate: WorldClimateDefinition) -> WorldLightningEvent?:
     if slotIndex < 0: return null
     const cell = lightningCellPosition(samplePosition)
     const cellX = cellCoordinate(samplePosition.x, worldLightningHorizontalCellSize)
@@ -122,7 +124,7 @@ def lightningForSlot(seed: string, slotIndex: number, samplePosition: readonly C
     const cellZ = cellCoordinate(samplePosition.z, worldLightningHorizontalCellSize)
     const stream = random(seed).fork(f"environment:lightning:{slotIndex}:{cellX}:{cellY}:{cellZ}")
     const occurredAtWorldMilliseconds = slotIndex * worldLightningSlotMilliseconds + (stream.fork("offset").number() * (worldLightningSlotMilliseconds - 1)).floor()
-    const weather = weatherAt(seed, occurredAtWorldMilliseconds, cell)
+    const weather = weatherAt(seed, occurredAtWorldMilliseconds, cell, climate)
     if weather.precipitation != WorldPrecipitationKind.rain or weather.precipitationIntensity < 0.52: return null
     const chance = 0.2 + (weather.precipitationIntensity - 0.52) * 0.75
     if stream.fork("occurrence").number() >= chance: return null
@@ -139,12 +141,12 @@ def lightningForSlot(seed: string, slotIndex: number, samplePosition: readonly C
         occurredAtWorldMilliseconds,
     }
 
-def activeLightning(seed: string, worldMilliseconds: number, samplePosition: readonly Coordinate3) -> WorldLightningEvent?:
+def activeLightning(seed: string, worldMilliseconds: number, samplePosition: readonly Coordinate3, climate: WorldClimateDefinition) -> WorldLightningEvent?:
     const slotIndex = (worldMilliseconds / worldLightningSlotMilliseconds).floor()
-    const current = lightningForSlot(seed, slotIndex, samplePosition)
+    const current = lightningForSlot(seed, slotIndex, samplePosition, climate)
     if current != null and current.occurredAtWorldMilliseconds <= worldMilliseconds and worldMilliseconds - current.occurredAtWorldMilliseconds <= worldLightningLifetimeMilliseconds:
         return current
-    const previous = lightningForSlot(seed, slotIndex - 1, samplePosition)
+    const previous = lightningForSlot(seed, slotIndex - 1, samplePosition, climate)
     if previous != null and previous.occurredAtWorldMilliseconds <= worldMilliseconds and worldMilliseconds - previous.occurredAtWorldMilliseconds <= worldLightningLifetimeMilliseconds:
         return previous
     return null
@@ -155,13 +157,14 @@ export def worldEnvironmentAt(
     seed: string,
     worldMilliseconds: number,
     samplePosition: readonly Coordinate3 = {x: 0, y: 64, z: 0},
+    climate: WorldClimateDefinition = defaultWorldClimate,
 ) -> WorldEnvironmentSample:
     assert not seed.isBlank() and seed.size <= 128 else "Environment seed must contain from 1 through 128 characters"
     assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Environment world milliseconds are outside the supported range"
     requireCoordinate3(samplePosition, "Environment sample")
     const dayIndex = (worldMilliseconds / worldDayMilliseconds).floor()
     const timeOfDay = (0.25 + (worldMilliseconds - dayIndex * worldDayMilliseconds) / worldDayMilliseconds) % 1
-    const weather = weatherAt(seed, worldMilliseconds, samplePosition)
+    const weather = weatherAt(seed, worldMilliseconds, samplePosition, climate)
     const sample: WorldEnvironmentSample = {
         worldMilliseconds,
         samplePosition,
@@ -172,7 +175,7 @@ export def worldEnvironmentAt(
         precipitationIntensity: saturate(weather.precipitationIntensity),
         windX: weather.windX,
         windZ: weather.windZ,
-        lightning: activeLightning(seed, worldMilliseconds, samplePosition),
+        lightning: activeLightning(seed, worldMilliseconds, samplePosition, climate),
     }
     validateWorldEnvironmentSample(sample)
     return sample

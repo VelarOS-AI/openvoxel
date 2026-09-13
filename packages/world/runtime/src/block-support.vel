@@ -1,0 +1,142 @@
+import {BlockRegistry, BlockSupportFace, findSupportBehavior, unsupportedBlockStateRuntimeId} from "@openvoxel/blocks"
+import {BlockPosition, maximumWorldCoordinate} from "@openvoxel/world"
+import {WorldRequestError} from "./world-errors.vel"
+
+/// 支撑闭包只关心最终可见身份。固定地形、生态投影和玩家覆盖如何组合，仍由
+/// 世界命令的读取边界负责；这里不接触存储，也不会产生半批次写入。
+export readonly type SupportCascadeEdit:
+    position: readonly BlockPosition
+    blockStateRuntimeId: number
+
+export type SupportBlockReader = (positions: readonly List<readonly BlockPosition>) -> Promise<readonly List<number>>
+
+def positionKey(position: readonly BlockPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
+
+def insideWorld(position: readonly BlockPosition) -> bool:
+    return position.x.abs() <= maximumWorldCoordinate and position.y.abs() <= maximumWorldCoordinate and position.z.abs() <= maximumWorldCoordinate
+
+def adjacentPositions(position: readonly BlockPosition) -> List<readonly BlockPosition>:
+    const output: List<readonly BlockPosition> = []
+    const candidates: List<readonly BlockPosition> = [
+        {x: position.x, y: position.y - 1, z: position.z},
+        {x: position.x, y: position.y + 1, z: position.z},
+        {x: position.x - 1, y: position.y, z: position.z},
+        {x: position.x + 1, y: position.y, z: position.z},
+        {x: position.x, y: position.y, z: position.z - 1},
+        {x: position.x, y: position.y, z: position.z + 1},
+    ]
+    for candidate in candidates:
+        if insideWorld(candidate): output.append(candidate)
+    return output
+
+def supportPositions(position: readonly BlockPosition, face: BlockSupportFace) -> List<readonly BlockPosition>:
+    match face:
+        case BlockSupportFace.below:
+            const below = {x: position.x, y: position.y - 1, z: position.z}
+            return insideWorld(below) ? [below] : []
+        case BlockSupportFace.sides:
+            const output: List<readonly BlockPosition> = []
+            const candidates: List<readonly BlockPosition> = [
+                {x: position.x - 1, y: position.y, z: position.z},
+                {x: position.x + 1, y: position.y, z: position.z},
+                {x: position.x, y: position.y, z: position.z - 1},
+                {x: position.x, y: position.y, z: position.z + 1},
+            ]
+            for candidate in candidates:
+                if insideWorld(candidate): output.append(candidate)
+            return output
+        case BlockSupportFace.any: return adjacentPositions(position)
+
+def supportingBlock(registry: readonly BlockRegistry, runtimeId: number, supportingTag: string?) -> bool:
+    if supportingTag != null: return registry.hasTag(runtimeId, supportingTag)
+    return not registry.requireStateByRuntimeId(runtimeId).physics.replaceable
+
+/// 在同批用户编辑之上求支撑规则的稳定闭包。原始编辑先全部进入 finalStates，
+/// 因而把旧支撑换成另一种合法支撑不会误删附件；每个失撑替换再把六邻居加入
+/// 下一轮，仙人掌等竖直链会跨 Chunk 继续收敛。超过命令总修改上限时整批拒绝，
+/// 调用方尚未写入任何状态。
+export async def resolveSupportCascade(
+    edits: readonly List<SupportCascadeEdit>,
+    readBlocks: SupportBlockReader,
+    registry: readonly BlockRegistry,
+    maximumChanges: number,
+) -> readonly List<SupportCascadeEdit>:
+    assert maximumChanges.isInteger() and maximumChanges > 0 else "Support cascade change limit must be a positive integer"
+    assert edits.size <= maximumChanges else "Support cascade input exceeds its change limit"
+
+    const requested: Set<string> = Set()
+    const finalStates: Map<string, number> = Map()
+    const positions: Map<string, readonly BlockPosition> = Map()
+    let pending: Map<string, readonly BlockPosition> = Map()
+    const currentStates: Map<string, number> = Map()
+
+    def rememberPosition(position: readonly BlockPosition): positions.set(positionKey(position), position)
+
+    def enqueueAffected(position: readonly BlockPosition):
+        const candidates = [position, ...adjacentPositions(position)]
+        for candidate in candidates:
+            const key = positionKey(candidate)
+            rememberPosition(candidate)
+            pending.set(key, candidate)
+
+    for edit in edits:
+        const key = positionKey(edit.position)
+        requested.add(key)
+        rememberPosition(edit.position)
+        finalStates.set(key, edit.blockStateRuntimeId)
+        enqueueAffected(edit.position)
+
+    async def rememberCurrent(candidates: readonly List<readonly BlockPosition>):
+        const missing = candidates.filter(position => currentStates.get(positionKey(position)) == null)
+        if missing.size == 0: return
+        const runtimeIds = await readBlocks(missing)
+        assert runtimeIds.size == missing.size else "Support block reader returned an incomplete result"
+        for position, index in missing:
+            registry.requireStateByRuntimeId(runtimeIds[index])
+            currentStates.set(positionKey(position), runtimeIds[index])
+
+    def runtimeIdAt(position: readonly BlockPosition) -> number:
+        const key = positionKey(position)
+        const current = currentStates.get(key)
+        assert current != null else f"Support cascade did not load block {key}"
+        return finalStates.get(key) ?? current
+
+    while pending.size > 0:
+        const candidates = pending.values().sorted(by=positionKey)
+        pending = Map()
+        const inspection: Map<string, readonly BlockPosition> = Map()
+        for candidate in candidates:
+            inspection.set(positionKey(candidate), candidate)
+            for neighbor in adjacentPositions(candidate): inspection.set(positionKey(neighbor), neighbor)
+        await rememberCurrent(inspection.values().sorted(by=positionKey))
+
+        for candidate in candidates:
+            const runtimeId = runtimeIdAt(candidate)
+            const state = registry.requireStateByRuntimeId(runtimeId)
+            const behavior = findSupportBehavior(state.behaviors)
+            if behavior == null: continue
+            const supportingTag = behavior.supportingTag
+            const supported = supportPositions(candidate, behavior.face).some(position => supportingBlock(registry, runtimeIdAt(position), supportingTag))
+            if supported: continue
+            const replacement = unsupportedBlockStateRuntimeId(registry, runtimeId)
+            if replacement == runtimeId: continue
+
+            const key = positionKey(candidate)
+            if finalStates.get(key) == null and finalStates.size == maximumChanges:
+                throw WorldRequestError(f"A block edit and its support cascade cannot exceed {maximumChanges} changed positions")
+            finalStates.set(key, replacement)
+            enqueueAffected(candidate)
+
+    const output: List<SupportCascadeEdit> = []
+    for edit in edits:
+        const runtimeId = finalStates.get(positionKey(edit.position))
+        assert runtimeId != null else "Support cascade lost a requested edit"
+        output.append({position: edit.position, blockStateRuntimeId: runtimeId})
+    const synthetic = positions.values()
+        .filter(position => (positionKey(position) not in requested) and finalStates.get(positionKey(position)) != null)
+        .sorted(by=positionKey)
+    for position in synthetic:
+        const runtimeId = finalStates.get(positionKey(position))
+        assert runtimeId != null else "Support cascade lost a synthetic edit"
+        output.append({position, blockStateRuntimeId: runtimeId})
+    return output

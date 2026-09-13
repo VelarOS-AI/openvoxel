@@ -1,5 +1,6 @@
 {
   "formatVersion": 2,
+  "surfaces": {"core": "0.10"},
   "entry": "src/index.vel",
   "outDir": "dist",
   "extensions": []

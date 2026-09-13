@@ -7,6 +7,7 @@ import { gzipSync } from "node:zlib";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import sharp from "sharp";
+import {assertWorldMinimap} from "./support/minimap-acceptance.mjs";
 
 const projectRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const velarCli = join(projectRoot, "node_modules", "@velarscript", "cli", "dist", "cli.js");
@@ -26,6 +27,7 @@ const noFailure = Symbol("no failure");
 const initialJavaScriptBudget = {raw: 1024 * 1024, gzip: 230 * 1024};
 const secondaryRouteJavaScriptBudget = {raw: 900 * 1024, gzip: 200 * 1024};
 const worldJavaScriptBudget = {raw: 5 * 1024 * 1024, gzip: 1330 * 1024};
+const texturePayloadBudget = {raw: 4 * 1024 * 1024, gzip: 800 * 1024};
 
 function staticImportSpecifiers(source, owner) {
   const specifiers = [];
@@ -92,15 +94,20 @@ async function assertBuildPerformance() {
   assert.match(manifest.entry, /^assets\/main-[A-Z0-9]+\.js$/u, "Web build has no content-hashed application entry");
   const initial = await staticJavaScriptClosure(manifest.entry);
   await assertJavaScriptPerformance("Initial", initial, initialJavaScriptBudget);
+  const textureEntry = resolve(webDistDirectory, requireRouteAsset(manifest, "builtin-resource-pack"));
+  assert.equal(initial.has(textureEntry), false, "Home must not eagerly load texture arrays");
   for (const [label, routeName, budget] of [
     ["Create world", "create-world-page", secondaryRouteJavaScriptBudget],
     ["Open world", "open-world-page", secondaryRouteJavaScriptBudget],
     ["World", "world-page", worldJavaScriptBudget],
   ]) {
     const route = await staticJavaScriptClosure(requireRouteAsset(manifest, routeName));
+    assert.equal(route.has(textureEntry), false, `${label} must keep generated texture data in its independent payload`);
     for (const initialPath of initial) route.delete(initialPath);
     await assertJavaScriptPerformance(label, route, budget);
   }
+  // Texture bytes are a separately bounded asset payload, not unbudgeted lazy code.
+  await assertJavaScriptPerformance("Texture payload", new Set([textureEntry]), texturePayloadBudget);
 }
 
 function errorText(error) {
@@ -359,6 +366,17 @@ async function voxelSceneMetrics(png) {
     }
   }
   const pixels = info.width * info.height;
+  // Exposed marble/granite can occupy the entire foreground. Preserve the
+  // color-loss fence using an independent midground band as well; foreground
+  // luminance and geometry checks remain tied to the original sampling area.
+  const midground = await sharp(png).extract({
+    left: region.left, width: region.width,
+    top: Math.floor(metadata.height * 0.20), height: Math.floor(metadata.height * 0.24),
+  }).removeAlpha().raw().toBuffer();
+  let midgroundColorful = 0;
+  for (let offset = 0; offset < midground.length; offset += 3) {
+    if (Math.max(midground[offset], midground[offset + 1], midground[offset + 2]) - Math.min(midground[offset], midground[offset + 1], midground[offset + 2]) >= 12) midgroundColorful += 1;
+  }
   let cumulative = 0;
   let medianLuminance = 255;
   for (let value = 0; value < luminance.length; value += 1) {
@@ -372,6 +390,7 @@ async function voxelSceneMetrics(png) {
     nearBlackRatio: nearBlack / pixels,
     medianLuminance,
     colorfulPixelRatio: colorful / pixels,
+    midgroundColorfulPixelRatio: midgroundColorful / (midground.length / 3),
     meanEdgeDelta: edgeDelta / edgeCount,
     visibleEdgeRatio: visibleEdges / edgeCount,
   };
@@ -388,7 +407,7 @@ async function assertVoxelSample(canvas, path, label) {
   // Preserve the stronger daytime color fence without rejecting a valid
   // moonlit scene whose material colors are intentionally exposure-compressed.
   const minimumColorfulPixelRatio = metrics.medianLuminance < 32 ? 0.04 : 0.1;
-  assert.ok(metrics.colorfulPixelRatio >= minimumColorfulPixelRatio, `${label} foreground lost its color channels: ${evidence}`);
+  assert.ok(Math.max(metrics.colorfulPixelRatio, metrics.midgroundColorfulPixelRatio) >= minimumColorfulPixelRatio, `${label} scene lost its color channels: ${evidence}`);
   // Day, night, snow, rain and dense fog legitimately produce very different
   // average contrast. Count actual discontinuities instead of requiring a
   // day-scene mean; deterministic texture/PBR deltas belong to the GPU probe.
@@ -444,15 +463,15 @@ async function assertStreamingWorkBounded(page, label) {
   const metrics = await streamingWorkMetrics(page);
   const evidence = `${label}: ${JSON.stringify(metrics)}`;
   // A directional cone contains at most one of each antipodal pair outside
-  // its all-direction safety sphere: acquisition <= 33 + (515 - 33) / 2,
-  // retention <= 123 + (925 - 123) / 2. Add one four-section commit surplus.
+  // its all-direction safety sphere: acquisition <= 33 + (925 - 33) / 2,
+  // retention <= 123 + (1419 - 123) / 2. Add one four-section commit surplus.
   // These bounds cover every camera pitch/yaw, not just the axis-aligned view.
-  assert.ok(metrics.residentChunks <= 528, `Resident Chunk window grew without bound; ${evidence}`);
-  assert.ok(metrics.terrainPendingChunks <= 274, `Terrain request queue grew without bound; ${evidence}`);
+  assert.ok(metrics.residentChunks <= 775, `Resident Chunk window grew without bound; ${evidence}`);
+  assert.ok(metrics.terrainPendingChunks <= 479, `Terrain request queue grew without bound; ${evidence}`);
   assert.ok(metrics.meshQueuedChunks <= metrics.residentChunks, `Mesh queue contains non-resident Chunks; ${evidence}`);
   assert.ok(metrics.meshActiveChunks <= 2, `Meshing exceeded its Worker budget; ${evidence}`);
   assert.ok(metrics.uploadQueuedChunks <= 2, `GPU upload queue exceeded its producer budget; ${evidence}`);
-  assert.ok(metrics.pending <= 804, `Combined streaming work grew without bound; ${evidence}`);
+  assert.ok(metrics.pending <= 1256, `Combined streaming work grew without bound; ${evidence}`);
   return metrics;
 }
 
@@ -757,7 +776,7 @@ async function finishFrameSampling(page) {
   });
 }
 
-async function moveFirstPersonWorld(page, graphics) {
+async function moveFirstPersonWorld(page, graphics, observationHeight) {
   const canvas = page.locator('[data-voxel-canvas]');
   assert.equal(await canvas.getAttribute("data-navigation-mode"), "first-person");
   assert.equal(await canvas.getAttribute("data-movement-mode"), "creative-flight");
@@ -851,6 +870,20 @@ async function moveFirstPersonWorld(page, graphics) {
     await page.keyboard.up("Control");
     await page.keyboard.up("Shift");
   }
+
+  // Creative flight can cross terrain while exploring at the spawn height.
+  // After proving descent, establish this fixture's clear observation height
+  // and look down before asserting pixels at the fully streamed destination.
+  await page.keyboard.down("Space");
+  try {
+    await page.waitForFunction((height) => {
+      const element = document.querySelector('[data-voxel-canvas]');
+      return element instanceof HTMLCanvasElement && Number(element.getAttribute("data-view-y")) >= height;
+    }, observationHeight, {timeout: 15_000});
+  } finally {
+    await page.keyboard.up("Space");
+  }
+  await page.mouse.move(1040, 560);
 
   await page.keyboard.press("Escape");
   await page.locator('[data-voxel-canvas][data-pointer-locked="false"]').waitFor({timeout: 10_000});
@@ -1015,6 +1048,8 @@ try {
     preset: "coast",
     mode: "Creative",
     seed: "ui-coast-visual-v1",
+    // This route ends above the seed's 76–77-block coastal terrain.
+    observationHeight: 96,
   };
   await createWorld(page, coast);
   assert.equal(await page.evaluate(() => performance.getEntriesByType("resource")
@@ -1023,13 +1058,15 @@ try {
   await assertVoxelSceneVisible(page, "03-world", browserFailures);
   // Measure ordinary exploration before deliberately destroying the graphics
   // context; recovery is then checked against the fully populated destination.
-  await moveFirstPersonWorld(page, graphics);
+  await moveFirstPersonWorld(page, graphics, coast.observationHeight);
+  await assertWorldMinimap(page, screenshotsDirectory);
   await assertVoxelSample(
     page.locator("[data-voxel-canvas]"),
     join(screenshotsDirectory, "03-world-canvas-moved.png"),
     "Moved voxel sample",
   );
   await restoreVoxelContext(page, "03-world");
+  await assertWorldMinimap(page, screenshotsDirectory);
   await screenshot(page, "03-world");
 
   assert.deepEqual(await worldUnloadIsGuarded(page), {allowed: false, defaultPrevented: true});
@@ -1053,6 +1090,7 @@ try {
     await page.locator('[data-back-home]').click();
   }
   await page.locator('[data-selected-world-name]').filter({hasText: coast.name}).waitFor();
+  await waitForWorkerCount(page, 0, "World exit");
   assert.equal(await dispatchCarouselWheel(page, {deltaY: 180}), false, "Single-world carousel consumed page scrolling");
   await screenshot(page, "04-populated");
   await cancelWorldEntryWhileLoading(page, coast, browserFailures);

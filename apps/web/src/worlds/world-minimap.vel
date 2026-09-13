@@ -1,0 +1,15 @@
+import {minimapCanvasLook, minimapLook} from "../styles/world-minimap.vel"
+
+/// UI 只拥有圆形地图的挂载位置，画面与方向由游戏图形表面绘制。
+export component WorldMinimapPanel(attach: (canvas: CanvasElement?) -> null):
+    let canvas: CanvasElement? = null
+
+    @mounted:
+        attach(canvas)
+
+    @cleanup:
+        attach(null)
+
+    return <aside look={minimapLook} aria-label="Minimap" data-minimap>
+        <canvas ref={canvas} look={minimapCanvasLook} aria-label="Live top-down world map. North up; east right, south down, west left. Arrow shows your position and heading." data-map-canvas></canvas>
+    </aside>

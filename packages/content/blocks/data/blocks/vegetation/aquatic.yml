@@ -1,0 +1,76 @@
+blocks:
+  - key: blocks.kelp
+    translationKey: translations.block.kelp
+    tags: [tags.fluid, tags.water, tags.replaceable, tags.plant, tags.aquatic, tags.aquaticPlantSupport]
+    properties: [{name: falling, kind: boolean}, {name: level, kind: integer, minimum: 0, maximum: 15}]
+    defaultState: [{name: falling, value: false}, {name: level, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.fluid}, occlusion: {kind: none}, replaceable: true, friction: 0.5, speedFactor: 0.76, jumpFactor: 0.78}
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.water
+      textures: {all: textures.block.water}
+      tint: tints.biomeWater
+      cullFaces: true
+      attachments: [{model: models.block.submergedCross, layer: cutout, material: materials.cross, textures: {all: textures.block.kelp}, tint: tints.kelpFoliage}]
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
+    behaviors: [{kind: fluid, canonicalBlock: blocks.water, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}, {kind: support, face: below, supportingTag: tags.aquaticPlantSupport}]
+    variants: []
+
+  - key: blocks.seagrass
+    translationKey: translations.block.seagrass
+    tags: [tags.fluid, tags.water, tags.replaceable, tags.plant, tags.aquatic, tags.aquaticPlantSupport]
+    properties: [{name: falling, kind: boolean}, {name: level, kind: integer, minimum: 0, maximum: 15}]
+    defaultState: [{name: falling, value: false}, {name: level, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.fluid}, occlusion: {kind: none}, replaceable: true, friction: 0.5, speedFactor: 0.78, jumpFactor: 0.8}
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.water
+      textures: {all: textures.block.water}
+      tint: tints.biomeWater
+      cullFaces: true
+      attachments: [{model: models.block.submergedCross, layer: cutout, material: materials.cross, textures: {all: textures.block.seagrass}, tint: tints.seagrassFoliage}]
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
+    behaviors: [{kind: fluid, canonicalBlock: blocks.water, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}, {kind: support, face: below, supportingTag: tags.aquaticPlantSupport}]
+    variants: []
+
+  - key: blocks.seaUrchin
+    translationKey: translations.block.seaUrchin
+    tags: [tags.fluid, tags.water, tags.replaceable, tags.aquatic]
+    properties: [{name: falling, kind: boolean}, {name: level, kind: integer, minimum: 0, maximum: 15}]
+    defaultState: [{name: falling, value: false}, {name: level, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.fluid}, occlusion: {kind: none}, replaceable: true, friction: 0.5, speedFactor: 0.76, jumpFactor: 0.78}
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.water
+      textures: {all: textures.block.water}
+      tint: tints.biomeWater
+      cullFaces: true
+      attachments: [{model: models.block.seaUrchin, layer: cutout, material: materials.cross, textures: {all: textures.block.seaUrchin}}]
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
+    behaviors: [{kind: fluid, canonicalBlock: blocks.water, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}, {kind: support, face: below, supportingTag: tags.bottomDwellerSupport}]
+    variants: []
+
+  - key: blocks.starfish
+    translationKey: translations.block.starfish
+    tags: [tags.fluid, tags.water, tags.replaceable, tags.aquatic]
+    properties: [{name: falling, kind: boolean}, {name: level, kind: integer, minimum: 0, maximum: 15}]
+    defaultState: [{name: falling, value: false}, {name: level, value: 0}]
+    physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.fluid}, occlusion: {kind: none}, replaceable: true, friction: 0.5, speedFactor: 0.78, jumpFactor: 0.8}
+    light: {emission: 0, opacity: 2, skylight: diffuse, ambientOcclusion: false}
+    render:
+      model: models.block.fluid
+      layer: translucent
+      material: materials.water
+      textures: {all: textures.block.water}
+      tint: tints.biomeWater
+      cullFaces: true
+      attachments: [{model: models.block.starfish, layer: cutout, material: materials.cross, textures: {all: textures.block.starfish}}]
+    interaction: {breakable: false, hardness: 100, blastResistance: 100, drops: loot.empty, sounds: sounds.water}
+    behaviors: [{kind: fluid, canonicalBlock: blocks.water, fluidKey: fluids.water, levelProperty: level, fallingProperty: falling, tickRate: 5, viscosity: 1}, {kind: support, face: below, supportingTag: tags.bottomDwellerSupport}]
+    variants: []

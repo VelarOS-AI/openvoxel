@@ -1,6 +1,6 @@
 # OpenVoxel 当前协议
 
-HTTP 与 WebSocket 语义由 `protocolVersion = 13` 标识，机器可读客户端清单由 `clientContractVersion = 8` 标识。世界持久化格式由清单中的 `formatVersion = 5` 独立标识。
+HTTP 与 WebSocket 语义由 `protocolVersion = 14` 标识，机器可读客户端清单由 `clientContractVersion = 9` 标识。世界持久化格式由清单中的 `formatVersion = 6` 独立标识；bootstrap 携带该世界的基础气候参数，客户端据此推进天气与染色。
 
 ## 传输分工
 

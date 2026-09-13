@@ -1,4 +1,4 @@
-import {WorldGameMode} from "@openvoxel/world"
+import {WorldGameMode} from "@openvoxel/world/game-mode"
 import {WorldPreset} from "./saved-world.vel"
 
 export def worldGameModeName(mode: WorldGameMode) -> string:

@@ -8,7 +8,7 @@ import {ChunkMeshWorker, meshingWorkerCount} from "./chunk-meshing.vel"
 /// Worker 边界只接收构网时捕获的邻域快照。调度队列本身不保存过早的快照，
 /// 所以尚未开始的邻居无需因新地形到达而反复重发 ticket。
 export def chunkMeshWorker(
-    states: readonly List<readonly ClientRenderState>,
+    states: readonly List<ClientRenderState>,
     state: readonly ClientWorldState,
     edge: number,
 ) -> ChunkMeshWorker:
@@ -16,7 +16,7 @@ export def chunkMeshWorker(
 
     async def initialize(): await pool.broadcast({operation: meshingWorkerOperations.initialize, states}, null, 10s)
 
-    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> readonly ChunkMesh:
+    async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> ChunkMesh:
         const center = state.chunk(position)
         assert center != null else "Cannot mesh an untracked client Chunk"
         const paddedBlocks = snapshotChunkNeighborhood(center, candidate => state.chunk(candidate))

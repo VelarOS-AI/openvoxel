@@ -1,4 +1,4 @@
-import {WorldGameMode} from "@openvoxel/world"
+import {WorldGameMode} from "@openvoxel/world/game-mode"
 
 export enum WorldPreset:
     meadow = "meadow"
@@ -6,15 +6,15 @@ export enum WorldPreset:
     highlands = "highlands"
     quietShore = "quiet-shore"
 
-export type SavedWorld:
-    readonly id: string
-    readonly name: string
-    readonly seed: string
-    readonly mode: WorldGameMode
-    readonly preset: WorldPreset
-    readonly lastPlayed: string
+export readonly type SavedWorld:
+    id: string
+    name: string
+    seed: string
+    mode: WorldGameMode
+    preset: WorldPreset
+    lastPlayed: string
 
-export type SavedWorlds = List<readonly SavedWorld>
+export type SavedWorlds = List<SavedWorld>
 
 export def worldIdFromName(name: string) -> string:
     const slug = Text.slug(name).slice(0, 44)

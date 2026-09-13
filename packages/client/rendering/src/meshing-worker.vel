@@ -4,9 +4,9 @@ import {ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingW
 import {meshChunkWithIndex} from "./mesher.vel"
 import {indexRenderStates} from "./meshing/catalog.vel"
 
-let activeStates: Map<number, readonly ClientRenderState>? = null
+let activeStates: Map<number, ClientRenderState>? = null
 
-async def handleMeshingWorker(request: readonly MeshingWorkerRequest, cancellation: Cancellation) -> MeshingWorkerResponse:
+async def handleMeshingWorker(request: MeshingWorkerRequest, cancellation: Cancellation) -> MeshingWorkerResponse:
     await cancellation.checkpoint()
     if request.operation == meshingWorkerOperations.initialize:
         const states = request.states

@@ -1,7 +1,7 @@
 import {activeWorldState} from "../src/active-world-state.vel"
 import {monotonic} from "velar/time"
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
-import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "../src/index.vel"
+import {StoredBlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from "../src/index.vel"
 
 /// 热状态读取基准使用 64 个带有 256 项稀疏覆盖的 Chunk。它刻意把存储读取放在
 /// 预热阶段之外，稳定态结果只衡量 LRU 命中、快照隔离和批量返回所产生的成本。
@@ -11,7 +11,7 @@ import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from
     for chunkX in range(64):
         const position: ChunkPosition = {x: chunkX, y: 1, z: 0}
         positions.append(position)
-        const overrides: List<BlockOverride> = []
+        const overrides: List<StoredBlockOverride> = []
         for localIndex in range(256):
             overrides.append({
                 position: {
@@ -20,6 +20,7 @@ import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from
                     z: ((localIndex / 16).floor()) % 16,
                 },
                 blockStateRuntimeId: 1,
+                growthOriginEpoch: null,
             })
         stored.set(chunkKey(position), {position, revision: 1, overrides})
 
@@ -30,7 +31,7 @@ import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldDeltaStore} from
             if delta != null: found.append(delta)
         return found
 
-    async def commitChunks(_worldId: string, _commits: readonly List<readonly ChunkDeltaCommit>):
+    async def commitChunks(_worldId: string, _commits: readonly List<ChunkDeltaCommit>):
         throw Error("Read benchmark must not write")
 
     def validateBlockStateRuntimeId(_runtimeId: number): pass

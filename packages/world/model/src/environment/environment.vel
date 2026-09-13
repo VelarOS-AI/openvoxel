@@ -12,23 +12,23 @@ export enum WorldPrecipitationKind:
 
 /// 闪电的发生时刻属于世界时间线，而不是接收方本地时钟。sequence 由确定性时间槽
 /// 与空间 cell 共同产生；同一世界、同一 cell 和同一时刻会得到相同事件身份。
-export type WorldLightningEvent:
-    readonly sequence: number
-    readonly position: readonly Coordinate3
-    readonly intensity: number
-    readonly occurredAtWorldMilliseconds: number
+export readonly type WorldLightningEvent:
+    sequence: number
+    position: readonly Coordinate3
+    intensity: number
+    occurredAtWorldMilliseconds: number
 
 /// 环境状态是某一世界时刻的权威事实。0/0.25/0.5/0.75 分别表示午夜、日出、
 /// 正午和日落；moonPhase 0 为满月、4 为新月。风速单位是方块每秒。
-export type WorldEnvironmentState:
-    readonly timeOfDay: number
-    readonly moonPhase: number
-    readonly cloudiness: number
-    readonly precipitation: WorldPrecipitationKind
-    readonly precipitationIntensity: number
-    readonly windX: number
-    readonly windZ: number
-    readonly lightning: readonly WorldLightningEvent?
+export readonly type WorldEnvironmentState:
+    timeOfDay: number
+    moonPhase: number
+    cloudiness: number
+    precipitation: WorldPrecipitationKind
+    precipitationIntensity: number
+    windX: number
+    windZ: number
+    lightning: WorldLightningEvent?
 
 /// 样本把状态绑定到唯一世界时间与采样位置。服务端发送它作为锚点；能够取得 seed
 /// 的消费者使用同层的 worldEnvironmentAt 继续确定性时空场，否则只能推进样本中的
@@ -87,18 +87,18 @@ const WorldEnvironmentSampleValidator = validator(WorldEnvironmentSample, all([
     ),
 ]))
 
-export def validateWorldLightningEvent(event: readonly WorldLightningEvent) -> readonly WorldLightningEvent:
+export def validateWorldLightningEvent(event: WorldLightningEvent) -> WorldLightningEvent:
     WorldLightningEventValidator.validate(WorldLightningEvent.from(event))
     requireCoordinate3(event.position, "World lightning")
     return event
 
-export def validateWorldEnvironmentState(state: readonly WorldEnvironmentState) -> readonly WorldEnvironmentState:
+export def validateWorldEnvironmentState(state: WorldEnvironmentState) -> WorldEnvironmentState:
     WorldEnvironmentStateValidator.validate(WorldEnvironmentState.from(state))
     const lightning = state.lightning
     if lightning != null: validateWorldLightningEvent(lightning)
     return state
 
-export def validateWorldEnvironmentSample(sample: readonly WorldEnvironmentSample) -> readonly WorldEnvironmentSample:
+export def validateWorldEnvironmentSample(sample: WorldEnvironmentSample) -> WorldEnvironmentSample:
     validateWorldEnvironmentState(sample)
     WorldEnvironmentSampleValidator.validate(WorldEnvironmentSample.from(sample))
     requireCoordinate3(sample.samplePosition, "World environment sample")
@@ -107,7 +107,7 @@ export def validateWorldEnvironmentSample(sample: readonly WorldEnvironmentSampl
 /// 在没有 seed 的边界只推进权威锚点中的天体时间，保留原天气和同一闪电事件。
 /// 能取得世界 seed 的消费者应按新世界时间调用 worldEnvironmentAt，才能跨越
 /// 确定性天气窗口。
-export def sampleWorldEnvironment(anchor: readonly WorldEnvironmentSample, elapsedMilliseconds: number) -> WorldEnvironmentSample:
+export def sampleWorldEnvironment(anchor: WorldEnvironmentSample, elapsedMilliseconds: number) -> WorldEnvironmentSample:
     validateWorldEnvironmentSample(anchor)
     assert elapsedMilliseconds.isFinite() and elapsedMilliseconds >= 0 else "Environment elapsed milliseconds must be finite and non-negative"
     assert anchor.worldMilliseconds + elapsedMilliseconds <= maximumWorldEnvironmentMilliseconds else "Environment world time exceeds the supported range"

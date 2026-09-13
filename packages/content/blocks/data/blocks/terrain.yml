@@ -20,7 +20,7 @@ blocks:
 
   - key: blocks.grass
     translationKey: translations.block.grass
-    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    tags: [tags.terrain, tags.soil, tags.lushPlantSupport, tags.treeSupport, tags.dryPlantSupport, tags.cropSupport, tags.snowSupport]
     properties: [{name: snowy, kind: boolean}]
     defaultState: [{name: snowy, value: false}]
     physics:
@@ -45,7 +45,7 @@ blocks:
 
   - key: blocks.dirt
     translationKey: translations.block.dirt
-    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    tags: [tags.terrain, tags.soil, tags.lushPlantSupport, tags.treeSupport, tags.dryPlantSupport, tags.cropSupport, tags.snowSupport, tags.aquaticPlantSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -57,7 +57,7 @@ blocks:
 
   - key: blocks.stone
     translationKey: translations.block.stone
-    tags: [tags.terrain, tags.naturalRock]
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport, tags.bottomDwellerSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -69,7 +69,7 @@ blocks:
 
   - key: blocks.sand
     translationKey: translations.block.sand
-    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    tags: [tags.terrain, tags.soil, tags.cactusSupport, tags.dryPlantSupport, tags.snowSupport, tags.aquaticPlantSupport, tags.bottomDwellerSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -81,7 +81,7 @@ blocks:
 
   - key: blocks.sandstone
     translationKey: translations.block.sandstone
-    tags: [tags.terrain, tags.naturalRock]
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -93,7 +93,7 @@ blocks:
 
   - key: blocks.granite
     translationKey: translations.block.granite
-    tags: [tags.terrain, tags.naturalRock]
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -105,7 +105,7 @@ blocks:
 
   - key: blocks.basalt
     translationKey: translations.block.basalt
-    tags: [tags.terrain, tags.naturalRock]
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -117,7 +117,7 @@ blocks:
 
   - key: blocks.gravel
     translationKey: translations.block.gravel
-    tags: [tags.terrain, tags.plantSupport]
+    tags: [tags.terrain, tags.snowSupport, tags.aquaticPlantSupport, tags.bottomDwellerSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -129,7 +129,7 @@ blocks:
 
   - key: blocks.limestone
     translationKey: translations.block.limestone
-    tags: [tags.terrain, tags.naturalRock]
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport, tags.bottomDwellerSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -139,9 +139,21 @@ blocks:
     behaviors: []
     variants: []
 
+  - key: blocks.marble
+    translationKey: translations.block.marble
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport, tags.bottomDwellerSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.marble}, cullFaces: true}
+    interaction: {breakable: true, hardness: 1.2, blastResistance: 5, toolTag: tools.pickaxe, drops: loot.block.marble, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
   - key: blocks.clay
     translationKey: translations.block.clay
-    tags: [tags.terrain, tags.soil, tags.plantSupport]
+    tags: [tags.terrain, tags.soil, tags.snowSupport, tags.aquaticPlantSupport, tags.bottomDwellerSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
@@ -153,7 +165,7 @@ blocks:
 
   - key: blocks.ice
     translationKey: translations.block.ice
-    tags: [tags.terrain, tags.ice]
+    tags: [tags.terrain, tags.ice, tags.snowSupport]
     properties: []
     defaultState: []
     physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: none}, replaceable: false, friction: 0.98, speedFactor: 1, jumpFactor: 1}
@@ -185,5 +197,5 @@ blocks:
     light: {emission: 0, opacity: 1, skylight: diffuse, ambientOcclusion: false}
     render: {model: models.block.snowLayer, layer: cutout, material: materials.terrain, textures: {all: textures.block.snow}, cullFaces: false}
     interaction: {breakable: true, hardness: 0.1, blastResistance: 0.1, toolTag: tools.shovel, drops: loot.block.snow, sounds: sounds.snow}
-    behaviors: [{kind: support, face: below}]
+    behaviors: [{kind: support, face: below, supportingTag: tags.snowSupport}]
     variants: []

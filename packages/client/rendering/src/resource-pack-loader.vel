@@ -1,0 +1,6 @@
+import {ClientResourcePackArtifact} from "./resource-pack.vel"
+
+/// 纹理数组产物独立于呈现代码分片；进入世界时才加载，模块缓存负责复用。
+export async def loadBuiltinClientResourcePack() -> ClientResourcePackArtifact:
+    const resources = await import("./builtin-resource-pack.vel")
+    return resources.builtinClientResourcePack

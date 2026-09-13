@@ -1,4 +1,4 @@
-import {localBackend} from "@openvoxel/client"
+import {deferredWorldLibrary} from "../worlds/world-library-operations.vel"
 import {Head} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
@@ -7,13 +7,13 @@ import {navigate} from "../navigation/app-navigation.vel"
 import {errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
 import {openPanelLook, panelTitleLook} from "../styles/open-world.vel"
 import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
-import {SavedWorld, WorldPreset} from "../worlds/saved-world.vel"
+import {WorldPreset} from "../worlds/saved-world.vel"
 import {rememberWorld} from "../worlds/world-library.vel"
 import {worldCover} from "../worlds/world-presentation.vel"
 import {worldRoute} from "../worlds/world-route.vel"
 
 export component OpenWorldPage:
-    const backend = localBackend()
+    const backend = deferredWorldLibrary()
     const lifetime = asyncPageLifetime()
     state worldId = ""
     state failure = ""
@@ -28,12 +28,7 @@ export component OpenWorldPage:
             assert not id.isBlank() else "World identifier cannot be blank"
             const found = await backend.findWorld(id)
             if not lifetime.owns(generation): return
-            const saved = SavedWorld.from(found, {
-                mode: found.mode,
-                preset: WorldPreset.meadow,
-                lastPlayed: "Opened just now",
-            })
-            rememberWorld(saved)
+            rememberWorld(found)
             navigate(worldRoute(found.id))
         catch error:
             if lifetime.owns(generation): failure = error.message

@@ -2,22 +2,22 @@ import {BlockStateDefinition} from "../definition/catalog.vel"
 
 /// 收集目录实际引用的逻辑渲染资源，供客户端预加载与缓存规划使用。
 /// 资源清单按类别去重并排序，输出顺序不受状态遍历顺序影响。
-export type BlockRenderResources:
+export readonly type BlockRenderResources:
     /// 所有状态使用的材质规则身份。
-    readonly materials: readonly List<string>
+    materials: readonly List<string>
     /// 所有面引用的纹理身份。
-    readonly textures: readonly List<string>
+    textures: readonly List<string>
     /// 所有可见状态使用的模型身份。
-    readonly models: readonly List<string>
+    models: readonly List<string>
     /// 可选染色规则身份。
-    readonly tints: readonly List<string>
+    tints: readonly List<string>
     /// 可选纹理动画规则身份。
-    readonly animations: readonly List<string>
+    animations: readonly List<string>
 
 def sortedValues(values: Set<string>) -> readonly List<string>: return values.values().sorted()
 
 /// 遍历具体状态而不是方块家族，因为 variant 可能为不同状态替换渲染组件。
-export def collectBlockRenderResources(states: readonly List<readonly BlockStateDefinition>) -> BlockRenderResources:
+export def collectBlockRenderResources(states: readonly List<BlockStateDefinition>) -> BlockRenderResources:
     const materials: Set<string> = Set()
     const textures: Set<string> = Set()
     const models: Set<string> = Set()
@@ -35,8 +35,20 @@ export def collectBlockRenderResources(states: readonly List<readonly BlockState
             if blockTextures.top != null: textures.add(blockTextures.top)
             if blockTextures.bottom != null: textures.add(blockTextures.bottom)
             if blockTextures.side != null: textures.add(blockTextures.side)
+            if blockTextures.front != null: textures.add(blockTextures.front)
         if render.tint != null: tints.add(render.tint)
         if render.animation != null: animations.add(render.animation)
+        for attachment in render.attachments ?? []:
+            models.add(attachment.model)
+            materials.add(attachment.material)
+            const attachmentTextures = attachment.textures
+            if attachmentTextures.all != null: textures.add(attachmentTextures.all)
+            if attachmentTextures.top != null: textures.add(attachmentTextures.top)
+            if attachmentTextures.bottom != null: textures.add(attachmentTextures.bottom)
+            if attachmentTextures.side != null: textures.add(attachmentTextures.side)
+            if attachmentTextures.front != null: textures.add(attachmentTextures.front)
+            if attachment.tint != null: tints.add(attachment.tint)
+            if attachment.animation != null: animations.add(attachment.animation)
 
     return {
         materials: sortedValues(materials),

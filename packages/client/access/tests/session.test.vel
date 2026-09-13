@@ -12,7 +12,7 @@ type BackendHarness:
     backend: WorldBackend
     runtime: WorldRuntime
     world: WorldManifest
-    injectDuringNextSync: (edit: readonly RealtimeBlockEdit) -> null
+    injectDuringNextSync: (edit: RealtimeBlockEdit) -> null
 
 type Signal = bool
 
@@ -42,7 +42,7 @@ def contentResponse(snapshot: readonly WorldContentSnapshot) -> WorldContentResp
         states: snapshot.catalog.states,
     })
 
-def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
+def bootstrapResponse(manifest: WorldManifest, content: readonly WorldContentSnapshot) -> WorldBootstrapResponse:
     return WorldBootstrapResponse.from(manifest, {
         clientContractVersion,
         protocolVersion,
@@ -55,7 +55,7 @@ def bootstrapResponse(manifest: readonly WorldManifest, content: readonly WorldC
 
 def terrainSnapshot(chunk: readonly Chunk) -> ClientTerrainChunkSnapshot: return ClientTerrainChunkSnapshot.from(chunk)
 
-def blockChanges(batch: readonly BlockChangeBatch) -> List<RealtimeBlockChange>:
+def blockChanges(batch: BlockChangeBatch) -> List<RealtimeBlockChange>:
     return batch.changes
         .filter(change => change.changed)
         .map(change => RealtimeBlockChange.from(change))
@@ -69,7 +69,7 @@ async def backendHarness() -> BackendHarness:
     let environmentMilliseconds = 120000
     let injectedEdit: RealtimeBlockEdit? = null
 
-    def publish(batch: readonly BlockChangeBatch):
+    def publish(batch: BlockChangeBatch):
         currentSequence = batch.sequence
         const event: WorldBlocksChangedEvent = {
             event: "blocks.changed",
@@ -83,7 +83,7 @@ async def backendHarness() -> BackendHarness:
 
     async def contract() -> WorldBackendContract: return contractResponse()
 
-    async def createWorld(command: readonly CreateWorldRequest):
+    async def createWorld(command: CreateWorldRequest):
         return await runtime.createWorld(CreateWorld.from(command, {
             contentPacks: command.contentPacks?.copy(),
         }))
@@ -107,7 +107,7 @@ async def backendHarness() -> BackendHarness:
             await Promise.sleep(20ms)
             await cancellation.checkpoint()
         const chunks = await runtime.terrainChunks(worldId, positions)
-        const output: List<readonly ClientTerrainChunkSnapshot> = []
+        const output: List<ClientTerrainChunkSnapshot> = []
         for chunk in chunks: output.append(terrainSnapshot(chunk))
         return {worldId, chunks: output}
 
@@ -142,8 +142,8 @@ async def backendHarness() -> BackendHarness:
             const output: List<RealtimeChunkDelta> = deltas.map(delta => RealtimeChunkDelta.from(delta))
             return {event: "chunks.synced", requestId, worldId, chunks: output}
 
-        async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
-            const commands: List<readonly BlockEdit> = edits.copy()
+        async def applyBlocks(requestId: string, edits: readonly List<RealtimeBlockEdit>) -> BlockEditsAppliedEvent:
+            const commands: List<BlockEdit> = edits.copy()
             const batch = await runtime.editBlocks(worldId, commands)
             return {
                 event: "blocks.applied",
@@ -162,7 +162,7 @@ async def backendHarness() -> BackendHarness:
 
     async def close(): pass
 
-    def injectDuringNextSync(edit: readonly RealtimeBlockEdit):
+    def injectDuringNextSync(edit: RealtimeBlockEdit):
         assert injectedEdit == null else "Test backend already has a pending injected edit"
         injectedEdit = RealtimeBlockEdit.parse(edit)
 
@@ -465,7 +465,7 @@ test "terrain arriving after session close cannot introduce cold chunks":
     const entered = channel(Signal, capacity=1)
     const release = channel(Signal, capacity=1)
 
-    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> readonly ClientTerrainBatchSnapshot:
+    async def terrainChunks(worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null) -> ClientTerrainBatchSnapshot:
         const terrain = cancellation == null ? await harness.backend.terrainChunks(worldId, positions) : await harness.backend.terrainChunks(worldId, positions, cancellation)
         entered.trySend(true)
         await release.next()
@@ -511,7 +511,7 @@ test "a failed overlapping Chunk load cannot roll back another successful owner"
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> readonly ClientTerrainBatchSnapshot:
+    ) -> ClientTerrainBatchSnapshot:
         if cancellation == null:
             successfulTerrainEntered = true
             while not cancellableSyncEntered: await Promise.sleep(0ms)

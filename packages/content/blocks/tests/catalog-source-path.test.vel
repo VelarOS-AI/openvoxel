@@ -1,0 +1,30 @@
+import {expect} from "velar/test"
+import {isBlockCatalogSourcePath, requireBlockCatalogSourcePath} from "../tools/catalog-source-path.vel"
+
+test "block catalog sources allow responsibility folders at arbitrary depth":
+    const sources = [
+        "blocks/terrain.yml",
+        "blocks/vegetation/ground-plants.yml",
+        "blocks/ecology/aquatic/deep-water.yml",
+    ]
+    for source in sources:
+        expect(isBlockCatalogSourcePath(source)).toBe(true)
+        requireBlockCatalogSourcePath(source)
+
+test "block catalog sources reject paths that can escape or alias data ownership":
+    const sources = [
+        "/blocks/terrain.yml",
+        "../blocks/terrain.yml",
+        "blocks/../terrain.yml",
+        "blocks//terrain.yml",
+        "blocks/vegetation//aquatic.yml",
+        "blocks/vegetation/",
+        "blocks/Vegetation/trees.yml",
+        "blocks/vegetation/ground_plants.yml",
+        "blocks/vegetation/-trees.yml",
+        "blocks/vegetation/trees-.yml",
+        "blocks/vegetation/trees.yaml",
+    ]
+    for source in sources:
+        expect(isBlockCatalogSourcePath(source)).toBe(false)
+        expect(() => requireBlockCatalogSourcePath(source)).toThrow()

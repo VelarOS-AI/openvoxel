@@ -1,5 +1,6 @@
 {
   "formatVersion": 2,
+  "surfaces": {"core": "0.10", "web": "0.14"},
   "kind": "library",
   "entry": "src/index.vel",
   "outDir": "dist",

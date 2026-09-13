@@ -1,0 +1,54 @@
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {builtinIdentities} from "@openvoxel/identities"
+import {chunkBlock, Coordinate3, emptyChunk, setChunkBlock} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {compiledFeaturePlan, featurePlansOverlap} from "../../src/survival/feature-plan.vel"
+import {DecorationPlan, decorationVerticalBounds, generateVegetation} from "../../src/survival/vegetation.vel"
+
+test "feature overlap compares occupied world cells rather than intersecting envelopes":
+    const left = compiledFeaturePlan("left", {x: -16, y: 64, z: 3}, "left", [
+        {x: 0, y: 1, z: 0, runtimeId: 1}, {x: 2, y: 1, z: 0, runtimeId: 2},
+    ])
+    const hole = compiledFeaturePlan("hole", {x: -15, y: 65, z: 3}, "hole", [{x: 0, y: 0, z: 0, runtimeId: 4}])
+    const crossing = compiledFeaturePlan("crossing", {x: -32, y: 48, z: 0}, "crossing", [{x: 18, y: 17, z: 3, runtimeId: 4}])
+    expect(featurePlansOverlap(left, hole)).toBe(false)
+    expect(featurePlansOverlap(hole, left)).toBe(false)
+    expect(featurePlansOverlap(left, crossing)).toBe(true)
+    expect(featurePlansOverlap(crossing, left)).toBe(true)
+
+test "decoration bounds include a high neighboring tree that crosses into the target column":
+    const feature = compiledFeaturePlan(
+        "tree:neighbor",
+        {x: -2, y: 112, z: 8},
+        "0_structure:tree:neighbor",
+        [
+            {x: 2, y: 19, z: 0, runtimeId: 1},
+            {x: 3, y: 20, z: 0, runtimeId: 1},
+        ],
+    )
+    const plan: DecorationPlan = {chunkX: 0, chunkZ: 0, features: [feature]}
+
+    expect(decorationVerticalBounds(plan)).toEqual({minimumY: 131, maximumY: 132})
+
+test "oriented branch logs replace leaves through semantic block tags":
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const chunk = emptyChunk({x: 0, y: 4, z: 0}, 16, blocks.air)
+    const position = {x: 3, y: 2, z: 4}
+    const worldY = chunk.position.y * chunk.edge + position.y
+    const branch = registry.withProperty(blocks.oakLog, "axis", "x")
+    setChunkBlock(chunk, position, blocks.birchLeaves)
+    const feature = compiledFeaturePlan(
+        "tree:branch",
+        Coordinate3.from(position, {y: worldY}),
+        "0_structure:tree:branch",
+        [{x: 0, y: 0, z: 0, runtimeId: branch}],
+    )
+    const plan: DecorationPlan = {chunkX: 0, chunkZ: 0, features: [feature]}
+
+    generateVegetation(chunk, plan, blocks, registry)
+
+    expect(chunkBlock(chunk, position)).toBe(branch)
+    expect(registry.requireStateByRuntimeId(branch).blockKey).toBe(builtinIdentities.blocks.oakLog)

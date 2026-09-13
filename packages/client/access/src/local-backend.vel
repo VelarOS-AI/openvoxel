@@ -50,27 +50,27 @@ export def localBackend(
         assert response.operation == message.operation else "LocalBackend Worker returned the wrong operation"
         return response
 
-    async def contract() -> readonly WorldBackendContract:
+    async def contract() -> WorldBackendContract:
         const response = await call(request(localWorkerOperations.contract))
         assert response.contract != null else "LocalBackend Worker omitted its contract"
         return response.contract
 
-    async def createWorld(command: readonly CreateWorldRequest) -> readonly WorldManifest:
+    async def createWorld(command: CreateWorldRequest) -> WorldManifest:
         const response = await call({operation: localWorkerOperations.createWorld, command})
         assert response.manifest != null else "LocalBackend Worker omitted the created world"
         return response.manifest
 
-    async def findWorld(worldId: string) -> readonly WorldManifest:
+    async def findWorld(worldId: string) -> WorldManifest:
         const response = await call({operation: localWorkerOperations.findWorld, worldId})
         assert response.manifest != null else "LocalBackend Worker omitted the found world"
         return response.manifest
 
-    async def bootstrap(worldId: string) -> readonly WorldBootstrapResponse:
+    async def bootstrap(worldId: string) -> WorldBootstrapResponse:
         const response = await call({operation: localWorkerOperations.bootstrap, worldId})
         assert response.bootstrap != null else "LocalBackend Worker omitted world bootstrap"
         return response.bootstrap
 
-    async def content(worldId: string) -> readonly WorldContentResponse:
+    async def content(worldId: string) -> WorldContentResponse:
         const response = await call({operation: localWorkerOperations.content, worldId})
         assert response.content != null else "LocalBackend Worker omitted world content"
         return response.content
@@ -79,7 +79,7 @@ export def localBackend(
         worldId: string,
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
-    ) -> readonly ClientTerrainBatchSnapshot:
+    ) -> ClientTerrainBatchSnapshot:
         const response = await call({operation: localWorkerOperations.terrainChunks, worldId, positions}, cancellation)
         assert response.terrain != null else "LocalBackend Worker omitted terrain Chunks"
         return response.terrain
@@ -127,7 +127,7 @@ export def localBackend(
             assert response.chunks != null else "LocalBackend Worker omitted chunks.synced"
             return response.chunks
 
-        async def applyBlocks(requestId: string, edits: readonly List<readonly RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
+        async def applyBlocks(requestId: string, edits: readonly List<RealtimeBlockEdit>) -> readonly BlockEditsAppliedEvent:
             requireHealthy()
             const response = await call({
                 operation: localWorkerOperations.applyBlocks,

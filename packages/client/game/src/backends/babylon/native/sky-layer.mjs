@@ -1,6 +1,7 @@
 import {ShaderMaterial} from "@babylonjs/core/Materials/shaderMaterial.js";
 import {Mesh} from "@babylonjs/core/Meshes/mesh.js";
 import {MeshBuilder} from "@babylonjs/core/Meshes/meshBuilder.js";
+import {skyColorShader} from "./sky-colors.mjs";
 
 export function createSky(scene, diameter) {
   const material = new ShaderMaterial("openvoxel-sky-material", scene, {
@@ -20,11 +21,10 @@ uniform vec3 ovSkyTop;
 uniform vec3 ovHorizon;
 uniform vec3 ovGround;
 uniform float ovFlash;
+${skyColorShader}
 void main(void) {
   vec3 direction = normalize(ovSkyDirection);
-  vec3 lower = mix(ovGround, ovHorizon, smoothstep(-1.0, 0.0, direction.y));
-  vec3 color = mix(lower, ovSkyTop, smoothstep(0.0, 0.82, direction.y));
-  color = mix(color, vec3(0.82, 0.88, 1.0), ovFlash * 0.3);
+  vec3 color = ovSkyColor(direction.y, ovSkyTop, ovHorizon, ovGround, ovFlash);
   gl_FragColor = vec4(color, 1.0);
 }`,
   }, {

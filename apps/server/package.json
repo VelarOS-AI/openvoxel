@@ -9,16 +9,16 @@
     "src"
   ],
   "scripts": {
-    "benchmark:sqlite": "velar run benchmarks/sqlite-deltas.vel",
-    "benchmark:presentation": "velar run benchmarks/presentation.vel",
-    "benchmark:transport": "velar run benchmarks/http-terrain.vel",
-    "check": "velar check",
+    "benchmark:sqlite": "node ../../tools/run-validation.mjs -- velar run benchmarks/sqlite-deltas.vel",
+    "benchmark:presentation": "node ../../tools/run-validation.mjs -- velar run benchmarks/presentation.vel",
+    "benchmark:transport": "node ../../tools/run-validation.mjs -- velar run benchmarks/http-terrain.vel",
+    "check": "node ../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
+    "format:check": "node ../../tools/run-validation.mjs -- velar format --check",
     "dev": "velar dev",
     "start": "velar serve",
-    "test": "velar test",
-    "build": "velar build"
+    "test": "node ../../tools/run-validation.mjs -- velar test",
+    "build": "node ../../tools/run-validation.mjs -- velar build"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",
@@ -27,11 +27,11 @@
     "@openvoxel/world": "0.2.0",
     "@openvoxel/world-generation": "0.2.0",
     "@openvoxel/world-runtime": "0.2.0",
-    "@velarscript-labs/database": "0.3.3",
+    "@velarscript-labs/database": "0.3.4",
     "@velarscript-labs/msgpack": "0.1.7",
-    "@velarscript-labs/sql": "0.1.3",
-    "@velarscript-labs/sqlite": "0.3.4",
-    "@velarscript/server": "0.33.1"
+    "@velarscript-labs/sql": "0.1.4",
+    "@velarscript-labs/sqlite": "0.3.5",
+    "@velarscript/server": "0.34.0"
   },
   "devDependencies": {
     "@openvoxel/identities": "0.2.0",

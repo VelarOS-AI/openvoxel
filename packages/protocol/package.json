@@ -14,11 +14,11 @@
     }
   },
   "scripts": {
-    "check": "velar check",
+    "check": "node ../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
-    "test": "velar test",
-    "build": "velar build"
+    "format:check": "node ../../tools/run-validation.mjs -- velar format --check",
+    "test": "node ../../tools/run-validation.mjs -- velar test",
+    "build": "node ../../tools/run-validation.mjs -- velar build"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",

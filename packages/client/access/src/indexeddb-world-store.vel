@@ -2,7 +2,7 @@ import {Bytes} from "velar/binary"
 import {database} from "velar/storage"
 import {decode, encode} from "@velarscript-labs/msgpack"
 import {ChunkPosition, LocalPosition, WorldManifest, chunkKey} from "@openvoxel/world"
-import {BlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
+import {StoredBlockOverride, StoredChunkDelta, ChunkDeltaCommit, WorldStore} from "@openvoxel/world-runtime"
 
 type DatabaseBatchChange:
     key: string
@@ -10,7 +10,7 @@ type DatabaseBatchChange:
 
 def localKey(position: readonly LocalPosition) -> string: return f"{position.x}:{position.y}:{position.z}"
 
-def localOrder(entry: readonly BlockOverride) -> number:
+def localOrder(entry: StoredBlockOverride) -> number:
     return entry.position.x + 1024 * entry.position.z + 1048576 * entry.position.y
 
 /// OpenVoxel 的浏览器持久化适配器。一个 LocalBackend 只让自己的专用 Worker
@@ -32,7 +32,11 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
     async def storedDelta(worldId: string, position: readonly ChunkPosition) -> StoredChunkDelta?:
         const bytes = await storage.getBytes(deltaKey(worldId, position))
         if bytes == null: return null
-        return StoredChunkDelta.parse(decode(bytes))
+        const decoded = StoredChunkDelta.parse(decode(bytes))
+        if decoded.storageRevision != null: return decoded
+        // v7 本地记录只有公开 revision；首次读时在内存中提升为双版本，下一次
+        // 原子写会把 storageRevision 一并编码，不需要全库扫描迁移。
+        return StoredChunkDelta.from(decoded, {storageRevision: decoded.revision})
 
     async def findChunks(worldId: string, positions: readonly List<readonly ChunkPosition>) -> List<StoredChunkDelta>:
         const found: List<StoredChunkDelta> = []
@@ -41,22 +45,25 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
             if delta != null: found.append(delta)
         return found
 
-    async def commitChunks(worldId: string, commits: readonly List<readonly ChunkDeltaCommit>):
+    async def commitChunks(worldId: string, commits: readonly List<ChunkDeltaCommit>):
         const changes: List<DatabaseBatchChange> = []
         for commit in commits:
             const current = await storedDelta(worldId, commit.position) ?? {
                 position: commit.position,
                 revision: 0,
+                storageRevision: 0,
                 overrides: [],
             }
-            assert current.revision == commit.expectedRevision else f"Chunk revision conflict at {chunkKey(commit.position)}"
-            assert commit.revision == commit.expectedRevision + 1 else "Chunk revision must advance exactly once"
+            const currentStorageRevision = current.storageRevision ?? current.revision
+            assert currentStorageRevision == commit.expectedStorageRevision else f"Chunk storage revision conflict at {chunkKey(commit.position)}"
+            assert commit.storageRevision == commit.expectedStorageRevision + 1 else "Chunk storage revision must advance exactly once"
+            assert commit.revision == current.revision or commit.revision == current.revision + 1 else "Chunk visible revision must stay or advance exactly once"
 
-            const byPosition: Map<string, readonly BlockOverride> = Map()
+            const byPosition: Map<string, StoredBlockOverride> = Map()
             for entry in current.overrides: byPosition.set(localKey(entry.position), entry)
             for write in commit.writes:
                 if write.blockStateRuntimeId != null:
-                    byPosition.set(localKey(write.position), BlockOverride.from(write, {
+                    byPosition.set(localKey(write.position), StoredBlockOverride.from(write, {
                         blockStateRuntimeId: write.blockStateRuntimeId,
                     }))
                 else: byPosition.remove(localKey(write.position))

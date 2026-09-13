@@ -1,7 +1,7 @@
 import {DatabaseCommand, DatabaseExecutor, DatabaseQuery, execute, one} from "@velarscript-labs/database"
 import {insertCommand, selectQuery, sqlColumnEqual, sqlNamedField, sqlTable} from "@velarscript-labs/sql"
 import {WorldBlockRegistrySnapshot} from "@openvoxel/blocks"
-import {WorldContentIdentity, WorldGameMode, WorldManifest, validateWorldManifest} from "@openvoxel/world"
+import {WorldClimateDefinition, WorldContentIdentity, WorldGameMode, WorldManifest, validateWorldManifest} from "@openvoxel/world"
 import {WorldManifestStore} from "@openvoxel/world-runtime"
 
 type WorldRow:
@@ -14,6 +14,7 @@ type WorldRow:
     chunkEdge: number
     generator: string
     generatorHash: string
+    climateJson: string
     spawnX: number
     spawnY: number
     spawnZ: number
@@ -25,8 +26,8 @@ const worldsTable = sqlTable("worlds")
 def insertWorldOperation(world: WorldManifest) -> DatabaseCommand:
     return insertCommand(
         worldsTable,
-        ["id", "name", "seed", "mode", "world_time_origin_milliseconds", "format_version", "chunk_edge", "generator", "generator_hash", "spawn_x", "spawn_y", "spawn_z", "content_json", "block_registry_json"],
-        [[world.id, world.name, world.seed, world.mode, world.worldTimeOriginMilliseconds, world.formatVersion, world.chunkEdge, world.generator, world.generatorHash, world.spawn.x, world.spawn.y, world.spawn.z, Json.stableStringify(world.content), Json.stableStringify(world.blockRegistry)]],
+        ["id", "name", "seed", "mode", "world_time_origin_milliseconds", "format_version", "chunk_edge", "generator", "generator_hash", "climate_json", "spawn_x", "spawn_y", "spawn_z", "content_json", "block_registry_json"],
+        [[world.id, world.name, world.seed, world.mode, world.worldTimeOriginMilliseconds, world.formatVersion, world.chunkEdge, world.generator, world.generatorHash, Json.stableStringify(world.climate), world.spawn.x, world.spawn.y, world.spawn.z, Json.stableStringify(world.content), Json.stableStringify(world.blockRegistry)]],
         minimumAffected=1,
         maximumAffected=1,
     )
@@ -44,6 +45,7 @@ def findWorldOperation(worldId: string) -> DatabaseQuery<WorldRow>:
             sqlNamedField("chunk_edge", alias="chunkEdge"),
             sqlNamedField("generator"),
             sqlNamedField("generator_hash", alias="generatorHash"),
+            sqlNamedField("climate_json", alias="climateJson"),
             sqlNamedField("spawn_x", alias="spawnX"),
             sqlNamedField("spawn_y", alias="spawnY"),
             sqlNamedField("spawn_z", alias="spawnZ"),
@@ -68,6 +70,7 @@ export def sqliteWorldManifests(databaseExecutor: DatabaseExecutor) -> WorldMani
         const content = WorldContentIdentity.parse(Json.parse(row.contentJson))
         return validateWorldManifest(WorldManifest.from(row, {
             mode: WorldGameMode.parse(row.mode),
+            climate: WorldClimateDefinition.parse(Json.parse(row.climateJson)),
             spawn: {x: row.spawnX, y: row.spawnY, z: row.spawnZ},
             content,
             blockRegistry,

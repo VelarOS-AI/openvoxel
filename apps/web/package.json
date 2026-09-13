@@ -19,17 +19,17 @@
     }
   },
   "scripts": {
-    "generate": "node tools/generate-assets.mjs",
-    "generate:check": "node tools/check-assets.mjs",
+    "generate": "node ../../tools/run-validation.mjs -- node tools/generate-assets.mjs",
+    "generate:check": "node ../../tools/run-validation.mjs -- node tools/check-assets.mjs",
     "precheck": "npm run generate",
-    "check": "velar check",
+    "check": "node ../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
-    "format:check": "velar format --check",
-    "test": "velar test && node --test tests/*.test.mjs",
+    "format:check": "node ../../tools/run-validation.mjs -- velar format --check",
+    "test": "node ../../tools/run-validation.mjs --shell \"velar test && node --test --test-concurrency=1 tests/*.test.mjs\"",
     "predev": "npm run generate",
     "dev": "velar dev --port 7173",
     "prebuild": "npm run generate",
-    "build": "velar build",
+    "build": "node ../../tools/run-validation.mjs -- velar build",
     "preview": "velar preview --port 7174"
   },
   "dependencies": {
@@ -37,13 +37,13 @@
     "@openvoxel/game": "0.2.0",
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/world": "0.2.0",
-    "@velarscript/web": "0.33.1"
+    "@velarscript/web": "0.34.0"
   },
   "devDependencies": {
     "@fontsource/inter": "5.3.0",
     "@fontsource/rajdhani": "5.3.0",
     "@fortawesome/fontawesome-free": "7.3.1",
-    "@velarscript/cli": "0.33.1",
+    "@velarscript/cli": "0.34.0",
     "sharp": "0.35.4",
     "yaml": "2.9.0"
   }

@@ -23,16 +23,16 @@ export type WorldRuntime:
     findWorld: (worldId: string) -> Promise<WorldManifest?>
     requireWorld: (worldId: string) -> Promise<WorldManifest>
     worldContent: (worldId: string) -> Promise<readonly WorldContentSnapshot>
-    environment: (worldId: string, worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> Promise<readonly WorldEnvironmentSample>
+    environment: (worldId: string, worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> Promise<WorldEnvironmentSample>
     chunk: (worldId: string, position: readonly ChunkPosition) -> Promise<Chunk>
     chunks: (worldId: string, positions: readonly List<readonly ChunkPosition>) -> Promise<List<Chunk>>
     terrainChunks: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<List<Chunk>>
-    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<readonly WorldChunkSnapshot>>
+    chunkDeltas: (worldId: string, positions: readonly List<readonly ChunkPosition>, cancellation?: Cancellation) -> Promise<readonly List<WorldChunkSnapshot>>
     terrainSample: (worldId: string, position: readonly Coordinate2) -> Promise<TerrainSample>
-    editBlocks: (worldId: string, edits: readonly List<readonly BlockEdit>) -> Promise<BlockChangeBatch>
+    editBlocks: (worldId: string, edits: readonly List<BlockEdit>) -> Promise<BlockChangeBatch>
     /// 为长连接保留世界上下文；关闭租约后世界才重新具备自动淘汰资格。
     retainWorld: (worldId: string) -> Promise<WorldRuntimeLease>
-    subscribeBlockChanges: (listener: (batch: readonly BlockChangeBatch) -> null) -> WorldRuntimeSubscription
+    subscribeBlockChanges: (listener: (batch: BlockChangeBatch) -> null) -> WorldRuntimeSubscription
     /// 释放一个世界的可重建运行时上下文，不删除任何持久化数据。
     unloadWorld: (worldId: string) -> Promise<null>
     close: () -> Promise<null>
@@ -41,9 +41,9 @@ export type WorldRuntimeSubscription:
     close: () -> null
 
 export type WorldRuntimeLease:
-    manifest: readonly WorldManifest
+    manifest: WorldManifest
     sequence: () -> number
-    environment: (worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> readonly WorldEnvironmentSample
+    environment: (worldMilliseconds?: number, samplePosition?: readonly Coordinate3) -> WorldEnvironmentSample
     close: () -> Promise<null>
 
 /// 宿主为世界运行时提供权威 Unix 墙钟；确定性环境采样策略本身属于 world/model。
@@ -85,10 +85,10 @@ export def worldRuntime(
             : worldSessionCache(store, content, validatedOptions.activeWorldCapacity, validatedOptions.activeChunkCapacity, validatedOptions.activeOverrideCapacity)
     )
     const queries = worldChunkQueries(sessions, currentWorldMilliseconds)
-    const listeners: Map<number, (batch: readonly BlockChangeBatch) -> null> = Map()
+    const listeners: Map<number, (batch: BlockChangeBatch) -> null> = Map()
     let nextListenerId = 1
 
-    def publishBlockChanges(batch: readonly BlockChangeBatch):
+    def publishBlockChanges(batch: BlockChangeBatch):
         // 事件订阅是提交后的通知，不是持久化事务的一部分。某个宿主监听器失败时
         // 不能把已经可靠提交的命令伪装成失败，也不能阻断其他订阅者；客户端可用
         // chunks.sync 按 revision 重新收敛。
@@ -99,7 +99,7 @@ export def worldRuntime(
     const commands = worldBlockCommands(sessions, publishBlockChanges, currentWorldMilliseconds)
     const creations: Map<string, Promise<WorldManifest>> = Map()
 
-    def currentWorldMilliseconds(manifest: readonly WorldManifest) -> number:
+    def currentWorldMilliseconds(manifest: WorldManifest) -> number:
         const worldMilliseconds = environmentClock() - manifest.worldTimeOriginMilliseconds
         assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 else "World environment clock precedes the persisted world time origin"
         return worldMilliseconds
@@ -152,17 +152,17 @@ export def worldRuntime(
         try: return lease.world.contentSnapshot
         finally: await lease.close()
 
-    async def environment(worldId: string, worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
+    async def environment(worldId: string, worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> WorldEnvironmentSample:
         const lease = await sessions.require(worldId)
         try:
-            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn)
+            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn, lease.world.manifest.climate)
         finally: await lease.close()
 
     async def retainWorld(worldId: string) -> WorldRuntimeLease:
         const lease = await sessions.require(worldId)
 
-        def environment(worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> readonly WorldEnvironmentSample:
-            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn)
+        def environment(worldMilliseconds: number? = null, samplePosition: readonly Coordinate3? = null) -> WorldEnvironmentSample:
+            return worldEnvironmentAt(lease.world.manifest.seed, worldMilliseconds ?? currentWorldMilliseconds(lease.world.manifest), samplePosition ?? lease.world.manifest.spawn, lease.world.manifest.climate)
 
         return {manifest: lease.world.manifest, sequence: () => lease.world.sequence, environment, close: lease.close}
 
@@ -170,7 +170,7 @@ export def worldRuntime(
         await commands.drain(worldId)
         await sessions.unload(worldId)
 
-    def subscribeBlockChanges(listener: (batch: readonly BlockChangeBatch) -> null) -> WorldRuntimeSubscription:
+    def subscribeBlockChanges(listener: (batch: BlockChangeBatch) -> null) -> WorldRuntimeSubscription:
         const id = nextListenerId
         nextListenerId += 1
         assert not listeners.has(id) else "World runtime listener identifier space is exhausted"

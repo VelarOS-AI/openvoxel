@@ -1,14 +1,16 @@
 import {BlockRenderLayer} from "@openvoxel/blocks"
 import {expect} from "velar/test"
-import {UInt32Buffer, uint32Buffer} from "velar/binary"
+import {Float32Buffer, UInt32Buffer, uint32Buffer} from "velar/binary"
 import {meshChunk} from "../src/mesher.vel"
-import {ClientBlockModelKind, ClientClimateTint, ClientRenderState, ClientRenderTexture, ClientTextureVariant, ClientTintCoverage, chunkPortalFaceCount, chunkPortalFaceIndices} from "../src/contracts.vel"
+import {ClientBlockModelKind, ClientClimateTint, ClientRenderAttachment, ClientRenderState, ClientRenderTexture, ClientTextureVariant, ClientTintCoverage, chunkPortalFaceCount, chunkPortalFaceIndices} from "../src/contracts.vel"
+import {climateTintRole, topFace} from "../src/meshing/faces.vel"
+import {stableCoordinateOffset} from "../src/meshing/variation.vel"
 
 const edge = 4
 const paddedEdge = edge + 2
 const textureBankKey = "test:texture-bank"
 
-def renderTexture(key: string, variants: readonly List<readonly ClientTextureVariant>) -> ClientRenderTexture:
+def renderTexture(key: string, variants: readonly List<ClientTextureVariant>) -> ClientRenderTexture:
     return {
         key,
         bankKey: textureBankKey,
@@ -23,7 +25,7 @@ def state(
     model: ClientBlockModelKind?,
     occludes: bool,
     layer: BlockRenderLayer? = null,
-    texture: readonly ClientRenderTexture = region,
+    texture: ClientRenderTexture = region,
 ) -> ClientRenderState:
     return {
         runtimeId,
@@ -33,7 +35,7 @@ def state(
         materialKey: model == null ? null : "test:material",
         bankKey: model == null ? null : texture.bankKey,
         pipelineKey: model == null ? null : f"{layer}|{texture.bankKey}|test:material|-",
-        textures: model == null ? null : {top: texture, bottom: texture, side: texture},
+        textures: model == null ? null : {top: texture, bottom: texture, side: texture, front: null},
         tintKey: null,
         climateTint: ClientClimateTint.neutral,
         tintCoverage: ClientTintCoverage.all,
@@ -45,10 +47,36 @@ def state(
         occludes,
         emission: 0,
         collisionBoxes: model == null ? [] : [{minimumX: 0, minimumY: 0, minimumZ: 0, maximumX: 1, maximumY: 1, maximumZ: 1}],
+        attachments: [],
+        canonicalFluidKey: model == ClientBlockModelKind.fluid ? "test:water" : null,
         axis: null,
+        facing: null,
         level: model == ClientBlockModelKind.fluid ? 0 : null,
         falling: model == ClientBlockModelKind.fluid ? false : null,
-        layers: model == ClientBlockModelKind.snowLayer ? 1 : null,
+        layers: model == ClientBlockModelKind.snowLayer or model == ClientBlockModelKind.groundCover ? 1 : null,
+    }
+
+def attachment(runtimeId: number, model: ClientBlockModelKind, facing: string? = null) -> ClientRenderAttachment:
+    return {
+        modelKey: f"test:model/{model}",
+        model,
+        layer: BlockRenderLayer.cutout,
+        materialKey: "test:attachment-material",
+        bankKey: region.bankKey,
+        pipelineKey: f"cutout|{region.bankKey}|test:attachment-material|-",
+        textures: {top: region, bottom: region, side: region, front: null},
+        tintKey: null,
+        climateTint: ClientClimateTint.neutral,
+        tintCoverage: ClientTintCoverage.all,
+        tintRed: 1,
+        tintGreen: 1,
+        tintBlue: 1,
+        animationKey: null,
+        cullFaces: false,
+        runtimeId,
+        emission: 0,
+        axis: null,
+        facing,
     }
 
 def index(x: number, y: number, z: number) -> number: return x + paddedEdge * (z + paddedEdge * y)
@@ -63,7 +91,39 @@ const oakLeaves = state(12, ClientBlockModelKind.cube, false, BlockRenderLayer.c
 const birchLeaves = state(13, ClientBlockModelKind.cube, false, BlockRenderLayer.cutout)
 const cactus = state(14, ClientBlockModelKind.cactus, false, BlockRenderLayer.cutout)
 const snowLayer = state(15, ClientBlockModelKind.snowLayer, false, BlockRenderLayer.cutout)
+const groundCover = state(18, ClientBlockModelKind.groundCover, false, BlockRenderLayer.cutout)
 const glass = state(17, ClientBlockModelKind.cube, false, BlockRenderLayer.translucent)
+
+test "fluid culling follows canonical identity across material changes":
+    const volume = blocks()
+    volume[index(2, 2, 2)] = water.runtimeId
+    volume[index(3, 2, 2)] = 19
+    const styledWater = ClientRenderState.from(water, {
+        runtimeId: 19,
+        materialKey: "test:styled-water",
+        pipelineKey: f"translucent|{textureBankKey}|test:styled-water|-",
+    })
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, water, styledWater], 1).quadCount).toBe(10)
+    const otherFluid = ClientRenderState.from(water, {runtimeId: 19, canonicalFluidKey: "test:oil"})
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, water, otherFluid], 2).quadCount).toBe(12)
+
+test "attachment geometry shares a bounded Chunk budget across all pipelines":
+    const size = 16
+    const padded = size + 2
+    const volume = uint32Buffer(padded * padded * padded)
+    for y in range(size):
+        for z in range(size):
+            for x in range(size): volume[x + 1 + padded * (z + 1 + padded * (y + 1))] = 19
+    const cross = attachment(19, ClientBlockModelKind.submergedCross)
+    const allowed = ClientRenderState.from(water, {runtimeId: 19, attachments: [cross, cross, cross]})
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, size, volume, [air, allowed], 1)
+    expect(mesh.quadCount > size * size * size * 6).toBe(true)
+    expect(mesh.byteSize <= 8 * 1024 * 1024).toBe(true)
+    const excessive = ClientRenderState.from(water, {runtimeId: 19, attachments: [cross, cross, cross, cross, cross]})
+    let rejected = false
+    try: meshChunk({x: 0, y: 0, z: 0}, size, volume, [air, excessive], 2)
+    catch error: rejected = error.message == "Chunk mesh exceeds the 8 MiB geometry budget"
+    expect(rejected).toBe(true)
 
 def faceBit(face: number) -> number: return Math.pow(2, face)
 
@@ -170,7 +230,7 @@ test "horizontal column axes rotate end textures without changing the four side 
     const bottomTexture = renderTexture("test:texture/bottom", [{layer: 3, weight: 1}])
     const sideTexture = renderTexture("test:texture/side", [{layer: 4, weight: 1}])
     const baseColumn = state(8, ClientBlockModelKind.column, true, BlockRenderLayer.opaque)
-    const textures = {top: topTexture, bottom: bottomTexture, side: sideTexture}
+    const textures = {top: topTexture, bottom: bottomTexture, side: sideTexture, front: null}
 
     const xColumn = ClientRenderState.from(baseColumn, {axis: "x", textures})
     const xVolume = blocks()
@@ -188,6 +248,27 @@ test "horizontal column axes rotate end textures without changing the four side 
     expect(zLayers[16]).toBe(2)
     expect(zLayers[20]).toBe(3)
 
+test "front texture follows all four horizontal facing states and other faces use side":
+    const sideTexture = renderTexture("test:texture/oriented-side", [{layer: 4, weight: 1}])
+    const frontTexture = renderTexture("test:texture/oriented-front", [{layer: 9, weight: 1}])
+    const baseOriented = state(20, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque)
+    const textures = {top: sideTexture, bottom: sideTexture, side: sideTexture, front: frontTexture}
+    const orientations = [
+        {facing: "east", frontOffset: 0},
+        {facing: "west", frontOffset: 4},
+        {facing: "south", frontOffset: 16},
+        {facing: "north", frontOffset: 20},
+    ]
+
+    for orientation, orientationIndex in orientations:
+        const oriented = ClientRenderState.from(baseOriented, {runtimeId: 20 + orientationIndex, textures, facing: orientation.facing})
+        const volume = blocks()
+        volume[index(2, 2, 2)] = oriented.runtimeId
+        const layers = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, oriented], orientationIndex).batches[0].textureLayers
+        for offset in [0, 4, 8, 12, 16, 20]:
+            const expected = offset == orientation.frontOffset ? 9 : 4
+            for vertexOffset in range(4): expect(layers[offset + vertexOffset]).toBe(expected)
+
 test "neighbor halo culls a Chunk seam while cross and fluid models keep their own geometry":
     const seam = blocks()
     seam[index(edge, 2, 2)] = stone.runtimeId
@@ -202,6 +283,90 @@ test "neighbor halo culls a Chunk seam while cross and fluid models keep their o
     expect(mesh.batches.size).toBe(2)
     expect(mesh.quadCount).toBe(8)
     expect(mesh.byteSize > 0).toBe(true)
+
+test "submerged attachments preserve water volume and batch cutout geometry separately":
+    const grass = attachment(16, ClientBlockModelKind.submergedCross)
+    const plantedWater = ClientRenderState.from(water, {runtimeId: 16, attachments: [grass]})
+    const volume = blocks()
+    volume[index(2, 2, 2)] = plantedWater.runtimeId
+    volume[index(3, 2, 2)] = water.runtimeId
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, water, plantedWater], 26)
+    expect(mesh.visibleBlocks).toBe(2)
+    expect(mesh.batches.size).toBe(2)
+    expect(mesh.quadCount).toBe(12)
+    const fluidBatch = mesh.batches.find(batch => batch.layer == BlockRenderLayer.translucent)
+    const plantBatch = mesh.batches.find(batch => batch.layer == BlockRenderLayer.cutout)
+    assert fluidBatch != null and plantBatch != null else "Expected fluid and attachment batches"
+    expect(fluidBatch.quadCount).toBe(10)
+    expect(plantBatch.quadCount).toBe(2)
+
+test "submerged surface attachments stay low while retaining the surrounding fluid":
+    const surface = attachment(water.runtimeId, ClientBlockModelKind.submergedSurface)
+    const inhabitedWater = ClientRenderState.from(water, {attachments: [surface]})
+    const volume = blocks()
+    volume[index(2, 2, 2)] = inhabitedWater.runtimeId
+    const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, inhabitedWater], 27)
+    expect(mesh.quadCount).toBe(9)
+    const groundBatch = mesh.batches.find(batch => batch.layer == BlockRenderLayer.cutout)
+    assert groundBatch != null else "Expected a bottom-dweller batch"
+    expect(groundBatch.quadCount).toBe(3)
+    expect(groundBatch.positions.size).toBe(36)
+
+test "submerged surfaces default to the bottom and expose six batch-meshed orientations":
+    const directions = [
+        {facing: "up", normal: [0, 1, 0]},
+        {facing: "down", normal: [0, -1, 0]},
+        {facing: "north", normal: [0, 0, -1]},
+        {facing: "east", normal: [1, 0, 0]},
+        {facing: "south", normal: [0, 0, 1]},
+        {facing: "west", normal: [-1, 0, 0]},
+    ]
+    let upwardPositions: Float32Buffer? = null
+    for direction in directions:
+        const facing = direction.facing
+        const surface = attachment(16, ClientBlockModelKind.submergedSurface, facing)
+        const inhabitedWater = ClientRenderState.from(water, {runtimeId: 16, attachments: [surface]})
+        const volume = blocks()
+        volume[index(2, 2, 2)] = inhabitedWater.runtimeId
+        const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, inhabitedWater], 35)
+        const batch = mesh.batches.find(candidate => candidate.layer == BlockRenderLayer.cutout)
+        assert batch != null else f"Expected submerged surface batch facing {facing}"
+        expect(batch.quadCount).toBe(3)
+        const flatNormalOffset = 8 * 3
+        expect(batch.normals[flatNormalOffset]).toBe(direction.normal[0])
+        expect(batch.normals[flatNormalOffset + 1]).toBe(direction.normal[1])
+        expect(batch.normals[flatNormalOffset + 2]).toBe(direction.normal[2])
+        for coordinate in batch.positions: expect(coordinate >= 1 and coordinate <= 2).toBe(true)
+        if facing == "up": upwardPositions = batch.positions
+
+    const defaultSurface = attachment(16, ClientBlockModelKind.submergedSurface)
+    const defaultWater = ClientRenderState.from(water, {runtimeId: 16, attachments: [defaultSurface]})
+    const defaultVolume = blocks()
+    defaultVolume[index(2, 2, 2)] = defaultWater.runtimeId
+    const defaultMesh = meshChunk({x: 0, y: 0, z: 0}, edge, defaultVolume, [air, defaultWater], 36)
+    const defaultBatch = defaultMesh.batches.find(candidate => candidate.layer == BlockRenderLayer.cutout)
+    assert defaultBatch != null and upwardPositions != null else "Expected default bottom surface geometry"
+    expect(defaultBatch.positions.size).toBe(upwardPositions.size)
+    for offset in range(defaultBatch.positions.size):
+        expect(defaultBatch.positions[offset]).toBe(upwardPositions[offset])
+
+test "submerged surface visual variants derive stably from coordinates without state properties":
+    const same = stableCoordinateOffset(16, -31, 8, 47, 0x5bd1, 4)
+    expect(stableCoordinateOffset(16, -31, 8, 47, 0x5bd1, 4)).toBe(same)
+    const variants: Set<number> = Set()
+    for worldX in range(32): variants.add(stableCoordinateOffset(16, worldX, 8, 47, 0x5bd1, 4))
+    expect(variants.size).toBe(4)
+
+test "wall overlays follow the four support faces without creating cube geometry":
+    const directions = ["north", "east", "south", "west"]
+    for facing, directionIndex in directions:
+        const vine = ClientRenderState.from(state(30 + directionIndex, ClientBlockModelKind.wallOverlay, false, BlockRenderLayer.cutout), {facing})
+        const volume = blocks()
+        volume[index(2, 2, 2)] = vine.runtimeId
+        const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, vine], 28 + directionIndex)
+        expect(mesh.visibleBlocks).toBe(1)
+        expect(mesh.quadCount).toBe(1)
+        expect(mesh.batches[0].positions.size).toBe(12)
 
 test "adjacent leaf cubes share internal faces across state and Chunk boundaries":
     const cluster = blocks()
@@ -240,6 +405,17 @@ test "foliage and water climate roles do not depend on resource key spelling":
         const expected = batch.layer == BlockRenderLayer.cutout ? 2 : 3
         for role in batch.tintRoles: expect(role).toBe(expected)
 
+test "distinct foliage families keep stable renderer roles":
+    const policies = [
+        {climate: ClientClimateTint.foliage, role: 2},
+        {climate: ClientClimateTint.evergreenFoliage, role: 5},
+        {climate: ClientClimateTint.drylandFoliage, role: 6},
+        {climate: ClientClimateTint.aquaticFoliage, role: 7},
+    ]
+    for policy in policies:
+        const surface = ClientRenderState.from(oakLeaves, {climateTint: policy.climate})
+        expect(climateTintRole(surface, topFace)).toBe(policy.role)
+
 test "box culling follows the model boundary instead of the occupied cell":
     const cactusSeam = blocks()
     cactusSeam[index(edge, 2, 2)] = cactus.runtimeId
@@ -267,6 +443,23 @@ test "adjacent snow layers cull or clip only their shared height":
     steppedLayers[index(2, 2, 2)] = snowLayer.runtimeId
     steppedLayers[index(3, 2, 2)] = deepSnow.runtimeId
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, steppedLayers, [air, snowLayer, deepSnow], 14).quadCount).toBe(11)
+
+test "ground cover keeps a one-sixteenth layer scale independent from snow":
+    const deepCover = ClientRenderState.from(groundCover, {runtimeId: 19, layers: 4})
+    const coverVolume = blocks()
+    coverVolume[index(2, 2, 2)] = deepCover.runtimeId
+    const coverMesh = meshChunk({x: 0, y: 0, z: 0}, edge, coverVolume, [air, deepCover], 32)
+    expect(coverMesh.quadCount).toBe(6)
+    expect(coverMesh.batches[0].positions[1]).toBe(1.25)
+
+    const deepSnow = ClientRenderState.from(snowLayer, {runtimeId: 20, layers: 4})
+    const snowVolume = blocks()
+    snowVolume[index(2, 2, 2)] = deepSnow.runtimeId
+    const snowMesh = meshChunk({x: 0, y: 0, z: 0}, edge, snowVolume, [air, deepSnow], 33)
+    expect(snowMesh.batches[0].positions[1]).toBe(1.5)
+
+    coverVolume[index(3, 2, 2)] = deepCover.runtimeId
+    expect(meshChunk({x: 0, y: 0, z: 0}, edge, coverVolume, [air, deepCover], 34).quadCount).toBe(10)
 
 test "weighted texture variants are deterministic and distributed by world position":
     const mixedTexture = renderTexture(

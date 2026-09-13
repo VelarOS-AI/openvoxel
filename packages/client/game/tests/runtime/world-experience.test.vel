@@ -1,12 +1,12 @@
-import {WorldGameMode, WorldManifest} from "@openvoxel/world"
+import {WorldGameMode, WorldManifest, defaultWorldClimate} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {WorldGameOwner} from "../../src/runtime/ownership.vel"
 import {WorldGameStage, worldGameExperience} from "../../src/runtime/world-experience.vel"
 
 const manifest: WorldManifest = {
     id: "experience", name: "Experience", seed: "experience", mode: WorldGameMode.creative,
-    worldTimeOriginMilliseconds: 0, formatVersion: 5, chunkEdge: 16,
-    generator: "test", generatorHash: "test", spawn: {x: 0, y: 64, z: 0},
+    worldTimeOriginMilliseconds: 0, formatVersion: 6, chunkEdge: 16,
+    generator: "test", generatorHash: "test", climate: defaultWorldClimate, spawn: {x: 0, y: 64, z: 0},
     content: {contentHash: "test", packs: []},
     blockRegistry: {formatVersion: 1, nextModRuntimeId: 65536, states: []},
 }

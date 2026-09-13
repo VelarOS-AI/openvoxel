@@ -1,0 +1,15 @@
+import {simplex2} from "@velarscript-labs/noise"
+
+export type EcologyPatterns:
+    cover: (x: number, z: number) -> number
+    species: (x: number, z: number) -> number
+
+/// 连续世界坐标场决定草甸、花丛与水草带的位置，不在 Chunk 边缘重置。
+/// 每个生成器各初始化一次两个噪声通道，不在每株或每层构造排列数组。
+export def createEcologyPatterns(seed: string, domain: string, period: number) -> EcologyPatterns:
+    const density = simplex2(f"{seed}:ecology:{domain}:cover")
+    const variety = simplex2(f"{seed}:ecology:{domain}:species")
+    def cover(x: number, z: number) -> number: return Math.clamp(0.5 + density(x / period, z / period) * 0.5, 0, 1)
+    def species(x: number, z: number) -> number:
+        return Math.clamp(((variety(x / period, z / period) * 0.5 + 0.5) * 13).floor(), 0, 12)
+    return {cover, species}

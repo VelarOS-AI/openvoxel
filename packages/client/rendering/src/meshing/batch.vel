@@ -1,11 +1,20 @@
 import {BlockRenderLayer} from "@openvoxel/blocks"
 import {Float32Builder, UInt32Builder, float32Builder, uint32Builder} from "velar/binary"
-import {ChunkMeshBatch, ClientRenderState, ClientTextureVariant} from "../contracts.vel"
+import {ChunkMeshBatch, ClientModelTriangle, ClientRenderAttachment, ClientRenderState, ClientTextureVariant} from "../contracts.vel"
 import {MeshFace, climateTintRole, faceShade} from "./faces.vel"
 
+export type ClientMeshSurface = ClientRenderState | ClientRenderAttachment
+
 const maximumChunkMeshBytes = 8 * 1024 * 1024
+// 四顶点的六组属性与六个 UInt32 索引：每个 quad 恰好 248 bytes。
+const meshQuadBytes = (12 + 12 + 8 + 4 + 4 + 16 + 6) * 4
+export const maximumChunkMeshQuads = (maximumChunkMeshBytes / meshQuadBytes).floor()
+
+type MeshBudget:
+    quads: number
 
 export type MutableMeshBatch:
+    budget: MeshBudget
     pipelineKey: string
     layer: BlockRenderLayer
     bankKey: string
@@ -20,10 +29,11 @@ export type MutableMeshBatch:
     indices: UInt32Builder
     vertexCount: number
     quadCount: number
+    triangleCount: number
 
 export def batchFor(
     batches: Map<string, MutableMeshBatch>,
-    state: readonly ClientRenderState,
+    state: ClientMeshSurface,
     maximumFaces: number,
 ) -> MutableMeshBatch:
     const materialKey = state.materialKey
@@ -33,7 +43,10 @@ export def batchFor(
     assert materialKey != null and layer != null and bankKey != null and pipelineKey != null else f"Rendered state {state.runtimeId} has no material pipeline"
     const existing = batches.get(pipelineKey)
     if existing != null: return existing
+    const first = batches.iterator().next()?.value
+    const budget = first == null ? {quads: 0} : batches.get(first)!.budget
     const created: MutableMeshBatch = {
+        budget,
         pipelineKey,
         layer,
         bankKey,
@@ -48,13 +61,14 @@ export def batchFor(
         indices: uint32Builder(maximumFaces * 6),
         vertexCount: 0,
         quadCount: 0,
+        triangleCount: 0,
     }
     batches.set(pipelineKey, created)
     return created
 
 def pushVertex(
     batch: MutableMeshBatch,
-    state: readonly ClientRenderState,
+    state: ClientMeshSurface,
     shade: number,
     x: number,
     y: number,
@@ -66,6 +80,9 @@ def pushVertex(
     v: number,
     textureLayer: number,
     tintRole: number,
+    red: number = 1,
+    green: number = 1,
+    blue: number = 1,
 ):
     batch.positions.push(x)
     batch.positions.push(y)
@@ -77,16 +94,16 @@ def pushVertex(
     batch.uvs.push(v)
     batch.textureLayers.push(textureLayer)
     batch.tintRoles.push(tintRole)
-    batch.colors.push(state.tintRed * shade)
-    batch.colors.push(state.tintGreen * shade)
-    batch.colors.push(state.tintBlue * shade)
+    batch.colors.push(state.tintRed * shade * red)
+    batch.colors.push(state.tintGreen * shade * green)
+    batch.colors.push(state.tintBlue * shade * blue)
     batch.colors.push(1)
 
 export def emitQuad(
     batch: MutableMeshBatch,
-    state: readonly ClientRenderState,
+    state: ClientMeshSurface,
     face: MeshFace,
-    texture: readonly ClientTextureVariant,
+    texture: ClientTextureVariant,
     ax: number,
     ay: number,
     az: number,
@@ -103,6 +120,8 @@ export def emitQuad(
     ny: number,
     nz: number,
 ):
+    assert batch.budget.quads < maximumChunkMeshQuads else "Chunk mesh exceeds the 8 MiB geometry budget"
+    batch.budget.quads += 1
     const first = batch.vertexCount
     const shade = faceShade(face, state.emission)
     const tintRole = climateTintRole(state, face)
@@ -124,6 +143,29 @@ export type FinishedMeshBatches:
     quadCount: number
     byteSize: number
 
+/// 任意模型保留三角形和原始法线，不生成退化四边形。预算按一个 quad 保守计费，
+/// 最终仍以实际字节数检查；因此与体素面共享硬上限、批次和一次 GPU 上传。
+export def emitModelTriangle(batch: MutableMeshBatch, state: ClientMeshSurface, triangle: ClientModelTriangle, texture: ClientTextureVariant, x: number, y: number, z: number, cosine: number, sine: number, tintRole: number):
+    assert batch.budget.quads < maximumChunkMeshQuads else "Chunk mesh exceeds the 8 MiB geometry budget"
+    const geometry = state.geometry
+    assert geometry != null else "Model triangle requires resolved geometry"
+    batch.budget.quads += 1
+    const first = batch.vertexCount
+    const values = triangle.vertices
+    for offset in [0, 8, 16]:
+        const px = values[offset] - 0.5
+        const pz = values[offset + 2] - 0.5
+        const nx = values[offset + 3]
+        const nz = values[offset + 5]
+        pushVertex(batch, state, 1, x + 0.5 + px * cosine - pz * sine, y + values[offset + 1], z + 0.5 + px * sine + pz * cosine,
+            nx * cosine - nz * sine, values[offset + 4], nx * sine + nz * cosine, values[offset + 6], values[offset + 7], texture.layer, tintRole,
+            geometry.color[0], geometry.color[1], geometry.color[2])
+    batch.indices.push(first)
+    batch.indices.push(first + 1)
+    batch.indices.push(first + 2)
+    batch.vertexCount += 3
+    batch.triangleCount += 1
+
 /// Finalize each pipeline once in stable order and enforce the complete upload bound.
 export def finishMeshBatches(batches: Map<string, MutableMeshBatch>) -> FinishedMeshBatches:
     const finished: List<ChunkMeshBatch> = []
@@ -131,7 +173,7 @@ export def finishMeshBatches(batches: Map<string, MutableMeshBatch>) -> Finished
     let byteSize = 0
     for key in batches.keys().sorted():
         const batch = batches.get(key)!
-        if batch.quadCount == 0: continue
+        if batch.quadCount == 0 and batch.triangleCount == 0: continue
         const output: ChunkMeshBatch = {
             pipelineKey: batch.pipelineKey,
             layer: batch.layer,
@@ -146,6 +188,7 @@ export def finishMeshBatches(batches: Map<string, MutableMeshBatch>) -> Finished
             colors: batch.colors.finish(),
             indices: batch.indices.finish(),
             quadCount: batch.quadCount,
+            triangleCount: batch.triangleCount,
         }
         quadCount += output.quadCount
         byteSize += (output.positions.size + output.normals.size + output.uvs.size + output.textureLayers.size + output.tintRoles.size + output.colors.size + output.indices.size) * 4

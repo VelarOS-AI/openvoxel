@@ -17,6 +17,7 @@ import {
   uniqueByKey,
 } from "./resource-pack-values.mjs";
 import {buildTextureArray} from "./texture-array.mjs";
+import {loadModelGeometry} from "./model-geometry.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = resolve(packageRoot, "data");
@@ -29,6 +30,10 @@ const maximumTextureBankChannelBytes = 16 * 1024 * 1024;
 const maximumClientTextureResidentBytes = 128 * 1024 * 1024;
 const maximumEnvironmentImageSize = 2048;
 
+function renderParts(render) {
+  return render.model == null ? [] : [render, ...(render.attachments ?? [])];
+}
+
 function requiredResources(blockCatalog) {
   const resources = {
     models: new Set(),
@@ -38,13 +43,13 @@ function requiredResources(blockCatalog) {
     animations: new Set(),
   };
   for (const profile of blockCatalog.catalog.componentProfiles) {
-    const render = profile.render;
-    if (render.model == null) continue;
-    resources.models.add(render.model);
-    resources.materials.add(render.material);
-    if (render.tint != null) resources.tints.add(render.tint);
-    if (render.animation != null) resources.animations.add(render.animation);
-    for (const key of textureKeys(render)) resources.textures.add(key);
+    for (const render of renderParts(profile.render)) {
+      resources.models.add(render.model);
+      resources.materials.add(render.material);
+      if (render.tint != null) resources.tints.add(render.tint);
+      if (render.animation != null) resources.animations.add(render.animation);
+      for (const key of textureKeys(render)) resources.textures.add(key);
+    }
   }
   return resources;
 }
@@ -56,6 +61,7 @@ function textureKeys(render) {
     render.textures.top,
     render.textures.bottom,
     render.textures.side,
+    render.textures.front,
   ].filter((key) => key != null))];
 }
 
@@ -87,21 +93,25 @@ export function planTextureBanks(blockCatalog, animations, materials, models) {
     textureAlphaCutoffs.set(key, alphaCutoff);
   };
   for (const profile of blockCatalog.catalog.componentProfiles) {
-    const render = profile.render;
-    if (render.model == null) continue;
-    const role = bankRole(render, modelByKey);
-    let alphaCutoff = null;
-    if (role === "cutout") {
-      const material = materialByKey.get(render.material);
-      if (material == null) throw new Error(`Cutout component profile references unknown material ${render.material}`);
-      alphaCutoff = material.alphaCutoff;
+    for (const render of renderParts(profile.render)) {
+      const role = bankRole(render, modelByKey);
+      let alphaCutoff = null;
+      if (role === "cutout") {
+        const material = materialByKey.get(render.material);
+        if (material == null) throw new Error(`Cutout component profile references unknown material ${render.material}`);
+        alphaCutoff = material.alphaCutoff;
+      }
+      for (const key of textureKeys(render)) assign(key, role, alphaCutoff);
+      if (render.animation != null) {
+        const animation = animationByKey.get(render.animation);
+        if (animation == null) throw new Error(`Rendered component profile references unknown animation ${render.animation}`);
+        for (const frame of animation.frames) assign(frame, role, alphaCutoff);
+      }
     }
-    for (const key of textureKeys(render)) assign(key, role, alphaCutoff);
-    if (render.animation != null) {
-      const animation = animationByKey.get(render.animation);
-      if (animation == null) throw new Error(`Rendered component profile references unknown animation ${render.animation}`);
-      for (const frame of animation.frames) assign(frame, role, alphaCutoff);
-    }
+  }
+  for (const material of materials) {
+    if (material.materialEffect !== "water") continue;
+    for (const wave of material.waterOptics.waves) assign(wave.normalTexture, "fluid", null);
   }
   return {assignments, textureAlphaCutoffs};
 }
@@ -325,15 +335,37 @@ export async function buildResourcePack() {
   const declaredTints = uniqueByKey(manifest.tints, owner, "tints");
   const declaredAnimations = uniqueByKey(manifest.animations, owner, "animations");
 
-  const models = requireList(manifest.models, "models").map((raw) => {
+  const models = await Promise.all(requireList(manifest.models, "models").map(async (raw) => {
     const entry = requireRecord(raw, "model entry");
-    return {key: entry.key, kind: requireText(entry.kind, `model ${entry.key} kind`)};
-  });
+    return {key: entry.key, kind: requireText(entry.kind, `model ${entry.key} kind`), geometry: await loadModelGeometry(dataRoot, entry.geometry)};
+  }));
   const materials = requireList(manifest.materials, "materials").map((raw) => {
     const entry = requireRecord(raw, "material entry");
+    const materialEffect = requireText(entry.materialEffect, `material ${entry.key} materialEffect`);
+    let waterOptics = null;
+    if (materialEffect === "water") {
+      const optics = requireRecord(entry.waterOptics, `material ${entry.key} waterOptics`);
+      waterOptics = {
+        indexOfRefraction: requireNumber(optics.indexOfRefraction, 1, 2, `material ${entry.key} waterOptics indexOfRefraction`),
+        roughness: requireNumber(optics.roughness, 0, 1, `material ${entry.key} waterOptics roughness`),
+        normalStrength: requireNumber(optics.normalStrength, 0, 1, `material ${entry.key} waterOptics normalStrength`),
+        waves: requireList(optics.waves, `material ${entry.key} waterOptics waves`).map((rawWave, waveIndex) => {
+          const wave = requireRecord(rawWave, `material ${entry.key} waterOptics wave ${waveIndex}`);
+          return {
+            normalTexture: requireText(wave.normalTexture, `material ${entry.key} waterOptics wave ${waveIndex} normalTexture`),
+            scale: requireNumber(wave.scale, 0.001, 4, `material ${entry.key} waterOptics wave ${waveIndex} scale`),
+            speed: requireNumber(wave.speed, 0, 4, `material ${entry.key} waterOptics wave ${waveIndex} speed`),
+            directionX: requireNumber(wave.directionX, -1, 1, `material ${entry.key} waterOptics wave ${waveIndex} directionX`),
+            directionZ: requireNumber(wave.directionZ, -1, 1, `material ${entry.key} waterOptics wave ${waveIndex} directionZ`),
+          };
+        }),
+      };
+    }
     return {
       key: entry.key,
       precipitationSurface: entry.precipitationSurface,
+      materialEffect,
+      waterOptics,
       alpha: requireNumber(entry.alpha, 0, 1, `material ${entry.key} alpha`),
       alphaCutoff: requireNumber(entry.alphaCutoff, 0, 1, `material ${entry.key} alphaCutoff`),
       doubleSided: requireBoolean(entry.doubleSided, `material ${entry.key} doubleSided`),
@@ -346,7 +378,7 @@ export async function buildResourcePack() {
   });
   const tints = requireList(manifest.tints, "tints").map((raw) => {
     const entry = requireRecord(raw, "tint entry");
-    if (!["none", "grass", "foliage", "water"].includes(entry.climate)) throw new Error(`Tint ${entry.key} has an invalid climate policy`);
+    if (!["none", "grass", "foliage", "water", "evergreen_foliage", "dryland_foliage", "aquatic_foliage", "birch_foliage", "poplar_foliage", "tall_spruce_foliage"].includes(entry.climate)) throw new Error(`Tint ${entry.key} has an invalid climate policy`);
     if (!["all", "grass_cap"].includes(entry.coverage)) throw new Error(`Tint ${entry.key} has an invalid coverage policy`);
     if (entry.coverage === "grass_cap" && entry.climate !== "grass") throw new Error(`Tint ${entry.key} grass-cap coverage requires grass climate`);
     return {
@@ -377,6 +409,17 @@ export async function buildResourcePack() {
   for (const animation of animations) {
     if (required.animations.has(animation.key)) {
       for (const frame of animation.frames) required.textures.add(frame);
+    }
+  }
+  const textureSourceByKey = new Map(source.textures.map((texture) => [texture.key, texture]));
+  for (const material of materials) {
+    if (!required.materials.has(material.key) || material.materialEffect !== "water") continue;
+    for (const wave of material.waterOptics.waves) {
+      required.textures.add(wave.normalTexture);
+      const texture = textureSourceByKey.get(wave.normalTexture);
+      if (texture == null) throw new Error(`Water material ${material.key} references unknown normal texture ${wave.normalTexture}`);
+      if (texture.maps.normal == null) throw new Error(`Water material ${material.key} texture ${wave.normalTexture} must declare an explicit normal map`);
+      if ((texture.variants ?? []).length !== 0) throw new Error(`Water material ${material.key} texture ${wave.normalTexture} must resolve to exactly one layer`);
     }
   }
   requireCoverage(required.models, declaredModels, "model");
@@ -453,8 +496,8 @@ export async function buildResourcePack() {
   )));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
-    artifactVersion: 8,
-    formatVersion: 8,
+    artifactVersion: 9,
+    formatVersion: 9,
     owner,
     targetContentHash,
     textureBanks: bankArtifacts,

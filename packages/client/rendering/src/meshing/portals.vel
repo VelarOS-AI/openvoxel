@@ -16,7 +16,7 @@ def maskForBits(bits: readonly Set<number>) -> number: return bits.values().map(
 /// 语义，所以 air、叶片、水、玻璃以及其他非遮挡模型都能组成同一条视线通路。
 export def summarizeChunkPortals(
     edge: number,
-    states: readonly List<readonly ClientRenderState>,
+    states: readonly List<ClientRenderState>,
 ) -> ChunkPortalSummary:
     const empty = states.every(state => state.model == null)
     const fullyOccluding = states.every(state => state.occludes)
