@@ -1,0 +1,21 @@
+import {Cancellation} from "velar/task"
+import {serveWorker} from "velar/worker"
+import {LightingWorkerRequest, LightingWorkerResponse} from "./lighting-contracts.vel"
+import {ClientLightField, createClientLightField} from "./lighting.vel"
+
+let field: ClientLightField? = null
+
+async def handle(request: LightingWorkerRequest, cancellation: Cancellation) -> LightingWorkerResponse:
+    await cancellation.checkpoint()
+    if request.operation == "initialize":
+        assert request.edge != null and request.states != null else "Lighting Worker initialization is incomplete"
+        field = createClientLightField(request.edge, request.states)
+        return {ready: true}
+    assert request.operation == "update" else "Unknown lighting operation"
+    const current = field
+    assert current != null and request.chunks != null and request.removed != null else "Lighting Worker update is incomplete"
+    const update = current.solve(request.chunks, request.removed)
+    await cancellation.checkpoint()
+    return {ready: true, update}
+
+export def serveLightingWorker(): serveWorker(LightingWorkerRequest, LightingWorkerResponse, handle, 2)

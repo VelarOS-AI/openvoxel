@@ -169,12 +169,12 @@ test "world runtime resolves and caches a separate active block registry for eve
     const runtime = worldRuntime(store, catalog)
     const vanilla = await runtime.createWorld({id: "vanilla", name: "Vanilla", seed: "plain"})
     const modded = await runtime.createWorld({id: "modded", name: "Modded", seed: "farming", contentPacks: ["farming"]})
-    expect(vanilla.blockRegistry.states.size).toBe(376)
-    expect(modded.blockRegistry.states.size).toBe(377)
+    expect(vanilla.blockRegistry.states.size).toBe(377)
+    expect(modded.blockRegistry.states.size).toBe(378)
     expect(modded.blockRegistry.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
     const moddedContent = await runtime.worldContent(modded.id)
     expect(moddedContent.content).toEqual(modded.content)
-    expect(moddedContent.catalog.states.size).toBe(377)
+    expect(moddedContent.catalog.states.size).toBe(378)
     expect(moddedContent.catalog.states.some(state => state.runtimeId == firstModBlockStateRuntimeId and state.stateKey == "farming:tomato_crop")).toBe(true)
     // 内容目录只在 LoadedWorld 装配时压缩和聚合一次；重复查询直接返回同一份
     // 不可变快照，不能在每个 HTTP 请求中重新遍历完整方块状态表。
@@ -185,7 +185,7 @@ test "world runtime resolves and caches a separate active block registry for eve
 
     const restoredRuntime = worldRuntime(store, catalog)
     const restored = await restoredRuntime.requireWorld(modded.id)
-    expect(restored.blockRegistry.states.size).toBe(377)
+    expect(restored.blockRegistry.states.size).toBe(378)
     const change = await editOne(restoredRuntime, modded.id, {x: 0, y: 80, z: 0}, firstModBlockStateRuntimeId)
     expect(change.blockStateRuntimeId).toBe(firstModBlockStateRuntimeId)
 
@@ -340,7 +340,7 @@ test "world runtime pins the exact content pack build in the world manifest":
         seed: "catalog-hash",
         contentPacks: ["farming"],
     })
-    expect(created.blockRegistry.states.size).toBe(377)
+    expect(created.blockRegistry.states.size).toBe(378)
 
     const changedCatalog = createContentCatalog([tomatoPack("farming:catalog-v2")])
     const changedRuntime = worldRuntime(store, changedCatalog)

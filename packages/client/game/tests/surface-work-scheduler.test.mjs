@@ -39,6 +39,21 @@ test("pending Chunk uploads can be cancelled without crossing the commit boundar
   assert.deepEqual(committed, []);
 });
 
+test("GPU uploads recheck validity on the commit frame, keeping the previous mesh when stale", async () => {
+  let visible = "existing";
+  let current = true;
+  const queue = new LatestFrameWorkQueue(value => { visible = value; });
+  const stale = queue.enqueue("chunk", "stale", () => current);
+  current = false;
+  queue.drainOne();
+  assert.equal(await stale, false);
+  assert.equal(visible, "existing");
+  const fresh = queue.enqueue("chunk", "latest", () => true);
+  queue.drainOne();
+  assert.equal(await fresh, true);
+  assert.equal(visible, "latest");
+});
+
 test("re-enqueue after cancellation does not reuse the cancelled queue slot", async () => {
   const committed = [];
   const queue = new LatestFrameWorkQueue((value) => committed.push(value));

@@ -1,8 +1,8 @@
-import {ChunkMesh, ClientAnimationResource, ClientMaterialResource, ClientRenderCatalog, ClientResourceEnvironment, ClientTextureBank, ClientTextureResource} from "@openvoxel/renderer"
+import {ChunkMesh, ClientAnimationResource, ClientMaterialResource, ClientRenderCatalog, ClientResourceEnvironment, ClientTextureBank, ClientTextureResource, WorldLightingUpdate} from "@openvoxel/renderer"
 import {WorldClimateDefinition, WorldClimateSample, WorldEnvironmentSample, worldClimateAt} from "@openvoxel/world"
 import {WorldMovementFlightState, worldMovementFlightState, stepWorldMovementFlight} from "../controls/creative-flight.vel"
 import {WorldMovementCollisionQuery, WorldMovementWalkState, stepWorldMovementWalk, worldMovementEyeHeight, worldMovementPlayerHeight, worldMovementWalkState} from "../controls/survival-walk.vel"
-import {WorldMovementFlightStep, WorldMovementMode, WorldMovementWalkStep, WorldNavigationFactory, WorldNavigationMode, WorldNavigationStats, createWorldNavigation} from "../controls/world-navigation.vel"
+import {WorldCreativeAction, WorldMovementFlightStep, WorldMovementMode, WorldMovementWalkStep, WorldNavigationFactory, WorldNavigationMode, WorldNavigationPosition, WorldNavigationStats, createWorldNavigation} from "../controls/world-navigation.vel"
 import {WorldGraphicsEnvironmentFrame, worldGraphicsEnvironmentFrame} from "./environment-frame.vel"
 
 export {WorldMovementMode, WorldNavigationMode, WorldNavigationStats} from "../controls/world-navigation.vel"
@@ -12,6 +12,7 @@ export readonly type WorldGraphicsEnvironmentStats:
     environmentTextureUpdates: number
     precipitation: string
     precipitationIntensity: number
+    precipitationSeverity: string
     cloudiness: number
     activeRainParticles: number
     activeSnowParticles: number
@@ -51,8 +52,9 @@ export readonly type WorldGraphicsStats:
 /// OpenVoxel 游戏层的稳定图形表面。Chunk 网格和资源目录仍由 Renderer 拥有；
 /// 具体 GPU 后端只实现这组游戏所需操作。
 export type WorldGraphics:
+    setLighting: (update: WorldLightingUpdate) -> null
     setChunkMesh: (mesh: ChunkMesh) -> null
-    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
+    enqueueChunkMesh: (mesh: ChunkMesh, mayCommit: () -> bool) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
     stats: () -> WorldGraphicsStats
     environmentStats: () -> WorldGraphicsEnvironmentStats
@@ -73,6 +75,10 @@ export readonly type WorldGraphicsRequest:
     navigationMode: WorldNavigationMode
     movementMode: WorldMovementMode
     collisionAt: WorldMovementCollisionQuery
+    aimChanged: (origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeAction: (action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeSlot: (slot: number) -> null
+    walkSound: (position: WorldNavigationPosition, crouching: bool, landed: bool) -> null
     minimumWorldY: number
     maximumWorldY: number
     worldSeed: string
@@ -98,6 +104,10 @@ readonly type NativeWorldGraphicsOptions:
     navigationMode: WorldNavigationMode
     movementMode: WorldMovementMode
     collisionAt: WorldMovementCollisionQuery
+    aimChanged: (origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeAction: (action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeSlot: (slot: number) -> null
+    walkSound: (position: WorldNavigationPosition, crouching: bool, landed: bool) -> null
     survivalEyeHeight: number
     survivalPlayerHeight: number
     minimumWorldY: number
@@ -112,8 +122,9 @@ readonly type NativeWorldGraphicsDependencies:
     stepWalk: WorldMovementWalkStep
 
 type NativeWorldGraphics:
+    setLighting: (update: WorldLightingUpdate) -> null
     setChunkMesh: (mesh: ChunkMesh) -> null
-    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
+    enqueueChunkMesh: (mesh: ChunkMesh, mayCommit: () -> bool) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
     stats: () -> WorldGraphicsStats
     environmentStats: () -> WorldGraphicsEnvironmentStats
@@ -148,6 +159,10 @@ async def openDefaultWorldGraphics(request: WorldGraphicsRequest) -> WorldGraphi
         navigationMode: request.navigationMode,
         movementMode: request.movementMode,
         collisionAt: request.collisionAt,
+        aimChanged: request.aimChanged,
+        creativeAction: request.creativeAction,
+        creativeSlot: request.creativeSlot,
+        walkSound: request.walkSound,
         survivalEyeHeight: worldMovementEyeHeight,
         survivalPlayerHeight: worldMovementPlayerHeight,
         minimumWorldY: request.minimumWorldY,
@@ -165,8 +180,9 @@ async def openDefaultWorldGraphics(request: WorldGraphicsRequest) -> WorldGraphi
         native.setEnvironmentFrame(worldGraphicsEnvironmentFrame(sample))
 
     return {
+        setLighting: update => native.setLighting(update),
         setChunkMesh: mesh => native.setChunkMesh(mesh),
-        enqueueChunkMesh: mesh => native.enqueueChunkMesh(mesh),
+        enqueueChunkMesh: (mesh, mayCommit) => native.enqueueChunkMesh(mesh, mayCommit),
         removeChunk: (x, y, z) => native.removeChunk(x, y, z),
         stats: () => native.stats(),
         environmentStats: () => native.environmentStats(),

@@ -117,6 +117,37 @@ test "superseded GPU commit remains owned and rebuilds with a strictly newer tic
         releaseFirst = true
         await owner.close()
 
+test "a superseded queued mesh is rejected before GPU presentation":
+    const state = chunkState()
+    const attempted: List<number> = []
+    const presented: List<number> = []
+    let release = false
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        return mesh(ticket)
+    async def enqueue(value: ChunkMesh, mayCommit: () -> bool) -> bool:
+        attempted.append(value.ticket)
+        if attempted.size == 1:
+            while not release: await Promise.sleep(0ms)
+        const allowed = mayCommit()
+        if allowed: presented.append(value.ticket)
+        return allowed
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {enqueueChunkMesh: enqueue, removeChunk: (_x, _y, _z) => null}, () => view, () => null, _message => null, () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while attempted.size == 0: await Promise.sleep(0ms)
+        owner.invalidate({kind: ClientWorldChangeKind.chunksSynchronized, generation: 0, sequence: 0, positions: [position], changes: []})
+        release = true
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(attempted.size).toBe(2)
+        expect(presented).toEqual([attempted[1]])
+        expect(owner.stats().startupPending).toBe(0)
+    finally:
+        release = true
+        await owner.close()
+
 test "a late GPU commit for an evicted Chunk is removed after its physical installation":
     const state = chunkState()
     let uploading = false

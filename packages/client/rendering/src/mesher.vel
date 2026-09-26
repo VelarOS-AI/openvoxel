@@ -39,12 +39,15 @@ export def meshChunkWithIndex(
     paddedBlocks: UInt32Buffer,
     byRuntimeId: Map<number, ClientRenderState>,
     ticket: number,
+    fluidDepthHalo: UInt32Buffer? = null,
 ) -> ChunkMesh:
     requireChunkPosition(position)
     requireChunkEdge(edge)
     assert ticket.isInteger() and ticket >= 0 else "Chunk mesh ticket must be a non-negative integer"
     const paddedEdge = edge + 2
     assert paddedBlocks.size == paddedEdge * paddedEdge * paddedEdge else "Chunk meshing input has the wrong padded volume"
+    if fluidDepthHalo != null:
+        assert fluidDepthHalo.size == edge * edge * Math.min(7, edge - 1) else "Chunk fluid depth halo has the wrong volume"
     const maximumFaces = maximumChunkMeshQuads
     const batches: Map<string, MutableMeshBatch> = Map()
     const chunkStates = centerChunkStates(edge, paddedBlocks, byRuntimeId)
@@ -80,7 +83,7 @@ export def meshChunkWithIndex(
                     emitGroundCover(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
                 else:
                     assert model == ClientBlockModelKind.fluid else f"Unsupported primary block model {model}"
-                    emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ)
+                    emitFluid(batches, byRuntimeId, paddedBlocks, paddedEdge, maximumFaces, state, x, y, z, worldX, worldY, worldZ, fluidDepthHalo)
                 for attachment in state.attachments:
                     emitAttachment(batches, attachment, maximumFaces, x, y, z, worldX, worldY, worldZ)
 
@@ -94,4 +97,6 @@ export def meshChunk(
     paddedBlocks: UInt32Buffer,
     states: readonly List<ClientRenderState>,
     ticket: number,
-) -> ChunkMesh: return meshChunkWithIndex(position, edge, paddedBlocks, indexRenderStates(states), ticket)
+    fluidDepthHalo: UInt32Buffer? = null,
+) -> ChunkMesh:
+    return meshChunkWithIndex(position, edge, paddedBlocks, indexRenderStates(states), ticket, fluidDepthHalo)

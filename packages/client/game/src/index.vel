@@ -1,5 +1,6 @@
 export {WorldGameExperience} from "./runtime/world-experience.vel"
 export {WorldGameStats, openWorldGameRuntime} from "./runtime/world-game.vel"
+export {CreativePaletteEntry, creativePalette} from "./runtime/creative-interaction.vel"
 export {openLocalWorldGame} from "./runtime/local-world-game.vel"
 export {WorldGraphics, WorldGraphicsEnvironmentStats, WorldGraphicsFactory, WorldGraphicsRequest, WorldGraphicsStats, openWorldGraphics, openWorldGraphicsWithBackend} from "./graphics/world-graphics.vel"
 export {WorldMovementMode, WorldNavigationMode, WorldNavigationStats} from "./controls/world-navigation.vel"

@@ -279,7 +279,7 @@ test "SQLite adapter persists the complete world block registry":
             expect(manifest.spawn.y > 0).toBe(true)
             expect(manifest.content.contentHash).toBe(createdContentHash)
             expect(manifest.content.packs.size).toBe(0)
-            expect(manifest.blockRegistry.states.size).toBe(376)
+            expect(manifest.blockRegistry.states.size).toBe(377)
             expect(manifest.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
         finally: await reopened.close()
         expect(await schemaVersion(databasePath)).toBe(sqliteSchemaVersion)

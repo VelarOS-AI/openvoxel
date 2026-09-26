@@ -1,7 +1,7 @@
 import {expect} from "velar/test"
 import {Coordinate3} from "../src/spatial/coordinates.vel"
 import {WorldLightningEvent, WorldPrecipitationKind, worldDayMilliseconds} from "../src/environment/environment.vel"
-import {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldWeatherWindowMilliseconds} from "../src/environment/timeline.vel"
+import {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldPrecipitationAt, worldWeatherWindowMilliseconds} from "../src/environment/timeline.vel"
 
 def firstLightning(seed: string, samplePosition: readonly Coordinate3) -> WorldLightningEvent:
     for worldMilliseconds in range(0, worldDayMilliseconds * 4, 500):
@@ -17,6 +17,15 @@ test "environment timeline is deterministic and seed-owned":
     expect(first).toEqual(replayed)
     expect(first.samplePosition).toEqual(position)
     expect(first.cloudiness != otherSeed.cloudiness or first.windX != otherSeed.windX or first.windZ != otherSeed.windZ).toBe(true)
+
+test "ecology precipitation samples follow the visible weather timeline":
+    const position = {x: 240, y: 72, z: 240}
+    for windowIndex in range(12):
+        const at = windowIndex * worldWeatherWindowMilliseconds + worldWeatherWindowMilliseconds / 2
+        const weather = worldEnvironmentAt("ecology-weather", at, position)
+        const precipitation = worldPrecipitationAt("ecology-weather", at, position)
+        expect(precipitation.kind).toBe(weather.precipitation)
+        expect(precipitation.intensity).toBe(weather.precipitationIntensity)
 
 test "world time advances the full celestial cycle and eight moon phases":
     expect(worldEnvironmentAt("cycle", 0).timeOfDay).toBe(0.25)

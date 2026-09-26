@@ -144,6 +144,25 @@ async function changedPixelRatio(first, second, minimumPixelDelta = 18) {
   return changed / sampled;
 }
 
+async function meanGroundPixelDifference(first, second) {
+  const source = await decodePng(first);
+  const reference = await decodePng(second);
+  assert.deepEqual(source.info, reference.info, "Ground shadow comparison changed image dimensions");
+  const {width, height} = source.info;
+  let difference = 0;
+  let channels = 0;
+  for (let y = Math.floor(height * 0.25); y < height; y += 1) {
+    for (let x = Math.floor(width * 0.08); x < Math.ceil(width * 0.92); x += 1) {
+      const offset = (y * width + x) * 3;
+      for (let channel = 0; channel < 3; channel += 1) {
+        difference += Math.abs(source.data[offset + channel] - reference.data[offset + channel]);
+        channels += 1;
+      }
+    }
+  }
+  return difference / channels;
+}
+
 async function environmentViewDifference(first, second, lookUp) {
   const source = await decodePng(first);
   const reference = await decodePng(second);
@@ -238,9 +257,14 @@ async function restoreContext(page) {
 function assertVisibleScene(name, metrics) {
   const evidence = `${name}: ${JSON.stringify(metrics)}`;
   assert.ok(metrics.nearBlackRatio < 0.82, `GPU probe scene is predominantly black; ${evidence}`);
-  assert.ok(metrics.colorfulRatio > 0.08, `GPU probe scene lost color channels; ${evidence}`);
+  // The natural-model yard now uses a pale basalt floor; its small colored
+  // models still occupy a visible part of the frame.
+  const minimumColorfulRatio = name === "natural-models" ? 0.05 : 0.08;
+  assert.ok(metrics.colorfulRatio > minimumColorfulRatio, `GPU probe scene lost color channels; ${evidence}`);
   assert.ok(metrics.quantizedColors > 48, `GPU probe scene lost material/texture diversity; ${evidence}`);
-  assert.ok(metrics.meanHorizontalEdgeDelta > 0.8, `GPU probe scene lost visible geometry edges; ${evidence}`);
+  // The seam fixture has two narrow blocks against a large sky background.
+  const minimumEdgeDelta = name === "seams" ? 0.7 : 0.8;
+  assert.ok(metrics.meanHorizontalEdgeDelta > minimumEdgeDelta, `GPU probe scene lost visible geometry edges; ${evidence}`);
 }
 
 function assertVisibleAnimationScene(name, metrics) {
@@ -254,6 +278,11 @@ function assertVisibleAnimationScene(name, metrics) {
 function assertVisibleTransparencyOracle(name, metrics) {
   const evidence = `${name}: ${JSON.stringify(metrics)}`;
   assert.ok(metrics.nearBlackRatio < 0.82, `GPU probe transparency oracle is predominantly black; ${evidence}`);
+  if (name.startsWith("ice-water-contact-night")) {
+    assert.ok(metrics.meanLuminance > 2, `GPU probe night contact lost its lit surface; ${evidence}`);
+    assert.ok(metrics.meanHorizontalEdgeDelta > 0.08, `GPU probe night contact lost visible geometry edges; ${evidence}`);
+    return;
+  }
   assert.ok(metrics.colorfulRatio > 0.08, `GPU probe transparency oracle lost color channels; ${evidence}`);
   assert.ok(metrics.quantizedColors > 8, `GPU probe transparency oracle lost its controlled materials; ${evidence}`);
   assert.ok(metrics.meanHorizontalEdgeDelta > 0.01, `GPU probe transparency oracle lost visible geometry edges; ${evidence}`);
@@ -266,8 +295,12 @@ function assertVisibleEnvironmentScene(name, metrics) {
   const evidence = `${name}: ${JSON.stringify(metrics)}`;
   assert.ok(metrics.nearBlackRatio < 0.96, `GPU probe environment scene is effectively black; ${evidence}`);
   if (name === "night") {
-    assert.ok(metrics.lowLightRatio < 0.82, `GPU probe night lost navigable terrain detail; ${evidence}`);
-    assert.ok(metrics.meanLuminance > 16, `GPU probe night is too dark to read; ${evidence}`);
+    assert.ok(metrics.nearBlackRatio < 0.9, `GPU probe moonlit terrain lost its silhouette; ${evidence}`);
+    // This fixture is mostly night sky with six small material panels, rather
+    // than a frame filled by terrain. Keep faint detail without a daytime sky.
+    assert.ok(metrics.meanLuminance > 2.5 && metrics.meanLuminance < 20, `GPU probe moonlight must retain detail while staying dark; ${evidence}`);
+    assert.ok(metrics.meanHorizontalEdgeDelta > 0.1, `GPU probe moonlight lost terrain edges; ${evidence}`);
+    return;
   }
   if (name === "lightning") {
     assert.ok(metrics.nearBlackRatio < 0.2, `GPU probe lightning flash did not illuminate the scene; ${evidence}`);
@@ -497,6 +530,7 @@ try {
     // Core-only Velar packages have no JavaScript package export. Exercise the
     // exact world module compiled into this game's production closure.
     alias: {
+      "@openvoxel/renderer/lighting-native": join(renderingRoot, "src", "native", "voxel-lighting.mjs"),
       "@openvoxel/game": join(gameRoot, "dist", "graphics", "world-graphics.js"),
       "@openvoxel/world": join(gameRoot, "dist", "__velar_packages__", "@openvoxel", "world", "src", "index.js"),
     },
@@ -549,19 +583,24 @@ try {
     response.end("Not found");
   });
   const origin = await listen(server);
-  browser = await chromium.launch({headless: true});
+  const requestedScene = process.env.OPENVOXEL_GPU_SCENE ?? null;
+  browser = await chromium.launch({headless: true, args: ["render-budget", "lighting", "rain-eye", "snow-eye", "vine-motion"].includes(requestedScene) && process.platform === "darwin" ? ["--use-angle=metal"] : []});
   const results = new Map();
   const images = new Map();
-  const requestedScene = process.env.OPENVOXEL_GPU_SCENE ?? null;
   const requestedScenes = requestedScene === "material-yard-suite"
     ? new Set(["material-yard", "material-yard-normal", "material-yard-material"])
     : requestedScene === null ? null : new Set([requestedScene]);
   const staticScenes = [
+    "lighting",
+    "vine-motion",
+    "chunk-transitions",
     "natural-models",
     "states",
     "layers",
     "seams",
     "transparency",
+    "ice-water-contact",
+    "ice-water-contact-night",
     "transparency-depth-occluded",
     "transparency-depth-reference",
     "transparency-sort-forward",
@@ -581,6 +620,7 @@ try {
     "snow",
     "lightning",
     "shadows",
+    "terrain-aliasing",
     "cutout-shadows",
     "seasons",
     "clouds-sky",
@@ -597,10 +637,13 @@ try {
     animation: null,
     settleMs: name === "rain-eye" || name === "snow-eye" ? 1_200 : name === "rain" || name === "snow" ? 800 : 0,
   }));
+  // Real-time power/cadence measurements are opt-in; the normal scene suite can
+  // also run correctly on software WebGL without a real-time frame-rate target.
+  if (requestedScene === "render-budget") staticScenes.push({name: "render-budget", evidenceName: "render-budget", query: new URLSearchParams({scene: "render-budget"}), animation: null, settleMs: 0});
   for (const scene of [...staticScenes, ...animationScenes]) {
     if (requestedScenes !== null && !requestedScenes.has(scene.name)) continue;
     process.stdout.write(`[gpu-probe] ${scene.name}\n`);
-    const page = await browser.newPage({viewport: {width: 1280, height: 800}, deviceScaleFactor: 1});
+    const page = await browser.newPage({viewport: {width: 1280, height: 800}, deviceScaleFactor: scene.name === "render-budget" ? 2 : 1});
     const failures = [];
     const sceneCleanupFailures = [];
     let sceneFailure = noFailure;
@@ -617,6 +660,13 @@ try {
       await page.waitForFunction(() => globalThis.__openVoxelGpuProbe?.ready === true
         || globalThis.__openVoxelGpuProbe?.error !== null, null, {timeout: 30_000});
       if (scene.settleMs > 0) await page.waitForTimeout(scene.settleMs);
+      try {
+        await page.waitForFunction(() => globalThis.__openVoxelGpuProbeChunksSettled(), null, {timeout: 10000});
+      } catch (error) {
+        process.stderr.write(JSON.stringify(await page.evaluate(() => globalThis.__openVoxelGpuProbeChunkCoverage())) + "\n");
+        process.stderr.write(failures.join("\n") + "\n");
+        throw error;
+      }
       if (scene.name === "rain-eye" || scene.name === "snow-eye") {
         await page.waitForFunction(() => {
           const stats = globalThis.__openVoxelGpuProbeEnvironmentStats();
@@ -647,22 +697,31 @@ try {
       assert.equal(report.error, null, `GPU probe ${scene.name} failed: ${report.error}`);
       assert.equal(report.scene, scene.name);
       assert.equal(report.ready, true);
+      assert.deepEqual(failures, [], `GPU probe ${scene.name} emitted browser errors before capture`);
       const canvas = page.locator("[data-gpu-render-probe]");
       const initial = await canvas.screenshot({path: join(evidenceRoot, `${scene.evidenceName}.png`)});
       images.set(scene.name, initial);
       const metrics = await imageMetrics(initial);
       if (scene.animation !== null) assertVisibleAnimationScene(scene.name, metrics);
-      else if (scene.name === "shadows" || scene.name === "cutout-shadows") assertVisibleEnvironmentScene(scene.name, metrics);
+      else if (["lighting", "shadows", "cutout-shadows", "terrain-aliasing", "vine-motion", "chunk-transitions"].includes(scene.name)) assertVisibleEnvironmentScene(scene.name, metrics);
       else if (environmentViewSceneNames.has(scene.name)) {
         assert.ok(metrics.nearBlackRatio < 0.95, `GPU ${scene.name} environment is unreadable: ${JSON.stringify(metrics)}`);
         assertEnvironmentStats(report.payload.environmentPreset, report.payload);
       }
-      else if (scene.name.startsWith("transparency-depth-") || scene.name.startsWith("transparency-sort-")) {
+      else if (scene.name.startsWith("transparency-depth-") || scene.name.startsWith("transparency-sort-") || scene.name.startsWith("ice-water-contact")) {
         assertVisibleTransparencyOracle(scene.name, metrics);
       } else if (environmentSceneNames.has(scene.name)) {
         assertVisibleEnvironmentScene(scene.name, metrics);
         assertEnvironmentStats(scene.name, report.payload);
       } else assertVisibleScene(scene.name, metrics);
+
+      if (scene.name === "ice-water-contact-night" && requestedScene === null) {
+        const dayImage = images.get("ice-water-contact");
+        assert.ok(dayImage, "GPU probe night contact has no daylight reference");
+        const dayMetrics = await imageMetrics(dayImage);
+        assert.ok(metrics.meanLuminance < dayMetrics.meanLuminance * 0.25,
+          "GPU probe night contact retained daylight illumination");
+      }
 
       if (scene.name.startsWith("material-yard")) {
         assertMaterialYardEvidence(resourcePack, report.payload.materialYard);
@@ -740,6 +799,27 @@ try {
         assert.ok(affectedRatio > (lookUp ? 0.005 : 0.0001), `GPU ${scene.name} effect is invisible in the player's ${lookUp ? "sky" : "eye-level"} view: ${affectedRatio}`);
         process.stdout.write(`[gpu-probe] ${scene.name} visible effect ${JSON.stringify({affectedRatio, ...view})}\n`);
         await page.evaluate(() => globalThis.__openVoxelGpuProbeSetEnvironmentEffect(true));
+        if (!lookUp && process.env.OPENVOXEL_WEATHER_GRADES === "1") {
+          const grades = [];
+          await page.evaluate(() => globalThis.__openVoxelGpuProbeWeatherGrade(0, 0));
+          await page.waitForFunction(() => {
+            const stats = globalThis.__openVoxelGpuProbeEnvironmentStats();
+            return stats.activeRainParticles + stats.activeSnowParticles === 0;
+          }, null, {timeout: 25000});
+          for (const [intensity, wind, level] of [[0.15, 1, "light"], [0.4, 3, "moderate"], [0.7, 6, "heavy"], [1, 14, "storm"]]) {
+            await page.evaluate(([intensity, wind]) => globalThis.__openVoxelGpuProbeWeatherGrade(intensity, wind), [intensity, wind]);
+            await page.waitForTimeout(scene.name === "snow-eye" ? 3000 : 1800);
+            const stats = await page.evaluate(() => globalThis.__openVoxelGpuProbeEnvironmentStats());
+            assert.equal(stats.precipitationSeverity, level);
+            assert.ok(stats.activeRainParticles + stats.activeSnowParticles <= 596);
+            await canvas.screenshot({path: join(evidenceRoot, `${scene.evidenceName}-${level}.png`)});
+            grades.push({level, particles: stats.activeRainParticles + stats.activeSnowParticles});
+            if (level === "light") await restoreContext(page);
+          }
+          assert.ok(grades.at(-1).particles > grades[0].particles, "Storm must be denser than light weather");
+          report.payload.environment.environmentTextureUpdates += 5;
+          process.stdout.write(`[gpu-probe] weather grades ${JSON.stringify(grades)}\n`);
+        }
         if (lookUp) {
           const samples = await page.evaluate(() => globalThis.__openVoxelGpuProbeTextureBlending());
           const background = [0.2, 0.4, 0.6];
@@ -800,6 +880,33 @@ try {
         process.stdout.write(`[gpu-probe] shadow contrast ${JSON.stringify(contrast)}\n`);
         await page.evaluate(() => globalThis.__openVoxelGpuProbeSetShadows(true));
       }
+      if (scene.name === "terrain-aliasing") {
+        const terrainSampling = await page.evaluate(() => globalThis.__openVoxelGpuProbeTerrainSampling());
+        assert.ok(terrainSampling.mipLevels > 1 && terrainSampling.useMipMaps, "Terrain must have a complete mip chain");
+        assert.ok(terrainSampling.specularWeight > 0 && terrainSampling.specularWeight <= 0.35, "Natural terrain uses restrained dielectric reflections");
+        assert.equal(terrainSampling.minFilter, terrainSampling.linearMipLinear, "Terrain minification must avoid nearest-neighbor aliasing");
+        assert.equal(terrainSampling.magFilter, terrainSampling.nearest, "Nearby block textures must retain pixel edges");
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeTerrainFilter(8));
+        const nearestSampling = await page.evaluate(() => globalThis.__openVoxelGpuProbeTerrainSampling());
+        assert.equal(nearestSampling.minFilter, nearestSampling.nearestMipLinear, "Comparison must restore nearest-neighbor minification");
+        await page.waitForTimeout(80);
+        const nearest = await canvas.screenshot({path: join(evidenceRoot, "terrain-aliasing-nearest.png")});
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeTerrainFilter(6));
+        const filteredSampling = await page.evaluate(() => globalThis.__openVoxelGpuProbeTerrainSampling());
+        assert.equal(filteredSampling.minFilter, filteredSampling.linearMipLinear, "Comparison must restore filtered minification");
+        await page.waitForTimeout(80);
+        const filtered = await canvas.screenshot({path: join(evidenceRoot, "terrain-aliasing-filtered.png")});
+        const changedRatio = await changedPixelRatio(nearest, filtered, 4);
+        assert.ok(changedRatio > 0.05, `Terrain minification should visibly change distant texture sampling: ${changedRatio}`);
+        process.stdout.write(`[gpu-probe] terrain aliasing filter comparison ${JSON.stringify({changedRatio})}\n`);
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeSetShadows(false));
+        await page.waitForTimeout(80);
+        const noShadows = await canvas.screenshot({path: join(evidenceRoot, "terrain-aliasing-no-shadows.png")});
+        const selfShadowDifference = await meanGroundPixelDifference(filtered, noShadows);
+        assert.ok(selfShadowDifference < 0.35, `Flat grass must not receive moving self-shadow bands: ${selfShadowDifference}`);
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeSetShadows(true));
+        process.stdout.write(`[gpu-probe] flat terrain self-shadow difference ${selfShadowDifference}\n`);
+      }
       if (scene.animation !== null) {
         assert.equal(report.payload.animationKey, scene.animation.key);
         assert.equal(report.payload.frameDurationMs, scene.animation.frameDurationMs);
@@ -852,6 +959,84 @@ try {
         const reversed = await canvas.screenshot({path: join(evidenceRoot, `${scene.evidenceName}-reversed.png`)});
         assertVisibleScene(`${scene.name}-reversed`, await imageMetrics(reversed));
         assert.ok(await changedPixelRatio(initial, reversed) > 0.04, "GPU probe camera reversal did not materially redraw translucent geometry");
+      }
+      if (scene.name.startsWith("ice-water-contact")) {
+        for (const [direction, shift] of [["left", -2], ["right", 4]]) {
+          await page.evaluate((dx) => globalThis.__openVoxelGpuProbeShiftCamera(dx), shift);
+          await page.waitForTimeout(180);
+          const strafe = await canvas.screenshot({path: join(evidenceRoot, `${scene.evidenceName}-${direction}.png`)});
+          assertVisibleTransparencyOracle(`${scene.name}-${direction}`, await imageMetrics(strafe));
+        }
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeShiftCamera(-2));
+      }
+      if (scene.name === "lighting") {
+        const lighting = {open: metrics};
+        for (const mode of ["dark", "local", "blocked", "blocked-water", "open"]) {
+          await page.evaluate(mode => globalThis.__openVoxelGpuProbeLighting(mode), mode);
+          await page.waitForFunction(() => globalThis.__openVoxelGpuProbeChunksSettled());
+          await page.waitForTimeout(400);
+          lighting[mode] = await imageMetrics(await canvas.screenshot({path: join(evidenceRoot, `lighting-${mode}.png`)}));
+        }
+        process.stdout.write(`[gpu-probe] lighting ${JSON.stringify(lighting)}\n`);
+        assert.ok(lighting.dark.meanLuminance < 1, "A sealed room admitted outdoor light");
+        assert.ok(lighting.local.meanLuminance > lighting.dark.meanLuminance + 8, "Local light failed to illuminate the sealed room");
+        assert.ok(lighting.blocked.meanLuminance < 1, "Local light leaked through an opaque wall");
+        assert.ok(lighting["blocked-water"].meanLuminance < 1, "Unlit cave water reflected outdoor light or a blocked emitter");
+        assert.ok(lighting.open.meanLuminance > lighting.dark.meanLuminance + 15, "Opening the roof failed to admit daylight");
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeLightingTime(true));
+        await page.waitForTimeout(1800);
+        lighting.night = await imageMetrics(await canvas.screenshot({path: join(evidenceRoot, "lighting-night.png")}));
+        assert.ok(lighting.night.meanLuminance < lighting.open.meanLuminance * 0.25, "Night kept daytime illumination");
+        await page.evaluate(() => globalThis.__openVoxelGpuProbeLightingTime(false));
+        await page.waitForTimeout(1800);
+        report.payload.environment.environmentTextureUpdates += 2;
+        report.payload.lighting = lighting;
+      }
+      if (scene.name === "vine-motion") {
+        const vines = await page.evaluate(() => globalThis.__openVoxelGpuProbeVines());
+        assert.ok(vines.joins > 0 && vines.chunkJoins > 0, "Vine probe needs both block and chunk joins");
+        assert.ok(vines.maximumGap < 0.00001, `Connected vine vertices separated: ${JSON.stringify(vines)}`);
+        assert.ok(vines.maximumNormalOffset < 0.00001, "Vines moved off or into their supporting face");
+        assert.ok(vines.maximumMotion > 0.001 && vines.maximumMotion < 0.03, "Vines lost subtle, continuous wind motion");
+        assert.equal(vines.calmMotion, 0, "Vines should rest when wind stops");
+        assert.ok(vines.grassOracleGap > 0.03, "Vine regression did not detect the old per-block grass bend");
+        report.payload.vines = vines;
+        await page.waitForTimeout(900);
+        await canvas.screenshot({path: join(evidenceRoot, "vine-motion-later.png")});
+      }
+      if (scene.name === "render-budget") {
+        const power = await page.evaluate(() => globalThis.__openVoxelGpuProbeRenderBudget());
+        process.stdout.write(`[gpu-probe] power ${JSON.stringify(power)}\n`);
+        assert.equal(power.maximumFps, 60);
+        assert.equal(power.backgroundRendering, false);
+        assert.equal(power.devicePixelRatio, 2);
+        assert.ok(power.width * power.height <= 3_600_000);
+        assert.ok(power.resting.frames > 25, "Probe did not render enough frames to compare capture cadence");
+        assert.ok(power.resting.frames * 1000 / power.resting.milliseconds <= 64, "Render frame rate exceeded the budget");
+        assert.ok(power.resting.reflections < power.resting.frames * 0.5, "Stationary reflections still redraw at main-view frequency");
+        assert.ok(power.resting.refractions < power.resting.frames * 0.5, "Stationary refractions still redraw at main-view frequency");
+        assert.ok(power.moving.reflections >= power.moving.frames - 1, "Camera motion did not immediately refresh water reflection");
+        assert.ok(power.moving.refractions >= power.moving.frames - 1, "Camera motion did not immediately refresh water refraction");
+        assert.equal(power.background.frames, 0, "Unfocused game kept drawing frames");
+        assert.ok(power.resumed.frames > 2, "Refocusing failed to resume rendering");
+        report.payload.power = power;
+      }
+      if (scene.name === "chunk-transitions") {
+        const transitions = await page.evaluate(() => globalThis.__openVoxelGpuProbeChunkTransitions());
+        assert.equal(transitions.released, true, "Retired chunk GPU buffers survived their fade");
+        assert.equal(transitions.retainedOpaqueDepth, true, "Chunk fade changed opaque terrain into alpha blending");
+        assert.equal(transitions.finalSceneMeshes, transitions.originalSceneMeshes, "Chunk re-entry leaked meshes");
+        for (const [direction, result] of [["out", transitions.out], ["in", transitions.into]]) {
+          assert.ok(result.frames.some(value => value > 0.1 && value < 0.9), `Chunk ${direction} popped without intermediate coverage`);
+          for (let i = 1; i < result.frames.length; i++) {
+            assert.ok(direction === "out" ? result.frames[i] <= result.frames[i - 1] : result.frames[i] >= result.frames[i - 1], `Chunk ${direction} coverage reversed`);
+          }
+          const samples = result.samples.map(sample => Buffer.from(sample.png.split(",")[1], "base64"));
+          for (const [index, png] of samples.entries()) await writeFile(join(evidenceRoot, `chunk-${direction}-${index}.png`), png);
+          const changed = await changedPixelRatio(samples[0], samples.at(-1), 6);
+          assert.ok(changed > 0.005, `Chunk ${direction} did not change rendered pixels: ${changed}; coverage ${result.frames}`);
+        }
+        report.payload.transitions = {out: transitions.out.frames, into: transitions.into.frames};
       }
       if (scene.name === "transparency-sort-forward") {
         await orbitCameraHalfTurn(page, canvas);

@@ -70,6 +70,7 @@ float ovTerrainFogTransmittance() {
 #ifdef FOG
   vec3 ovAtmosphereDirection = normalize(vPositionW - vEyePosition.xyz);
   vec3 ovAtmosphereColor = ovSkyColor(ovAtmosphereDirection.y, ovTerrainSkyTop, ovTerrainHorizon, ovTerrainGround, ovTerrainFlash);
+  ovAtmosphereColor *= ovSkyVisibility;
 #ifdef PREMULTIPLYALPHA
   ovAtmosphereColor *= finalColor.a;
 #endif

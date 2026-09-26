@@ -8,6 +8,7 @@ function fixture() {
   const resources = {
     sky: {sunDataUrl: "sun", glowDataUrl: "glow", starDataUrl: "star", moonDataUrls: Array.from({length: 8}, (_, index) => "moon" + index)},
     clouds: {textureDataUrl: "clouds"},
+    foliage: {leafDataUrl: "leaf"},
     precipitation: {rainDataUrl: "rain", rainSplashDataUrl: "splash", snowDataUrl: "snow"},
   };
   const factory = (_scene, url, sampling, loaded, failed) => {
@@ -22,7 +23,7 @@ function fixture() {
 test("environment images keep the source sampling contract and one owner per texture", async () => {
   const {resources, factory, requests} = fixture();
   const pending = loadEnvironmentTextures(null, resources, factory);
-  assert.equal(requests.length, 15);
+  assert.equal(requests.length, 16);
   assert.ok(requests.slice(0, 12).every((request) => request.sampling === Texture.BILINEAR_SAMPLINGMODE));
   assert.ok(requests.slice(12).every((request) => request.sampling === Texture.NEAREST_SAMPLINGMODE));
   for (const request of requests) request.loaded();

@@ -5,7 +5,7 @@ import {inspectModule} from "@velarscript/compiler";
 import {velarCompilerExtension as nodeExtension} from "@velarscript/node/compiler";
 import {velarCompilerExtension as webExtension} from "@velarscript/web/compiler";
 import {inspectSourceBoundaries, moduleEdges, publicEntryTargets} from "./architecture/module-boundaries.mjs";
-import {allowedOpenVoxelDependencies, extensionEnvironments, gameMeshingWorkerSpecifier, gamePublicInterfaceViolations, gameWorkerBridgeViolations, installedToolchainViolation, labsRegistryPrefix, labsScope, npmToolchainPackages, openVoxelGamePackage, packageHomes, publicInterfaceTypeReferences, renderingImportViolations, renderingManifestViolations, supportedTargets, toolchainPinViolations, workerClosureViolations} from "./architecture/policy.mjs";
+import {allowedOpenVoxelDependencies, extensionEnvironments, gameWorkerBridges, gamePublicInterfaceViolations, gameWorkerBridgeViolations, installedToolchainViolation, labsRegistryPrefix, labsScope, npmToolchainPackages, openVoxelGamePackage, packageHomes, publicInterfaceTypeReferences, renderingImportViolations, renderingManifestViolations, supportedTargets, toolchainPinViolations, workerClosureViolations} from "./architecture/policy.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const rootManifest = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
@@ -325,29 +325,30 @@ async function inspectRenderingArchitecture() {
           specifier: edge.source,
           target: target.path,
           resolvedOwnerName: target.ownerName,
-          gameWorkerBridge: edge.source === gameMeshingWorkerSpecifier && target.path !== null,
+          gameWorkerBridge: gameWorkerBridges.has(edge.source) && target.path !== null,
         });
       }
     }
   }
 
   const game = packages.get(openVoxelGamePackage);
-  const gameWorkerBridgePaths = new Set();
+  const gameWorkerBridgePaths = new Map();
   if (game !== undefined) {
-    for (const target of publicEntryTargets(game.manifest, "./meshing-worker")) {
-      const path = sourcePath(resolve(game.home, target));
-      if (path !== null) gameWorkerBridgePaths.add(path);
-    }
-    if (gameWorkerBridgePaths.size === 0) {
-      violations.push(`${game.owner}: ${openVoxelGamePackage} must declare the ${gameMeshingWorkerSpecifier} Velar entry`);
+    for (const specifier of gameWorkerBridges.keys()) {
+      const targets = publicEntryTargets(game.manifest, `.${specifier.slice(openVoxelGamePackage.length)}`);
+      if (targets.length === 0) violations.push(`${game.owner}: ${openVoxelGamePackage} must declare the ${specifier} Velar entry`);
+      for (const target of targets) {
+        const path = sourcePath(resolve(game.home, target));
+        if (path !== null) gameWorkerBridgePaths.set(path, specifier);
+      }
     }
   }
   for (const [path, module] of modules) {
     module.gameWorkerBridge = gameWorkerBridgePaths.has(path);
   }
-  for (const path of gameWorkerBridgePaths) {
+  for (const [path, specifier] of gameWorkerBridgePaths) {
     const imports = modules.get(path)?.rawEdges.map((edge) => edge.source) ?? [];
-    violations.push(...gameWorkerBridgeViolations(imports)
+    violations.push(...gameWorkerBridgeViolations(imports, specifier)
       .map((message) => `${portable(relative(projectRoot, path))}: ${message}`));
   }
 

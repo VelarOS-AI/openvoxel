@@ -1,7 +1,8 @@
 import {expect} from "velar/test"
 import {baseWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {emptyChunk} from "@openvoxel/world"
+import {chunkBlock, emptyChunk} from "@openvoxel/world"
+import {defaultGenerator, instantiateWorldGenerator} from "../../src/generator-registry.vel"
 import {carveCaves, cavePlanner} from "../../src/survival/caves.vel"
 import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
 import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
@@ -46,3 +47,32 @@ test "cave LRU cache retains a recently touched owner after overflow":
     expect(planner.planBuildCount()).toBe(3)
     planner.tunnel(1, 0)
     expect(planner.planBuildCount()).toBe(4)
+
+test "dry land cave entrances open the final surface and descend into rock":
+    const seed = "cave-entrance-surface"
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const fields = createGenerationFields(seed, profile)
+    const columns = columnPlanner(fields, 16)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const planner = cavePlanner(fields, seed, blocks)
+    const generator = instantiateWorldGenerator(defaultGenerator, seed, 16)
+    let found = false
+    for cellX in range(-8, 9):
+        for cellZ in range(-8, 9):
+            const entrance = planner.entrance(cellX, cellZ)
+            if entrance.origin.y <= profile.world.seaLevel + 8: continue
+            const x = entrance.origin.x
+            const z = entrance.origin.z
+            const chunkX = (x / 16).floor()
+            const chunkZ = (z / 16).floor()
+            const sample = columns.columns(chunkX, chunkZ).sampleAt(x, z)
+            if (sample.surfaceY - entrance.origin.y).abs() > 1: continue
+            const chunkY = (sample.surfaceY / 16).floor()
+            const chunk = generator.generate({x: chunkX, y: chunkY, z: chunkZ})
+            expect(chunkBlock(chunk, {x: x - chunkX * 16, y: sample.surfaceY - chunkY * 16, z: z - chunkZ * 16})).toBe(blocks.air)
+            expect(planner.surfaceIntact(x, sample.surfaceY, z)).toBe(false)
+            expect(entrance.bounds.minimumY < sample.surfaceY - 10).toBe(true)
+            found = true
+            break
+        if found: break
+    expect(found).toBe(true)

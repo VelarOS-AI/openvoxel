@@ -5,6 +5,9 @@ import {SharedShadowDepthWrapper} from "./shared-shadow-depth-wrapper.mjs";
 import {VoxelTextureArrayPlugin} from "./texture-bank.mjs";
 import {VoxelWaterSurfacePlugin, WaterSurfaceRuntime} from "./water-surface.mjs";
 import {TerrainFogPlugin} from "./terrain-fog.mjs";
+import {VegetationMotionPlugin, VegetationMotionRuntime} from "./vegetation-motion.mjs";
+import {ChunkTransitionPlugin} from "./chunk-transition.mjs";
+import {VoxelLightingPlugin} from "./voxel-lighting.mjs";
 
 function finiteNumber(value, minimum, maximum, label) {
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
@@ -16,14 +19,18 @@ function finiteNumber(value, minimum, maximum, label) {
 // Resource recipes are resolved once per material pipeline. Upload validation
 // and PBR construction consume the same result, including animation layer ownership.
 export class VoxelMaterialLibrary {
-  constructor(scene, options, textureBanks, climateTintField, atmosphere) {
+  constructor(scene, options, textureBanks, climateTintField, atmosphere, lighting = null, invalidateShadows = () => {}) {
     this.scene = scene;
     this.textureBanks = textureBanks;
     this.climateTintField = climateTintField;
     this.atmosphere = atmosphere;
+    this.lighting = lighting;
+    this.invalidateShadows = invalidateShadows;
     this.pipelines = new Map();
     this.animationClockMs = 0;
-    this.waterSurfaceRuntime = new WaterSurfaceRuntime();
+    this.waterSurfaceRuntime = new WaterSurfaceRuntime(scene);
+    this.waterSurfaceRuntime.setEnvironmentFrame(options.environmentFrame ?? {windX: 0, windZ: 0});
+    this.vegetationMotionRuntime = new VegetationMotionRuntime(options.environmentFrame ?? {windX: 0, windZ: 0});
     this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
     this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
     this.animationDefinitions = new Map(options.animations.map((definition) => [definition.key, definition]));
@@ -139,14 +146,25 @@ export class VoxelMaterialLibrary {
     const isWater = definition.materialEffect === "water";
     const material = new PBRMaterial("material:" + key, this.scene);
     try {
-      const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField, {neutralSurface: isWater});
+      const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField, {
+        neutralSurface: isWater, atmosphere: this.atmosphere, grassPlant: definition.key === "openvoxel:material/cross",
+      });
+      new ChunkTransitionPlugin(material);
+      new VoxelLightingPlugin(material, this.lighting);
+      material.maxSimultaneousLights = 5;
       new TerrainFogPlugin(material, this.atmosphere);
+      const vegetationMode = {"openvoxel:material/cross": "cross", "openvoxel:material/leaves": "leaves", "openvoxel:material/vine": "vine"}[definition.key];
+      if (vegetationMode !== undefined) {
+        new VegetationMotionPlugin(material, vegetationMode, this.vegetationMotionRuntime);
+      }
       if (isWater) new VoxelWaterSurfacePlugin(material, textureBank.normal, waterOptics, this.waterSurfaceRuntime);
       material.albedoColor = Color3.White();
       material.ambientColor = new Color3(0.38, 0.4, 0.38);
       material.emissiveColor = Color3.Black();
       material.metallic = isWater ? 0 : 1;
+      material.enableSpecularAntiAliasing = true;
       material.roughness = isWater ? waterOptics.roughness : 1;
+      material.metallicF0Factor = finiteNumber(definition.specularWeight, 0, 1, "Material specular weight");
       material.environmentIntensity = definition.environmentIntensity;
       material.clearCoat.isEnabled = definition.clearCoat > 0;
       material.clearCoat.intensity = definition.clearCoat;
@@ -181,6 +199,13 @@ export class VoxelMaterialLibrary {
       }
       if (batch.layer === "cutout" && definition.castsShadows) {
         material.shadowDepthWrapper = new SharedShadowDepthWrapper(material, this.scene);
+        // The first shadow pass can precede the visible material's effect.
+        // Rebuild the cached map after that effect compiles and has rendered.
+        material.onEffectCreatedObservable.addOnce(({effect}) => {
+          const afterRender = () => this.scene.onAfterRenderObservable.addOnce(() => this.invalidateShadows());
+          if (effect.isReady()) afterRender();
+          else effect.onCompileObservable.addOnce(afterRender);
+        });
       }
       if (!isWater && animation !== null && frames.length > 1) {
         this.animatedMaterials.push({frameDurationMs: animation.frameDurationMs, frames, frameIndex: -1, plugin: texturePlugin});
@@ -195,8 +220,14 @@ export class VoxelMaterialLibrary {
     }
   }
 
-  update(deltaMs) {
+  setEnvironmentFrame(frame) {
+    this.vegetationMotionRuntime.setEnvironmentFrame(frame);
+    this.waterSurfaceRuntime.setEnvironmentFrame(frame);
+  }
+
+  update(deltaMs, playerPosition = this.vegetationMotionRuntime.player) {
     this.waterSurfaceRuntime.update(deltaMs);
+    this.vegetationMotionRuntime.update(deltaMs, playerPosition);
     if (this.animatedMaterials.length === 0) return;
     this.animationClockMs += deltaMs;
     for (const animation of this.animatedMaterials) {

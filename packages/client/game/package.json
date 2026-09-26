@@ -5,19 +5,32 @@
   "type": "module",
   "imports": {
     "#openvoxel/game/babylon-surface": "./src/backends/babylon/native/surface.mjs",
+    "#openvoxel/game/web-audio": "./src/host/web/audio.mjs",
     "#openvoxel/game/web-navigation": "./src/host/web/navigation.mjs"
   },
   "files": [
+    "data",
+    "tools",
     "src"
   ],
   "exports": {
     ".": "./dist/index.js",
-    "./meshing-worker": "./dist/meshing-worker.js"
+    "./meshing-worker": "./dist/meshing-worker.js",
+    "./lighting-worker": "./dist/lighting-worker.js",
+    "./creative-palette-data": "./data/creative-palette.json",
+    "./creative-preview-assets": "./tools/creative-preview-assets.mjs"
   },
   "velar": {
     "entry": "src/index.vel",
+    "resources": {
+      "./creative-palette-data": {
+        "path": "data/creative-palette.json",
+        "type": "json"
+      }
+    },
     "entries": {
-      "./meshing-worker": "src/meshing-worker.vel"
+      "./meshing-worker": "src/meshing-worker.vel",
+      "./lighting-worker": "src/lighting-worker.vel"
     },
     "targets": [
       "web",
@@ -36,7 +49,9 @@
     "test": "node ../../../tools/run-validation.mjs --shell \"velar test && node --test --test-concurrency=1 tests/*.test.mjs\"",
     "test:gpu": "node ../../../tools/run-validation.mjs --shell \"velar build && node tests/gpu-render-probe.mjs\"",
     "build": "node ../../../tools/run-validation.mjs -- velar build",
-    "test:gpu:built": "node ../../../tools/run-validation.mjs -- node tests/gpu-render-probe.mjs"
+    "test:gpu:built": "node ../../../tools/run-validation.mjs -- node tests/gpu-render-probe.mjs",
+    "benchmark:translucency": "node ../../../tools/run-validation.mjs -- node tests/translucent-sort-benchmark.mjs",
+    "benchmark:visibility": "node ../../../tools/run-validation.mjs -- velar run benchmarks/portal-visibility.vel"
   },
   "dependencies": {
     "@babylonjs/core": "9.23.0",
@@ -47,8 +62,8 @@
   "devDependencies": {
     "@openvoxel/blocks": "0.2.0",
     "@openvoxel/world-generation": "0.2.0",
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/web": "0.34.0",
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/web": "0.34.2",
     "esbuild": "0.28.2",
     "playwright": "1.62.1",
     "sharp": "0.35.4",

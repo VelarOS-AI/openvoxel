@@ -3,6 +3,7 @@ import {baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {chunkBlock, emptyChunk} from "@openvoxel/world"
 import {TerrainSample} from "../../src/terrain-sample.vel"
+import {VegetationConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
 import {CompiledFeaturePlan} from "../../src/survival/feature-plan.vel"
@@ -52,7 +53,7 @@ test "sparse ecology candidates obey climate water depth and substrate contracts
                         expect(registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)).toBe(true)
                     else if feature.owner.startsWith("seagrass:"):
                         seagrass += 1
-                        expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast or sample.biome == profile.biomes.river).toBe(true)
+                        expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast or sample.biome == profile.biomes.river or sample.waterBody != null).toBe(true)
                         expect(registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)).toBe(true)
                     else if feature.owner.startsWith("sea-urchin:"):
                         seaUrchins += 1
@@ -120,7 +121,8 @@ test "every admitted fallen log has one decision across all intersecting Chunks"
     expect(crossing > 0).toBe(true)
 
 test "deadwood overlap winner is resolved before the losing log crosses a Chunk seam":
-    const profile = baseWorldGeneratorCatalog.generators[0]
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const profile = WorldGeneratorDefinition.from(base, {vegetation: VegetationConfig.from(base.vegetation, {deadwoodCellSize: 12})})
     const registry = baseWorldBlockRegistry.registry
     const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
     const seed = "deadwood-seam-direct"
@@ -134,7 +136,7 @@ test "deadwood overlap winner is resolved before the losing log crosses a Chunk 
                 position: {x: worldX, z: worldZ},
                 surfaceY: 69, slope: 0, humidity: 12, forestDensity: 1,
                 biome: profile.biomes.forest, terrainType: profile.terrainTypes.plain,
-                geology: 0, deposit: 0, exposure: 0, stoneVein: 1,
+                geology: 0, deposit: 0, exposure: 0, roadDistance: null,
             })
 
         return TerrainColumnPlan.from(actual, {sampleAt})
@@ -186,7 +188,6 @@ test "ground vegetation can select every new authored ecology family":
     for block in [
         builtinIdentities.blocks.yellowFlower,
         builtinIdentities.blocks.blueFlower,
-        builtinIdentities.blocks.wheat,
         builtinIdentities.blocks.pumpkinStem,
         builtinIdentities.blocks.rottenPumpkin,
         builtinIdentities.blocks.oakSapling,

@@ -70,7 +70,7 @@ test "world manifests carry their complete runtime registry":
     const world = manifest()
     expect(world.formatVersion).toBe(6)
     expect(world.worldTimeOriginMilliseconds).toBe(1_000_000)
-    expect(world.blockRegistry.states.size).toBe(376)
+    expect(world.blockRegistry.states.size).toBe(377)
     expect(world.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
 
 test "world manifests reject invalid world time origins":

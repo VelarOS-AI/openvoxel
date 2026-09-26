@@ -91,13 +91,42 @@ test "vegetation plans admit each feature only on its final substrate":
     expect(dryBushCount > 0).toBe(true)
     expect(priorityOverlapCount > 0).toBe(true)
 
-test "wild vegetation exposes crop stages and horizontal pumpkin states":
+test "vegetation plans omit a tree when its surface support was carved away":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const seed = "continental-ridges"
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const baseline = decorationPlanner(profile, seed, blocks, columns, registry)
+    let treeX = 0
+    let treeZ = 0
+    let ownerChunkX = 0
+    let ownerChunkZ = 0
+    let found = false
+    for chunkX in range(-4, 5):
+        for chunkZ in range(-4, 5):
+            const tree = baseline.decorations(chunkX, chunkZ).features.find(feature => feature.owner.startsWith("tree:"))
+            if tree == null: continue
+            treeX = tree.origin.x
+            treeZ = tree.origin.z
+            ownerChunkX = chunkX
+            ownerChunkZ = chunkZ
+            found = true
+            break
+        if found: break
+    expect(found).toBe(true)
+    def surfaceIntact(x: number, y: number, z: number) -> bool: return x != treeX or z != treeZ
+    const filtered = decorationPlanner(profile, seed, blocks, columns, registry, surfaceIntact)
+    expect(filtered.decorations(ownerChunkX, ownerChunkZ).features.some(feature => feature.owner.startsWith("tree:") and feature.origin.x == treeX and feature.origin.z == treeZ)).toBe(false)
+
+test "wild communities retain green cotton and rye while wheat is cultivated":
     const profile = baseWorldGeneratorCatalog.generators[0]
     const registry = baseWorldBlockRegistry.registry
     const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
     const columns = columnPlanner(createGenerationFields("ecology-variety", profile), 16)
     const planner = decorationPlanner(profile, "ecology-variety", blocks, columns, registry)
     const cropAges: Set<number> = Set()
+    let cottonCount = 0
     const pumpkinFacings: Set<string> = Set()
 
     for chunkX in range(-16, 17):
@@ -115,11 +144,18 @@ test "wild vegetation exposes crop stages and horizontal pumpkin states":
                 if crop:
                     const ageProperty = growth!.ageProperty
                     const age = state.properties.find(property => property.name == ageProperty)?.value
-                    if age is number: cropAges.add(age)
+                    if age is number:
+                        cropAges.add(age)
+                        expect(state.blockKey != builtinIdentities.blocks.wheat).toBe(true)
+                        if state.blockKey == builtinIdentities.blocks.cotton:
+                            expect(age <= 1).toBe(true)
+                            cottonCount += 1
+                        else if state.blockKey == builtinIdentities.blocks.rye: expect(age <= 5).toBe(true)
                 if pumpkin:
                     const facing = state.properties.find(property => property.name == "facing")?.value
                     if facing is string: pumpkinFacings.add(facing)
 
+    expect(cottonCount > 30).toBe(true)
     expect(cropAges.size >= 4).toBe(true)
     expect(pumpkinFacings).toEqual(Set(["north", "east", "south", "west"]))
 
@@ -179,7 +215,7 @@ def shapeEnvelope(kind: TreeShapeKind, height: number) -> TreeShapeEnvelope:
         maximumY = Math.max(maximumY, write.y)
         minimumZ = Math.min(minimumZ, write.z)
         maximumZ = Math.max(maximumZ, write.z)
-    expect(writes.some(write => write.runtimeId == 2 or write.runtimeId == 3)).toBe(kind == TreeShapeKind.oak or kind == TreeShapeKind.mimosa)
+    expect(writes.some(write => write.runtimeId == 2 or write.runtimeId == 3)).toBe(true)
     const horizontalReach = Math.max(minimumX.abs(), Math.max(maximumX.abs(), Math.max(minimumZ.abs(), maximumZ.abs())))
     return {width: maximumX - minimumX + 1, height: maximumY - minimumY + 1, depth: maximumZ - minimumZ + 1, maximumY, horizontalReach}
 

@@ -39,6 +39,7 @@ function waterLibrary(scene) {
       doubleSided: true,
       castsShadows: false,
       environmentIntensity: 1.35,
+      specularWeight: 1,
       clearCoat: 0,
       clearCoatRoughness: 0,
       unlit: false,
@@ -80,8 +81,11 @@ test("water uses one shared continuous runtime, neutral albedo, and Babylon scen
     assert.equal(texturePlugin.neutralSurface, true);
     assert.equal(waterPlugin.runtime, library.waterSurfaceRuntime);
     assert.equal(waterPlugin.normalTexture, bank.normal);
-    assert.equal(waterPlugin.getCustomCode("vertex"), null, "P0 water must not displace geometry");
+    assert.match(waterPlugin.getCustomCode("vertex").CUSTOM_VERTEX_MAIN_END, /ovWaterCode = color\.a/u);
+    assert.doesNotMatch(waterPlugin.getCustomCode("vertex").CUSTOM_VERTEX_MAIN_END, /positionUpdated/u);
     assert.match(waterPlugin.getCustomCode("fragment").CUSTOM_FRAGMENT_BEFORE_LIGHTS, /vPositionW\.xz/u);
+    assert.match(waterPlugin.getCustomCode("fragment").CUSTOM_FRAGMENT_UPDATE_ALBEDO, /ovWaterDepth/u);
+    assert.match(waterPlugin.getCustomCode("fragment").CUSTOM_FRAGMENT_BEFORE_LIGHTS, /ovWaveSpeed/u);
     assert.doesNotMatch(texturePlugin.getCustomCode("fragment").CUSTOM_FRAGMENT_UPDATE_ALBEDO, /ovAlbedoSampler/u);
 
     assert.equal(material.indexOfRefraction, 1.333);

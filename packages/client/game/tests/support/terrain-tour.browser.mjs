@@ -1,8 +1,9 @@
 import {instantiateWorldGenerator, defaultGenerator} from "@openvoxel/world-generation";
 import {basePackedBlockCatalogSource, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks";
-import {loadBuiltinClientResourcePack, createClientRenderCatalog, meshChunk} from "@openvoxel/renderer";
+import {loadBuiltinClientResourcePack, createClientRenderCatalog, createClientLightField, meshChunk} from "@openvoxel/renderer";
 import {openWorldGraphics} from "@openvoxel/game";
-import {EngineStore} from "@babylonjs/core/Engines/engineStore.js";
+import {worldYearMilliseconds} from "@openvoxel/world";
+import {collectLeafEmitters} from "../../src/backends/babylon/native/leaf-simulation.mjs";
 import {Vector3} from "@babylonjs/core/Maths/math.vector.js";
 
 const pack = await loadBuiltinClientResourcePack();
@@ -20,6 +21,8 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 0));
 let surface;
 let activeSite;
 let shoreTarget;
+let activeScene = null;
+globalThis.__openVoxelCaptureScene = scene => { activeScene = scene; };
 
 globalThis.discoverSpawnSites = () => ["openvoxel", "continental-ridges", "climate-extremes"].map((seed, index) => {
   const generator = instantiateWorldGenerator(defaultGenerator, seed, 16);
@@ -53,7 +56,7 @@ globalThis.discoverTerrainSites = async () => {
   return [...found.values()];
 };
 
-globalThis.loadTerrainSite = async (site, radius = 4) => {
+globalThis.loadTerrainSite = async (site, radius = 4, year = null) => {
   surface?.close();
   activeSite = site;
   const generator = instantiateWorldGenerator(defaultGenerator, site.seed, 16);
@@ -80,16 +83,20 @@ globalThis.loadTerrainSite = async (site, radius = 4) => {
     }
     await pause();
   }
-  const target = {x: site.x, y: Math.max(center.surfaceY + 1, 64), z: site.z};
+  const target = {x: site.x, y: Math.max(center.surfaceY + 1, center.waterLevel ?? 64), z: site.z};
   surface = await openWorldGraphics({
     canvas: document.querySelector("canvas"), catalog, edge: 16,
     targetX: target.x, targetY: target.y, targetZ: target.z, horizontalChunkRadius: 6,
     navigationMode: "orbit", movementMode: "creative-flight", collisionAt: () => null,
     viewChanged: () => null, minimumWorldY: 0, maximumWorldY: 255,
     worldSeed: site.seed, worldClimate: {temperaturePeriod: 1024, humidityPeriod: 896, samplingStep: 4, seaLevel: 64},
-    initialEnvironment: {worldMilliseconds: 600000, samplePosition: target, timeOfDay: 0.5, moonPhase: 0,
-      cloudiness: 0.15, precipitation: "none", precipitationIntensity: 0, windX: 0, windZ: 0, lightning: null},
+    initialEnvironment: {worldMilliseconds: year === null ? 600000 : Math.round(((year - 0.125 + 1) % 1) * worldYearMilliseconds), samplePosition: target, timeOfDay: 0.5, moonPhase: 0,
+      cloudiness: 0.15, precipitation: "none", precipitationIntensity: 0, windX: 2, windZ: 0.5, lightning: null},
   });
+  const lighting = createClientLightField(16, catalog.lightStates);
+  surface.setLighting(lighting.solve([...chunks.values()].map(chunk => ({
+    position: chunk.position, blocks: Uint32Array.from(chunk.indices, index => chunk.palette[index]),
+  })), []));
   for (const chunk of chunks.values()) {
     const {x: chunkX, y: chunkY, z: chunkZ} = chunk.position;
     if (Math.abs(chunkX - cx) === radius || Math.abs(chunkZ - cz) === radius) continue;
@@ -102,13 +109,48 @@ globalThis.loadTerrainSite = async (site, radius = 4) => {
     }
     await surface.enqueueChunkMesh(meshChunk(chunk.position, 16, padded, catalog.states, 1));
   }
-  const camera = EngineStore.LastCreatedScene.activeCamera;
+  const camera = activeScene.activeCamera;
   camera.setTarget(new Vector3(target.x, target.y, target.z));
   return {site, currentHeight: center.surfaceY, surfaceSamples: counts, stats: surface.stats()};
 };
 
 globalThis.terrainTourView = view => {
-  const camera = EngineStore.LastCreatedScene.activeCamera;
+  const camera = activeScene.activeCamera;
+  // The production orbit camera limits elevation for editing. Inspection
+  // poses must retain eye height, including a first-person grazing angle.
+  camera.checkCollisions = false;
+  camera.upperBetaLimit = Math.PI - 0.02;
+  camera.upperRadiusLimit = null;
+  if (view.startsWith("water-low")) {
+    const level = activeSite.waterLevel === undefined ? 65 : activeSite.waterLevel + 1;
+    const side = view === "water-low-side" ? -1 : 1;
+    camera.setTarget(activeSite.name === "coast"
+      ? new Vector3(shoreTarget.x, level, shoreTarget.z)
+      : new Vector3(activeSite.x - 22, level, activeSite.z - 20));
+    camera.setPosition(activeSite.name === "coast"
+      ? new Vector3(activeSite.x + (shoreTarget.x - activeSite.x) * 0.35 + 4 * side, level + 1.6, activeSite.z + (shoreTarget.z - activeSite.z) * 0.35)
+      : new Vector3(activeSite.x + 4 * side, level + 1.6, activeSite.z + 6));
+    return;
+  }
+  if (view === "water" || view === "water-motion") {
+    camera.setTarget(new Vector3(activeSite.x, activeSite.waterLevel + 0.15, activeSite.z));
+    camera.setPosition(activeSite.name === "pond"
+      ? new Vector3(activeSite.x + 6, activeSite.waterLevel + 8, activeSite.z + 7)
+      : new Vector3(activeSite.x + 14, activeSite.waterLevel + 5.5, activeSite.z + 17));
+    return;
+  }
+  if (view === "foliage") {
+    const emitters = activeScene.meshes.flatMap(mesh => {
+      const roles = mesh.getVerticesData("tintRole");
+      return roles === null ? [] : collectLeafEmitters(mesh.getVerticesData("position"), mesh.getVerticesData("normal"), roles, mesh.position);
+    }).sort((a, b) => Math.hypot(a.x - activeSite.x, a.z - activeSite.z) - Math.hypot(b.x - activeSite.x, b.z - activeSite.z));
+    if (emitters.length > 0) {
+      const source = emitters[0];
+      camera.setTarget(new Vector3(source.x, source.y, source.z));
+      camera.setPosition(new Vector3(source.x + 9, source.y + 0.5, source.z + 10));
+      return;
+    }
+  }
   if (view === "eye" && activeSite.name.startsWith("start-")) {
     camera.setTarget(new Vector3(shoreTarget.x, 65, shoreTarget.z));
     camera.setPosition(new Vector3(activeSite.x, activeSite.y + 1.62, activeSite.z));
@@ -117,6 +159,12 @@ globalThis.terrainTourView = view => {
   camera.alpha = -Math.PI / 3;
   camera.beta = view === "top" ? 0.03 : 1.18;
   camera.radius = view === "top" ? 90 : 48;
+};
+globalThis.terrainTourFoliageStats = () => surface.environmentStats().leaves;
+globalThis.terrainTourRenderStats = () => {
+  const scene = activeScene;
+  const camera = scene.activeCamera;
+  return {fps: scene.getEngine().getFps(), camera: {x: camera.position.x, y: camera.position.y, z: camera.position.z, directionY: camera.getForwardRay().direction.y}, targets: scene.customRenderTargets.map(target => ({name: target.name, size: target.getSize(), meshes: target.renderList?.length})), meshes: scene.meshes.length};
 };
 globalThis.terrainTourClose = () => {surface?.close(); surface = null;};
 globalThis.terrainTourReady = true;

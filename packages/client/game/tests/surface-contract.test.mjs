@@ -95,7 +95,7 @@ function materialLibrary(animation = false) {
     materials: [{
       key: "test:material", precipitationSurface: "solid", materialEffect: "standard", waterOptics: null,
       alpha: 1, alphaCutoff: 0.5, doubleSided: false, castsShadows: true,
-      environmentIntensity: 1, clearCoat: 0, clearCoatRoughness: 0, unlit: false,
+      environmentIntensity: 1, specularWeight: 1, clearCoat: 0, clearCoatRoughness: 0, unlit: false,
     }],
     textures,
     animations: animation ? [{key: "test:animation", frames: ["test:first", "test:next"], frameDurationMs: 100}] : [],
@@ -176,7 +176,9 @@ test("mesh validation preserves full-storage buffers and rejects invalid topolog
   batch.tintRoles.fill(0);
   batch.indices[0] = 3;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /canonical quad topology/);
-  batch.indices[0] = 0;
+  batch.indices.set([0, 1, 3, 1, 2, 3]);
+  assert.doesNotThrow(() => validateChunkMesh(chunk, 16, library));
+  batch.indices.set([0, 1, 2, 0, 2, 3]);
   batch.textureLayers[0] = 1;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /outside texture bank/);
 });

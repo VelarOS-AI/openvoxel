@@ -1,5 +1,5 @@
 formatVersion: 2
-nextRuntimeId: 376
+nextRuntimeId: 377
 reservedRuntimeIds: []
 states:
   - {runtimeId: 0, stateKey: "openvoxel:air"}
@@ -378,3 +378,4 @@ states:
   - {runtimeId: 373, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=false]"}
   - {runtimeId: 374, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=true]"}
   - {runtimeId: 375, stateKey: "openvoxel:marble"}
+  - {runtimeId: 376, stateKey: "openvoxel:pale_basalt"}

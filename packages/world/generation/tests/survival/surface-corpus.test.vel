@@ -3,7 +3,7 @@ import {baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
 import {columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
-import {surfaceBlock} from "../../src/survival/surface-materials.vel"
+import {surfaceBedrock, surfaceBlock} from "../../src/survival/surface-materials.vel"
 
 // 大范围地质覆盖属于完整语料验证；表层规则迭代使用 surface-materials.test.vel。
 test "geological fields share exact Chunk boundaries and expose diverse real surfaces":
@@ -18,15 +18,17 @@ test "geological fields share exact Chunk boundaries and expose diverse real sur
             const a = west.sampleAt(x, z)
             const b = east.sampleAt(x, z)
             expect(a.geology).toBe(b.geology)
-            expect(a.stoneVein).toBe(b.stoneVein)
+            expect(a.roadDistance).toBe(b.roadDistance)
             expect(a.exposure).toBe(b.exposure)
             expect(a.deposit).toBe(b.deposit)
             expect(surfaceBlock(profile, blocks, a)).toBe(surfaceBlock(profile, blocks, b))
     const seen: Set<number> = Set()
+    const bedrocks: Set<number> = Set()
     for x in range(-512, 513, 16):
         for z in range(-512, 513, 16):
             const sample = planner.columns(x / 16, z / 16).sampleAt(x, z)
             if sample.surfaceY <= profile.world.seaLevel: continue
             seen.add(surfaceBlock(profile, blocks, sample))
-    for rock in [blocks.marble, blocks.granite, blocks.limestone, blocks.gravel, blocks.clay, blocks.sand, blocks.grass]:
-        expect(rock in seen).toBe(true)
+            bedrocks.add(surfaceBedrock(blocks, sample))
+    for rock in [blocks.paleBasalt, blocks.clay, blocks.sand, blocks.grass]: expect(rock in seen).toBe(true)
+    for rock in [blocks.basalt, blocks.granite, blocks.stone, blocks.limestone]: expect(rock in bedrocks).toBe(true)

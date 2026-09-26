@@ -10,6 +10,6 @@ export {WorldGameMode} from "./manifest/game-mode.vel"
 
 /// 环境层：权威天气状态、确定性世界时间线与无 seed 的时间锚点推进。
 export {WorldEnvironmentSample, WorldEnvironmentState, WorldLightningEvent, WorldPrecipitationKind, maximumWorldEnvironmentMilliseconds, sampleWorldEnvironment, validateWorldEnvironmentSample, validateWorldEnvironmentState, validateWorldLightningEvent, worldDayMilliseconds} from "./environment/environment.vel"
-export {worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldLightningSlotMilliseconds, worldWeatherWindowMilliseconds} from "./environment/timeline.vel"
+export {WorldPrecipitationSample, worldEnvironmentAt, worldLightningLifetimeMilliseconds, worldLightningSlotMilliseconds, worldPrecipitationAt, worldWeatherWindowMilliseconds} from "./environment/timeline.vel"
 export {WorldClimateSample, WorldSeason, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds, worldYearMilliseconds, worldYearProgress} from "./environment/climate.vel"
 export {WorldClimateDefinition, WorldBaseClimateSample, WorldBaseClimateSampler, createWorldBaseClimateNodeSampler, createWorldBaseClimateSampler, defaultWorldClimate, validateWorldClimateDefinition, worldBaseClimateAt, worldClimateVersion, worldTemperatureAtHeight} from "./environment/base-climate.vel"

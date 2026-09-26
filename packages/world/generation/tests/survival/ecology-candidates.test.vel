@@ -137,7 +137,10 @@ test "ecology candidate scan discovers every crop behavior and leaves pumpkin fa
         expectedRuntimeIds.append(runtimeId)
         expectedAgeProperties.append(ageProperty)
         expectedAges.append(age)
-        expectedMaximumAges.append(ageDefinition.maximum)
+        let maximumAge = ageDefinition.maximum
+        if definition.key == builtinIdentities.blocks.cotton: maximumAge = 1
+        else if definition.key == builtinIdentities.blocks.rye: maximumAge = 5
+        expectedMaximumAges.append(maximumAge)
         expectedCadences.append(behavior.epochsPerStage)
     expect(expectedRuntimeIds.size > 0).toBe(true)
     const pumpkinWest = registry.withProperty(blocks.pumpkin, "facing", "west")

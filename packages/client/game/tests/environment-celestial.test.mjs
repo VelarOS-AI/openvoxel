@@ -41,19 +41,28 @@ test("celestial sprites use source angular sizes, horizon enlargement, and dual 
   assert.deepEqual(day.sunTint, [1, 1, 1, 1]);
   assert.deepEqual(day.moonTint, [0, 0, 0, 0]);
   assert.deepEqual(day.sunGlowTint, [0.6, 0.6, 0.6, 0.6]);
-  assert.deepEqual(day.moonGlowTint, [0.2, 0.2, 0.2, 0.2]);
+  assert.deepEqual(day.moonGlowTint, [0, 0, 0, 0]);
 
   const horizon = celestialPresentation(frame({sunDirection: new Vector3(-1, 0, 0)}));
   assert.equal(horizon.sunHalfSize, 160);
   assert.equal(horizon.moonHalfSize, 80);
-  approximately(horizon.sunTint[2], 160 / 255);
+  assert.deepEqual(horizon.sunTint, [0, 0, 0, 0]);
+  const approachingHorizon = celestialPresentation(frame({sunDirection: new Vector3(-1, -0.04, 0)}));
+  approximately(approachingHorizon.sunTint[3], 0.5);
+  assert.ok(approachingHorizon.sunTint[2] < approachingHorizon.sunTint[0]);
 });
 
 test("precipitation scales all premultiplied disc channels and stars consume the checked frame intensity", () => {
-  const night = celestialPresentation(frame({daylightIntensity: 0, precipitationIntensity: 0.5}));
-  assert.deepEqual(night.sunTint, [0.5, 0.5, 0.5, 0.5]);
+  const night = celestialPresentation(frame({
+    daylightIntensity: 0,
+    precipitationIntensity: 0.5,
+    sunDirection: new Vector3(0, 0.8, -0.6),
+    moonDirection: new Vector3(0, -0.8, 0.6),
+  }));
+  assert.deepEqual(night.sunTint, [0, 0, 0, 0]);
   assert.deepEqual(night.moonTint, [0.5, 0.5, 0.5, 0.5]);
-  assert.deepEqual(night.sunGlowTint, [0.15, 0.15, 0.15, 0.15]);
+  assert.deepEqual(night.sunGlowTint, [0, 0, 0, 0]);
+  assert.deepEqual(night.moonGlowTint, [0.05, 0.05, 0.05, 0.05]);
   assert.equal(night.starOpacity, 0.25);
   assert.equal(celestialPresentation(frame()).starOpacity, 0);
   const storm = celestialPresentation(frame({daylightIntensity: 0, precipitationIntensity: 1}));
@@ -61,6 +70,18 @@ test("precipitation scales all premultiplied disc channels and stars consume the
   assert.deepEqual(storm.moonTint, [0, 0, 0, 0]);
   assert.equal(storm.starOpacity, 0);
   assert.equal(celestialPresentation(frame({starIntensity: 0.125})).starOpacity, 0.125);
+});
+
+test("opposite sun and moon never draw together through translucent water", () => {
+  for (const sunHeight of [-0.8, -0.04, 0, 0.04, 0.8]) {
+    const view = celestialPresentation(frame({
+      sunDirection: new Vector3(0, -sunHeight, 0),
+      moonDirection: new Vector3(0, sunHeight, 0),
+      daylightIntensity: 0.5,
+    }));
+    assert.equal(view.sunTint[3] > 0 && view.moonTint[3] > 0, false);
+    assert.equal(view.sunGlowTint[3] > 0 && view.moonGlowTint[3] > 0, false);
+  }
 });
 
 test("celestial tangent orientation faces the viewer position without camera-dependent billboarding", () => {
@@ -181,6 +202,8 @@ test("celestial meshes share authored glow, switch eight moon textures, retain g
     assert.equal(layer.moonGlow.material.getActiveTextures()[0], textures.glow);
     assert.equal(layer.sun.material._vectors4.ovTint.w, 1);
     assert.equal(layer.moon.material._vectors4.ovTint.w, 0, "body tint uniforms must not share a mutable vector");
+    assert.equal(layer.moon.mesh.isVisible, false, "daylight moon below the horizon must not shine through water");
+    assert.equal(layer.moonGlow.mesh.isVisible, false);
     const starGeometry = layer.stars.mesh.geometry;
     const dayRotation = layer.stars.mesh.rotationQuaternion.clone();
     const night = frame({
@@ -197,6 +220,8 @@ test("celestial meshes share authored glow, switch eight moon textures, retain g
     assert.equal(layer.stars.mesh.geometry, starGeometry);
     assert.equal(dayRotation.equals(layer.stars.mesh.rotationQuaternion), false);
     assert.deepEqual(layer.stats(), {sunVisible: false, moonVisible: true, starVisibility: 1});
+    assert.equal(layer.sun.mesh.isVisible, false, "nighttime sun below the horizon must not shine through water");
+    assert.equal(layer.sunGlow.mesh.isVisible, false);
     layer.dispose();
     for (const body of [layer.sun, layer.moon, layer.sunGlow, layer.moonGlow, layer.stars]) {
       assert.equal(body.mesh.isDisposed(), true);

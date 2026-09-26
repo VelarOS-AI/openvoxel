@@ -1,7 +1,8 @@
 import {UInt32Buffer} from "velar/binary"
-import {ClientBlockModelKind, ClientRenderState} from "../contracts.vel"
+import {ClientBlockModelKind, ClientClimateTint, ClientRenderState} from "../contracts.vel"
 import {ClientMeshSurface, MutableMeshBatch, batchFor, emitQuad} from "./batch.vel"
 import {stateAt} from "./catalog.vel"
+import {stableCoordinateOffset} from "./variation.vel"
 import {bottomFace, boxBounds, eastFace, faceVisible, northFace, sameBoxContactVolume, sameTranslucentVolume, southFace, textureForFace, topFace, westFace} from "./faces.vel"
 
 export def emitBox(
@@ -43,18 +44,46 @@ export def emitBox(
     const y1 = y + maximumY
     const z0 = z + minimumZ
     const z1 = z + maximumZ
+    // The one-block halo supplies identical AO on both sides of a chunk edge.
+    // Only full opaque neighbours occlude; plants and transparent ice do not.
+    def occupied(dx: number, dy: number, dz: number) -> bool:
+        return stateAt(states, blocks, paddedEdge, x + 1 + dx, y + 1 + dy, z + 1 + dz).occludes
+
+    def cornerAO(vx: number, vy: number, vz: number, nx: number, ny: number, nz: number) -> number:
+        if not state.occludes or state.emission > 0: return 1
+        const sx = vx - x < 0.5 ? -1 : 1
+        const sy = vy - y < 0.5 ? -1 : 1
+        const sz = vz - z < 0.5 ? -1 : 1
+        let sideA = false
+        let sideB = false
+        let corner = false
+        if ny != 0:
+            sideA = occupied(sx, ny, 0)
+            sideB = occupied(0, ny, sz)
+            corner = occupied(sx, ny, sz)
+        else if nx != 0:
+            sideA = occupied(nx, sy, 0)
+            sideB = occupied(nx, 0, sz)
+            corner = occupied(nx, sy, sz)
+        else:
+            sideA = occupied(sx, 0, nz)
+            sideB = occupied(0, sy, nz)
+            corner = occupied(sx, sy, nz)
+        const shade = sideA and sideB ? 3 : (sideA ? 1 : 0) + (sideB ? 1 : 0) + (corner ? 1 : 0)
+        return 1 - shade * 0.12
+
     if faceVisible(state, east, maximumX == 1, eastBounds?.minimumX == 0):
-        emitQuad(batch, state, eastFace, textureForFace(state, eastFace, worldX, worldY, worldZ), x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0)
+        emitQuad(batch, state, eastFace, textureForFace(state, eastFace, worldX, worldY, worldZ), x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0, 1, cornerAO(x1, y0, z1, 1, 0, 0), cornerAO(x1, y0, z0, 1, 0, 0), cornerAO(x1, y1, z0, 1, 0, 0), cornerAO(x1, y1, z1, 1, 0, 0))
     if faceVisible(state, west, minimumX == 0, westBounds?.maximumX == 1):
-        emitQuad(batch, state, westFace, textureForFace(state, westFace, worldX, worldY, worldZ), x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0)
+        emitQuad(batch, state, westFace, textureForFace(state, westFace, worldX, worldY, worldZ), x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0, 1, cornerAO(x0, y0, z0, -1, 0, 0), cornerAO(x0, y0, z1, -1, 0, 0), cornerAO(x0, y1, z1, -1, 0, 0), cornerAO(x0, y1, z0, -1, 0, 0))
     if faceVisible(state, above, maximumY == 1, aboveBounds?.minimumY == 0):
-        emitQuad(batch, state, topFace, textureForFace(state, topFace, worldX, worldY, worldZ), x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0)
+        emitQuad(batch, state, topFace, textureForFace(state, topFace, worldX, worldY, worldZ), x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0, 1, cornerAO(x0, y1, z0, 0, 1, 0), cornerAO(x0, y1, z1, 0, 1, 0), cornerAO(x1, y1, z1, 0, 1, 0), cornerAO(x1, y1, z0, 0, 1, 0))
     if faceVisible(state, below, minimumY == 0, belowBounds?.maximumY == 1):
-        emitQuad(batch, state, bottomFace, textureForFace(state, bottomFace, worldX, worldY, worldZ), x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0)
+        emitQuad(batch, state, bottomFace, textureForFace(state, bottomFace, worldX, worldY, worldZ), x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0, 1, cornerAO(x0, y0, z1, 0, -1, 0), cornerAO(x0, y0, z0, 0, -1, 0), cornerAO(x1, y0, z0, 0, -1, 0), cornerAO(x1, y0, z1, 0, -1, 0))
     if faceVisible(state, south, maximumZ == 1, southBounds?.minimumZ == 0):
-        emitQuad(batch, state, southFace, textureForFace(state, southFace, worldX, worldY, worldZ), x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1)
+        emitQuad(batch, state, southFace, textureForFace(state, southFace, worldX, worldY, worldZ), x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1, 1, cornerAO(x0, y0, z1, 0, 0, 1), cornerAO(x1, y0, z1, 0, 0, 1), cornerAO(x1, y1, z1, 0, 0, 1), cornerAO(x0, y1, z1, 0, 0, 1))
     if faceVisible(state, north, minimumZ == 0, northBounds?.maximumZ == 1):
-        emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1)
+        emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1, 1, cornerAO(x1, y0, z0, 0, 0, -1), cornerAO(x0, y0, z0, 0, 0, -1), cornerAO(x0, y1, z0, 0, 0, -1), cornerAO(x1, y1, z0, 0, 0, -1))
 
 def layeredCoverHeight(state: ClientRenderState) -> number:
     const scale = state.model == ClientBlockModelKind.groundCover ? 1 / 16 : 1 / 8
@@ -149,6 +178,23 @@ export def emitCross(
 ):
     const batch = batchFor(batches, state, maximumFaces)
     const texture = textureForFace(state, southFace, worldX, worldY, worldZ)
+    if state.model == ClientBlockModelKind.cross:
+        // Build variation once in the worker, using absolute coordinates.
+        // Roots keep their exact surface height and every vertex stays in-cell.
+        // A fixed identity keeps the orientation unchanged as crop ages advance.
+        const hash = stableCoordinateOffset(0, worldX, worldY, worldZ, 0x347b, 67108864)
+        const angle = (hash % 1024) / 1024 * Math.pi
+        const cosine = Math.cos(angle)
+        const sine = Math.sin(angle)
+        const radius = 0.4 + ((hash >>> 10) % 256) / 256 * 0.08
+        const top = y + 0.8 + ((hash >>> 18) % 256) / 256 * 0.2
+        const centerX = x + 0.5
+        const centerZ = z + 0.5
+        const dx = cosine * radius
+        const dz = sine * radius
+        emitQuad(batch, state, southFace, texture, centerX - dx, y, centerZ - dz, centerX + dx, y, centerZ + dz, centerX + dx, top, centerZ + dz, centerX - dx, top, centerZ - dz, sine, 0, -cosine)
+        emitQuad(batch, state, southFace, texture, centerX + dz, y, centerZ - dx, centerX - dz, y, centerZ + dx, centerX - dz, top, centerZ + dx, centerX + dz, top, centerZ - dx, -cosine, 0, -sine)
+        return
     emitQuad(batch, state, southFace, texture, x, y, z, x + 1, y, z + 1, x + 1, y + 1, z + 1, x, y + 1, z, 0.707, 0, -0.707)
     emitQuad(batch, state, southFace, texture, x + 1, y, z, x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, -0.707, 0, -0.707)
 
@@ -156,6 +202,52 @@ def fluidHeight(state: ClientRenderState) -> number:
     if state.falling == true: return 1
     const level = state.level ?? 0
     return Math.max(1 / 16, 1 - level / 16)
+
+/// 水与冰等透明实体接触时只保留实体的界面。两侧各画一张共面的透明面会在
+/// 相机横移、透明网格重新排序时交替覆盖。
+def transparentBoxCoversFluidFace(state: ClientRenderState, neighbor: ClientRenderState, touchesBoundary: bool) -> bool:
+    return neighbor.layer == state.layer and neighbor.model != ClientBlockModelKind.fluid and touchesBoundary
+
+def waterShoreDistance(states: Map<number, ClientRenderState>, blocks: UInt32Buffer, paddedEdge: number, state: ClientRenderState, x: number, y: number, z: number, dx: number, dz: number) -> number:
+    for step in range(1, 9):
+        const sampleX = x + 1 + dx * step
+        const sampleZ = z + 1 + dz * step
+        if sampleX < 0 or sampleX >= paddedEdge or sampleZ < 0 or sampleZ >= paddedEdge: break
+        if not sameTranslucentVolume(state, stateAt(states, blocks, paddedEdge, sampleX, y + 1, sampleZ)): return step
+    return 9
+
+/// 顶点颜色 alpha 是水材质专用的深度/流向码，不参与真实透明度计算。
+/// 窄河槽和已有流体水位状态运动更快；大片海面保持缓慢波纹。
+def waterSurfaceCode(states: Map<number, ClientRenderState>, blocks: UInt32Buffer, paddedEdge: number, state: ClientRenderState, x: number, y: number, z: number, fluidDepthHalo: UInt32Buffer?) -> number:
+    if state.climateTint != ClientClimateTint.water: return 1
+    let depth = 1
+    for step in range(1, 9):
+        const belowY = y + 1 - step
+        if belowY < 0: break
+        const below = stateAt(states, blocks, paddedEdge, x + 1, belowY, z + 1)
+        if not sameTranslucentVolume(state, below): break
+        depth += 1
+    const east = waterShoreDistance(states, blocks, paddedEdge, state, x, y, z, 1, 0)
+    const west = waterShoreDistance(states, blocks, paddedEdge, state, x, y, z, -1, 0)
+    const south = waterShoreDistance(states, blocks, paddedEdge, state, x, y, z, 0, 1)
+    const north = waterShoreDistance(states, blocks, paddedEdge, state, x, y, z, 0, -1)
+    if y == 0 and depth > 1:
+        if fluidDepthHalo == null:
+            // 下方 section 尚未载入时使用中等深度，加载后会重新构网。
+            depth = 5
+        else:
+            const edge = paddedEdge - 2
+            for layer in range(fluidDepthHalo.size / (edge * edge)):
+                if depth >= 8: break
+                const below = states.get(fluidDepthHalo[x + edge * (z + edge * layer)])
+                if below == null or not sameTranslucentVolume(state, below): break
+                depth += 1
+    // A closed small pool has banks along both axes and stays still. A channel
+    // is narrow on one axis and continues on the other; explicit fluid states
+    // always retain their own current regardless of the surrounding banks.
+    const channel = (east < 9 and west < 9 and (south == 9 or north == 9)) or (south < 9 and north < 9 and (east == 9 or west == 9))
+    const flowing = state.falling == true or (state.level ?? 0) > 0 or (channel and depth >= 2)
+    return 0.05 + 0.4 * Math.min(1, (depth - 1) / 7) + (flowing ? 0.5 : 0)
 
 export def emitFluid(
     batches: Map<string, MutableMeshBatch>,
@@ -170,33 +262,38 @@ export def emitFluid(
     worldX: number,
     worldY: number,
     worldZ: number,
+    fluidDepthHalo: UInt32Buffer? = null,
 ):
     const batch = batchFor(batches, state, maximumFaces)
     const height = fluidHeight(state)
     const above = stateAt(states, blocks, paddedEdge, x + 1, y + 2, z + 1)
-    if not above.occludes and not sameTranslucentVolume(state, above):
-        emitQuad(batch, state, topFace, textureForFace(state, topFace, worldX, worldY, worldZ), x, y + height, z, x, y + height, z + 1, x + 1, y + height, z + 1, x + 1, y + height, z, 0, 1, 0)
+    const aboveBounds = boxBounds(above)
+    const topVisible = not above.occludes and not sameTranslucentVolume(state, above) and not (height == 1 and transparentBoxCoversFluidFace(state, above, aboveBounds?.minimumY == 0))
+    const surfaceCode = topVisible ? waterSurfaceCode(states, blocks, paddedEdge, state, x, y, z, fluidDepthHalo) : 1
+    if topVisible:
+        emitQuad(batch, state, topFace, textureForFace(state, topFace, worldX, worldY, worldZ), x, y + height, z, x, y + height, z + 1, x + 1, y + height, z + 1, x + 1, y + height, z, 0, 1, 0, surfaceCode)
     const below = stateAt(states, blocks, paddedEdge, x + 1, y, z + 1)
-    if not below.occludes and not sameTranslucentVolume(state, below):
+    const belowBounds = boxBounds(below)
+    if not below.occludes and not sameTranslucentVolume(state, below) and not transparentBoxCoversFluidFace(state, below, belowBounds?.maximumY == 1):
         emitQuad(batch, state, bottomFace, textureForFace(state, bottomFace, worldX, worldY, worldZ), x, y, z + 1, x, y, z, x + 1, y, z, x + 1, y, z + 1, 0, -1, 0)
 
     const east = stateAt(states, blocks, paddedEdge, x + 2, y + 1, z + 1)
     const eastSharesVolume = sameTranslucentVolume(state, east)
     const eastFloor = eastSharesVolume ? fluidHeight(east) : 0
-    if not east.occludes and (not eastSharesVolume or eastFloor < height):
-        emitQuad(batch, state, eastFace, textureForFace(state, eastFace, worldX, worldY, worldZ), x + 1, y + eastFloor, z + 1, x + 1, y + eastFloor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0)
+    if not east.occludes and not transparentBoxCoversFluidFace(state, east, boxBounds(east)?.minimumX == 0) and (not eastSharesVolume or eastFloor < height):
+        emitQuad(batch, state, eastFace, textureForFace(state, eastFace, worldX, worldY, worldZ), x + 1, y + eastFloor, z + 1, x + 1, y + eastFloor, z, x + 1, y + height, z, x + 1, y + height, z + 1, 1, 0, 0, surfaceCode)
     const west = stateAt(states, blocks, paddedEdge, x, y + 1, z + 1)
     const westSharesVolume = sameTranslucentVolume(state, west)
     const westFloor = westSharesVolume ? fluidHeight(west) : 0
-    if not west.occludes and (not westSharesVolume or westFloor < height):
-        emitQuad(batch, state, westFace, textureForFace(state, westFace, worldX, worldY, worldZ), x, y + westFloor, z, x, y + westFloor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0)
+    if not west.occludes and not transparentBoxCoversFluidFace(state, west, boxBounds(west)?.maximumX == 1) and (not westSharesVolume or westFloor < height):
+        emitQuad(batch, state, westFace, textureForFace(state, westFace, worldX, worldY, worldZ), x, y + westFloor, z, x, y + westFloor, z + 1, x, y + height, z + 1, x, y + height, z, -1, 0, 0, surfaceCode)
     const south = stateAt(states, blocks, paddedEdge, x + 1, y + 1, z + 2)
     const southSharesVolume = sameTranslucentVolume(state, south)
     const southFloor = southSharesVolume ? fluidHeight(south) : 0
-    if not south.occludes and (not southSharesVolume or southFloor < height):
-        emitQuad(batch, state, southFace, textureForFace(state, southFace, worldX, worldY, worldZ), x, y + southFloor, z + 1, x + 1, y + southFloor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1)
+    if not south.occludes and not transparentBoxCoversFluidFace(state, south, boxBounds(south)?.minimumZ == 0) and (not southSharesVolume or southFloor < height):
+        emitQuad(batch, state, southFace, textureForFace(state, southFace, worldX, worldY, worldZ), x, y + southFloor, z + 1, x + 1, y + southFloor, z + 1, x + 1, y + height, z + 1, x, y + height, z + 1, 0, 0, 1, surfaceCode)
     const north = stateAt(states, blocks, paddedEdge, x + 1, y + 1, z)
     const northSharesVolume = sameTranslucentVolume(state, north)
     const northFloor = northSharesVolume ? fluidHeight(north) : 0
-    if not north.occludes and (not northSharesVolume or northFloor < height):
-        emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x + 1, y + northFloor, z, x, y + northFloor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1)
+    if not north.occludes and not transparentBoxCoversFluidFace(state, north, boxBounds(north)?.maximumZ == 1) and (not northSharesVolume or northFloor < height):
+        emitQuad(batch, state, northFace, textureForFace(state, northFace, worldX, worldY, worldZ), x + 1, y + northFloor, z, x, y + northFloor, z, x, y + height, z, x + 1, y + height, z, 0, 0, -1, surfaceCode)

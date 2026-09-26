@@ -1,5 +1,6 @@
-import {BlockComponentProfile, BlockPropertyValue, BlockRenderAttachment, BlockRenderLayer, BlockShapeKind, BlockTextures, PackedBlockStateDefinition, findFluidBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {BlockComponentProfile, BlockPropertyValue, BlockRenderAttachment, BlockRenderLayer, BlockShapeKind, BlockSkylightMode, BlockTextures, PackedBlockStateDefinition, findFluidBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
+import {ClientLightState} from "./lighting-contracts.vel"
 import {ClientBlockCollisionBox, ClientBlockModelKind, ClientClimateTint, ClientRenderAttachment, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures, ClientTintCoverage} from "./contracts.vel"
 import {ClientAnimationResource, ClientMaterialEffect, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
@@ -12,6 +13,7 @@ export type ClientRenderCatalog:
     readonly textures: readonly List<ClientTextureResource>
     readonly animations: readonly List<ClientAnimationResource>
     readonly states: readonly List<ClientRenderState>
+    readonly lightStates: readonly List<ClientLightState>
     requireState: (runtimeId: number) -> ClientRenderState
 
 def propertyValue(state: PackedBlockStateDefinition, name: string) -> BlockPropertyValue?:
@@ -185,6 +187,7 @@ export def createClientRenderCatalog(
         profiles.set(profile.profileId, profile)
 
     const states: List<ClientRenderState> = []
+    const lightStates: List<ClientLightState> = []
     const byRuntimeId: Map<number, ClientRenderState> = Map()
     for state in content.states:
         assert not byRuntimeId.has(state.runtimeId) else f"World content repeats runtimeId {state.runtimeId}"
@@ -259,6 +262,7 @@ export def createClientRenderCatalog(
                     assert materialResource != null and frameTexture.alphaCutoff == materialResource.alphaCutoff else f"Animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
         const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
         const blockEmission = profile.light.emission
+        lightStates.append({runtimeId: state.runtimeId, opacity: profile.light.opacity, emission: blockEmission, passesSkylight: profile.light.skylight == BlockSkylightMode.passThrough})
         const attachments = (profile.render.attachments ?? []).map(attachment => resolvedAttachment(
             attachment, state, blockEmission, models, materials, textureBanks, renderTextures, tints, animations,
         ))
@@ -304,4 +308,4 @@ export def createClientRenderCatalog(
         assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
         return state
 
-    return ClientRenderCatalog.from(pack, {states, requireState})
+    return ClientRenderCatalog.from(pack, {states, lightStates, requireState})

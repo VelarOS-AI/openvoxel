@@ -94,23 +94,26 @@ export function writeWeatherSprite(buffers, index, kind, particle, axes, light, 
   const uvs = triangle ? rainUvs : kind === "snow" || kind === "snowSplash" ? snowUvs[particle.slot] : fullUvs;
   const basis = particle.horizontal ? horizontalAxes : axes;
   const up = triangle ? verticalUp : basis.up;
-  const halfWidth = triangle ? 0.02 : particle.halfSize;
-  const halfHeight = triangle ? 0.15 : particle.halfSize;
+  const fallSpeed = Math.max(0.1, particle.fallSpeed ?? 10);
+  const slantX = triangle ? -(particle.velocityX ?? 0) / fallSpeed : 0;
+  const slantZ = triangle ? -(particle.velocityZ ?? 0) / fallSpeed : 0;
+  const halfWidth = triangle ? (particle.halfWidth ?? 0.02) : particle.halfSize;
+  const halfHeight = triangle ? (particle.halfHeight ?? 0.15) : particle.halfSize;
   const opacity = Math.max(0, Math.min(1, fade));
   for (let corner = 0; corner < corners.length; corner += 1) {
     const vertex = index * buffers.vertexCount + corner;
     const rightOffset = corners[corner][0] * halfWidth;
     const upOffset = corners[corner][1] * halfHeight;
-    buffers.positions[vertex * 3] = particle.x + basis.right.x * rightOffset + up.x * upOffset;
+    buffers.positions[vertex * 3] = particle.x + basis.right.x * rightOffset + (up.x + slantX) * upOffset;
     buffers.positions[vertex * 3 + 1] = particle.y + basis.right.y * rightOffset + up.y * upOffset;
-    buffers.positions[vertex * 3 + 2] = particle.z + basis.right.z * rightOffset + up.z * upOffset;
+    buffers.positions[vertex * 3 + 2] = particle.z + basis.right.z * rightOffset + (up.z + slantZ) * upOffset;
     // Only the full-image rain impact sprite flips. Snow retains its source
     // atlas cell and orientation while falling and after contacting ground.
     buffers.uvs[vertex * 2] = kind === "rainSplash" && particle.flipX ? 1 - uvs[corner * 2] : uvs[corner * 2];
     buffers.uvs[vertex * 2 + 1] = kind === "rainSplash" && particle.flipY ? 1 - uvs[corner * 2 + 1] : uvs[corner * 2 + 1];
-    buffers.colors[vertex * 4] = light * opacity;
-    buffers.colors[vertex * 4 + 1] = light * opacity;
-    buffers.colors[vertex * 4 + 2] = light * opacity;
+    buffers.colors[vertex * 4] = light * opacity * (particle.color?.[0] ?? 1);
+    buffers.colors[vertex * 4 + 1] = light * opacity * (particle.color?.[1] ?? 1);
+    buffers.colors[vertex * 4 + 2] = light * opacity * (particle.color?.[2] ?? 1);
     buffers.colors[vertex * 4 + 3] = opacity;
   }
 }
@@ -129,7 +132,7 @@ export function createWeatherParticleBatch(scene, texture, kind, capacity) {
   material.setTexture("weatherTexture", texture);
   material.alphaMode = Constants.ALPHA_PREMULTIPLIED_PORTERDUFF;
   material.backFaceCulling = false;
-  material.disableDepthWrite = kind === "rain" || kind === "snow";
+  material.disableDepthWrite = kind === "rain" || kind === "snow" || kind === "leaf";
   material.forceDepthWrite = !material.disableDepthWrite;
   material.fogEnabled = false;
   mesh.material = material;
@@ -149,6 +152,14 @@ export function createWeatherParticleBatch(scene, texture, kind, capacity) {
   const minimum = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
   const maximum = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
   mesh.setEnabled(false);
+  const engine = scene.getEngine();
+  const restore = engine.onContextRestoredObservable.add(() => {
+    // Partial updates retain only a prefix in Babylon's CPU buffer cache.
+    // Restore full capacity before the next frame expands its active range.
+    mesh.setVerticesData(VertexBuffer.PositionKind, buffers.positions, true);
+    mesh.setVerticesData(VertexBuffer.UVKind, buffers.uvs, true);
+    mesh.setVerticesData(VertexBuffer.ColorKind, buffers.colors, true);
+  });
   let count = 0;
   return {
     mesh,
@@ -181,11 +192,12 @@ export function createWeatherParticleBatch(scene, texture, kind, capacity) {
       mesh.subMeshes[0].indexCount = count * buffers.indexCount;
       if (count === 0) return;
       bounds.reConstruct(minimum, maximum, mesh.getWorldMatrix());
-      mesh.updateVerticesData(VertexBuffer.PositionKind, buffers.positions, false, false);
-      mesh.updateVerticesData(VertexBuffer.UVKind, buffers.uvs, false, false);
-      mesh.updateVerticesData(VertexBuffer.ColorKind, buffers.colors, false, false);
+      mesh.geometry.updateVerticesDataDirectly(VertexBuffer.PositionKind, buffers.positions.subarray(0, count * buffers.vertexCount * 3), 0);
+      mesh.geometry.updateVerticesDataDirectly(VertexBuffer.UVKind, buffers.uvs.subarray(0, count * buffers.vertexCount * 2), 0);
+      mesh.geometry.updateVerticesDataDirectly(VertexBuffer.ColorKind, buffers.colors.subarray(0, count * buffers.vertexCount * 4), 0);
     },
     dispose() {
+      engine.onContextRestoredObservable.remove(restore);
       mesh.dispose(false, false);
       material.dispose(false, false);
       count = 0;

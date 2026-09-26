@@ -70,6 +70,10 @@ function navigationFixture(movementMode, {locked = true} = {}) {
   let position = {x: 0, y: 10, z: 0};
   const flightIntents = [];
   const walkIntents = [];
+  const creativeActions = [];
+  const creativeSlots = [];
+  const aims = [];
+  const walkSounds = [];
   const navigation = createNavigationAdapter({
     canvas,
     mode: "first-person",
@@ -108,8 +112,12 @@ function navigationFixture(movementMode, {locked = true} = {}) {
     rotateView: () => null,
     releaseView: () => null,
     viewChanged: () => null,
+    aimChanged: (origin, forward) => aims.push({origin, forward}),
+    creativeAction: (action, origin, forward) => creativeActions.push({action, origin, forward}),
+    creativeSlot: (slot) => creativeSlots.push(slot),
+    walkSound: (position, crouching, landed) => walkSounds.push({position, crouching, landed}),
   });
-  return {canvas, document, window, navigation, flightIntents, walkIntents};
+  return {canvas, document, window, navigation, flightIntents, walkIntents, creativeActions, creativeSlots, aims, walkSounds};
 }
 
 function withCanvasGlobal(run) {
@@ -121,6 +129,35 @@ function withCanvasGlobal(run) {
     globalThis.HTMLCanvasElement = previousCanvas;
   }
 }
+
+test("locked creative input sends aimed edits and hotbar selection while preserving capture clicks", () => {
+  withCanvasGlobal(() => {
+    const fixture = navigationFixture("creative-flight");
+    const left = {button: 0, prevented: false, preventDefault() { this.prevented = true; }};
+    const right = {button: 2, prevented: false, preventDefault() { this.prevented = true; }};
+    fixture.canvas.emit("pointerdown", left);
+    fixture.canvas.emit("pointerdown", right);
+    fixture.navigation.update(16);
+    const slot = keyboardEvent("Digit3");
+    fixture.window.emit("keydown", slot);
+    assert.equal(left.prevented, true);
+    assert.equal(right.prevented, true);
+    assert.deepEqual(fixture.creativeActions.map((entry) => entry.action), ["break", "place"]);
+    assert.deepEqual(fixture.creativeActions[0].origin, {x: 0, y: 10, z: 0});
+    assert.deepEqual(fixture.creativeActions[0].forward, {x: 0, y: 0, z: -1});
+    assert.equal(fixture.aims.length, 1);
+    assert.deepEqual(fixture.creativeSlots, [2]);
+    assert.equal(slot.defaultPrevented, true);
+
+    fixture.document.pointerLockElement = null;
+    fixture.document.emit("pointerlockchange");
+    fixture.canvas.emit("pointerdown", left);
+    assert.equal(fixture.creativeActions.length, 2, "the click that captures the pointer must not edit");
+    fixture.navigation.release();
+    fixture.canvas.emit("pointerdown", right);
+    assert.equal(fixture.creativeActions.length, 2, "a released surface must not edit");
+  });
+});
 
 test("creative flight uses Control alone for descent and no longer maps C to vertical movement", () => {
   withCanvasGlobal(() => {

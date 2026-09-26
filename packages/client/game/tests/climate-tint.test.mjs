@@ -9,6 +9,18 @@ test("climate tint carries local temperature humidity season and elevation", () 
 
 const distance = (left, right) => left.reduce((total, value, index) => total + Math.abs(value - right[index]), 0);
 
+test("ground grass, grass blades and crowns have distinct restrained greens", () => {
+  for (const season of [0.125, 0.375]) {
+    const climate = [24, 0.9, season, 64];
+    const ground = climateTintColor(1, climate);
+    const blades = climateTintColor(1, climate, undefined, true);
+    const leaves = climateTintColor(2, climate);
+    assert.ok(ground[1] < 0.76 && ground[1] - ground[0] < 0.4, "ground should not approach fluorescent pure green");
+    assert.ok(blades[1] > ground[1] + 0.035, "blades remain distinguishable against the ground");
+    assert.ok(leaves[1] < ground[1] && leaves[0] / leaves[1] < ground[0] / ground[1], "crowns have a deeper green than the olive ground");
+  }
+});
+
 test("birch and poplar have independent climate palettes and golden autumn foliage", () => {
   const roles = [climateTintRoles.deciduousFoliage, climateTintRoles.birchFoliage, climateTintRoles.poplarFoliage];
   const summer = roles.map(role => climateTintColor(role, [18, 0.65, 0.375, 72]));
@@ -90,4 +102,25 @@ test("long-distance climate sampling has a fixed cache bound and supports negati
   field.clear();
   assert.equal(field.nodes.size, 0);
   assert.equal(field.chunks.size, 0);
+});
+
+test("authored grass RGB is multiplied once and soil in side tiles keeps its own color", async () => {
+  const {applyClimateTint} = await import("../src/backends/babylon/native/climate-tint.mjs");
+  const albedo = [0.48, 0.62, 0.43];
+  const climate = [18, 0.65, 0.375, 72];
+  const tint = climateTintColor(climateTintRoles.grass, climate);
+  assert.ok(distance(applyClimateTint(albedo, climateTintRoles.grass, climate), albedo.map((value, index) => value * tint[index])) < 1e-12);
+  assert.deepEqual(applyClimateTint([0.5, 0.3, 0.12], climateTintRoles.grassCap, climate), [0.5, 0.3, 0.12]);
+});
+
+test("autumn crowns vary by world position and only deciduous species shed", async () => {
+  const {leafDropIntensity} = await import("../src/backends/babylon/native/climate-tint.mjs");
+  const climate = [18, 0.65, 0.625, 72];
+  assert.ok(distance(climateTintColor(2, climate, {x: 1, z: 1}), climateTintColor(2, climate, {x: 13, z: 4})) > 0.05);
+  for (const role of [2, 8, 9]) {
+    assert.ok(leafDropIntensity(role, 0.625, {x: 0, z: 0}) > 0.9);
+    assert.equal(leafDropIntensity(role, 0.375, {x: 0, z: 0}), 0);
+    assert.equal(leafDropIntensity(role, 0.95, {x: 0, z: 0}), 0);
+  }
+  for (const role of [0, 1, 5, 6, 7, 10]) assert.equal(leafDropIntensity(role, 0.625), 0);
 });

@@ -18,7 +18,7 @@ import {coastalSpawnAffinity, coastalSpawnScore} from "./coastal-spawn.vel"
 
 /// 生成结果的代码语义版本，与可调 YAML 参数一起锁定世界。修改地形、树冠
 /// 或阶段顺序时同步递增，保证旧清单不会悄悄使用新算法生成邻接区块。
-export const survivalAlgorithmRevision = 1
+export const survivalAlgorithmRevision = 4
 
 export def generateBaseTerrain(
     chunk: Chunk,
@@ -125,7 +125,7 @@ export def survivalWorldGenerator(
     const caves = cavePlanner(fields, seed, blocks)
     const minerals = mineralPlanner(profile, palette, seed, worldBlocks.registry)
     const surfaces = surfacePlanner(profile, blocks)
-    const decorations = decorationPlanner(profile, seed, blocks, columns, worldBlocks.registry)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, worldBlocks.registry, caves.surfaceIntact)
     let minimumMineralY = profile.world.maximumY
     let maximumMineralY = profile.world.minimumY
     for mineral in profile.minerals:

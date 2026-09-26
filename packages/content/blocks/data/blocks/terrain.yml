@@ -151,6 +151,18 @@ blocks:
     behaviors: []
     variants: []
 
+  - key: blocks.paleBasalt
+    translationKey: translations.block.paleBasalt
+    tags: [tags.terrain, tags.naturalRock, tags.snowSupport, tags.vineSupport, tags.bottomDwellerSupport]
+    properties: []
+    defaultState: []
+    physics: {collision: {kind: full_cube}, selection: {kind: full_cube}, occlusion: {kind: full_cube}, replaceable: false, friction: 0.6, speedFactor: 1, jumpFactor: 1}
+    light: {emission: 0, opacity: 15, skylight: blocked, ambientOcclusion: true}
+    render: {model: models.block.cube, layer: opaque, material: materials.terrain, textures: {all: textures.block.paleBasalt}, tint: tints.paleStone, cullFaces: true}
+    interaction: {breakable: true, hardness: 1.2, blastResistance: 5, toolTag: tools.pickaxe, drops: loot.block.paleBasalt, sounds: sounds.stone}
+    behaviors: []
+    variants: []
+
   - key: blocks.clay
     translationKey: translations.block.clay
     tags: [tags.terrain, tags.soil, tags.snowSupport, tags.aquaticPlantSupport, tags.bottomDwellerSupport]

@@ -85,7 +85,7 @@ def treeSelection(profile: readonly WorldGeneratorDefinition, blocks: readonly S
         {tree: {shape: TreeShapeKind.spruce, log: blocks.spruceLog, leaves: blocks.spruceLeaves}, weight: cool * habitat(humidity, 3, 8, 11, 14)},
         {tree: {shape: TreeShapeKind.tallSpruce, log: blocks.spruceLog, leaves: blocks.tallSpruceLeaves}, weight: 0.35 * cool * habitat(humidity, 8, 11, 15, 15)},
         {tree: {shape: TreeShapeKind.mimosa, log: blocks.mimosaLog, leaves: blocks.mimosaLeaves}, weight: habitat(temperature, 2, 5, 12, 15) * habitat(humidity, 0, 0, 4, 7)},
-        {tree: {shape: TreeShapeKind.poplar, log: blocks.poplarLog, leaves: blocks.poplarLeaves}, weight: habitat(temperature, 4, 8, 12, 15) * habitat(humidity, 6, 11, 15, 15) * lowland * 0.65},
+        {tree: {shape: TreeShapeKind.poplar, log: blocks.poplarLog, leaves: blocks.poplarLeaves}, weight: habitat(temperature, 4, 8, 12, 15) * habitat(humidity, 3, 15, 15, 15) * lowland},
     ]
     const total = candidates.map(candidate => candidate.weight).sum()
     if total <= 0: return null
@@ -149,7 +149,7 @@ export def decorationVerticalBounds(plan: readonly DecorationPlan) -> Decoration
 
 /// DecorationPlan 以水平列为缓存单位。树、仙人掌、花草和积雪候选在这里计算
 /// 一次，所有垂直 Chunk 共享；跨边界树冠仍由候选所有者的稳定计划负责。
-export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: string, blocks: readonly SurvivalBlockPalette, columns: ColumnPlanner, registry: readonly BlockRegistry, capacity: number = profile.sampling.columnCacheCapacity) -> DecorationPlanner:
+export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: string, blocks: readonly SurvivalBlockPalette, columns: ColumnPlanner, registry: readonly BlockRegistry, surfaceIntact: (x: number, y: number, z: number) -> bool = (x, y, z) => true, capacity: number = profile.sampling.columnCacheCapacity) -> DecorationPlanner:
     const root = random(seed).fork("decoration")
     const groundPatterns = createEcologyPatterns(seed, "ground", profile.vegetation.groundPatchPeriod)
     const aquaticPatterns = createEcologyPatterns(seed, "aquatic", profile.vegetation.aquaticPatchPeriod)
@@ -187,11 +187,12 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
                 const x = cellX * treeSize + stream.int(0, treeSize)
                 const z = cellZ * treeSize + stream.int(0, treeSize)
                 const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.roadDistance != null: continue
                 const groundBlock = surfaceBlock(profile, blocks, sample)
                 if sample.slope > profile.vegetation.treeMaximumSlope or sample.surfaceY <= profile.world.seaLevel:
                     continue
                 if not registry.hasTag(groundBlock, builtinIdentities.tags.treeSupport): continue
-                if not stream.bool(0.08 + 0.72 * sample.forestDensity): continue
+                if not stream.bool(0.04 + 0.48 * sample.forestDensity): continue
                 const tree = treeSelection(profile, blocks, sample, stream)
                 if tree == null: continue
                 const selectedTree: TreeSelection = tree
@@ -218,6 +219,7 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
                 const x = cellX * cactusSize + stream.int(0, cactusSize)
                 const z = cellZ * cactusSize + stream.int(0, cactusSize)
                 const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.roadDistance != null: continue
                 const groundBlock = surfaceBlock(profile, blocks, sample)
                 if sample.biome != profile.biomes.desert or sample.slope > profile.vegetation.cactusMaximumSlope:
                     continue
@@ -228,8 +230,13 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
         for feature in naturalEcologyFeatures(profile, seed, blocks, columns, registry, chunkX, chunkZ, aquaticPatterns):
             // 同类枯木已经在 world owner-cell 邻域内完成唯一裁决；这里仅处理
             // 活树、树藤和仙人掌等不同结构之间的整组避让。
-            if feature.owner.startsWith("deadwood:") and features.some(existing => not existing.owner.startsWith("deadwood:") and featurePlansOverlap(existing, feature)):
-                continue
+            if feature.owner.startsWith("deadwood:"):
+                let overlaps = false
+                for existing in features:
+                    if not existing.owner.startsWith("deadwood:") and featurePlansOverlap(existing, feature):
+                        overlaps = true
+                        break
+                if overlaps: continue
             features.append(feature)
 
         const core = columns.columns(chunkX, chunkZ)
@@ -244,7 +251,13 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
                     features.append(singleBlockFeature(f"snow:{x}:{z}", {x, y: sample.surfaceY + 1, z}, blocks.snow, DecorationFeatureLayer.surface))
 
         const groundPlants = groundPlantFeatures(profile, blocks, registry, core, root, groundPatterns)
-        const built: DecorationPlan = {chunkX, chunkZ, features: [features, groundPlants].flatMap(group => group).sorted(by=feature => feature.sortKey)}
+        const supported: List<CompiledFeaturePlan> = []
+        for feature in [features, groundPlants].flatMap(group => group):
+            const x = feature.origin.x
+            const z = feature.origin.z
+            const groundY = planAt(columns, x, z).sampleAt(x, z).surfaceY
+            if surfaceIntact(x, groundY, z): supported.append(feature)
+        const built: DecorationPlan = {chunkX, chunkZ, features: supported.sorted(by=feature => feature.sortKey)}
         builds += 1
         if plans.size >= capacity: evictOldest(plans)
         plans.set(key, built)

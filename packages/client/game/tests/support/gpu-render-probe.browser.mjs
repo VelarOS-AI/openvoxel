@@ -6,14 +6,15 @@ import {
 import {
   loadBuiltinClientResourcePack,
   createClientRenderCatalog,
+  createClientLightField,
   meshChunk,
 } from "@openvoxel/renderer";
 import {openWorldGraphics} from "@openvoxel/game";
 import {createNavigationAdapter} from "../../src/host/web/navigation.mjs";
-import {EngineStore} from "@babylonjs/core/Engines/engineStore.js";
 import {Vector3} from "@babylonjs/core/Maths/math.vector.js";
 import {worldClimateAt, worldYearMilliseconds} from "@openvoxel/world";
 import {probeEnvironmentTextureBlending} from "./environment-texture-probe.browser.mjs";
+import {probeVineMotion} from "./vine-motion-probe.browser.mjs";
 import {
   createMaterialYardScene,
   materialYardPipelineOwner,
@@ -34,6 +35,8 @@ const report = {
 };
 globalThis.__openVoxelGpuProbe = report;
 globalThis.__openVoxelGpuProbeTextureBlending = probeEnvironmentTextureBlending;
+let activeScene = null;
+globalThis.__openVoxelCaptureScene = scene => { activeScene = scene; };
 
 function chunkKey(position) {
   return `${position.x}:${position.y}:${position.z}`;
@@ -206,6 +209,31 @@ function naturalModelScene(catalog) {
   const meshes = meshChunks(new Map([[chunkKey(chunk.position), chunk]]), catalog.states);
   return {target: {x: 8, y: 1.1, z: 5.5}, cameraPose: {target: {x: 8, y: 1.1, z: 5.5}, alpha: -Math.PI / 2, beta: 0.8, radius: 12}, meshes,
     payload: {naturalModelTriangles: counts}};
+}
+
+function vineMotionScene(catalog) {
+  const chunks = new Map([0, 1].map(y => {
+    const chunk = createChunk({x: 0, y, z: 0});
+    return [chunkKey(chunk.position), chunk];
+  }));
+  const log = findState(catalog.states, "openvoxel:oak_log");
+  const grass = findState(catalog.states, "openvoxel:grass");
+  for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) setBlock(chunks.get("0:0:0"), x, 10, z, grass.runtimeId);
+  for (let y = 11; y <= 20; y++) {
+    const chunk = chunks.get(`0:${Math.floor(y / 16)}:0`);
+    setBlock(chunk, 7, y % 16, 7, log.runtimeId);
+    for (const [facing, x, z] of [["north", 7, 8], ["south", 7, 6], ["west", 8, 7], ["east", 6, 7]]) {
+      const vine = findState(catalog.states, "openvoxel:vine", state => state.facing === facing);
+      setBlock(chunk, x, y % 16, z, vine.runtimeId);
+    }
+  }
+  const meshes = meshChunks(chunks, catalog.states);
+  return {
+    target: {x: 7.5, y: 15.5, z: 7.5}, meshes,
+    cameraPose: {target: {x: 7.5, y: 15.5, z: 7.5}, alpha: Math.PI / 3, beta: 1.3, radius: 9},
+    environmentState: {...clearEnvironmentSample, windX: 12, windZ: 7},
+    payload: {vineFaces: 40},
+  };
 }
 
 function pushQuad(group, x, y, z, layer, tint, width = 1, depth = 1) {
@@ -638,6 +666,27 @@ function shadowScene(catalog) {
   };
 }
 
+function terrainAliasingScene(catalog) {
+  const chunks = new Map();
+  const grass = findState(catalog.states, "openvoxel:grass");
+  for (let z = 0; z < 3; z += 1) {
+    for (let x = 0; x < 3; x += 1) {
+      const chunk = createChunk({x, y: 0, z});
+      for (let localZ = 0; localZ < chunkEdge; localZ += 1) {
+        for (let localX = 0; localX < chunkEdge; localX += 1) setBlock(chunk, localX, 0, localZ, grass.runtimeId);
+      }
+      chunks.set(chunkKey(chunk.position), chunk);
+    }
+  }
+  return {
+    target: {x: 24, y: 1, z: 24},
+    cameraPose: {target: {x: 24, y: 0, z: 24}, alpha: 0.8, beta: 1.1, radius: 17},
+    meshes: meshChunks(chunks, catalog.states),
+    environmentState: {...clearEnvironmentSample, timeOfDay: 0.35},
+    payload: {terrainAliasingOracle: true},
+  };
+}
+
 function cutoutShadowScene(catalog) {
   const definition = shadowScene(catalog);
   const leaves = findState(catalog.states, "openvoxel:oak_leaves");
@@ -804,7 +853,7 @@ function seamScene(catalog) {
   };
 }
 
-function transparencyScene(catalog) {
+function transparencyScene(catalog, iceTouchesWater = false, night = false) {
   const left = createChunk({x: 0, y: 0, z: 0});
   const right = createChunk({x: 1, y: 0, z: 0});
   const sand = findState(catalog.states, "openvoxel:sand");
@@ -822,8 +871,13 @@ function transparencyScene(catalog) {
     for (let x = 0; x <= 5; x += 1) setBlock(right, x, 1, z, water.runtimeId);
   }
   for (let y = 1; y <= 5; y += 1) {
-    for (let z = 4; z <= 7; z += 1) setBlock(left, 6, y, z, ice.runtimeId);
+    for (let z = 4; z <= 7; z += 1) setBlock(left, iceTouchesWater ? 9 : 6, y, z, ice.runtimeId);
     for (let z = 9; z <= 12; z += 1) setBlock(right, 9, y, z, stone.runtimeId);
+  }
+  if (iceTouchesWater) {
+    for (let x = 11; x <= 14; x += 1) {
+      for (let z = 4; z <= 7; z += 1) setBlock(left, x, 2, z, ice.runtimeId);
+    }
   }
   for (let z = 3; z <= 6; z += 1) {
     for (let x = 10; x <= 13; x += 1) setBlock(right, x, 1, z, magma.runtimeId);
@@ -837,11 +891,14 @@ function transparencyScene(catalog) {
   if (translucentBatches.length < 3) throw new Error("GPU probe transparency scene lacks independent translucent pipelines");
   return {
     target: {x: 16, y: 2, z: 8},
+    ...(iceTouchesWater ? {cameraPose: {target: {x: 10, y: 1.4, z: 6}, alpha: 0.4, beta: 1.17, radius: 13}} : {}),
+    ...(night ? {environmentState: environmentStates.night} : {}),
     meshes,
     payload: {
       translucentBatches: translucentBatches.length,
       translucentQuads: translucentBatches.reduce((total, batch) => total + batch.quadCount, 0),
       materials: [...new Set(translucentBatches.map((batch) => batch.materialKey))].sort(),
+      iceTouchesWater,
     },
   };
 }
@@ -944,12 +1001,39 @@ function transparencyDepthScene(catalog, includeHiddenPanel) {
   };
 }
 
+function lightingScene(catalog) {
+  const field = createClientLightField(chunkEdge, catalog.lightStates);
+  const stone = findState(catalog.states, "openvoxel:stone");
+  const magma = findState(catalog.states, "openvoxel:magma", state => !state.falling && state.level === 0);
+  const water = findState(catalog.states, "openvoxel:water", state => !state.falling && state.level === 0);
+  const build = mode => {
+    const chunk = createChunk({x: 0, y: 0, z: 0});
+    const blocked = mode.startsWith("blocked");
+    for (let y = 0; y <= 10; y++) for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      const roofOpening = mode === "open" && x >= 5 && x <= 10 && z >= 5 && z <= 10;
+      if (y === 0 || x === 0 || z === 0 || x === 15 || z === 15 || (y === 10 && !roofOpening)
+        || (blocked && z === 8)) setBlock(chunk, x, y, z, stone.runtimeId);
+    }
+    if (mode === "local" || blocked) setBlock(chunk, 8, 2, 11, magma.runtimeId);
+    if (mode === "blocked-water") for (let x = 3; x <= 12; x++) for (let z = 5; z <= 7; z++) setBlock(chunk, x, 1, z, water.runtimeId);
+    return {meshes: meshChunks(new Map([[chunkKey(chunk.position), chunk]]), catalog.states), lighting: field.solve([chunk], [])};
+  };
+  return {...build("open"), buildLighting: build, target: {x: 8, y: 2, z: 4},
+    navigationMode: "first-person", lookDirection: {x: 0, y: -0.15, z: 1}, payload: {lightingOracle: true}};
+}
+
 const sceneFactories = {
+  lighting: lightingScene,
+  "vine-motion": vineMotionScene,
+  "chunk-transitions": seamScene,
+  "render-budget": transparencyScene,
   "natural-models": naturalModelScene,
   states: allStateScene,
   layers: textureLayerScene,
   seams: seamScene,
   transparency: transparencyScene,
+  "ice-water-contact": (catalog) => transparencyScene(catalog, true),
+  "ice-water-contact-night": (catalog) => transparencyScene(catalog, true, true),
   "transparency-depth-occluded": (catalog) => transparencyDepthScene(catalog, true),
   "transparency-depth-reference": (catalog) => transparencyDepthScene(catalog, false),
   "transparency-sort-forward": (catalog) => transparencySortScene(catalog, false),
@@ -969,6 +1053,7 @@ const sceneFactories = {
   snow: (catalog) => environmentScene(catalog, "snow"),
   lightning: (catalog) => environmentScene(catalog, "lightning"),
   shadows: shadowScene,
+  "terrain-aliasing": terrainAliasingScene,
   "cutout-shadows": cutoutShadowScene,
   seasons: seasonalScene,
   "clouds-sky": (catalog) => environmentViewScene(catalog, "clouds", true),
@@ -1016,13 +1101,13 @@ try {
     worldClimate: {temperaturePeriod: 1024, humidityPeriod: 896, samplingStep: 4, seaLevel: 64},
   });
   if (definition.lookDirection !== undefined) {
-    const camera = EngineStore.LastCreatedScene?.activeCamera;
+    const camera = activeScene?.activeCamera;
     if (camera === null || camera === undefined) throw new Error("GPU probe has no environment camera");
     const look = definition.lookDirection;
     camera.setTarget(camera.position.add(new Vector3(look.x, look.y, look.z)));
   }
   if (definition.cameraPose !== undefined) {
-    const camera = EngineStore.LastCreatedScene?.activeCamera;
+    const camera = activeScene?.activeCamera;
     if (camera === null || camera === undefined || camera.getClassName() !== "ArcRotateCamera") {
       throw new Error("GPU probe material yard has no orbit camera");
     }
@@ -1036,11 +1121,12 @@ try {
     camera.beta = definition.cameraPose.beta;
     camera.radius = definition.cameraPose.radius;
   }
+  if (definition.lighting) surface.setLighting(definition.lighting);
   for (const mesh of definition.meshes) surface.setChunkMesh(mesh);
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   let materialYard = definition.payload.materialYard;
   if (materialYard !== undefined) {
-    const scene = EngineStore.LastCreatedScene;
+    const scene = activeScene;
     const camera = scene?.activeCamera;
     const sun = scene?.getLightByName("openvoxel-sun-light");
     if (camera === null || camera === undefined || sun === null || sun === undefined) {
@@ -1080,8 +1166,116 @@ globalThis.__openVoxelGpuProbeStats = () => {
   return surface.stats();
 };
 
+globalThis.__openVoxelGpuProbeLighting = (mode) => {
+  const definition = activeDefinition.buildLighting(mode);
+  surface.setLighting(definition.lighting);
+  for (const mesh of definition.meshes) surface.setChunkMesh(mesh);
+  return {sources: definition.lighting.sources, chunks: definition.lighting.chunks.length};
+};
+globalThis.__openVoxelGpuProbeLightingTime = (night) => {
+  surface.setEnvironment(night ? environmentStates.night : clearEnvironmentSample);
+};
+
+globalThis.__openVoxelGpuProbeVines = () => {
+  const scene = activeScene;
+  const plugin = scene.materials.find(material => material.name.includes("openvoxel:material/vine"))
+    ?.pluginManager?.getPlugin("OpenVoxelVegetationMotion");
+  if (plugin?.mode !== "vine") throw new Error("Vines did not resolve their own motion material");
+  return probeVineMotion(scene, plugin);
+};
+
+globalThis.__openVoxelGpuProbeChunksSettled = () => {
+  const scene = activeScene;
+  return scene.isReady() && scene.meshes.filter(mesh => mesh.name.startsWith("chunk:")).every(mesh => mesh.chunkCoverage === 1);
+};
+globalThis.__openVoxelGpuProbeChunkCoverage = () => activeScene.meshes
+  .filter(mesh => mesh.name.startsWith("chunk:")).map(mesh => ({name: mesh.name, coverage: mesh.chunkCoverage}));
+
+globalThis.__openVoxelGpuProbeRenderBudget = async () => {
+  const scene = activeScene, engine = scene.getEngine();
+  const originalTarget = scene.activeCamera.target.clone();
+  const reflection = scene.textures.find(texture => texture.name === "openvoxel-water-reflection");
+  const refraction = scene.textures.find(texture => texture.name === "openvoxel-water-refraction");
+  if (!reflection || !refraction) throw new Error("Power probe requires active water captures");
+  const measure = async (milliseconds, moving = false) => {
+    let frames = 0, reflections = 0, refractions = 0;
+    const camera = scene.activeCamera;
+    const motion = moving ? scene.onBeforeAnimationsObservable.add(() => camera.setTarget(camera.target.add(new Vector3(0.02, 0, 0)))) : null;
+    const rendered = scene.onAfterRenderObservable.add(() => frames++);
+    const reflected = reflection.onBeforeRenderObservable.add(() => reflections++);
+    const refracted = refraction.onBeforeRenderObservable.add(() => refractions++);
+    const started = performance.now();
+    try {
+      await new Promise(resolve => setTimeout(resolve, milliseconds));
+      return {frames, reflections, refractions, milliseconds: performance.now() - started};
+    } finally {
+      scene.onBeforeAnimationsObservable.remove(motion);
+      scene.onAfterRenderObservable.remove(rendered);
+      reflection.onBeforeRenderObservable.remove(reflected);
+      refraction.onBeforeRenderObservable.remove(refracted);
+    }
+  };
+  const resting = await measure(1800);
+  const moving = await measure(700, true);
+  scene.activeCamera.setTarget(originalTarget);
+  let background;
+  try {
+    window.dispatchEvent(new Event("blur"));
+    background = await measure(350);
+  } finally { window.dispatchEvent(new Event("focus")); }
+  const resumed = await measure(350);
+  return {resting, moving, background, resumed, width: engine.getRenderWidth(), height: engine.getRenderHeight(),
+    devicePixelRatio, maximumFps: engine.maxFPS, backgroundRendering: engine.renderEvenInBackground};
+};
+
+globalThis.__openVoxelGpuProbeChunkTransitions = async () => {
+  const scene = activeScene;
+  const canvas = scene.getEngine().getRenderingCanvas();
+  const chunk = activeDefinition.meshes[0];
+  const key = `chunk:${chunk.position.x}:${chunk.position.y}:${chunk.position.z}:`;
+  const liveMeshes = () => scene.meshes.filter(mesh => mesh.name.startsWith(key));
+  const original = liveMeshes();
+  const originalSceneMeshes = scene.meshes.length;
+  const capture = (direction, change) => new Promise((resolve, reject) => {
+    const samples = [];
+    const frames = [];
+    const thresholds = direction === "out" ? [0.7, 0.25, 0] : [0.15, 0.65, 1];
+    let stage = 0;
+    const timer = setTimeout(() => finish(new Error("Chunk transition did not finish")), 5000);
+    const observer = scene.onAfterRenderObservable.add(() => {
+      const meshes = liveMeshes();
+      const coverage = meshes[0]?.chunkCoverage ?? 0;
+      frames.push(coverage);
+      const reached = direction === "out" ? coverage <= thresholds[stage] : coverage >= thresholds[stage];
+      if (reached) {
+        samples.push({coverage, png: canvas.toDataURL("image/png")});
+        while (stage < thresholds.length && (direction === "out" ? coverage <= thresholds[stage] : coverage >= thresholds[stage])) stage++;
+      }
+      if (stage === thresholds.length) finish();
+    });
+    function finish(error = null) {
+      clearTimeout(timer);
+      scene.onAfterRenderObservable.remove(observer);
+      if (error) reject(error);
+      else resolve({samples, frames});
+    }
+    change();
+  });
+  const out = await capture("out", () => surface.removeChunk(chunk.position.x, chunk.position.y, chunk.position.z));
+  const released = original.every(mesh => mesh.isDisposed());
+  const into = await capture("in", () => surface.setChunkMesh(chunk));
+  return {out, into, released, originalSceneMeshes, finalSceneMeshes: scene.meshes.length,
+    retainedOpaqueDepth: liveMeshes().filter(mesh => mesh.renderingGroupId === 0).every(mesh => mesh.visibility === 1 && !mesh.material.needAlphaBlendingForMesh(mesh))};
+};
+
+globalThis.__openVoxelGpuProbeShiftCamera = (dx) => {
+  const camera = activeScene?.activeCamera;
+  if (camera?.getClassName() !== "ArcRotateCamera") throw new Error("GPU probe orbit camera is unavailable");
+  camera.setTarget(camera.target.add(new Vector3(dx, 0, 0)));
+};
+
 globalThis.__openVoxelGpuProbeAnimationCycle = () => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   const canvas = scene?.getEngine().getRenderingCanvas();
   const payload = activeDefinition?.payload;
   const material = scene?.getMaterialByName(`material:${payload?.pipelineKey}`);
@@ -1134,15 +1328,53 @@ globalThis.__openVoxelGpuProbeAnimationCycle = () => {
 };
 
 globalThis.__openVoxelGpuProbeSetShadows = (enabled) => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   if (scene === null) throw new Error("GPU probe scene is unavailable");
   scene.shadowsEnabled = enabled;
+};
+
+globalThis.__openVoxelGpuProbeTerrainSampling = () => {
+  const scene = activeScene;
+  const material = scene?.materials.find((candidate) => candidate.pluginManager?.getPlugin("OpenVoxelTextureArray")?.textureBank?.role === "opaque");
+  const texture = material?.pluginManager.getPlugin("OpenVoxelTextureArray").textureBank.albedo;
+  const internal = texture?.getInternalTexture();
+  const engine = scene?.getEngine();
+  const gl = engine?._gl;
+  if (internal == null || gl == null) throw new Error("GPU probe has no opaque terrain texture array");
+  engine._bindTextureDirectly(gl.TEXTURE_2D_ARRAY, internal, true);
+  try {
+    return {
+      mipLevels: internal.mipLevelCount,
+      useMipMaps: internal.useMipMaps,
+      samplingMode: internal.samplingMode,
+      specularWeight: material.metallicF0Factor,
+      minFilter: gl.getTexParameter(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER),
+      magFilter: gl.getTexParameter(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER),
+      nearest: gl.NEAREST,
+      nearestMipLinear: gl.NEAREST_MIPMAP_LINEAR,
+      linearMipLinear: gl.LINEAR_MIPMAP_LINEAR,
+    };
+  } finally {
+    engine._bindTextureDirectly(gl.TEXTURE_2D_ARRAY, null, true);
+  }
+};
+
+globalThis.__openVoxelGpuProbeTerrainFilter = (samplingMode) => {
+  const scene = activeScene;
+  if (scene == null || ![6, 8].includes(samplingMode)) throw new Error("GPU probe terrain sampling mode is invalid");
+  for (const material of scene.materials) {
+    const bank = material.pluginManager?.getPlugin("OpenVoxelTextureArray")?.textureBank;
+    if (bank?.role !== "opaque") continue;
+    for (const texture of [bank.albedo, bank.normal, bank.material, bank.emissive]) {
+      texture.updateSamplingMode(samplingMode, false);
+    }
+  }
 };
 
 const cutoutShadowWrappers = new Map();
 
 globalThis.__openVoxelGpuProbeCutoutShadows = (accurate) => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   if (scene === null) throw new Error("GPU probe shadow scene is unavailable");
   if (accurate) {
     for (const [material, wrapper] of cutoutShadowWrappers) material.shadowDepthWrapper = wrapper;
@@ -1160,7 +1392,7 @@ globalThis.__openVoxelGpuProbeCutoutShadows = (accurate) => {
 };
 
 globalThis.__openVoxelGpuProbeCutoutShadowStats = () => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   if (scene === null) throw new Error("GPU probe shadow scene is unavailable");
   const entries = scene.materials.filter((material) => material.shadowDepthWrapper).map((material) => {
     const wrapper = material.shadowDepthWrapper;
@@ -1178,7 +1410,7 @@ globalThis.__openVoxelGpuProbeCutoutShadowStats = () => {
 };
 
 globalThis.__openVoxelGpuProbeEnvironmentView = () => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   const camera = scene?.activeCamera;
   const clouds = scene?.getMeshByName("openvoxel-cloud-layer");
   if (camera === null || camera === undefined || clouds === null || clouds === undefined) throw new Error("GPU probe environment view is unavailable");
@@ -1201,6 +1433,7 @@ globalThis.__openVoxelGpuProbeEnvironmentView = () => {
     }
   }
   return {
+    renderer: scene.getEngine().getGlInfo().renderer,
     cameraKind: camera.getClassName(),
     directionY: camera.getForwardRay().direction.y,
     eyeY: camera.position.y,
@@ -1214,7 +1447,7 @@ globalThis.__openVoxelGpuProbeEnvironmentView = () => {
 };
 
 globalThis.__openVoxelGpuProbeSetEnvironmentEffect = (enabled) => {
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   if (scene === null || activeDefinition === null) throw new Error("GPU probe environment view is unavailable");
   if (activeDefinition.payload.environmentView === "sky") scene.getMeshByName("openvoxel-cloud-layer").setEnabled(enabled);
   else {
@@ -1228,6 +1461,12 @@ globalThis.__openVoxelGpuProbeSetEnvironmentEffect = (enabled) => {
 globalThis.__openVoxelGpuProbeEnvironmentStats = () => {
   if (surface === null) throw new Error("GPU probe surface is unavailable");
   return surface.environmentStats();
+};
+
+globalThis.__openVoxelGpuProbeWeatherGrade = (intensity, wind) => {
+  if (surface === null) throw new Error("GPU probe surface is unavailable");
+  activeEnvironmentState = {...activeEnvironmentState, precipitationIntensity: intensity, windX: wind, windZ: -wind * 0.25};
+  surface.setEnvironment(activeEnvironmentState);
 };
 
 globalThis.__openVoxelGpuProbeSetTerrain = (enabled) => {
@@ -1315,7 +1554,7 @@ globalThis.__openVoxelGpuProbeSeason = (season) => {
   const worldMilliseconds = (seasonalTimes[season] - 0.125) * worldYearMilliseconds;
   activeEnvironmentState = {...activeEnvironmentState, worldMilliseconds};
   surface.setEnvironment(activeEnvironmentState);
-  const scene = EngineStore.LastCreatedScene;
+  const scene = activeScene;
   return {
     climate: worldClimateAt(seasonalProbeSeed, worldMilliseconds, {x: 16, y: 1, z: 16}),
     meshes: scene.meshes.filter((mesh) => mesh.name.startsWith("chunk:")).map((mesh) => mesh.uniqueId),

@@ -1,0 +1,31 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {monotonic} from "velar/time"
+import {PortalVisibilitySummary, portalVisibilityWorkspace} from "../src/runtime/portal-visibility.vel"
+
+@main:
+    const open: PortalVisibilitySummary = {
+        empty: true, fullyOccluding: false, openFaces: 63,
+        connectedFaces: Math.pow(2, 36) - 1,
+    }
+    const wall: PortalVisibilitySummary = {empty: false, fullyOccluding: true, openFaces: 0, connectedFaces: 0}
+    const positions: List<ChunkPosition> = []
+    for y in range(-2, 3):
+        for z in range(-4, 5):
+            for x in range(-4, 5): positions.append({x, y, z})
+
+    for scenario in ["open", "wall"]:
+        const summaries: Map<string, PortalVisibilitySummary> = Map()
+        for position in positions:
+            summaries.set(chunkKey(position), scenario == "wall" and position.x == 1 ? wall : open)
+        const workspace = portalVisibilityWorkspace()
+        workspace.rebuild(positions, {x: 0, y: 0, z: 0})
+        const expectedVisible = scenario == "wall" ? 270 : 405
+        for warmup in range(10):
+            assert workspace.visibleChunkKeys(summaries).size == expectedVisible else "Portal benchmark visibility changed"
+        const samples: List<number> = []
+        for run in range(5):
+            const started = monotonic()
+            for sample in range(100):
+                assert workspace.visibleChunkKeys(summaries).size == expectedVisible else "Portal benchmark visibility changed"
+            samples.append(monotonic() - started)
+        print(Json.stringify({scenario, chunks: positions.size, queries: 100, runs: 5, medianMs: samples.sorted()[2]}))

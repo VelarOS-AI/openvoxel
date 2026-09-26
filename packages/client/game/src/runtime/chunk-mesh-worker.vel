@@ -1,5 +1,5 @@
 import {ClientWorldState} from "@openvoxel/client"
-import {ChunkMesh, ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations, snapshotChunkNeighborhood} from "@openvoxel/renderer"
+import {ChunkMesh, ClientChunkBlockView, ClientClimateTint, ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations, snapshotChunkNeighborhood, snapshotFluidDepthHalo} from "@openvoxel/renderer"
 import {ChunkPosition} from "@openvoxel/world"
 import {Cancellation} from "velar/task"
 import {workerPool} from "velar/worker"
@@ -11,16 +11,31 @@ export def chunkMeshWorker(
     states: readonly List<ClientRenderState>,
     state: readonly ClientWorldState,
     edge: number,
+    minimumWorldY: number,
+    maximumWorldY: number,
 ) -> ChunkMeshWorker:
     const pool = workerPool("openvoxel-meshing", MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerCount, 32)
+    const waterIds: Set<number> = Set(states.filter(renderState => renderState.climateTint == ClientClimateTint.water).map(renderState => renderState.runtimeId))
 
     async def initialize(): await pool.broadcast({operation: meshingWorkerOperations.initialize, states}, null, 10s)
 
     async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation) -> ChunkMesh:
         const center = state.chunk(position)
         assert center != null else "Cannot mesh an untracked client Chunk"
-        const paddedBlocks = snapshotChunkNeighborhood(center, candidate => state.chunk(candidate))
-        const response = await pool.call({operation: meshingWorkerOperations.mesh, position, edge, paddedBlocks, ticket}, cancellation, 15s)
+        def neighbor(candidate: readonly ChunkPosition) -> readonly ClientChunkBlockView?:
+            // 世界高度之外是真正的空气；世界内部缺失的是尚未加载的数据。
+            if candidate.y * edge > maximumWorldY or (candidate.y + 1) * edge <= minimumWorldY:
+                return {position: candidate, edge, blockAtIndex: _index => 0}
+            return state.chunk(candidate)
+        const paddedBlocks = snapshotChunkNeighborhood(center, neighbor, sealUnloaded=true)
+        let needsDepthHalo = false
+        for z in range(edge):
+            for x in range(edge):
+                const lower = center.blockAtIndex(x + edge * z)
+                const upper = center.blockAtIndex(x + edge * (z + edge))
+                if (lower in waterIds) and not (upper in waterIds): needsDepthHalo = true
+        const fluidDepthHalo = needsDepthHalo ? snapshotFluidDepthHalo(state.chunk({x: position.x, y: position.y - 1, z: position.z})) : null
+        const response = await pool.call({operation: meshingWorkerOperations.mesh, position, edge, paddedBlocks, fluidDepthHalo, ticket}, cancellation, 15s)
         assert response.operation == meshingWorkerOperations.mesh else "Meshing Worker returned a mismatched operation"
         const mesh = response.mesh
         assert mesh != null else "Meshing Worker returned no Chunk mesh"

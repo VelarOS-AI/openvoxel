@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {NullEngine} from "@babylonjs/core/Engines/nullEngine.js";
+import {StandardMaterial} from "@babylonjs/core/Materials/standardMaterial.js";
+import {MeshBuilder} from "@babylonjs/core/Meshes/meshBuilder.js";
+import {Scene} from "@babylonjs/core/scene.js";
 import {createTerrainGroundProbe, terrainColumnKey} from "../src/backends/babylon/native/terrain-ground.mjs";
 import {createPrecipitationColumnField} from "../src/backends/babylon/native/weather-columns.mjs";
 
@@ -98,6 +102,57 @@ test("precipitation uses the highest hit's authored surface, not transparency or
   assert.deepEqual(probe.sampleColumn(0, 0, 271), {groundY: 55, skyVisible: true, surface: "solid"});
   hits = [];
   assert.equal(probe.sampleColumn(0, 0, 271), null);
+});
+
+test("weather raycasts stop below the highest visible vertical mesh and follow water or ice changes", () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  try {
+    const material = new StandardMaterial("terrain", scene);
+    const boxes = [
+      {name: "ground", y: 16, surface: "solid"},
+      {name: "water", y: 48, surface: "water"},
+      {name: "roof", y: 64, surface: "solid"},
+    ].map(({name, y, surface}) => {
+      const box = MeshBuilder.CreateBox(name, {width: 16, height: 1, depth: 16}, scene);
+      box.position.set(8, y, 8);
+      box.computeWorldMatrix(true);
+      box.material = material;
+      box.precipitationSurface = surface;
+      return box;
+    });
+    const [ground, water, roof] = boxes;
+    let lowerIntersections = 0;
+    for (const box of [ground, water]) {
+      const original = box.intersects.bind(box);
+      box.intersects = (...args) => {
+        lowerIntersections += 1;
+        return original(...args);
+      };
+    }
+    const owners = new Set(boxes);
+    const column = new Set(boxes);
+    const probe = createTerrainGroundProbe(owners, 128, {
+      chunkEdge: 16,
+      terrainColumns: new Map([["0:0", column]]),
+    });
+    assert.deepEqual(probe.sampleColumn(0, 0, 100), {groundY: 64.5, skyVisible: true, surface: "solid"});
+    assert.equal(lowerIntersections, 0, "lower sections should not be raycast after a higher hit");
+
+    owners.delete(roof);
+    column.delete(roof);
+    probe.invalidateColumn(0, 0);
+    assert.deepEqual(probe.sampleColumn(0, 0, 100), {groundY: 48.5, skyVisible: true, surface: "water"});
+    assert.equal(lowerIntersections, 1, "the newly exposed water should be raycast once");
+
+    water.precipitationSurface = "solid";
+    probe.invalidateColumn(0, 0);
+    assert.deepEqual(probe.sampleColumn(0, 0, 100), {groundY: 48.5, skyVisible: true, surface: "solid"});
+    assert.deepEqual(probe.sampleColumn(0, 0, 40), {groundY: 16.5, skyVisible: true, surface: "solid"});
+  } finally {
+    scene.dispose();
+    engine.dispose();
+  }
 });
 
 test("decorative cross geometry does not intercept precipitation", () => {
@@ -266,4 +321,19 @@ test("weather TTL refreshes reuse unchanged terrain and resample only an invalid
   result = field.update(0, center, {x: 0, z: 0}, null, groundAt);
   assert.equal(probe.stats().columnRaycasts, initialCalls + affected);
   assert.ok(result.columns.every((column) => column.groundY === (column.x >= 0 && column.z >= 0 ? 68 : 64)));
+});
+
+test("falling leaf probes pass through foliage while precipitation still lands on the canopy", () => {
+  const canopy = {...mesh(), hasFoliage: true, precipitationSurface: "solid"};
+  const soil = {...mesh(), hasFoliage: false, precipitationSurface: "solid"};
+  const meshes = new Set([canopy, soil]);
+  const columns = new Map([[terrainColumnKey(0, 0), meshes]]);
+  const intersections = (_ray, candidates) => candidates.map(candidate => ({hit: true, pickedMesh: candidate, pickedPoint: {x: 0.5, y: candidate === canopy ? 9 : 1, z: 0.5}}));
+  const weather = createTerrainGroundProbe(meshes, 256, {chunkEdge: 16, terrainColumns: columns, intersections});
+  const leaves = createTerrainGroundProbe(meshes, 256, {chunkEdge: 16, terrainColumns: columns, intersections, meshFilter: candidate => !candidate.hasFoliage});
+  assert.equal(weather.sampleColumn(0, 0, 100).groundY, 9);
+  assert.equal(leaves.sampleColumn(0, 0, 100).groundY, 1);
+  meshes.delete(soil);
+  leaves.invalidateColumn(0, 0);
+  assert.equal(leaves.sampleColumn(0, 0, 100), null);
 });

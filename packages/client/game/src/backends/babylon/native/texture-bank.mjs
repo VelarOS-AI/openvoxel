@@ -114,9 +114,11 @@ function uploadTextureMipLevels(scene, texture, levels, label, smooth = false) {
   internalTexture.useMipMaps = levels.length > 1;
   internalTexture.generateMipMaps = false;
   internalTexture.mipLevelCount = levels.length;
+  // Preserve pixel-art magnification while filtering minified terrain inside
+  // each mip. Nearest minification aliases into moving diagonal bands.
   const samplingMode = smooth
     ? Texture.TRILINEAR_SAMPLINGMODE
-    : levels.length > 1 ? Texture.NEAREST_NEAREST_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
+    : levels.length > 1 ? Texture.NEAREST_LINEAR_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
   engine.updateTextureSamplingMode(samplingMode, internalTexture, false);
 }
 
@@ -185,13 +187,15 @@ export function loadTextureBank(scene, definition, maximumLayers) {
 
 
 export class VoxelTextureArrayPlugin extends MaterialPluginBase {
-  constructor(material, textureBank, climateField = null, {neutralSurface = false} = {}) {
+  constructor(material, textureBank, climateField = null, {neutralSurface = false, atmosphere = null, grassPlant = false} = {}) {
     super(material, "OpenVoxelTextureArray", 200, {}, true, false, true);
     if (typeof neutralSurface !== "boolean") throw new TypeError("Voxel texture neutralSurface must be boolean");
     this.registerForExtraEvents = true;
     this.textureBank = textureBank;
     this.climateField = climateField;
     this.neutralSurface = neutralSurface;
+    this.atmosphere = atmosphere;
+    this.grassPlant = grassPlant;
     this.animationLayerOffset = 0;
     this._enable(true);
   }
@@ -233,12 +237,13 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
       {name: "ovClimateBounds", size: 4, type: "vec4"},
       ...Array.from({length: 8}, (_, index) => ({name: "ovClimate" + index, size: 4, type: "vec4"})),
     ];
-    if (!this.neutralSurface) ubo.unshift({name: "ovAnimationLayerOffset", size: 1, type: "float"});
+    if (!this.neutralSurface) ubo.unshift({name: "ovAnimationLayerOffset", size: 1, type: "float"}, {name: "ovSurfaceWetness", size: 1, type: "float"});
     return {ubo};
   }
 
   bindForSubMesh(uniformBuffer) {
     if (this.neutralSurface) return;
+    uniformBuffer.updateFloat("ovSurfaceWetness", this.atmosphere?.wetness ?? 0);
     uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
     uniformBuffer.setTexture("ovAlbedoSampler", this.textureBank.albedo);
     uniformBuffer.setTexture("ovNormalSampler", this.textureBank.normal);
@@ -295,7 +300,7 @@ if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
     mix(mix(ovClimate4, ovClimate5, amount.x), mix(ovClimate6, ovClimate7, amount.x), amount.z),
     amount.y);
 }
-surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(vec3(1.0), ovTintRole, ovClimateSample));`,
+surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(vec3(1.0), ovTintRole, ovClimateSample, vPositionW, 0.0));`,
       };
     }
     if (shaderType === "vertex") {
@@ -324,6 +329,7 @@ uniform sampler2DArray ovNormalSampler;
 uniform sampler2DArray ovMaterialSampler;
 uniform sampler2DArray ovEmissiveSampler;
 uniform float ovAnimationLayerOffset;
+uniform float ovSurfaceWetness;
 uniform vec4 ovClimateBounds;
 ${Array.from({length: 8}, (_, index) => "uniform vec4 ovClimate" + index + ";").join("\n")}
 ${climateTintShader}
@@ -360,11 +366,14 @@ if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
     mix(mix(ovClimate4, ovClimate5, amount.x), mix(ovClimate6, ovClimate7, amount.x), amount.z),
     amount.y);
 }
-surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(ovAlbedoSample.rgb, ovTintRole, ovClimateSample));
+surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(ovAlbedoSample.rgb, ovTintRole, ovClimateSample, vPositionW, ${this.grassPlant ? "1.0" : "0.0"}));
+surfaceAlbedo *= 1.0 - ovSurfaceWetness * clamp(vNormalW.y, 0.0, 1.0) * 0.16;
 alpha *= ovAlbedoSample.a;`,
       CUSTOM_FRAGMENT_UPDATE_METALLICROUGHNESS: `
 metallicRoughness.r = ovMaterialSample.b;
-metallicRoughness.g = ovMaterialSample.g;`,
+bool ovVegetationSurface = ovTintRole > 0.5 && !(ovTintRole > 2.5 && ovTintRole < 3.5);
+float ovWetRoughness = ovVegetationSurface ? 0.86 : mix(0.42, 0.78, smoothstep(0.7, 0.95, ovMaterialSample.g));
+metallicRoughness.g = mix(ovMaterialSample.g, min(ovWetRoughness, ovMaterialSample.g), ovSurfaceWetness * clamp(vNormalW.y, 0.0, 1.0));`,
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
 vec2 ovNormalUv = gl_FrontFacing ? ovTextureUv : -ovTextureUv;
 normalW = normalize(ovCotangentFrame(normalW, vPositionW, ovNormalUv) * (ovNormalSample.xyz * 2.0 - 1.0));`,

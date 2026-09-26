@@ -46,12 +46,24 @@ export def validateWorldGeneratorDefinition(definition: WorldGeneratorDefinition
     requirePositiveInteger(definition.surface.geologyPeriod, "Geology period")
     requirePositiveInteger(definition.surface.depositPeriod, "Deposit period")
     requirePositiveInteger(definition.surface.outcropPeriod, "Outcrop period")
-    requirePositiveInteger(definition.surface.veinPeriod, "Vein period")
+    assert definition.roads.cellSize.isInteger() and definition.roads.cellSize >= 128 and definition.roads.cellSize <= 512 else "Road cell size must be an integer from 128 through 512"
+    assert definition.roads.minimumWidth.isFinite() and definition.roads.minimumWidth >= 2.5 and definition.roads.minimumWidth <= definition.roads.maximumWidth else "Road minimum width must be at least 2.5 and no greater than maximum width"
+    assert definition.roads.maximumWidth.isFinite() and definition.roads.maximumWidth <= 6 else "Road maximum width cannot exceed six blocks"
+    assert definition.roads.shoulderWidth.isFinite() and definition.roads.shoulderWidth >= 0 and definition.roads.shoulderWidth <= 1.5 else "Road shoulder width must be from zero through 1.5"
+    requireProbability(definition.roads.branchChance, "Road branch chance")
+    for basin in [definition.hydrology.lakes, definition.hydrology.ponds]:
+        assert basin.cellSize.isInteger() and basin.cellSize >= 32 and basin.cellSize <= 512 else "Basin cell size must be from 32 through 512"
+        requireProbability(basin.chance, "Basin chance")
+        assert basin.minimumRadius >= 3 and basin.maximumRadius >= basin.minimumRadius and basin.maximumRadius * 1.32 < basin.cellSize * 0.25 else "Basin radii must fit inside their owner cell"
+        assert basin.minimumDepth >= 1 and basin.maximumDepth >= basin.minimumDepth and basin.maximumDepth <= 16 else "Basin depth must be from 1 through 16"
+        assert basin.maximumRelief.isFinite() and basin.maximumRelief >= 0 and basin.maximumRelief <= 12 else "Basin relief must be from zero through 12"
+    assert definition.roads.maximumGrade.isFinite() and definition.roads.maximumGrade > 0 and definition.roads.maximumGrade <= 0.4 else "Road maximum grade must be greater than zero and at most 0.4"
     assert definition.terrain.surfaceMicroDetailAmplitude.isFinite() and definition.terrain.surfaceMicroDetailAmplitude >= 0.5 and definition.terrain.surfaceMicroDetailAmplitude <= 0.9 else "Surface micro-detail amplitude must be from 0.5 through 0.9 blocks"
     assert definition.terrain.surfaceMicroDetailPeriod.isInteger() and definition.terrain.surfaceMicroDetailPeriod >= 16 and definition.terrain.surfaceMicroDetailPeriod <= 32 else "Surface micro-detail period must be an integer from 16 through 32 blocks"
     assert definition.terrain.riverHalfWidth > 0 and definition.terrain.riverHalfWidth <= 1 else "River half width must be between 0 and 1"
     requireProbability(definition.caves.branchChance, "Cave branch chance")
     requireProbability(definition.caves.tunnelChance, "Cave tunnel chance")
+    requireProbability(definition.caves.entranceChance, "Cave entrance chance")
     requireProbability(definition.caves.chamberChance, "Cave chamber chance")
     requirePositiveInteger(definition.vegetation.treeCellSize, "Tree candidate cell size")
     requirePositiveInteger(definition.vegetation.treeHorizontalReach, "Tree horizontal reach")

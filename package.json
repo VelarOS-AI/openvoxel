@@ -63,10 +63,10 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/compiler": "0.34.0",
-    "@velarscript/node": "0.34.0",
-    "@velarscript/web": "0.34.0",
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/compiler": "0.34.2",
+    "@velarscript/node": "0.34.2",
+    "@velarscript/web": "0.34.2",
     "playwright": "1.62.1"
   },
   "allowScripts": {

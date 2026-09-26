@@ -21,7 +21,7 @@ async def handleMeshingWorker(request: MeshingWorkerRequest, cancellation: Cance
         const ticket = request.ticket
         assert states != null else "Meshing Worker is not initialized"
         assert position != null and edge != null and paddedBlocks != null and ticket != null else "Meshing Worker request is incomplete"
-        const mesh = meshChunkWithIndex(position, edge, paddedBlocks, states, ticket)
+        const mesh = meshChunkWithIndex(position, edge, paddedBlocks, states, ticket, request.fluidDepthHalo)
         await cancellation.checkpoint()
         return {operation: request.operation, mesh}
     throw Error(f"Unsupported Meshing Worker operation {request.operation}")

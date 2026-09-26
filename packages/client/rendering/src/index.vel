@@ -3,4 +3,6 @@ export {ChunkMesh, ChunkMeshBatch, ChunkPortalFaceIndices, ChunkPortalSummary, C
 export {ClientRenderCatalog, createClientRenderCatalog} from "./render-catalog.vel"
 export {loadBuiltinClientResourcePack} from "./resource-pack-loader.vel"
 export {meshChunk} from "./mesher.vel"
-export {ClientChunkBlockView, snapshotChunkNeighborhood} from "./snapshot.vel"
+export {ClientChunkBlockView, snapshotChunkNeighborhood, snapshotFluidDepthHalo} from "./snapshot.vel"
+export {ChunkLighting, ClientLightState, LightingChunkInput, LightingWorkerRequest, LightingWorkerResponse, VoxelLightSource, WorldLightingUpdate} from "./lighting-contracts.vel"
+export {ClientLightField, createClientLightField} from "./lighting.vel"

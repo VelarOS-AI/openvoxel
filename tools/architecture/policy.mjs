@@ -11,6 +11,10 @@ export const labsScope = "@velarscript-labs/";
 export const labsRegistryPrefix = "https://registry.npmjs.org/@velarscript-labs/";
 export const openVoxelGamePackage = "@openvoxel/game";
 export const gameMeshingWorkerSpecifier = "@openvoxel/game/meshing-worker";
+export const gameWorkerBridges = new Map([
+  [gameMeshingWorkerSpecifier, "@openvoxel/renderer/meshing-worker"],
+  ["@openvoxel/game/lighting-worker", "@openvoxel/renderer/lighting-worker"],
+]);
 export const openVoxelRendererPackage = "@openvoxel/renderer";
 export const openVoxelWebPackage = "@openvoxel/web";
 export const babylonPackagePrefix = "@babylonjs/";
@@ -124,17 +128,18 @@ export function renderingImportViolations({ownerName, path, specifier}) {
 /** Workers stay below the game/runtime and graphics-backend composition boundary. */
 export function workerDependencyViolation(specifier, resolvedOwnerName = null, resolvesToGameWorkerBridge = false) {
   if (specifier.startsWith(babylonPackagePrefix)) return `Worker closure cannot import ${specifier}`;
-  if (specifier === gameMeshingWorkerSpecifier && resolvesToGameWorkerBridge) return null;
+  if (gameWorkerBridges.has(specifier) && resolvesToGameWorkerBridge) return null;
   if (openVoxelPackageName(specifier) === openVoxelGamePackage || resolvedOwnerName === openVoxelGamePackage) {
-    return `Worker closure can enter ${openVoxelGamePackage} only through ${gameMeshingWorkerSpecifier}`;
+    return `Worker closure can enter ${openVoxelGamePackage} only through ${[...gameWorkerBridges.keys()].join(" or ")}`;
   }
   return null;
 }
 
-export function gameWorkerBridgeViolations(specifiers) {
-  return specifiers.length === 1 && specifiers[0] === "@openvoxel/renderer/meshing-worker"
+export function gameWorkerBridgeViolations(specifiers, entry = gameMeshingWorkerSpecifier) {
+  const target = gameWorkerBridges.get(entry);
+  return target !== undefined && specifiers.length === 1 && specifiers[0] === target
     ? []
-    : [`${gameMeshingWorkerSpecifier} must only forward @openvoxel/renderer/meshing-worker`];
+    : [`${entry} must only forward ${target}`];
 }
 
 /** Traverse an already-resolved module graph so indirect worker leaks stay visible. */

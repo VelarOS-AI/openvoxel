@@ -1,6 +1,6 @@
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
 import {expect} from "velar/test"
-import {ClientChunkBlockView, snapshotChunkNeighborhood} from "../src/snapshot.vel"
+import {ClientChunkBlockView, snapshotChunkNeighborhood, snapshotFluidDepthHalo} from "../src/snapshot.vel"
 
 const edge = 4
 const paddedEdge = edge + 2
@@ -42,6 +42,33 @@ test "missing neighbor faces keep the requested runtime id":
     const snapshot = snapshotChunkNeighborhood(current, _position => null, 17)
     expect(snapshot[paddedIndex(0, 1, 1)]).toBe(17)
     expect(snapshot[paddedIndex(1, 1, 1)]).toBe(50)
+
+test "streaming seals unknown cut faces but honors a loaded air neighbor":
+    const current = view({x: -1, y: 1, z: -1}, 50)
+    const unknown = snapshotChunkNeighborhood(current, _position => null, sealUnloaded=true)
+    for a in range(edge):
+        for b in range(edge):
+            expect(unknown[paddedIndex(0, a + 1, b + 1)]).toBe(50 + blockIndex(0, a, b))
+            expect(unknown[paddedIndex(edge + 1, a + 1, b + 1)]).toBe(50 + blockIndex(edge - 1, a, b))
+            expect(unknown[paddedIndex(a + 1, 0, b + 1)]).toBe(50 + blockIndex(a, 0, b))
+            expect(unknown[paddedIndex(a + 1, edge + 1, b + 1)]).toBe(50 + blockIndex(a, edge - 1, b))
+            expect(unknown[paddedIndex(a + 1, b + 1, 0)]).toBe(50 + blockIndex(a, b, 0))
+            expect(unknown[paddedIndex(a + 1, b + 1, edge + 1)]).toBe(50 + blockIndex(a, b, edge - 1))
+    def airNeighbor(position: readonly ChunkPosition) -> ClientChunkBlockView?:
+        if position.y != 2: return null
+        return {position, edge, blockAtIndex: _index => 0}
+    const exposed = snapshotChunkNeighborhood(current, airNeighbor, sealUnloaded=true)
+    expect(exposed[paddedIndex(1, edge + 1, 1)]).toBe(0)
+    expect(exposed[paddedIndex(0, 1, 1)]).toBe(50)
+
+test "fluid depth halo copies successive layers below the ordinary neighbor face":
+    const below = view({x: 0, y: 3, z: 0}, 100)
+    const halo = snapshotFluidDepthHalo(below)
+    assert halo != null else "Expected fluid depth halo"
+    expect(halo.size).toBe(edge * edge * (edge - 1))
+    expect(halo[0]).toBe(100 + blockIndex(0, edge - 2, 0))
+    expect(halo[edge * edge]).toBe(100 + blockIndex(0, edge - 3, 0))
+    expect(snapshotFluidDepthHalo(null)).toBe(null)
 
 test "snapshot reuses the captured center and resolves only six neighbors":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}

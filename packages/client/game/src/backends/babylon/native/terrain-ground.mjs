@@ -77,6 +77,25 @@ function groundFromCandidates(ray, candidates, candidateSet, intersections) {
   return highest;
 }
 
+function groundFromVerticalMeshes(ray, candidates) {
+  let highest = null;
+  let highestIndex = Number.POSITIVE_INFINITY;
+  for (const {mesh, maximumY, index} of candidates) {
+    // A downward ray cannot find a higher surface in a mesh whose entire
+    // bounding box lies below an already found hit. This avoids walking the
+    // triangles of every underground section for each weather column.
+    if (highest !== null && maximumY < highest.groundY - 0.000001) break;
+    const hit = ray.intersectsMesh(mesh, false);
+    if (!hit.hit || hit.pickedPoint == null) continue;
+    const y = requireFinite(hit.pickedPoint.y, "Terrain ground hit y");
+    if (highest === null || y > highest.groundY || (y === highest.groundY && index < highestIndex)) {
+      highest = {groundY: y, skyVisible: true, surface: mesh.precipitationSurface ?? "solid"};
+      highestIndex = index;
+    }
+  }
+  return highest;
+}
+
 export function createTerrainGroundProbe(terrainMeshes, maximumDistance, options = {}) {
   terrainMeshes = requireMeshOwnership(terrainMeshes);
   maximumDistance = requireFinite(maximumDistance, "Terrain ground probe maximum distance");
@@ -84,6 +103,8 @@ export function createTerrainGroundProbe(terrainMeshes, maximumDistance, options
   if (typeof options !== "object" || options === null || Array.isArray(options)) {
     throw new TypeError("Terrain ground probe options must be a record");
   }
+  const meshFilter = options.meshFilter ?? (() => true);
+  if (typeof meshFilter !== "function") throw new TypeError("Terrain ground mesh filter must be a function");
   const chunkEdge = options.chunkEdge ?? null;
   if (chunkEdge !== null && (!Number.isSafeInteger(chunkEdge) || chunkEdge < 1)) {
     throw new RangeError("Terrain ground probe Chunk edge must be a positive integer or null");
@@ -97,6 +118,7 @@ export function createTerrainGroundProbe(terrainMeshes, maximumDistance, options
   }
   const intersections = options.intersections ?? defaultIntersections;
   if (typeof intersections !== "function") throw new TypeError("Terrain ground probe intersections must be a function");
+  const useVerticalMeshOrder = intersections === defaultIntersections;
 
   const ray = new Ray(new Vector3(), new Vector3(0, -1, 0), maximumDistance);
   const columnRay = new Ray(new Vector3(), new Vector3(0, -1, 0), maximumDistance);
@@ -183,8 +205,12 @@ export function createTerrainGroundProbe(terrainMeshes, maximumDistance, options
       let entry = columnCache.get(key);
       if (entry === undefined) {
         const candidates = [...ownedMeshes].filter((mesh) => activeTerrainMesh(terrainMeshes, mesh)
-          && mesh.precipitationSurface !== "none");
-        entry = {candidates, candidateSet: new Set(candidates), samples: new Map(), originY};
+          && mesh.precipitationSurface !== "none" && meshFilter(mesh));
+        const verticalMeshes = useVerticalMeshOrder
+          ? candidates.map((mesh, index) => ({mesh, index, maximumY: mesh.getBoundingInfo().boundingBox.maximumWorld.y}))
+            .sort((left, right) => right.maximumY - left.maximumY)
+          : null;
+        entry = {candidates, candidateSet: new Set(candidates), verticalMeshes, samples: new Map(), originY};
         columnCache.set(key, entry);
         candidateBuilds += 1;
       } else if (entry.originY !== originY) {
@@ -199,7 +225,9 @@ export function createTerrainGroundProbe(terrainMeshes, maximumDistance, options
         return entry.samples.get(cell);
       }
       if (entry.candidates.length > 0) columnRaycasts += 1;
-      const sample = groundFromCandidates(columnRay, entry.candidates, entry.candidateSet, intersections);
+      const sample = entry.verticalMeshes === null
+        ? groundFromCandidates(columnRay, entry.candidates, entry.candidateSet, intersections)
+        : groundFromVerticalMeshes(columnRay, entry.verticalMeshes);
       const result = sample === null ? null : Object.freeze(sample);
       entry.samples.set(cell, result);
       return result;

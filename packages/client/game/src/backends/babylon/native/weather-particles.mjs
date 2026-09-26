@@ -1,3 +1,4 @@
+import {weatherProfile} from "../../../environment/weather-dynamics.mjs";
 import {Texture} from "@babylonjs/core/Materials/Textures/texture.js";
 import {createPrecipitationColumnField} from "./weather-columns.mjs";
 import {createWeatherParticleBatch, weatherBillboardAxes} from "./weather-particle-batch.mjs";
@@ -47,6 +48,8 @@ export function createWeatherParticles(scene, textures) {
   let kind = "none";
   let intensity = 0;
   let light = 1;
+  let worldMilliseconds = 0;
+  let sourceWorldMilliseconds = null;
   let windX = 0;
   let windZ = 0;
   let fieldStats = {columns: [], cachedColumns: 0, pendingColumns: 0, sampledColumns: 0, maximumColumns: 0};
@@ -67,6 +70,10 @@ export function createWeatherParticles(scene, textures) {
       simulation.invalidateChunkColumn(chunkX, chunkZ, chunkEdge);
     },
     applyFrame(frame) {
+      if (Number.isFinite(frame.worldMilliseconds) && frame.worldMilliseconds !== sourceWorldMilliseconds) {
+        sourceWorldMilliseconds = frame.worldMilliseconds;
+        worldMilliseconds = frame.worldMilliseconds;
+      }
       kind = frame.precipitation;
       intensity = kind === "none" ? 0 : frame.precipitationIntensity;
       light = precipitationSkyLight(frame.daylightIntensity);
@@ -75,6 +82,7 @@ export function createWeatherParticles(scene, textures) {
     },
     update(deltaMs, center, fallbackGround, groundAt) {
       if (disposed) return;
+      worldMilliseconds += deltaMs;
       const forward = cameraForward(scene);
       const hasFallingParticles = simulation.shafts.size > 0;
       if (intensity > 0 || hasFallingParticles) {
@@ -83,13 +91,17 @@ export function createWeatherParticles(scene, textures) {
         fieldStats = {...fieldStats, columns: [], sampledColumns: 0};
       }
       const columns = fieldStats.columns;
-      simulation.update(deltaMs, center, columns, kind, intensity, windX, windZ);
+      simulation.update(deltaMs, center, columns, kind, intensity, windX, windZ, worldMilliseconds);
       const axes = weatherBillboardAxes(forward);
       for (const batch of batches) batch.reset();
       for (const shaft of simulation.shafts.values()) {
         const batch = shaft.kind === "rain" ? rain : snow;
         for (const particle of shaft.particles) {
-          if (particle.active) batch.append(particle, axes, light, precipitationTopFade(particle.y, center.y));
+          if (!particle.active) continue;
+          const distance = Math.hypot(particle.x - center.x, particle.y - center.y, particle.z - center.z);
+          // Keep close flakes/drops from becoming giant opaque shapes at the eye.
+          const nearFade = Math.max(0, Math.min(1, (distance - 0.6) / 1.2));
+          batch.append(particle, axes, light, precipitationTopFade(particle.y, center.y) * nearFade * particle.opacity);
         }
       }
       for (const particle of simulation.rainSplashes) {
@@ -105,6 +117,7 @@ export function createWeatherParticles(scene, textures) {
     stats() {
       return {
         ...simulation.stats(),
+        severity: weatherProfile(kind, intensity, Math.hypot(windX, windZ)).level,
         activeColumns: fieldStats.columns.length,
         representativeGroundY: fieldStats.columns[0]?.groundY ?? null,
         cachedColumns: fieldStats.cachedColumns,

@@ -44,18 +44,20 @@ export def groundPlantFeatures(
             const z = cellZ * plantSize + stream.int(0, plantSize)
             if x < minimumX or x > minimumX + 15 or z < minimumZ or z > minimumZ + 15: continue
             const sample = core.sampleAt(x, z)
+            if sample.roadDistance != null: continue
             const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
             if adjustedTemperature <= profile.surface.snowTemperature: continue
             const position = {x, y: sample.surfaceY + 1, z}
             const groundBlock = surfaceBlock(profile, blocks, sample)
             if sample.biome == profile.biomes.desert:
                 if not registry.hasTag(groundBlock, builtinIdentities.tags.dryPlantSupport): continue
-                if stream.bool(0.018):
+                if stream.bool(0.006):
                     output.append(groundFeature(f"large-bush:{x}:{z}", position, blocks.largeDryBush))
-                else if stream.bool(0.06): output.append(groundFeature(f"bush:{x}:{z}", position, blocks.dryBush))
+                else if stream.bool(0.025): output.append(groundFeature(f"bush:{x}:{z}", position, blocks.dryBush))
                 continue
             const cover = Math.clamp(patterns.cover(x, z), 0, 1)
-            const chance = Math.clamp(profile.vegetation.groundPlantChance * Math.clamp(sample.humidity / 12, 0.25, 1) * (0.3 + 1.4 * cover), 0, 1)
+            // Open gaps and locally fuller patches share a bounded total density.
+            const chance = Math.clamp(profile.vegetation.groundPlantChance * Math.clamp(sample.humidity / 12, 0.25, 1) * (0.1 + 2.2 * cover * cover), 0, 1)
             if sample.slope > profile.vegetation.treeMaximumSlope or not stream.bool(chance): continue
             const choice = stream.bool(0.68) ? patterns.species(x, z) : stream.int(0, 64)
             let plant = blocks.tallGrass
@@ -66,13 +68,10 @@ export def groundPlantFeatures(
             else if choice == 3: plant = blocks.yellowFlower
             else if choice == 4: plant = blocks.blueFlower
             else if choice == 5 and adjustedTemperature >= 4 and sample.humidity >= 5:
-                plant = registry.withProperty(blocks.rye, "age", stream.int(4, 8))
+                plant = registry.withProperty(blocks.rye, "age", stream.int(3, 6))
                 supportTag = builtinIdentities.tags.cropSupport
-            else if choice == 6 and adjustedTemperature >= 4 and sample.humidity >= 6:
-                plant = registry.withProperty(blocks.wheat, "age", stream.int(0, 8))
-                supportTag = builtinIdentities.tags.cropSupport
-            else if choice == 7 and adjustedTemperature >= 8 and sample.humidity >= 8:
-                plant = registry.withProperty(blocks.cotton, "age", stream.int(1, 3))
+            else if (choice == 6 or choice == 7) and adjustedTemperature >= 7 and sample.humidity >= 6:
+                plant = registry.withProperty(blocks.cotton, "age", stream.bool(0.8) ? 1 : 0)
                 supportTag = builtinIdentities.tags.cropSupport
             else if choice == 8 and adjustedTemperature >= 6 and sample.humidity >= 6:
                 plant = registry.withProperty(blocks.pumpkinStem, "age", stream.int(0, 4))

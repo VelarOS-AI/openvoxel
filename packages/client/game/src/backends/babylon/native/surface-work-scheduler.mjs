@@ -56,17 +56,19 @@ export class LatestFrameWorkQueue {
     this.head = 0;
   }
 
-  enqueue(key, value) {
+  enqueue(key, value, mayCommit = () => true) {
     if (typeof key !== "string" || key.length === 0) throw new TypeError("Frame work key must be non-empty text");
+    requireFunction(mayCommit, "Frame work commit guard");
     return new Promise((resolve, reject) => {
       const current = this.pending.get(key);
       if (current !== undefined) {
         current.value = value;
+        current.mayCommit = mayCommit;
         current.waiters.push({resolve, reject});
         return;
       }
       const token = {};
-      this.pending.set(key, {token, value, waiters: [{resolve, reject}]});
+      this.pending.set(key, {token, value, mayCommit, waiters: [{resolve, reject}]});
       this.order.push({key, token});
     });
   }
@@ -80,8 +82,9 @@ export class LatestFrameWorkQueue {
       this.pending.delete(key);
       this.compactOrder();
       try {
-        this.commit(item.value);
-        for (const waiter of item.waiters) waiter.resolve(true);
+        const allowed = item.mayCommit();
+        if (allowed) this.commit(item.value);
+        for (const waiter of item.waiters) waiter.resolve(allowed);
       } catch (error) {
         for (const waiter of item.waiters) waiter.reject(error);
       }

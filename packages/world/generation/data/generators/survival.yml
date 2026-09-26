@@ -93,15 +93,26 @@ biomes:
   tundra: biomes.tundra
 
 surface:
-  rockSlope: 0.45
-  mixedSlope: 0.28
+  rockSlope: 0.65
+  mixedSlope: 0.42
   soilDepth: 4
   wetSoilDepth: 6
   snowTemperature: 0
   geologyPeriod: 224
   depositPeriod: 44
   outcropPeriod: 72
-  veinPeriod: 96
+
+hydrology:
+  lakes: {cellSize: 224, chance: 0.68, minimumRadius: 16, maximumRadius: 32, minimumDepth: 5, maximumDepth: 10, maximumRelief: 7}
+  ponds: {cellSize: 64, chance: 0.3, minimumRadius: 4, maximumRadius: 8, minimumDepth: 1, maximumDepth: 2, maximumRelief: 3}
+
+roads:
+  cellSize: 224
+  minimumWidth: 2.8
+  maximumWidth: 4
+  shoulderWidth: 0.65
+  branchChance: 0.18
+  maximumGrade: 0.4
 
 caves:
   tunnelCellSize: 32
@@ -111,6 +122,7 @@ caves:
   minimumRadius: 1.4
   maximumRadius: 3.2
   tunnelChance: 0.18
+  entranceChance: 0.1
   branchChance: 0.2
   chamberChance: 0.16
   minimumChamberRadius: 4
@@ -137,11 +149,11 @@ vegetation:
   treeHorizontalReach: 4
   maximumTreeHeight: 23
   cactusCellSize: 8
-  deadwoodCellSize: 12
+  deadwoodCellSize: 16
   cliffVineCellSize: 8
   aquaticCellSize: 3
   groundPlantCellSize: 1
-  groundPlantChance: 0.24
+  groundPlantChance: 0.1
   groundPatchPeriod: 24
   aquaticPatchPeriod: 18
   treeMaximumSlope: 0.42

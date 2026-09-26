@@ -37,9 +37,9 @@ npm run test:terrain -- review --discover
 npm run dev:web
 ```
 
-访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Esc` 释放指针。Creative 模式使用 `Space` 上升、`Ctrl` 下降、`Shift` 加速；Survival 模式使用 `Space` 跳跃、`C` 下蹲、`Shift` 冲刺。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
+访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Esc` 释放指针。Creative 模式使用 `Space` 上升、`Ctrl` 下降、`Shift` 加速；锁定指针后，准星选取六格内已同步的方块，鼠标左键挖掘、右键放置，数字键 `1`–`5` 切换快捷栏。编辑经世界会话保存，重新打开同一世界仍可看到修改。Survival 模式使用 `Space` 跳跃、`C` 下蹲、`Shift` 冲刺。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
 
-游戏图形后端的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/game/generated/gpu-render-probe`：
+游戏图形后端的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/game` 下测试运行时创建的 `generated/gpu-render-probe`：
 
 ```sh
 npm run test:gpu

@@ -31,16 +31,13 @@ const portalDirections: readonly List<PortalDirection> = [
 
 const allPortalFaces = Math.pow(2, portalFaceCount) - 1
 
-def containsBit(mask: number, bit: number) -> bool: return ((mask / Math.pow(2, bit)).floor() % 2) == 1
+def containsBit(mask: number, bit: number) -> bool: return (mask & (1 << bit)) != 0
 
 def connectedFaceMask(summary: PortalVisibilitySummary, incomingFace: number) -> number:
-    let mask = 0
-    for direction in portalDirections:
-        if containsBit(summary.openFaces, direction.face) and containsBit(
-            summary.connectedFaces,
-            incomingFace * portalFaceCount + direction.face,
-        ): mask += Math.pow(2, direction.face)
-    return mask
+    // connectedFaces 有 36 位，必须先用除法取出对应的六位行，再做 32 位位运算。
+    // 直接右移整张连接表会截掉第 32 至 35 位，导致部分洞口被错误遮挡。
+    const row = (summary.connectedFaces / Math.pow(2, incomingFace * portalFaceCount)).floor() % 64
+    return row & summary.openFaces
 
 /// 候选 key、六邻接和几何连通只在视区或驻留拓扑改变时重建。摘要更新使用
 /// 整数邻接表、复用队列和代次缓冲重跑 reachability，不再为每次 Worker 提交
@@ -124,17 +121,17 @@ export def portalVisibilityWorkspace() -> PortalVisibilityWorkspace:
         def markVisible(index: number): visibleGenerations[index] = reachabilityGeneration
 
         def emit(index: number, faces: number):
-            let emitted = emittedGenerations[index] == reachabilityGeneration ? emittedFaceMasks[index] : 0
+            const emitted = emittedGenerations[index] == reachabilityGeneration ? emittedFaceMasks[index] : 0
+            const pending = faces & (allPortalFaces ^ emitted)
+            if pending == 0: return
+            emittedGenerations[index] = reachabilityGeneration
+            emittedFaceMasks[index] = emitted | pending
             for face in range(portalFaceCount):
-                const bit = Math.pow(2, face)
-                if not containsBit(faces, face) or containsBit(emitted, face): continue
+                if not containsBit(pending, face): continue
                 const step = index * portalFaceCount + face
                 if queueSize == reachabilityQueue.size: reachabilityQueue.append(step)
                 else: reachabilityQueue[queueSize] = step
                 queueSize += 1
-                emitted += bit
-            emittedGenerations[index] = reachabilityGeneration
-            emittedFaceMasks[index] = emitted
 
         markVisible(start)
         const centerSummary = summaries.get(candidateKeys[start])
@@ -147,6 +144,8 @@ export def portalVisibilityWorkspace() -> PortalVisibilityWorkspace:
             cursor += 1
             const neighborIndex = neighborIndices[step]
             if neighborIndex < 0: continue
+            if emittedGenerations[neighborIndex] == reachabilityGeneration
+                and emittedFaceMasks[neighborIndex] == allPortalFaces: continue
             markVisible(neighborIndex)
 
             const summary = summaries.get(candidateKeys[neighborIndex])

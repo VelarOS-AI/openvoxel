@@ -55,6 +55,7 @@ test "built-in state map preserves the legacy range and appends new states":
         {runtimeId: 373, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=false]"},
         {runtimeId: 374, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=true]"},
         {runtimeId: 375, stateKey: "openvoxel:marble"},
+        {runtimeId: 376, stateKey: "openvoxel:pale_basalt"},
     ])
     expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "east"}])).toBe(187)
     expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "north"}])).toBe(188)

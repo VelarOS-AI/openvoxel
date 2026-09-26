@@ -55,7 +55,12 @@ export def ecologyCandidatePlanner(
         assert ageDefinition != null and ageDefinition.kind == BlockPropertyKind.integer else f"Crop {state.blockKey} requires its declared integer age property"
         const age = state.properties.find(property => property.name == ageProperty)?.value
         assert (age is number) and age.isInteger() and age >= ageDefinition.minimum and age <= ageDefinition.maximum else f"Crop {state.blockKey} has an invalid age state"
-        cropGrowthStates.set(state.runtimeId, {ageProperty, age, maximumAge: ageDefinition.maximum, epochsPerStage: behavior.epochsPerStage})
+        // Natural projections have their own ceiling. Player-planted crops use
+        // the full content behavior in world-runtime, including white cotton.
+        let maximumAge = ageDefinition.maximum
+        if state.blockKey == builtinIdentities.blocks.cotton: maximumAge = Math.min(maximumAge, 1)
+        else if state.blockKey == builtinIdentities.blocks.rye: maximumAge = Math.min(maximumAge, 5)
+        cropGrowthStates.set(state.runtimeId, {ageProperty, age, maximumAge, epochsPerStage: behavior.epochsPerStage})
 
     def remember(chunk: readonly Chunk) -> readonly List<EcologyCandidate>:
         const position = chunk.position

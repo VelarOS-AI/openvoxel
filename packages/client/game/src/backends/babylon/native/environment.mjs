@@ -20,6 +20,7 @@ import {createWeatherParticles} from "./weather-particles.mjs";
 import {requireEnvironmentFrame, requireEnvironmentPosition, requireEnvironmentResources, requireFinite} from "./environment-contract.mjs";
 import {loadEnvironmentTextures} from "./environment-textures.mjs";
 import {createSky} from "./sky-layer.mjs";
+import {LightingTransition} from "./lighting-transition.mjs";
 
 const shadowMapSize = 2_048;
 const shadowRefreshIntervalMilliseconds = 100;
@@ -72,6 +73,7 @@ class BabylonVoxelEnvironment {
     this.renderDistance = renderDistance;
     this.textures = textures;
     this.frame = frame;
+    this.lightingTransition = new LightingTransition(frame);
     this.disposed = false;
     this.visualWorldMilliseconds = this.frame.worldMilliseconds;
     this.lightningAgeMs = Number.POSITIVE_INFINITY;
@@ -93,7 +95,7 @@ class BabylonVoxelEnvironment {
     this.sunLight.shadowMaxZ = renderDistance * 3;
     this.shadowGenerator = new ShadowGenerator(shadowMapSize, this.sunLight);
     this.shadowGenerator.bias = 0.0003;
-    this.shadowGenerator.normalBias = 0.02;
+    this.shadowGenerator.normalBias = 0.08;
     // Babylon darkness is retained sunlight: zero gives full occlusion.
     // Sky irradiance supplies the blue fill inside the resulting shadow.
     this.shadowGenerator.setDarkness(0.08);
@@ -197,6 +199,7 @@ class BabylonVoxelEnvironment {
   applyFrame(candidate) {
     const previousSunDirection = this.frame.sunDirection;
     this.frame = requireEnvironmentFrame(candidate);
+    this.lightingTransition.apply(this.frame);
     if (!previousSunDirection.equals(this.frame.sunDirection)) this.shadowRefresh.invalidate();
     this.visualWorldMilliseconds = this.frame.worldMilliseconds;
     const lightning = this.frame.lightning;
@@ -212,8 +215,8 @@ class BabylonVoxelEnvironment {
   }
 
   updateVisuals(flash) {
-    const frame = this.frame;
-    this.scene.ambientColor.copyFrom(frame.ground.scale(0.06));
+    const frame = this.lightingTransition.frame;
+    this.scene.ambientColor.copyFrom(frame.ground.scale(0.015));
     this.scene.clearColor.set(frame.horizon.r, frame.horizon.g, frame.horizon.b, 1);
     this.scene.fogColor.copyFrom(frame.fog);
     const fog = environmentFogRange(this.renderDistance, frame.fogDensityFactor);
@@ -227,14 +230,14 @@ class BabylonVoxelEnvironment {
     this.atmosphere ??= {};
     Object.assign(this.atmosphere, {skyTop: frame.skyTop, horizon: frame.horizon, ground: frame.ground, flash});
 
-    this.skyLight.intensity = 0.06 + frame.skyIntensity * 0.28 + flash * 0.2;
+    this.skyLight.intensity = 0.004 + frame.skyIntensity * 0.34 + flash * 0.2;
     this.skyLight.diffuse = Color3.Lerp(new Color3(0.22, 0.28, 0.48), new Color3(0.96, 0.98, 1), frame.daylightIntensity);
     this.skyLight.groundColor.copyFrom(frame.ground);
     this.sunLight.diffuse = Color3.Lerp(new Color3(1, 0.55, 0.28), new Color3(1, 0.96, 0.86), frame.daylightIntensity);
-    this.sunLight.intensity = frame.sunIntensity * 2.1 + flash * 0.12;
+    this.sunLight.intensity = frame.sunIntensity * 3.2 + flash * 0.12;
     this.moonLight.direction.copyFrom(frame.moonDirection);
     this.moonLight.diffuse = new Color3(0.42, 0.52, 0.8);
-    this.moonLight.intensity = frame.moonIntensity * 0.5;
+    this.moonLight.intensity = frame.moonIntensity * 0.65;
 
     this.celestial.applyFrame(frame);
     this.clouds.applyFrame(frame);
@@ -251,6 +254,7 @@ class BabylonVoxelEnvironment {
     const ground = groundPosition === null
       ? null
       : requireEnvironmentPosition(groundPosition, "Voxel environment ground position");
+    if (this.lightingTransition.advance(deltaMs)) this.updateVisuals(this.frame.lightningFlash);
     this.sky.mesh.position.copyFrom(center);
     this.celestial.update(center);
     const celestialRadius = this.renderDistance * 1.45;
@@ -269,12 +273,16 @@ class BabylonVoxelEnvironment {
       this.shadowRefresh.invalidate();
     }
     if (this.shadowCasters.update(center)) this.shadowRefresh.invalidate();
-    if (this.shadowRefresh.advance(deltaMs)) {
+    if (this.sunLight.intensity > 0.005 && this.shadowRefresh.advance(deltaMs)) {
       this.sunLight.position.set(lightPosition.x, lightPosition.y, lightPosition.z);
       this.sunLight.direction.copyFrom(this.frame.sunDirection);
       this.shadowGenerator.getShadowMap().resetRefreshCounter();
     }
     this.moonLight.position.copyFrom(this.celestial.moon.mesh.position);
+    const wetTarget = this.frame.precipitation === "rain" ? this.frame.precipitationIntensity : 0;
+    const wetness = this.atmosphere.wetness ?? 0;
+    const wetRate = wetTarget > wetness ? 0.12 : 0.012;
+    this.atmosphere.wetness = wetness + (wetTarget - wetness) * (1 - Math.exp(-deltaMs * wetRate / 1000));
     this.visualWorldMilliseconds += deltaMs;
     this.clouds.update(center, this.visualWorldMilliseconds);
     this.weather.update(deltaMs, center, ground, groundAt);
@@ -317,6 +325,10 @@ class BabylonVoxelEnvironment {
     );
   }
 
+  invalidateShadowMap() {
+    this.shadowRefresh.invalidate();
+  }
+
   addShadowCaster(mesh) {
     this.shadowCasters.add(mesh);
   }
@@ -337,6 +349,7 @@ class BabylonVoxelEnvironment {
       activeSnowParticles: this.weather.snow.getActiveCount(),
       activeRainSplashes: this.weather.splash.getActiveCount(),
       activeSnowSplashes: weather.activeSnowSplashes,
+      precipitationSeverity: weather.severity,
       rainSplashContacts: weather.rainSplashContacts,
       snowSplashContacts: weather.snowSplashContacts,
       rainSplashGrounded: this.rainSplashGrounded,

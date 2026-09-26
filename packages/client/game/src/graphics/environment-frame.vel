@@ -86,26 +86,26 @@ export def worldGraphicsEnvironmentFrame(sample: WorldEnvironmentSample) -> Worl
     const sunDirection: WorldGraphicsVector3 = {x: -celestialX, y: -celestialY, z: -celestialZ}
     const moonDirection: WorldGraphicsVector3 = {x: celestialX, y: celestialY, z: celestialZ}
 
-    const daylightIntensity = smoothstep(-0.12, 0.22, celestialY)
+    const daylightIntensity = smoothstep(-0.16, 0.28, celestialY)
     const nightIntensity = 1 - smoothstep(-0.22, 0.06, celestialY)
     const twilight = smoothstep(-0.24, -0.02, celestialY) * (1 - smoothstep(0.04, 0.42, celestialY))
     const weatherDimming = Math.clamp(1 - current.cloudiness * 0.42 - current.precipitationIntensity * 0.36, 0.22, 1)
     const flash = lightningFlash(current)
     const phaseDistance = Math.min(current.moonPhase, 8 - current.moonPhase)
     const moonPhaseVisibility = 1 - phaseDistance / 4
-    const sunIntensity = saturate(daylightIntensity * weatherDimming)
-    const moonIntensity = saturate(nightIntensity * (0.045 + 0.24 * moonPhaseVisibility) * weatherDimming)
+    const sunIntensity = saturate(smoothstep(-0.025, 0.55, celestialY) * weatherDimming)
+    const moonIntensity = saturate(nightIntensity * (0.008 + 0.10 * moonPhaseVisibility) * weatherDimming)
     // 星光按昼夜和降水共同的透光率平方衰减；云的遮挡由云层贴图覆盖承担。
     const starIntensity = Math.pow((1 - daylightIntensity) * (1 - current.precipitationIntensity), 2)
-    const skyIntensity = saturate((0.09 + 0.91 * daylightIntensity + 0.58 * moonIntensity) * (0.55 + 0.45 * weatherDimming) + flash * 0.14)
+    const skyIntensity = saturate((0.012 + 0.988 * daylightIntensity + 0.20 * moonIntensity) * (0.55 + 0.45 * weatherDimming) + flash * 0.14)
 
-    const nightTop = color(0.026, 0.05, 0.115)
+    const nightTop = color(0.009, 0.018, 0.046)
     const dayTop = color(0.18, 0.47, 0.84)
     const twilightTop = color(0.08, 0.18, 0.34)
-    const nightHorizon = color(0.07, 0.1, 0.19)
+    const nightHorizon = color(0.022, 0.035, 0.068)
     const dayHorizon = color(0.7, 0.84, 0.96)
     const twilightHorizon = color(0.95, 0.43, 0.18)
-    const nightGround = color(0.025, 0.034, 0.065)
+    const nightGround = color(0.005, 0.009, 0.018)
     const dayGround = color(0.12, 0.17, 0.19)
     const twilightGround = color(0.08, 0.065, 0.06)
     const skyWeatherScale = 0.55 + 0.45 * weatherDimming

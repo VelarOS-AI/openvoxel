@@ -27,7 +27,7 @@ blocks:
   kelp: blocks.kelp
   largeDryBush: blocks.largeDryBush
   limestone: blocks.limestone
-  marble: blocks.marble
+  paleBasalt: blocks.paleBasalt
   magma: blocks.magma
   mimosaLeaves: blocks.mimosaLeaves
   mimosaLog: blocks.mimosaLog

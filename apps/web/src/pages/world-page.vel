@@ -1,4 +1,4 @@
-import {WorldGameStats, openLocalWorldGame} from "@openvoxel/game"
+import {WorldGameStats, creativePalette, openLocalWorldGame} from "@openvoxel/game"
 import {WorldGameMode, WorldManifest} from "@openvoxel/world"
 import {closeDialog, showDialog} from "velar/browser"
 import {Head, RouteContext} from "velar/web"
@@ -7,9 +7,9 @@ import {WorldMinimapPanel} from "../worlds/world-minimap.vel"
 import {asyncPageLifetime} from "../lifecycle/async-page-lifetime.vel"
 import {WorldExitGuard, releaseWorldPointerLock, worldExitGuard} from "../lifecycle/world-exit-guard.vel"
 import {navigate} from "../navigation/app-navigation.vel"
-import {primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
+import {primaryButtonLook, secondaryButtonLook} from "../styles/common.vel"
 import {navButtonLook} from "../styles/shell.vel"
-import {gameCanvasLook, loadingLook, worldChromeLook, worldExitActionsLook, worldExitBodyLook, worldExitDescriptionLook, worldExitDialogLook, worldExitTitleLook, worldStageLook} from "../styles/world-stage.vel"
+import {creativeAimActiveLook, creativeAimIdleLook, creativeAimLook, creativeBlockImageLook, creativeEditErrorLook, creativeHudLook, creativeSelectedSlotLook, creativeSlotLook, creativeToolbarLook, gameCanvasLook, loadingLook, worldBackButtonLook, worldChromeLook, worldExitActionsLook, worldExitBodyLook, worldExitDescriptionLook, worldExitDialogLook, worldExitTitleLook, worldStageLook} from "../styles/world-stage.vel"
 
 export component WorldPage(route: RouteContext):
     const lifetime = asyncPageLifetime()
@@ -137,6 +137,11 @@ export component WorldPage(route: RouteContext):
         data-view-chunk-x={str(stats?.viewChunkX ?? 0)}
         data-view-chunk-y={str(stats?.viewChunkY ?? 0)}
         data-view-chunk-z={str(stats?.viewChunkZ ?? 0)}
+        data-render-status={renderStatus}
+        data-creative-target-x={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.x)}
+        data-creative-target-y={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.y)}
+        data-creative-target-z={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.z)}
+        data-creative-target-runtime-id={stats?.creativeTarget == null ? null : str(stats.creativeTarget.runtimeId)}
     >
         <Head
             title={world == null ? "OpenVoxel" : f"{world.name} · OpenVoxel"}
@@ -154,21 +159,35 @@ export component WorldPage(route: RouteContext):
             data-navigation-mode="first-person"
             data-movement-mode={world?.mode == WorldGameMode.creative ? "creative-flight" : "survival-walk"}
         ></canvas>
-        <div look={worldChromeLook}>
-            <button type="button" look={navButtonLook} on:click={requestHomeLeave} aria-label="Back to worlds" data-leave-world>
+        <div look={worldChromeLook} data-world-chrome>
+            <button type="button" look={worldBackButtonLook} on:click={requestHomeLeave} aria-label="Back to worlds" data-leave-world>
                 <Icon name={IconName.chevronLeft} />
             </button>
-            <div>
-                <strong>{world?.name ?? "Opening world"}</strong>
-                <p look={subtitleLook} aria-live="polite" data-render-status>{renderStatus}</p>
-                <p look={subtitleLook} data-first-person-controls>
-                    {world?.mode == WorldGameMode.creative
-                        ? "Click to look · WASD move · Space rise · Ctrl descend · Shift accelerate · Esc release"
-                        : "Click to look · WASD move · Space jump · C crouch · Shift sprint · Esc release"}
-                </p>
-            </div>
         </div>
         <WorldMinimapPanel attach={mountMinimap} />
+        {world?.mode == WorldGameMode.creative ? <>
+            <div look={creativeAimLook} aria-hidden="true" data-creative-crosshair>
+                <span look={stats?.creativeTarget == null ? creativeAimIdleLook : creativeAimActiveLook}>+</span>
+            </div>
+            <div look={creativeHudLook} data-creative-hud>
+                {stats?.creativeEditError == null ? <></> : <p look={creativeEditErrorLook} role="alert" data-creative-edit-error>{stats.creativeEditError}</p>}
+                <div look={creativeToolbarLook} aria-label="Creative blocks" data-creative-toolbar>
+                    {creativePalette.map((entry, index) => <div
+                        look={stats?.creativeSlot == index ? creativeSelectedSlotLook : creativeSlotLook}
+                        data-creative-slot={str(index + 1)}
+                        data-selected={str(stats?.creativeSlot == index)}
+                        title={f"{index + 1}: {entry.label}"}
+                    >
+                        <img
+                            look={creativeBlockImageLook}
+                            src={f"/generated/creative-blocks/{entry.previewName}.png"}
+                            alt={entry.label}
+                            draggable={false}
+                        />
+                    </div>)}
+                </div>
+            </div>
+        </> : <></>}
         {loading ? <div look={loadingLook} aria-busy="true" data-world-loading>Opening world…</div> : <></>}
         {failure.isBlank() ? <></> : <div look={loadingLook} role="alert" data-error>
             <div>

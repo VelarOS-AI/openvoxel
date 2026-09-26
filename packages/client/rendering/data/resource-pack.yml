@@ -1,4 +1,4 @@
-formatVersion: 11
+formatVersion: 12
 owner: openvoxel
 
 textureCatalogs:
@@ -27,19 +27,23 @@ environment:
       - environment/sky/moon-08.webp
   clouds:
     texture: environment/sky/clouds.webp
+  foliage:
+    leaf: environment/foliage/leaf.webp
   precipitation:
     rain: environment/weather/rain.webp
     rainSplash: environment/weather/rain-splash.webp
     snow: environment/weather/snow.webp
 
 surfaceProfiles:
-  - {key: rock, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.55, occlusionStrength: 0.28, roughness: 0.88, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: paving, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.42, occlusionStrength: 0.25, roughness: 0.86, roughnessVariation: 0.04, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: rock, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.58, occlusionStrength: 0.32, roughness: 0.88, roughnessVariation: 0.1, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: soil, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.45, occlusionStrength: 0.2, roughness: 0.94, roughnessVariation: 0.06, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: grass, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.75, occlusionStrength: 0.2, roughness: 0.94, roughnessVariation: 0.06, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: mineral, normalFallback: albedo-height, materialFallback: uniform, normalStrength: 0.35, occlusionStrength: 0.3, roughness: 0.82, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: metallic-mineral, normalFallback: albedo-height, materialFallback: uniform, normalStrength: 0.5, occlusionStrength: 0.32, roughness: 0.78, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: wood, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.15, occlusionStrength: 0.22, roughness: 0.86, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: foliage, normalFallback: flat, materialFallback: uniform, normalStrength: 0.42, occlusionStrength: 0.12, roughness: 0.84, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
-  - {key: plant, normalFallback: flat, materialFallback: uniform, normalStrength: 0.24, occlusionStrength: 0.08, roughness: 0.9, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: wood, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.24, occlusionStrength: 0.28, roughness: 0.86, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: foliage, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.12, occlusionStrength: 0.12, roughness: 0.84, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
+  - {key: plant, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.1, occlusionStrength: 0.08, roughness: 0.9, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: cactus, normalFallback: albedo-height, materialFallback: albedo-derived, normalStrength: 0.18, occlusionStrength: 0.18, roughness: 0.82, roughnessVariation: 0.08, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: snow, normalFallback: flat, materialFallback: uniform, normalStrength: 0.22, occlusionStrength: 0.06, roughness: 0.8, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
   - {key: ice, normalFallback: flat, materialFallback: uniform, normalStrength: 0.3, occlusionStrength: 0.04, roughness: 0.12, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}
@@ -61,18 +65,19 @@ models:
   - {key: openvoxel:model/block/fluid, kind: fluid}
 
 materials:
-  - {key: openvoxel:material/terrain, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 0.9, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/metal, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 1.15, clearCoat: 0.08, clearCoatRoughness: 0.2, unlit: false}
-  - {key: openvoxel:material/leaves, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: false, castsShadows: true, environmentIntensity: 0.75, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/cross, precipitationSurface: none, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, environmentIntensity: 0.72, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
-  - {key: openvoxel:material/model, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: true, environmentIntensity: 0.85, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/terrain, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 0.85, specularWeight: 0.28, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/metal, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0, doubleSided: false, castsShadows: true, environmentIntensity: 1.15, specularWeight: 1, clearCoat: 0.08, clearCoatRoughness: 0.2, unlit: false}
+  - {key: openvoxel:material/leaves, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: false, castsShadows: true, environmentIntensity: 0.75, specularWeight: 0.18, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/cross, precipitationSurface: none, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, environmentIntensity: 0.72, specularWeight: 0.12, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/vine, precipitationSurface: none, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: false, environmentIntensity: 0.72, specularWeight: 0.12, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
+  - {key: openvoxel:material/model, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 1, alphaCutoff: 0.45, doubleSided: true, castsShadows: true, environmentIntensity: 0.85, specularWeight: 0, clearCoat: 0, clearCoatRoughness: 0, unlit: false}
   - key: openvoxel:material/water
     precipitationSurface: water
     materialEffect: water
     waterOptics:
       indexOfRefraction: 1.333
-      roughness: 0.055
-      normalStrength: 0.22
+      roughness: 0.07
+      normalStrength: 0.32
       waves:
         - {normalTexture: openvoxel:texture/block/water, scale: 0.08, speed: 0.018, directionX: 0.894427, directionZ: 0.447214}
         - {normalTexture: openvoxel:texture/block/water_flow, scale: 0.137, speed: 0.027, directionX: -0.351123, directionZ: 0.936329}
@@ -81,14 +86,16 @@ materials:
     doubleSided: true
     castsShadows: false
     environmentIntensity: 1.35
+    specularWeight: 1
     clearCoat: 0
     clearCoatRoughness: 0
     unlit: false
-  - {key: openvoxel:material/magma, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 0.92, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 0.35, clearCoat: 0.04, clearCoatRoughness: 0.35, unlit: false}
-  - {key: openvoxel:material/ice, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 0.72, alphaCutoff: 0, doubleSided: false, castsShadows: false, environmentIntensity: 1.25, clearCoat: 0.42, clearCoatRoughness: 0.08, unlit: false}
+  - {key: openvoxel:material/magma, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 0.92, alphaCutoff: 0, doubleSided: true, castsShadows: false, environmentIntensity: 0.35, specularWeight: 1, clearCoat: 0.04, clearCoatRoughness: 0.35, unlit: false}
+  - {key: openvoxel:material/ice, precipitationSurface: solid, materialEffect: standard, waterOptics: null, alpha: 0.72, alphaCutoff: 0, doubleSided: false, castsShadows: false, environmentIntensity: 1.25, specularWeight: 1, clearCoat: 0.42, clearCoatRoughness: 0.08, unlit: false}
 
 tints:
-  - {key: openvoxel:tint/deciduous_foliage, climate: foliage, coverage: all, red: 1, green: 1, blue: 0.94}
+  - {key: openvoxel:tint/pale_stone, climate: none, coverage: all, red: 0.82, green: 0.80, blue: 0.76}
+  - {key: openvoxel:tint/deciduous_foliage, climate: foliage, coverage: all, red: 1, green: 1, blue: 1}
   - {key: openvoxel:tint/birch_foliage, climate: birch_foliage, coverage: all, red: 1, green: 1, blue: 1}
   - {key: openvoxel:tint/poplar_foliage, climate: poplar_foliage, coverage: all, red: 1, green: 1, blue: 1}
   - {key: openvoxel:tint/evergreen_foliage, climate: evergreen_foliage, coverage: all, red: 1, green: 1, blue: 1}

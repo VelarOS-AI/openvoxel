@@ -97,7 +97,7 @@ blocks:
     defaultState: [{name: facing, value: north}]
     physics: {collision: {kind: none}, selection: {kind: custom, key: shapes.cross}, occlusion: {kind: none}, replaceable: true, friction: 0.6, speedFactor: 1, jumpFactor: 1}
     light: {emission: 0, opacity: 0, skylight: pass_through, ambientOcclusion: false}
-    render: {model: models.block.wallOverlay, layer: cutout, material: materials.cross, textures: {all: textures.block.vine}, tint: tints.deciduousFoliage, cullFaces: false}
+    render: {model: models.block.wallOverlay, layer: cutout, material: materials.vine, textures: {all: textures.block.vine}, tint: tints.deciduousFoliage, cullFaces: false}
     interaction: {breakable: true, hardness: 0.1, blastResistance: 0.1, toolTag: tools.shears, drops: loot.block.vine, sounds: sounds.grass}
     behaviors: [{kind: flammable, ignitionChance: 0.55, spreadChance: 0.95}, {kind: placement, strategy: horizontal_facing}, {kind: support, face: sides, supportingTag: tags.vineSupport}]
     variants: []

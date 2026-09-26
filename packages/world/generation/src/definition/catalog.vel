@@ -110,7 +110,7 @@ export type GeneratorBlockSlots<T>:
     kelp: T
     largeDryBush: T
     limestone: T
-    marble: T
+    paleBasalt: T
     magma: T
     mimosaLeaves: T
     mimosaLog: T
@@ -160,7 +160,27 @@ export type SurfaceConfig:
     geologyPeriod: number
     depositPeriod: number
     outcropPeriod: number
-    veinPeriod: number
+
+export type BasinConfig:
+    cellSize: number
+    chance: number
+    minimumRadius: number
+    maximumRadius: number
+    minimumDepth: number
+    maximumDepth: number
+    maximumRelief: number
+
+export type HydrologyConfig:
+    lakes: BasinConfig
+    ponds: BasinConfig
+
+export type RoadConfig:
+    cellSize: number
+    minimumWidth: number
+    maximumWidth: number
+    shoulderWidth: number
+    branchChance: number
+    maximumGrade: number
 
 export type CaveConfig:
     tunnelCellSize: number
@@ -170,6 +190,7 @@ export type CaveConfig:
     minimumRadius: number
     maximumRadius: number
     tunnelChance: number
+    entranceChance: number
     branchChance: number
     chamberChance: number
     minimumChamberRadius: number
@@ -239,6 +260,8 @@ export type WorldGeneratorDefinition:
     terrainTypes: TerrainTypeIdentities
     biomes: BiomeIdentities
     surface: SurfaceConfig
+    roads: RoadConfig
+    hydrology: HydrologyConfig
     caves: CaveConfig
     aquifers: AquiferConfig
     minerals: List<MineralConfig>

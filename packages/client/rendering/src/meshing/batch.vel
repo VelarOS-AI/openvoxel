@@ -83,6 +83,7 @@ def pushVertex(
     red: number = 1,
     green: number = 1,
     blue: number = 1,
+    alpha: number = 1,
 ):
     batch.positions.push(x)
     batch.positions.push(y)
@@ -97,7 +98,7 @@ def pushVertex(
     batch.colors.push(state.tintRed * shade * red)
     batch.colors.push(state.tintGreen * shade * green)
     batch.colors.push(state.tintBlue * shade * blue)
-    batch.colors.push(1)
+    batch.colors.push(alpha)
 
 export def emitQuad(
     batch: MutableMeshBatch,
@@ -119,22 +120,36 @@ export def emitQuad(
     nx: number,
     ny: number,
     nz: number,
+    alpha: number = 1,
+    aoA: number = 1,
+    aoB: number = 1,
+    aoC: number = 1,
+    aoD: number = 1,
 ):
     assert batch.budget.quads < maximumChunkMeshQuads else "Chunk mesh exceeds the 8 MiB geometry budget"
     batch.budget.quads += 1
     const first = batch.vertexCount
     const shade = faceShade(face, state.emission)
     const tintRole = climateTintRole(state, face)
-    pushVertex(batch, state, shade, ax, ay, az, nx, ny, nz, 0, 0, texture.layer, tintRole)
-    pushVertex(batch, state, shade, bx, by, bz, nx, ny, nz, 1, 0, texture.layer, tintRole)
-    pushVertex(batch, state, shade, cx, cy, cz, nx, ny, nz, 1, 1, texture.layer, tintRole)
-    pushVertex(batch, state, shade, dx, dy, dz, nx, ny, nz, 0, 1, texture.layer, tintRole)
-    batch.indices.push(first)
-    batch.indices.push(first + 1)
-    batch.indices.push(first + 2)
-    batch.indices.push(first)
-    batch.indices.push(first + 2)
-    batch.indices.push(first + 3)
+    pushVertex(batch, state, shade * aoA, ax, ay, az, nx, ny, nz, 0, 0, texture.layer, tintRole, 1, 1, 1, alpha)
+    pushVertex(batch, state, shade * aoB, bx, by, bz, nx, ny, nz, 1, 0, texture.layer, tintRole, 1, 1, 1, alpha)
+    pushVertex(batch, state, shade * aoC, cx, cy, cz, nx, ny, nz, 1, 1, texture.layer, tintRole, 1, 1, 1, alpha)
+    pushVertex(batch, state, shade * aoD, dx, dy, dz, nx, ny, nz, 0, 1, texture.layer, tintRole, 1, 1, 1, alpha)
+    // Choose the diagonal with the smoother occlusion interpolation.
+    if aoA + aoC > aoB + aoD:
+        batch.indices.push(first)
+        batch.indices.push(first + 1)
+        batch.indices.push(first + 3)
+        batch.indices.push(first + 1)
+        batch.indices.push(first + 2)
+        batch.indices.push(first + 3)
+    else:
+        batch.indices.push(first)
+        batch.indices.push(first + 1)
+        batch.indices.push(first + 2)
+        batch.indices.push(first)
+        batch.indices.push(first + 2)
+        batch.indices.push(first + 3)
     batch.vertexCount += 4
     batch.quadCount += 1
 

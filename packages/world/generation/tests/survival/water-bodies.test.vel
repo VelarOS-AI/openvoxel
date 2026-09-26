@@ -1,0 +1,98 @@
+import {baseWorldBlockRegistry, findFluidBehavior} from "@openvoxel/blocks"
+import {Chunk, chunkBlock, locateBlock} from "@openvoxel/world"
+import {defaultGenerator, instantiateWorldGenerator} from "../../src/generator-registry.vel"
+import {expect} from "velar/test"
+import {BasinConfig, HydrologyConfig} from "../../src/definition/catalog.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {createWaterBodyPlanner} from "../../src/survival/water-bodies.vel"
+import {WaterBodyKind} from "../../src/terrain-sample.vel"
+
+const builtin = baseWorldGeneratorCatalog.generators[0].hydrology
+
+def onlyLakes() -> HydrologyConfig:
+    return {lakes: BasinConfig.from(builtin.lakes, {chance: 1}), ponds: BasinConfig.from(builtin.ponds, {chance: 0})}
+
+test "lake and pond basins have one water level, submerged beds and a closed raised rim":
+    for kind in [WaterBodyKind.lake, WaterBodyKind.pond]:
+        const config = kind == WaterBodyKind.lake ? onlyLakes() : HydrologyConfig.from(builtin, {
+            lakes: BasinConfig.from(builtin.lakes, {chance: 0}),
+            ponds: BasinConfig.from(builtin.ponds, {chance: 1}),
+        })
+        const planner = createWaterBodyPlanner("closed-basins", config, 64, (x, z) => ({height: 80, humidity: 9, riverStrength: 0}))
+        const size = kind == WaterBodyKind.lake ? builtin.lakes.cellSize : builtin.ponds.cellSize
+        let wet = 0
+        let deep = 0
+        let rim = 0
+        for x in range(size):
+            for z in range(size):
+                const sample = planner.sample(x, z)
+                if sample == null: continue
+                expect(sample.kind).toBe(kind)
+                expect(sample.waterLevel).toBe(79)
+                if sample.floorY < sample.waterLevel:
+                    wet += 1
+                    if sample.waterLevel - sample.floorY > (kind == WaterBodyKind.lake ? 4 : 1): deep += 1
+                    for neighbor in [planner.sample(x - 1, z), planner.sample(x + 1, z), planner.sample(x, z - 1), planner.sample(x, z + 1)]:
+                        expect(neighbor != null).toBe(true)
+                        expect(neighbor?.waterLevel).toBe(sample.waterLevel)
+                else if sample.weight == 1: rim += 1
+        expect(wet > (kind == WaterBodyKind.lake ? 300 : 10)).toBe(true)
+        expect(deep > 0).toBe(true)
+        expect(rim > 0).toBe(true)
+
+test "basins reject sea, dry land, river crossings and steep terrain":
+    for ground in [
+        (x: number, z: number) => ({height: 66, humidity: 9, riverStrength: 0}),
+        (x: number, z: number) => ({height: 80, humidity: 2, riverStrength: 0}),
+        (x: number, z: number) => ({height: 80, humidity: 9, riverStrength: 0.8}),
+        (x: number, z: number) => ({height: 80 + x * 0.5, humidity: 9, riverStrength: 0}),
+    ]:
+        const planner = createWaterBodyPlanner("rejected-basins", onlyLakes(), 64, ground)
+        for x in range(0, 224, 8):
+            for z in range(0, 224, 8): expect(planner.sample(x, z)).toBe(null)
+
+test "basins remain deterministic at negative coordinates and after cache eviction":
+    const a = createWaterBodyPlanner("basin-seams", onlyLakes(), 64, (x, z) => ({height: 80, humidity: 9, riverStrength: 0}))
+    const b = createWaterBodyPlanner("basin-seams", onlyLakes(), 64, (x, z) => ({height: 80, humidity: 9, riverStrength: 0}))
+    for cell in range(400): a.sample(cell * 224, cell * -224)
+    expect(a.cachedRegionCount() <= 256).toBe(true)
+    let hits = 0
+    for x in range(-224, 224, 4):
+        for z in range(-224, 224, 4):
+            const left = a.sample(x, z)
+            const right = b.sample(x, z)
+            expect(left?.floorY).toBe(right?.floorY)
+            expect(left?.waterLevel).toBe(right?.waterLevel)
+            expect(left?.weight).toBe(right?.weight)
+            if left != null: hits += 1
+    expect(hits > 100).toBe(true)
+
+test "generated lakes and ponds preserve water and sealed beds across negative Chunk borders":
+    const generator = instantiateWorldGenerator(defaultGenerator, "continental-ridges", 16)
+    const registry = baseWorldBlockRegistry.registry
+    const chunks: Map<string, Chunk> = Map()
+
+    def blockAt(x: number, y: number, z: number) -> number:
+        const location = locateBlock({x, y, z}, 16)
+        const key = f"{location.chunk.x}:{location.chunk.y}:{location.chunk.z}"
+        if not chunks.has(key): chunks.set(key, generator.generate(location.chunk))
+        return chunkBlock(chunks.get(key)!, location.local)
+
+    for site in [{x: -1024, z: -376, level: 71, kind: WaterBodyKind.lake}, {x: -856, z: 36, level: 68, kind: WaterBodyKind.pond}]:
+        let wet = 0
+        for x in range(site.x - 2, site.x + 3):
+            for z in range(site.z - 2, site.z + 3):
+                const sample = generator.sample({x, z})
+                if sample.surfaceY >= site.level: continue
+                expect(sample.waterBody).toBe(site.kind)
+                expect(sample.waterLevel).toBe(site.level)
+                expect(sample.roadDistance).toBe(null)
+                wet += 1
+                for y in range(sample.surfaceY + 1, site.level + 1):
+                    const state = registry.requireStateByRuntimeId(blockAt(x, y, z))
+                    expect(findFluidBehavior(state.behaviors) != null).toBe(true)
+                for y in range(sample.surfaceY - 1, sample.surfaceY + 1):
+                    const state = registry.requireStateByRuntimeId(blockAt(x, y, z))
+                    expect(state.blockKey == "openvoxel:air").toBe(false)
+                    expect(findFluidBehavior(state.behaviors)).toBe(null)
+        expect(wet >= 5).toBe(true)

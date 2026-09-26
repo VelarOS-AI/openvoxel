@@ -53,6 +53,7 @@ identities:
     largeDryBush: openvoxel:large_dry_bush
     limestone: openvoxel:limestone
     marble: openvoxel:marble
+    paleBasalt: openvoxel:pale_basalt
     magma: openvoxel:magma
     mimosaLeaves: openvoxel:mimosa_leaves
     mimosaLog: openvoxel:mimosa_log
@@ -147,6 +148,7 @@ identities:
 
   materials:
     cross: openvoxel:material/cross
+    vine: openvoxel:material/vine
     ice: openvoxel:material/ice
     leaves: openvoxel:material/leaves
     magma: openvoxel:material/magma
@@ -182,6 +184,7 @@ identities:
       largeDryBush: openvoxel:texture/block/large_dry_bush
       limestone: openvoxel:texture/block/limestone
       marble: openvoxel:texture/block/marble
+      paleBasalt: openvoxel:texture/block/pale_basalt
       magma: openvoxel:texture/block/magma
       mimosaLeaves: openvoxel:texture/block/mimosa_leaves
       mimosaLogSide: openvoxel:texture/block/mimosa_log_side
@@ -250,6 +253,7 @@ identities:
       yellowFlower: openvoxel:texture/block/yellow_flower
 
   tints:
+    paleStone: openvoxel:tint/pale_stone
     deciduousFoliage: openvoxel:tint/deciduous_foliage
     birchFoliage: openvoxel:tint/birch_foliage
     poplarFoliage: openvoxel:tint/poplar_foliage
@@ -288,6 +292,7 @@ identities:
       largeDryBush: openvoxel:loot/block/large_dry_bush
       limestone: openvoxel:loot/block/limestone
       marble: openvoxel:loot/block/marble
+      paleBasalt: openvoxel:loot/block/pale_basalt
       mimosaLeaves: openvoxel:loot/block/mimosa_leaves
       mimosaLog: openvoxel:loot/block/mimosa_log
       oakLeaves: openvoxel:loot/block/oak_leaves
@@ -372,6 +377,7 @@ identities:
       largeDryBush: block.openvoxel.large_dry_bush
       limestone: block.openvoxel.limestone
       marble: block.openvoxel.marble
+      paleBasalt: block.openvoxel.pale_basalt
       magma: block.openvoxel.magma
       mimosaLeaves: block.openvoxel.mimosa_leaves
       mimosaLog: block.openvoxel.mimosa_log

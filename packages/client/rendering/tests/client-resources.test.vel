@@ -186,8 +186,8 @@ test "resource packs fail before rendering when their target content build diffe
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
 test "built-in resources expose role-scoped generated texture arrays":
-    expect(builtinClientResourcePack.artifactVersion).toBe(9)
-    expect(builtinClientResourcePack.formatVersion).toBe(9)
+    expect(builtinClientResourcePack.artifactVersion).toBe(10)
+    expect(builtinClientResourcePack.formatVersion).toBe(10)
     expect(builtinClientResourcePack.textureBanks.size).toBe(4)
     const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
     expect(ClientTextureBankRole.opaque in roles).toBe(true)
@@ -232,13 +232,16 @@ test "material families preserve lighting, shadow, and PBR response semantics":
     expect(water.unlit).toBe(false)
     expect(magma.unlit).toBe(false)
     expect(water.environmentIntensity > terrain.environmentIntensity).toBe(true)
+    expect(terrain.specularWeight).toBe(0.28)
+    expect(cross.specularWeight).toBe(0.12)
+    expect(water.specularWeight).toBe(1)
     expect(water.materialEffect).toBe(ClientMaterialEffect.water)
     expect(terrain.materialEffect).toBe(ClientMaterialEffect.standard)
     expect(terrain.waterOptics).toBe(null)
     const waterOptics = water.waterOptics
     assert waterOptics != null else "Expected dedicated water optics"
     expect(waterOptics.indexOfRefraction).toBe(1.333)
-    expect(waterOptics.roughness).toBe(0.055)
+    expect(waterOptics.roughness).toBe(0.07)
     expect(waterOptics.waves.size).toBe(2)
     expect(Set(waterOptics.waves.map(wave => wave.normalTexture)).size).toBe(2)
     expect(cross.castsShadows).toBe(false)
@@ -256,7 +259,11 @@ test "precipitation feedback follows material metadata through catalog projectio
     expect(cross.precipitationSurface).toBe(ClientPrecipitationSurface.permeable)
     const waterKey = water.key
     const crossKey = cross.key
-    expect(catalog.materials.filter(material => material.key != waterKey and material.key != crossKey).every(material => material.precipitationSurface == ClientPrecipitationSurface.solid)).toBe(true)
+    const vine = catalog.materials.find(material => material.key == "openvoxel:material/vine")
+    assert vine != null else "Expected the authored vine material"
+    expect(vine.precipitationSurface).toBe(ClientPrecipitationSurface.permeable)
+    const vineKey = vine.key
+    expect(catalog.materials.filter(material => material.key != waterKey and material.key != crossKey and material.key != vineKey).every(material => material.precipitationSurface == ClientPrecipitationSurface.solid)).toBe(true)
     const custom = ClientMaterialResource.from(water, {key: "example:material/custom"})
     expect(custom.precipitationSurface).toBe(ClientPrecipitationSurface.water)
     const frozen = ClientMaterialResource.from(water, {precipitationSurface: ClientPrecipitationSurface.solid})
@@ -274,6 +281,7 @@ test "material parsing rejects unrecognized precipitation surface values":
         doubleSided: material.doubleSided,
         castsShadows: material.castsShadows,
         environmentIntensity: material.environmentIntensity,
+        specularWeight: material.specularWeight,
         clearCoat: material.clearCoat,
         clearCoatRoughness: material.clearCoatRoughness,
         unlit: material.unlit,

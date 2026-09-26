@@ -15,7 +15,7 @@ export type ChunkMeshWorker:
     close: () -> Promise<null>
 
 export type ChunkMeshSurface:
-    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
+    enqueueChunkMesh: (mesh: ChunkMesh, mayCommit: () -> bool) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
 
 export readonly type ChunkMeshingStats:
@@ -63,6 +63,15 @@ export def chunkMeshing(
     let closed = false
     let closing: Promise<null>? = null
 
+    def mayPresent(position: readonly ChunkPosition, ticket: number) -> bool:
+        const key = chunkKey(position)
+        if closed or tickets.get(key) != ticket or state.chunk(position) == null: return false
+        if key in startupPending: return true
+        if demandTopologyDirty:
+            demand.rebuild(residents.values(), view())
+            demandTopologyDirty = false
+        return key in demand.demandedKeys(portals)
+
     async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation):
         let shouldReconcile = false
         try:
@@ -73,7 +82,13 @@ export def chunkMeshing(
             if closed or tickets.get(key) != ticket:
                 shouldReconcile = true
                 return
-            const committed = await surface.enqueueChunkMesh(mesh)
+            // 摘要先参与可见性，再决定是否上传。排队到实际帧提交之间，世界状态
+            // 仍可能改变；Surface 在写入 GPU 前再次执行同一个身份/需求检查。
+            portals.set(key, mesh.portalSummary)
+            if not mayPresent(position, ticket):
+                shouldReconcile = true
+                return
+            const committed = await surface.enqueueChunkMesh(mesh, () => mayPresent(position, ticket))
             if not committed:
                 shouldReconcile = true
                 return

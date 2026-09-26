@@ -1,0 +1,80 @@
+import json creativePaletteData from "@openvoxel/game/creative-palette-data"
+import {BlockPosition, maximumWorldCoordinate} from "@openvoxel/world"
+import {WorldNavigationPosition} from "../controls/world-navigation.vel"
+
+export readonly type CreativePaletteEntry:
+    label: string
+    stateKey: string
+    textureKey: string
+    previewName: string
+
+readonly type CreativePaletteArtifact:
+    formatVersion: number
+    entries: readonly List<CreativePaletteEntry>
+
+/// 只选默认形态的完整方块；世界目录负责提供本世界的实际 runtimeId。
+const paletteArtifact = CreativePaletteArtifact.parse(creativePaletteData)
+assert paletteArtifact.formatVersion == 1 else "Unsupported Creative palette format"
+assert paletteArtifact.entries.size > 0 and paletteArtifact.entries.size <= 5 else "Creative palette must contain one through five blocks"
+export const creativePalette: readonly List<CreativePaletteEntry> = paletteArtifact.entries
+
+export readonly type CreativeBlockTarget:
+    block: readonly BlockPosition
+    adjacent: readonly BlockPosition?
+    runtimeId: number
+
+export const creativeReach = 6
+
+/// 只沿已同步的体素前进；未知 Chunk 截断射线，不能把未加载地形当成空气。
+/// adjacent 是命中面外侧的上一格，供放置使用。格点边界按射线方向稳定处理。
+export def targetCreativeBlock(
+    origin: WorldNavigationPosition,
+    direction: WorldNavigationPosition,
+    blockAt: (position: readonly BlockPosition) -> number?,
+    reach: number = creativeReach,
+) -> CreativeBlockTarget?:
+    assert origin.x.isFinite() and origin.y.isFinite() and origin.z.isFinite() else "Creative aim origin must be finite"
+    assert direction.x.isFinite() and direction.y.isFinite() and direction.z.isFinite() else "Creative aim direction must be finite"
+    assert reach.isFinite() and reach > 0 and reach <= 16 else "Creative reach must be from 0 through 16"
+    const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)
+    assert length > 0 else "Creative aim direction must be non-zero"
+    const dx = direction.x / length
+    const dy = direction.y / length
+    const dz = direction.z / length
+    let x = origin.x.floor()
+    let y = origin.y.floor()
+    let z = origin.z.floor()
+    const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0
+    const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0
+    const stepZ = dz > 0 ? 1 : dz < 0 ? -1 : 0
+    const beyond = reach + 1
+    const deltaX = stepX == 0 ? beyond : 1 / dx.abs()
+    const deltaY = stepY == 0 ? beyond : 1 / dy.abs()
+    const deltaZ = stepZ == 0 ? beyond : 1 / dz.abs()
+    let nextX = stepX == 0 ? beyond : ((stepX > 0 ? x + 1 : x) - origin.x) / dx
+    let nextY = stepY == 0 ? beyond : ((stepY > 0 ? y + 1 : y) - origin.y) / dy
+    let nextZ = stepZ == 0 ? beyond : ((stepZ > 0 ? z + 1 : z) - origin.z) / dz
+    let distance = 0
+    let adjacent: BlockPosition? = null
+
+    while distance <= reach:
+        if x.abs() > maximumWorldCoordinate or y.abs() > maximumWorldCoordinate or z.abs() > maximumWorldCoordinate:
+            return null
+        const block: BlockPosition = {x, y, z}
+        const runtimeId = blockAt(block)
+        if runtimeId == null: return null
+        if runtimeId != 0: return {block, adjacent, runtimeId}
+        adjacent = block
+        if nextX <= nextY and nextX <= nextZ:
+            distance = nextX
+            nextX += deltaX
+            x += stepX
+        else if nextY <= nextZ:
+            distance = nextY
+            nextY += deltaY
+            y += stepY
+        else:
+            distance = nextZ
+            nextZ += deltaZ
+            z += stepZ
+    return null

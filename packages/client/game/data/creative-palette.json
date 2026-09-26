@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "entries": [
+    {"label": "Dirt", "stateKey": "openvoxel:dirt", "textureKey": "openvoxel:texture/block/dirt", "previewName": "dirt"},
+    {"label": "Stone", "stateKey": "openvoxel:stone", "textureKey": "openvoxel:texture/block/stone", "previewName": "stone"},
+    {"label": "Sandstone", "stateKey": "openvoxel:sandstone", "textureKey": "openvoxel:texture/block/sandstone", "previewName": "sandstone"},
+    {"label": "Pale Basalt", "stateKey": "openvoxel:pale_basalt", "textureKey": "openvoxel:texture/block/pale_basalt", "previewName": "pale-basalt"},
+    {"label": "Clay", "stateKey": "openvoxel:clay", "textureKey": "openvoxel:texture/block/clay", "previewName": "clay"}
+  ]
+}

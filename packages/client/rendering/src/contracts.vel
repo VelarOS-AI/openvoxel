@@ -195,6 +195,7 @@ export readonly type MeshingWorkerRequest:
     position: readonly ChunkPosition?
     edge: number?
     paddedBlocks: UInt32Buffer?
+    fluidDepthHalo: UInt32Buffer?
     ticket: number?
 
 export readonly type MeshingWorkerResponse:

@@ -1,0 +1,98 @@
+import {BlockPosition} from "@openvoxel/world"
+import {WorldCreativeAction, WorldNavigationPosition} from "../controls/world-navigation.vel"
+import {CreativeBlockTarget, creativePalette, targetCreativeBlock} from "./creative-interaction.vel"
+
+export readonly type CreativeEditingStats:
+    creativeTarget: CreativeBlockTarget?
+    creativeSlot: number
+    creativeEditError: string?
+
+export readonly type CreativeEditingPort:
+    runtimeIdFor: (stateKey: string) -> number?
+    blockAt: (position: readonly BlockPosition) -> number?
+    applyBlock: (position: readonly BlockPosition, runtimeId: number) -> Promise<null>
+    edited: (action: WorldCreativeAction, soundRuntimeId: number) -> null
+
+export type CreativeEditing:
+    stats: () -> CreativeEditingStats
+    aimChanged: (origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    selectSlot: (slot: number) -> null
+    action: (action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    close: () -> Promise<null>
+
+/// 选中、射线目标和异步写入由同一所有者管理；外部只提供已同步世界的查询与写入端口。
+export def creativeEditing(port: CreativeEditingPort, enabled: bool, changed: () -> null) -> CreativeEditing:
+    const runtimeIds: List<number> = []
+    for entry in creativePalette:
+        const runtimeId = port.runtimeIdFor(entry.stateKey)
+        assert runtimeId != null else f"World content is missing Creative block {entry.stateKey}"
+        runtimeIds.append(runtimeId)
+    let selectedSlot = 0
+    let target: CreativeBlockTarget? = null
+    let pending = false
+    let error: string? = null
+    let operation: Promise<null>? = null
+    let closed = false
+
+    def stats() -> CreativeEditingStats:
+        return {creativeTarget: target, creativeSlot: selectedSlot, creativeEditError: error}
+
+    def targetAt(origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> CreativeBlockTarget?:
+        return targetCreativeBlock(origin, forward, port.blockAt)
+
+    def aimChanged(origin: WorldNavigationPosition, forward: WorldNavigationPosition):
+        if closed or not enabled: return
+        const next = targetAt(origin, forward)
+        const old = target
+        if old == null and next == null: return
+        if old != null and next != null and old.runtimeId == next.runtimeId
+            and old.block.x == next.block.x and old.block.y == next.block.y and old.block.z == next.block.z: return
+        target = next
+        changed()
+
+    def selectSlot(slot: number):
+        if closed or not enabled or slot < 0 or slot >= creativePalette.size: return
+        if selectedSlot == slot: return
+        selectedSlot = slot
+        error = null
+        changed()
+
+    async def apply(action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition):
+        if closed or pending or not enabled: return
+        const hit = targetAt(origin, forward)
+        if hit == null: return
+        let position = hit.block
+        let runtimeId = 0
+        let soundRuntimeId = hit.runtimeId
+        if action == WorldCreativeAction.placeBlock:
+            const adjacent = hit.adjacent
+            if adjacent == null or port.blockAt(adjacent) != 0: return
+            position = adjacent
+            runtimeId = runtimeIds[selectedSlot]
+            soundRuntimeId = runtimeId
+        pending = true
+        error = null
+        changed()
+        try:
+            await port.applyBlock(position, runtimeId)
+            if not closed: port.edited(action, soundRuntimeId)
+        catch failure:
+            if not closed: error = failure.message
+        finally:
+            pending = false
+            if not closed:
+                aimChanged(origin, forward)
+                changed()
+
+    def action(action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition):
+        if closed or pending: return
+        const current = apply(action, origin, forward)
+        operation = current
+        detach current
+
+    async def close():
+        closed = true
+        const current = operation
+        if current != null: await current
+
+    return {stats, aimChanged, selectSlot, action, close}

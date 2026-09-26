@@ -1,0 +1,3 @@
+import {serveLightingWorker} from "@openvoxel/game/lighting-worker"
+
+serveLightingWorker()

@@ -206,6 +206,7 @@ export async function loadEnvironmentResources(root, environment) {
     {key: "clouds", file: environment.clouds.texture, label: "Environment clouds texture", shape: "square"},
     {key: "rain", file: environment.precipitation.rain, label: "Environment precipitation rain", shape: "portrait"},
     {key: "rain-splash", file: environment.precipitation.rainSplash, label: "Environment precipitation rain splash", shape: "square"},
+    {key: "leaf", file: environment.foliage.leaf, label: "Environment foliage leaf", shape: "square"},
     {key: "snow", file: environment.precipitation.snow, label: "Environment precipitation snow", shape: "square"},
   ];
   const sourceImages = await Promise.all(definitions.map(async ({file, label, shape}) => (
@@ -224,6 +225,7 @@ export async function loadEnvironmentResources(root, environment) {
         moonDataUrls: moonKeys.map(imageUrl),
       },
       clouds: {textureDataUrl: imageUrl("clouds")},
+      foliage: {leafDataUrl: imageUrl("leaf")},
       precipitation: {
         rainDataUrl: imageUrl("rain"),
         rainSplashDataUrl: imageUrl("rain-splash"),
@@ -371,6 +373,7 @@ export async function buildResourcePack() {
       doubleSided: requireBoolean(entry.doubleSided, `material ${entry.key} doubleSided`),
       castsShadows: requireBoolean(entry.castsShadows, `material ${entry.key} castsShadows`),
       environmentIntensity: requireNumber(entry.environmentIntensity, 0, 4, `material ${entry.key} environmentIntensity`),
+      specularWeight: requireNumber(entry.specularWeight, 0, 1, `material ${entry.key} specularWeight`),
       clearCoat: requireNumber(entry.clearCoat, 0, 1, `material ${entry.key} clearCoat`),
       clearCoatRoughness: requireNumber(entry.clearCoatRoughness, 0, 1, `material ${entry.key} clearCoatRoughness`),
       unlit: requireBoolean(entry.unlit, `material ${entry.key} unlit`),
@@ -496,8 +499,8 @@ export async function buildResourcePack() {
   )));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
-    artifactVersion: 9,
-    formatVersion: 9,
+    artifactVersion: 10,
+    formatVersion: 10,
     owner,
     targetContentHash,
     textureBanks: bankArtifacts,

@@ -73,10 +73,14 @@ export readonly type ClientPrecipitationEnvironmentResources:
     rainSplashDataUrl: string
     snowDataUrl: string
 
+export readonly type ClientFoliageEnvironmentResources:
+    leafDataUrl: string
+
 export readonly type ClientResourceEnvironment:
     sky: ClientSkyEnvironmentResources
     clouds: ClientCloudEnvironmentResources
     precipitation: ClientPrecipitationEnvironmentResources
+    foliage: ClientFoliageEnvironmentResources
 
 export readonly type ClientModelResource:
     key: string
@@ -93,6 +97,7 @@ export readonly type ClientMaterialResource:
     doubleSided: bool
     castsShadows: bool
     environmentIntensity: number
+    specularWeight: number
     clearCoat: number
     clearCoatRoughness: number
     unlit: bool
@@ -163,8 +168,8 @@ def requireEmbeddedWebp(value: string, label: string):
 /// 包内 JSON 已由生成阶段计算 resourceHash；运行时再次验证结构、范围、命名空间
 /// 和交叉引用，避免损坏的静态资源走到图形引擎边界。
 export def validateClientResourcePack(artifact: ClientResourcePackArtifact) -> ClientResourcePackArtifact:
-    assert artifact.artifactVersion == 9 else "Unsupported client resource pack artifact version"
-    assert artifact.formatVersion == 9 else "Unsupported client resource pack format version"
+    assert artifact.artifactVersion == 10 else "Unsupported client resource pack artifact version"
+    assert artifact.formatVersion == 10 else "Unsupported client resource pack format version"
     assert Text.matches(artifact.owner, r"^[a-z][a-z0-9_.-]*$") else "Client resource pack owner is invalid"
     requireHash(artifact.targetContentHash, "Client resource target content hash")
     requireHash(artifact.resourceHash, "Client resource hash")
@@ -177,6 +182,7 @@ export def validateClientResourcePack(artifact: ClientResourcePackArtifact) -> C
     requireEmbeddedWebp(artifact.environment.precipitation.rainDataUrl, "Client resource rain")
     requireEmbeddedWebp(artifact.environment.precipitation.rainSplashDataUrl, "Client resource rain splash")
     requireEmbeddedWebp(artifact.environment.precipitation.snowDataUrl, "Client resource snow")
+    requireEmbeddedWebp(artifact.environment.foliage.leafDataUrl, "Client resource leaf")
 
     const textureBankKeys: Set<string> = Set()
     const textureBankLayers: Map<string, number> = Map()
@@ -254,6 +260,7 @@ export def validateClientResourcePack(artifact: ClientResourcePackArtifact) -> C
         requireUnit(material.alpha, f"Material {material.key} alpha")
         requireUnit(material.alphaCutoff, f"Material {material.key} alpha cutoff")
         assert material.environmentIntensity.isFinite() and material.environmentIntensity >= 0 and material.environmentIntensity <= 4 else f"Material {material.key} environment intensity must be from 0 through 4"
+        requireUnit(material.specularWeight, f"Material {material.key} specular weight")
         requireUnit(material.clearCoat, f"Material {material.key} clear coat")
         requireUnit(material.clearCoatRoughness, f"Material {material.key} clear coat roughness")
         if material.materialEffect == ClientMaterialEffect.standard:

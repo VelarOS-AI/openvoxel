@@ -25,6 +25,8 @@ export function requireEnvironmentResources(value) {
   const sky = value.sky;
   const clouds = value.clouds;
   const precipitation = value.precipitation;
+  const foliage = value.foliage;
+  if (typeof foliage !== "object" || foliage === null) throw new TypeError("Voxel environment foliage resources must be a record");
   if (typeof sky !== "object" || sky === null) throw new TypeError("Voxel environment sky resources must be a record");
   if (typeof clouds !== "object" || clouds === null) throw new TypeError("Voxel environment cloud resources must be a record");
   if (typeof precipitation !== "object" || precipitation === null) throw new TypeError("Voxel environment precipitation resources must be a record");
@@ -41,6 +43,7 @@ export function requireEnvironmentResources(value) {
     clouds: {
       textureDataUrl: requireEmbeddedWebp(clouds.textureDataUrl, "Voxel environment clouds"),
     },
+    foliage: {leafDataUrl: requireEmbeddedWebp(foliage.leafDataUrl, "Voxel environment leaf")},
     precipitation: {
       rainDataUrl: requireEmbeddedWebp(precipitation.rainDataUrl, "Voxel environment rain"),
       rainSplashDataUrl: requireEmbeddedWebp(precipitation.rainSplashDataUrl, "Voxel environment rain splash"),

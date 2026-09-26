@@ -6,6 +6,7 @@ import {WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
 import {CompiledFeaturePlan, FeatureWrite, compiledFeaturePlan, featurePlansOverlap} from "./feature-plan.vel"
 import {ColumnPlanner, TerrainColumnPlan, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+import {surfaceBedrock} from "./surface-materials.vel"
 import {EcologyPatterns, createEcologyPatterns} from "./ecology-patterns.vel"
 
 /// 最长倒木写入四个水平方块；装饰规划器用同一包络扩展结构候选，保证
@@ -84,6 +85,7 @@ def deadwoodFeature(
     const z = cellZ * size + stream.int(0, size)
     const plan = planAt(columns, x, z)
     const sample = plan.sampleAt(x, z)
+    if sample.roadDistance != null: return null
     if sample.surfaceY <= profile.world.seaLevel or sample.slope > profile.vegetation.treeMaximumSlope: return null
     const ground = surfaceBlock(profile, blocks, sample)
     if not registry.hasTag(ground, builtinIdentities.tags.treeSupport): return null
@@ -105,6 +107,7 @@ def deadwoodFeature(
             const blockX = alongX ? x + offset : x
             const blockZ = alongX ? z : z + offset
             const blockSample = planAt(columns, blockX, blockZ).sampleAt(blockX, blockZ)
+            if blockSample.roadDistance != null: return null
             const support = surfaceBlock(profile, blocks, blockSample)
             if blockSample.surfaceY != sample.surfaceY or not registry.hasTag(support, builtinIdentities.tags.treeSupport):
                 return null
@@ -152,7 +155,7 @@ def cliffSupport(
         const supportZ = z - attachment.z
         const supportSample = planAt(columns, supportX, supportZ).sampleAt(supportX, supportZ)
         if supportSample.surfaceY - low.surfaceY < 3: continue
-        const support = surfaceBlock(profile, blocks, supportSample)
+        const support = surfaceBedrock(blocks, supportSample)
         if not registry.hasTag(support, builtinIdentities.tags.vineSupport): continue
         return {x: attachment.x, z: attachment.z, facing: attachment.facing, surfaceY: supportSample.surfaceY}
     return null
@@ -202,7 +205,7 @@ def aquaticFeature(
     const depth = waterTop - sample.surfaceY
     if depth < 2 or depth > 16: return null
     const saltWater = sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast
-    if not saltWater and sample.biome != profile.biomes.river: return null
+    // Inland lakes and pools use the same freshwater substrate rules as rivers.
     const cover = patterns.cover(x, z)
     const chance = cover > 0.5 ? 0.25 + cover * 0.65 : 0.05
     if not stream.bool(saltWater ? chance : chance * 0.7): return null
