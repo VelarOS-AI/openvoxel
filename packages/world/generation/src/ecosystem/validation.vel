@@ -1,0 +1,119 @@
+import {HabitatRange, WorldGenerationPack} from "../definition/catalog.vel"
+import {ecosystemUnitKeys} from "./unit-keys.vel"
+import {treeShapeKinds} from "../survival/tree-shapes.vel"
+
+def requireKey(key: string):
+    assert Text.matches(key, r"^[a-z][a-z0-9_.-]*:[a-z0-9][a-z0-9_./-]*$") else f"Invalid ecosystem identity {key}"
+    assert not key.startsWith("core:") and not key.startsWith("openvoxel.core:") else f"Core identity {key} is protected"
+
+def rangeValid(value: readonly HabitatRange):
+    assert value.minimum.isFinite() and value.maximum.isFinite() and value.idealLow.isFinite() and value.idealHigh.isFinite() else "Habitat values must be finite"
+    assert value.minimum <= value.idealLow and value.idealLow <= value.idealHigh and value.idealHigh <= value.maximum else "Habitat interval is reversed"
+
+def bounded(value: number, minimum: number, maximum: number, label: string):
+    assert value.isFinite() and value >= minimum and value <= maximum else f"{label} is outside the supported range"
+
+export def validateWorldGenerationPack(pack: readonly WorldGenerationPack) -> readonly WorldGenerationPack:
+    assert pack.formatVersion == 1 else "Unsupported ecosystem pack version"
+    assert Text.matches(pack.owner, r"^[a-z][a-z0-9_.-]*$") and (pack.owner not in ["core", "openvoxel", "openvoxel.core"]) else "Ecosystem pack must use its own non-core namespace"
+    const seen: Set<string> = Set()
+    for key in ecosystemUnitKeys(pack.units):
+        requireKey(key)
+        assert key not in seen else f"Pack {pack.owner} repeats unit {key}"
+        assert key.startsWith(f"{pack.owner}:") or (key in pack.replaces) else f"Unit {key} is outside pack {pack.owner}"
+        seen.add(key)
+    assert seen.size <= 512 else "An ecosystem pack cannot exceed 512 units"
+    for group in [pack.replaces, pack.removes, pack.requires]:
+        assert Set(group).size == group.size else f"Pack {pack.owner} repeats a dependency or operation"
+    for key in [pack.replaces, pack.removes].flatMap(group => group): requireKey(key)
+    assert pack.owner not in pack.requires else "An ecosystem pack cannot depend on itself"
+    for unit in pack.units.biomes:
+        requireKey(unit.id)
+        requireKey(unit.family)
+        rangeValid(unit.temperature)
+        rangeValid(unit.humidity)
+        bounded(unit.weight, 0, 100, "Biome weight")
+        bounded(unit.forestCover, 0, 1, "Forest cover")
+        bounded(unit.groundCover, 0, 4, "Ground cover")
+        bounded(unit.relief, 0, 3, "Biome relief")
+        bounded(unit.upland, -16, 48, "Biome uplift")
+    for unit in pack.units.trees:
+        assert unit.shape == "template" or treeShapeKinds.some(shape => str(shape) == unit.shape) else f"Unknown tree shape {unit.shape}"
+        requireKey(unit.log)
+        requireKey(unit.leaves)
+        if unit.fruit != null: requireKey(unit.fruit)
+        bounded(unit.fruitChance ?? 0, 0, 1, "Tree fruit probability")
+        if unit.shape == "template":
+            assert unit.template != null and unit.template.size > 0 and unit.template.size <= 4096 else "Tree template requires one through 4096 voxels"
+            for voxel in unit.template:
+                assert voxel.x.isInteger() and voxel.z.isInteger() and voxel.y.isInteger() and voxel.x.abs() <= 4 and voxel.z.abs() <= 4 and voxel.y >= 1 and voxel.y <= 23 else "Tree template exceeds the core feature envelope"
+                assert voxel.material in ["log", "log_x", "log_z", "leaves"] else "Tree template uses an unknown material role"
+        else: assert unit.template == null else "Tree template requires the template shape"
+        rangeValid(unit.temperature)
+        rangeValid(unit.humidity)
+        rangeValid(unit.elevation)
+        bounded(unit.weight, 0, 100, "Tree weight")
+        for affinity in unit.affinities:
+            requireKey(affinity.biome)
+            bounded(affinity.weight, 0, 100, "Tree biome affinity")
+    for unit in pack.units.plants:
+        requireKey(unit.block)
+        requireKey(unit.support)
+        if unit.topBlock != null: requireKey(unit.topBlock)
+        if unit.naturalMaximumAge != null:
+            assert unit.naturalMaximumAge.isInteger() and unit.naturalMaximumAge >= 0 and unit.naturalMaximumAge <= 31 else "Natural crop age cap must be from zero through 31"
+        rangeValid(unit.temperature)
+        rangeValid(unit.humidity)
+        bounded(unit.weight, 0, 100, "Plant weight")
+        assert unit.minimumHeight.isInteger() and unit.maximumHeight.isInteger() and unit.minimumHeight >= 1 and unit.maximumHeight >= unit.minimumHeight and unit.maximumHeight <= 16 else "Plant height must fit a sixteen-block envelope"
+        assert unit.aquatic or unit.maximumHeight <= 6 else "Land plants must fit their six-block owner column"
+        if unit.surfaceClearance != null:
+            assert unit.aquatic and unit.surfaceClearance.isInteger() and unit.surfaceClearance >= 1 and unit.surfaceClearance <= 8 else "Water surface clearance requires an aquatic plant and one through eight blocks"
+        for affinity in unit.affinities:
+            requireKey(affinity.biome)
+            bounded(affinity.weight, 0, 100, "Plant biome affinity")
+        for property in unit.properties:
+            assert property.values.size > 0 and property.values.size <= 32 else "Plant state selection must contain from one through 32 choices"
+    for unit in pack.units.minerals:
+        requireKey(unit.block)
+        requireKey(unit.source)
+        const config = unit.distribution
+        bounded(config.chance, 0, 1, "Mineral probability")
+        bounded(config.largeChance, 0, 1, "Large mineral probability")
+        assert config.minimumY.isInteger() and config.maximumY.isInteger() and config.minimumY >= 5 and config.maximumY <= 255 and config.minimumY <= config.maximumY else "Mineral height cannot enter the core foundation or leave the world"
+        assert config.minimumSize.isInteger() and config.maximumSize.isInteger() and config.minimumSize >= 1 and config.maximumSize >= config.minimumSize and config.maximumSize <= 64 else "Mineral vein size must be from one through 64"
+    for unit in pack.units.features:
+        requireKey(unit.block)
+        assert unit.algorithm in ["deadwood", "tree_vine", "cliff_vine", "cactus"] else f"Unknown feature implementation {unit.algorithm}"
+        bounded(unit.chance, 0, 1, "Feature multiplier")
+    for stage in pack.units.stages:
+        assert stage.step in ["terrain", "regions", "surface", "roads", "hydrology", "caves", "aquifers", "vegetation", "minerals", "snow"] else f"Unknown generation extension point {stage.step}"
+        assert stage.algorithm == null or (stage.step == "terrain" and (stage.algorithm in ["continental", "flat", "islands"])) else "Unknown stage implementation"
+        assert stage.terrain == null or stage.step == "terrain" else "Terrain settings require the terrain extension point"
+        assert stage.regions == null or stage.step == "regions" else "Region settings require the regions extension point"
+        assert stage.surface == null or stage.step == "surface" else "Surface settings require the surface extension point"
+        assert stage.roads == null or stage.step == "roads" else "Road settings require the roads extension point"
+        assert stage.hydrology == null or stage.step == "hydrology" else "Hydrology settings require the hydrology extension point"
+        assert stage.caves == null or stage.step == "caves" else "Cave settings require the caves extension point"
+        assert stage.aquifers == null or stage.step == "aquifers" else "Aquifer settings require the aquifers extension point"
+        assert stage.vegetation == null or stage.step == "vegetation" else "Vegetation settings require the vegetation extension point"
+    return pack
+
+type EcosystemSourceRecord = Record<unknown>
+type EcosystemSourceList = List<unknown>
+
+def knownFields(value: unknown, fields: readonly List<string>, label: string) -> EcosystemSourceRecord:
+    const record = EcosystemSourceRecord.parse(value)
+    for key, _value in record: assert key in fields else f"{label} cannot write field {key}"
+    return record
+
+/// 在原始 JSON/YAML 边界拒绝额外能力字段。核心字段不能通过 Type.parse 的
+/// 结构投影被静默吞掉，作者会直接看到不支持的写入请求。
+export def parseWorldGenerationPack(value: unknown) -> WorldGenerationPack:
+    const record = knownFields(value, ["formatVersion", "owner", "title", "description", "requires", "replaces", "removes", "units"], "Ecosystem pack")
+    const units = knownFields(record["units"], ["biomes", "trees", "plants", "minerals", "features", "stages"], "Ecosystem units")
+    for raw in EcosystemSourceList.parse(units["stages"]):
+        knownFields(raw, ["key", "step", "enabled", "algorithm", "terrain", "regions", "surface", "roads", "hydrology", "caves", "aquifers", "vegetation"], "Generation extension point")
+    const pack = WorldGenerationPack.parse(value)
+    validateWorldGenerationPack(pack)
+    return pack

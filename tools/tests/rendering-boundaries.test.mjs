@@ -28,7 +28,7 @@ test("game is registered as the sole web graphics composition responsibility", (
   );
   assert.deepEqual(
     [...allowedOpenVoxelDependencies.get("@openvoxel/web")].sort(),
-    ["@openvoxel/client", "@openvoxel/game", "@openvoxel/protocol", "@openvoxel/world"],
+    ["@openvoxel/client", "@openvoxel/content", "@openvoxel/game", "@openvoxel/protocol", "@openvoxel/world"],
   );
 });
 
@@ -169,4 +169,18 @@ test("worker closure rejects transitive game and Babylon dependencies", () => {
   });
   pureGraph.set("game-runtime", { ownerName: "@openvoxel/game", edges: [] });
   assert.match(workerClosureViolations("web-worker", pureGraph).join("\n"), /only through @openvoxel\/game\/meshing-worker/);
+});
+
+test("lighting worker is a narrow forwarding entry with the same graphics isolation", () => {
+  const entry = "@openvoxel/game/lighting-worker";
+  assert.deepEqual(gameWorkerBridgeViolations(["@openvoxel/renderer/lighting-worker"], entry), []);
+  assert.notDeepEqual(gameWorkerBridgeViolations(["@openvoxel/renderer/meshing-worker"], entry), []);
+  const graph = new Map([
+    ["web", {ownerName: "@openvoxel/web", edges: [{specifier: entry, target: "bridge", resolvedOwnerName: "@openvoxel/game", gameWorkerBridge: true}]}],
+    ["bridge", {ownerName: "@openvoxel/game", gameWorkerBridge: true, edges: [{specifier: "@openvoxel/renderer/lighting-worker", target: "renderer", resolvedOwnerName: "@openvoxel/renderer"}]}],
+    ["renderer", {ownerName: "@openvoxel/renderer", edges: []}],
+  ]);
+  assert.deepEqual(workerClosureViolations("web", graph), []);
+  graph.get("renderer").edges.push({specifier: "@babylonjs/core/Lights/pointLight.js", target: null});
+  assert.match(workerClosureViolations("web", graph).join("\n"), /cannot import @babylonjs/);
 });

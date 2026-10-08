@@ -1,0 +1,18 @@
+import {expect} from "velar/test"
+import {fallenTreeWrites} from "../../src/survival/fallen-trees.vel"
+
+test "fallen trees have full length connected trunks branches and bounded roots":
+    for length in range(6, 11):
+        for alongX in [true, false]:
+            for direction in [-1, 1]:
+                const writes = fallenTreeWrites(length, alongX, direction, 1, 2, 3)
+                const trunk = writes.filter(write => write.runtimeId == 1)
+                expect(trunk.size).toBe(length)
+                const occupied = Set(writes.map(write => f"{write.x}:{write.y}:{write.z}"))
+                expect(occupied.size).toBe(writes.size)
+                expect(writes.filter(write => write.runtimeId == 2).size).toBe(3)
+                expect(writes.some(write => write.y == 1)).toBe(true)
+                for write in writes:
+                    expect(write.x.abs() <= 6 and write.z.abs() <= 6).toBe(true)
+                    const neighbors = [{x: 1, y: 0, z: 0}, {x: -1, y: 0, z: 0}, {x: 0, y: 1, z: 0}, {x: 0, y: -1, z: 0}, {x: 0, y: 0, z: 1}, {x: 0, y: 0, z: -1}]
+                    expect(neighbors.some(offset => f"{write.x + offset.x}:{write.y + offset.y}:{write.z + offset.z}" in occupied)).toBe(true)

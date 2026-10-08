@@ -15,8 +15,8 @@
     "node": ">=24.12"
   },
   "scripts": {
-    "generate": "node tools/run-validation.mjs --shell \"npm run generate --workspace @openvoxel/identities && npm run generate --workspace @openvoxel/blocks && npm run generate --workspace @openvoxel/world-generation && npm run generate --workspace @openvoxel/renderer && npm run generate --workspace @openvoxel/web\"",
-    "generate:check": "node tools/run-validation.mjs --shell \"npm run generate:check --workspace @openvoxel/identities && npm run generate:check --workspace @openvoxel/blocks && npm run generate:check --workspace @openvoxel/world-generation && npm run generate:check --workspace @openvoxel/renderer && npm run generate:check --workspace @openvoxel/web\"",
+    "generate": "node tools/run-validation.mjs --shell \"npm run generate --workspace @openvoxel/identities && npm run generate --workspace @openvoxel/blocks && npm run generate --workspace @openvoxel/world-generation && npm run generate --workspace @openvoxel/content && npm run generate --workspace @openvoxel/renderer && npm run generate --workspace @openvoxel/web\"",
+    "generate:check": "node tools/run-validation.mjs --shell \"npm run generate:check --workspace @openvoxel/identities && npm run generate:check --workspace @openvoxel/blocks && npm run generate:check --workspace @openvoxel/world-generation && npm run generate:check --workspace @openvoxel/content && npm run generate:check --workspace @openvoxel/renderer && npm run generate:check --workspace @openvoxel/web\"",
     "structure:check": "node tools/check-layout.mjs",
     "test:structure": "node tools/run-validation.mjs --shell \"node --test --test-concurrency=1 tools/tests/*.test.mjs\"",
     "check": "node tools/run-validation.mjs -- npm run check --workspaces --if-present",
@@ -29,9 +29,15 @@
     "test:gpu": "node tools/run-validation.mjs --shell \"npm run generate && npm run test:gpu --workspace @openvoxel/game\"",
     "test:web-ui": "node tools/run-validation.mjs --shell \"npm run generate && node apps/web/tests/ui-acceptance.mjs\"",
     "build": "node tools/run-validation.mjs -- npm run build --workspaces --if-present",
+    "build:pages": "node tools/run-validation.mjs --shell \"npm run build --workspace @openvoxel/web && node apps/web/tools/prepare-pages.mjs\"",
+    "deploy:pages": "npm run build:pages && wrangler pages deploy apps/web/generated/pages-upload --project-name=openvoxel-velaros --branch=main",
+    "preview:pages": "wrangler pages dev apps/web/generated/pages-upload --ip=127.0.0.1 --port=7273 --compatibility-date=2026-09-26",
     "benchmark:worldgen": "node tools/run-validation.mjs -- npm run benchmark --workspace @openvoxel/world-generation",
     "benchmark:caves": "node tools/run-validation.mjs -- npm run benchmark:caves --workspace @openvoxel/world-generation",
     "benchmark:columns": "node tools/run-validation.mjs -- npm run benchmark:columns --workspace @openvoxel/world-generation",
+    "benchmark:streaming": "node tools/run-validation.mjs -- node packages/client/game/benchmarks/ecosystem-streaming.mjs",
+    "benchmark:meshing": "node tools/run-validation.mjs -- node packages/client/rendering/benchmarks/ecosystem-meshing.mjs",
+    "test:web-streaming": "node tools/run-validation.mjs -- node apps/web/tests/streaming-performance.mjs",
     "benchmark:runtime": "node tools/run-validation.mjs -- npm run benchmark --workspace @openvoxel/world-runtime",
     "benchmark:sqlite": "node tools/run-validation.mjs -- npm run benchmark:sqlite --workspace @openvoxel/server",
     "benchmark:presentation": "node tools/run-validation.mjs -- npm run benchmark:presentation --workspace @openvoxel/server",
@@ -50,7 +56,11 @@
     "test:terrain": "node tools/run-validation.mjs -- node packages/client/game/tests/terrain-tour.mjs",
     "test:quick": "node tools/run-validation.mjs --shell \"node --test --test-concurrency=1 tools/tests/*.test.mjs apps/web/tests/*.test.mjs packages/client/game/tests/*.test.mjs packages/client/rendering/tests/*.test.mjs\"",
     "validate:quick": "node tools/run-validation.mjs --shell \"npm run generate && npm run generate:check && npm run structure:check && npm run format:check:workspaces && npm run check:workspaces && npm run test:quick\"",
-    "validate:full": "node tools/run-validation.mjs --shell \"npm run validate:static && npm run validate:browser:built\""
+    "validate:full": "node tools/run-validation.mjs --shell \"npm run validate:static && npm run validate:browser:built\"",
+    "test:web-settings": "node tools/run-validation.mjs -- node apps/web/tests/settings-acceptance.mjs",
+    "test:web-home": "node tools/run-validation.mjs -- node apps/web/tests/home-acceptance.mjs",
+    "test:web-mobile": "node tools/run-validation.mjs -- node apps/web/tests/mobile-acceptance.mjs",
+    "test:web-ecosystem": "node tools/run-validation.mjs -- node apps/web/tests/ecosystem-acceptance.mjs"
   },
   "dependencies": {
     "@openvoxel/client": "0.2.0",
@@ -63,11 +73,12 @@
     "@openvoxel/world-runtime": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/compiler": "0.34.0",
-    "@velarscript/node": "0.34.0",
-    "@velarscript/web": "0.34.0",
-    "playwright": "1.62.1"
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/compiler": "0.34.2",
+    "@velarscript/node": "0.34.2",
+    "@velarscript/web": "0.34.2",
+    "playwright": "1.62.1",
+    "wrangler": "4.143.0"
   },
   "allowScripts": {
     "esbuild": false

@@ -93,30 +93,46 @@ function decodeRgba8(data, expectedLength, label) {
   return bytes;
 }
 
-function uploadTextureMipLevels(scene, texture, levels, label, smooth = false) {
+export function uploadTextureMipLevels(scene, texture, levels, label, smooth = false) {
   const engine = scene.getEngine();
   const internalTexture = texture.getInternalTexture();
-  const gl = engine._gl;
-  if (internalTexture == null || gl == null || typeof gl.texImage3D !== "function" || typeof engine._bindTextureDirectly !== "function") {
-    throw new Error(label + " cannot access the pinned Babylon WebGL 2 texture upload boundary");
-  }
-  const target = gl.TEXTURE_2D_ARRAY;
-  engine._bindTextureDirectly(target, internalTexture, true);
-  try {
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    for (const [mipLevel, level] of levels.entries()) {
-      gl.texImage3D(target, mipLevel, gl.RGBA8, level.width, level.height, texture.depth, 0, gl.RGBA, gl.UNSIGNED_BYTE, level.data);
+  if (internalTexture == null) throw new Error(label + " has no allocated texture");
+  internalTexture.generateMipMaps = false;
+  // Babylon 9.23's WebGL array updater ignores the mip argument; its WebGPU
+  // updater supports it. Both paths upload the same authored alpha-safe mips.
+  if (engine.isWebGPU) {
+    for (const [mipLevel, level] of levels.entries()) texture.updateMipLevel(level.data, mipLevel);
+    // InternalTexture._swapAndDie rebuilds the view from generateMipMaps, which
+    // is false for authored mips. Expose the full chain after initial upload and
+    // device restore; otherwise distant surfaces silently sample only level 0.
+    const hardware = internalTexture._hardwareTexture;
+    hardware.createView({label: label + ":authored-mips", format: hardware.format,
+      dimension: "2d-array", baseMipLevel: 0, mipLevelCount: levels.length,
+      baseArrayLayer: 0, arrayLayerCount: texture.depth, aspect: "all"});
+  } else {
+    const gl = engine._gl;
+    if (gl == null || typeof gl.texImage3D !== "function" || typeof engine._bindTextureDirectly !== "function") {
+      throw new Error(label + " cannot access the pinned Babylon WebGL 2 texture upload boundary");
     }
-  } finally {
-    engine._bindTextureDirectly(target, null, true);
+    engine._bindTextureDirectly(gl.TEXTURE_2D_ARRAY, internalTexture, true);
+    try {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      for (const [mipLevel, level] of levels.entries()) {
+        gl.texImage3D(gl.TEXTURE_2D_ARRAY, mipLevel, gl.RGBA8, level.width, level.height, texture.depth, 0, gl.RGBA, gl.UNSIGNED_BYTE, level.data);
+      }
+    } finally {
+      engine._bindTextureDirectly(gl.TEXTURE_2D_ARRAY, null, true);
+    }
   }
   internalTexture.useMipMaps = levels.length > 1;
   internalTexture.generateMipMaps = false;
   internalTexture.mipLevelCount = levels.length;
+  // Preserve pixel-art magnification while filtering minified terrain inside
+  // each mip. Nearest minification aliases into moving diagonal bands.
   const samplingMode = smooth
     ? Texture.TRILINEAR_SAMPLINGMODE
-    : levels.length > 1 ? Texture.NEAREST_NEAREST_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
+    : levels.length > 1 ? Texture.NEAREST_LINEAR_MIPLINEAR : Texture.NEAREST_SAMPLINGMODE;
   engine.updateTextureSamplingMode(samplingMode, internalTexture, false);
 }
 
@@ -140,15 +156,17 @@ export function loadTextureBank(scene, definition, maximumLayers) {
   const create = (channel, label) => {
     const levels = decodedLevels.map((level) => ({width: level.width, height: level.height, data: level[channel]}));
     const smooth = definition.role === "fluid" && channel === "normal";
-    const texture = RawTexture2DArray.CreateRGBATexture(
-      levels[0].data,
+    const texture = new RawTexture2DArray(
+      null,
       base.width,
       base.height,
       definition.layerCount,
+      5,
       scene,
-      false,
+      scene.getEngine().isWebGPU && levels.length > 1,
       false,
       smooth ? Texture.TRILINEAR_SAMPLINGMODE : Texture.NEAREST_SAMPLINGMODE,
+      0, 0, levels.length,
     );
     textures.push(texture);
     texture.name = "texture-bank:" + definition.key + ":" + label;
@@ -185,13 +203,16 @@ export function loadTextureBank(scene, definition, maximumLayers) {
 
 
 export class VoxelTextureArrayPlugin extends MaterialPluginBase {
-  constructor(material, textureBank, climateField = null, {neutralSurface = false} = {}) {
+  constructor(material, textureBank, climateField = null, {neutralSurface = false, atmosphere = null, grassPlant = false, terrainSurface = false} = {}) {
     super(material, "OpenVoxelTextureArray", 200, {}, true, false, true);
     if (typeof neutralSurface !== "boolean") throw new TypeError("Voxel texture neutralSurface must be boolean");
     this.registerForExtraEvents = true;
     this.textureBank = textureBank;
     this.climateField = climateField;
     this.neutralSurface = neutralSurface;
+    this.atmosphere = atmosphere;
+    this.grassPlant = grassPlant;
+    this.terrainSurface = terrainSurface;
     this.animationLayerOffset = 0;
     this._enable(true);
   }
@@ -233,26 +254,41 @@ export class VoxelTextureArrayPlugin extends MaterialPluginBase {
       {name: "ovClimateBounds", size: 4, type: "vec4"},
       ...Array.from({length: 8}, (_, index) => ({name: "ovClimate" + index, size: 4, type: "vec4"})),
     ];
-    if (!this.neutralSurface) ubo.unshift({name: "ovAnimationLayerOffset", size: 1, type: "float"});
-    return {ubo};
+    if (!this.neutralSurface) ubo.unshift({name: "ovAnimationLayerOffset", size: 1, type: "float"}, {name: "ovSurfaceWetness", size: 1, type: "float"});
+    return {ubo, fragment: ubo.map(uniform => `uniform ${uniform.type} ${uniform.name};`).join("\n")};
   }
 
-  bindForSubMesh(uniformBuffer) {
+  bindForSubMesh(uniformBuffer, _scene, engine) {
     if (this.neutralSurface) return;
+    uniformBuffer.updateFloat("ovSurfaceWetness", this.atmosphere?.wetness ?? 0);
     uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
-    uniformBuffer.setTexture("ovAlbedoSampler", this.textureBank.albedo);
-    uniformBuffer.setTexture("ovNormalSampler", this.textureBank.normal);
-    uniformBuffer.setTexture("ovMaterialSampler", this.textureBank.material);
-    uniformBuffer.setTexture("ovEmissiveSampler", this.textureBank.emissive);
+    const context = engine?.isWebGPU ? engine._currentMaterialContext : null;
+    this.bindBankTexture(uniformBuffer, context, "ovAlbedoSampler", this.textureBank.albedo);
+    this.bindBankTexture(uniformBuffer, context, "ovNormalSampler", this.textureBank.normal);
+    this.bindBankTexture(uniformBuffer, context, "ovMaterialSampler", this.textureBank.material);
+    this.bindBankTexture(uniformBuffer, context, "ovEmissiveSampler", this.textureBank.emissive);
+  }
+
+  bindBankTexture(buffer, context, name, texture) {
+    // Authored texture banks own immutable filtering/wrap recipes. WebGPU draw
+    // contexts retain these bindings; there is no video/delayed texture update
+    // to perform per draw. A new context or restored internal texture rebinds.
+    if (context && context.textures[name]?.texture === texture.getInternalTexture()) return;
+    buffer.setTexture(name, texture);
   }
 
   hardBindForSubMesh(uniformBuffer, _scene, _engine, subMesh) {
     if (!this.neutralSurface) uniformBuffer.updateFloat("ovAnimationLayerOffset", this.animationLayerOffset);
     const mesh = subMesh.getRenderingMesh();
     if (this.climateField === null || !mesh.hasClimateTint) return;
+    const cache = uniformBuffer._valueCache;
+    const revision = this.climateField.revision;
+    const cached = cache?.openVoxelClimate;
+    if (revision !== undefined && cached?.meshId === mesh.uniqueId && cached.revision === revision) return;
     const climate = this.climateField.forPosition(mesh.position);
     uniformBuffer.updateFloat4("ovClimateBounds", ...climate.bounds);
     for (let index = 0; index < 8; index += 1) uniformBuffer.updateFloat4("ovClimate" + index, ...climate.corners[index]);
+    if (cache) cache.openVoxelClimate = {meshId: mesh.uniqueId, revision};
   }
 
   hasTexture(texture) {
@@ -283,8 +319,6 @@ ovTintRole = tintRole;`,
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: `
 varying float ovTintRole;
-uniform vec4 ovClimateBounds;
-${Array.from({length: 8}, (_, index) => "uniform vec4 ovClimate" + index + ";").join("\n")}
 ${climateTintShader}`,
         CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
 vec4 ovClimateSample = vec4(18.0, 0.6, 0.375, 0.0);
@@ -295,7 +329,7 @@ if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
     mix(mix(ovClimate4, ovClimate5, amount.x), mix(ovClimate6, ovClimate7, amount.x), amount.z),
     amount.y);
 }
-surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(vec3(1.0), ovTintRole, ovClimateSample));`,
+surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(vec3(1.0), ovTintRole, ovClimateSample, vPositionW, 0.0));`,
       };
     }
     if (shaderType === "vertex") {
@@ -323,9 +357,6 @@ uniform sampler2DArray ovAlbedoSampler;
 uniform sampler2DArray ovNormalSampler;
 uniform sampler2DArray ovMaterialSampler;
 uniform sampler2DArray ovEmissiveSampler;
-uniform float ovAnimationLayerOffset;
-uniform vec4 ovClimateBounds;
-${Array.from({length: 8}, (_, index) => "uniform vec4 ovClimate" + index + ";").join("\n")}
 ${climateTintShader}
 vec4 ovAlbedoSample;
 vec4 ovNormalSample;
@@ -348,8 +379,12 @@ mat3 ovCotangentFrame(vec3 normal, vec3 position, vec2 textureUv) {
 float ovSampleLayer = floor(ovTextureLayer + ovAnimationLayerOffset + 0.5);
 vec3 ovTextureCoordinate = vec3(ovTextureUv, ovSampleLayer);
 ovAlbedoSample = texture(ovAlbedoSampler, ovTextureCoordinate);
-ovNormalSample = texture(ovNormalSampler, ovTextureCoordinate);
-ovMaterialSample = texture(ovMaterialSampler, ovTextureCoordinate);
+ovNormalSample = vec4(0.5, 0.5, 1.0, 1.0);
+ovMaterialSample = vec4(1.0, 1.0, 0.0, 1.0);
+if (ovFineDetail > 0.0) {
+  ovNormalSample = mix(ovNormalSample, texture(ovNormalSampler, ovTextureCoordinate), ovFineDetail);
+  ovMaterialSample = mix(ovMaterialSample, texture(ovMaterialSampler, ovTextureCoordinate), ovFineDetail);
+}
 ovEmissiveSample = texture(ovEmissiveSampler, ovTextureCoordinate);`,
       CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
 vec4 ovClimateSample = vec4(18.0, 0.6, 0.375, 0.0);
@@ -360,14 +395,26 @@ if (ovTintRole > 0.5 && ovClimateBounds.w > 0.0) {
     mix(mix(ovClimate4, ovClimate5, amount.x), mix(ovClimate6, ovClimate7, amount.x), amount.z),
     amount.y);
 }
-surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(ovAlbedoSample.rgb, ovTintRole, ovClimateSample));
+surfaceAlbedo *= toLinearSpace(ovApplyClimateTint(ovAlbedoSample.rgb, ovTintRole, ovClimateSample, vPositionW, ${this.grassPlant ? "1.0" : "0.0"}));
+${this.terrainSurface ? `
+// Continuous world-space weathering breaks up tiled surfaces without chunk seams.
+float ovBroadPatch = sin(vPositionW.x * 0.047 + sin(vPositionW.z * 0.031) * 2.0) * sin(vPositionW.z * 0.057 - vPositionW.x * 0.018);
+float ovFinePatch = sin(vPositionW.x * 0.29 + vPositionW.z * 0.17) * sin(vPositionW.z * 0.23 - vPositionW.x * 0.13);
+float ovWeathering = 1.0 + ovBroadPatch * 0.12 + ovFinePatch * 0.035;
+surfaceAlbedo *= ovWeathering;
+` : ""}
+surfaceAlbedo *= 1.0 - ovSurfaceWetness * clamp(vNormalW.y, 0.0, 1.0) * 0.16;
 alpha *= ovAlbedoSample.a;`,
       CUSTOM_FRAGMENT_UPDATE_METALLICROUGHNESS: `
 metallicRoughness.r = ovMaterialSample.b;
-metallicRoughness.g = ovMaterialSample.g;`,
+bool ovVegetationSurface = ovTintRole > 0.5 && !(ovTintRole > 2.5 && ovTintRole < 3.5);
+float ovWetRoughness = ovVegetationSurface ? 0.86 : mix(0.42, 0.78, smoothstep(0.7, 0.95, ovMaterialSample.g));
+metallicRoughness.g = mix(ovMaterialSample.g, min(ovWetRoughness, ovMaterialSample.g), ovSurfaceWetness * clamp(vNormalW.y, 0.0, 1.0));`,
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
-vec2 ovNormalUv = gl_FrontFacing ? ovTextureUv : -ovTextureUv;
-normalW = normalize(ovCotangentFrame(normalW, vPositionW, ovNormalUv) * (ovNormalSample.xyz * 2.0 - 1.0));`,
+if (ovFineDetail > 0.0) {
+  vec2 ovNormalUv = gl_FrontFacing ? ovTextureUv : -ovTextureUv;
+  normalW = normalize(ovCotangentFrame(normalW, vPositionW, ovNormalUv) * (ovNormalSample.xyz * 2.0 - 1.0));
+}`,
       "!(aoOut=ambientOcclusionBlock\\([\\s\\S]*?\\);)": `$1
 aoOut.ambientOcclusionColor *= vec3(ovMaterialSample.r);`,
       CUSTOM_FRAGMENT_BEFORE_FINALCOLORCOMPOSITION: `

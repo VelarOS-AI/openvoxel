@@ -8,6 +8,7 @@ export const localWorkerOperations = {
     contract: "contract",
     createWorld: "create-world",
     findWorld: "find-world",
+    deleteWorld: "delete-world",
     bootstrap: "bootstrap",
     content: "content",
     terrainChunks: "terrain-chunks",

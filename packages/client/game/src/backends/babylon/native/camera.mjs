@@ -104,5 +104,9 @@ export function createNavigation(canvas, options, camera, dependencies) {
     rotateView,
     releaseView,
     viewChanged: options.viewChanged,
+    aimChanged: options.aimChanged,
+    creativeAction: options.creativeAction,
+    creativeSlot: options.creativeSlot,
+    walkSound: options.walkSound,
   });
 }

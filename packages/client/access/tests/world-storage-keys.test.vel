@@ -1,0 +1,18 @@
+import {expect} from "velar/test"
+import {storedKeyBelongsToWorld, worldDeltaKey, worldManifestKey} from "../src/world-storage-keys.vel"
+
+test "delete selects the manifest and all signed chunk coordinates":
+    expect(worldManifestKey("lake")).toBe("manifest:lake")
+    expect(storedKeyBelongsToWorld("manifest:lake", "lake")).toBe(true)
+    expect(storedKeyBelongsToWorld(worldDeltaKey("lake", {x: -3, y: 0, z: 12}), "lake")).toBe(true)
+
+test "delete preserves worlds with overlapping identifiers":
+    expect(storedKeyBelongsToWorld("manifest:lake:1", "lake")).toBe(false)
+    expect(storedKeyBelongsToWorld("delta:lake:1:0:0:0", "lake")).toBe(false)
+    expect(storedKeyBelongsToWorld("delta:lake:0:0:0", "lake:0")).toBe(false)
+    expect(storedKeyBelongsToWorld("delta:lake:10:0:0:0", "lake:1")).toBe(false)
+    expect(storedKeyBelongsToWorld("delta:海岸:/?:-1:2:0", "海岸:/?")).toBe(true)
+
+test "delete only accepts canonical persisted coordinate keys":
+    for key in ["delta:lake:0:0", "delta:lake:0:0:0:0", "delta:lake:0:0:NaN", "delta:lake:0:0:1.5", "delta:lake:0:0:01", "settings:lake"]:
+        expect(storedKeyBelongsToWorld(key, "lake")).toBe(false)

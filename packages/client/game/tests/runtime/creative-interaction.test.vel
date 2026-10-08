@@ -1,0 +1,46 @@
+import {BlockPosition, maximumWorldCoordinate} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {targetCreativeBlock} from "../../src/runtime/creative-interaction.vel"
+
+def blockAt(target: readonly BlockPosition, solid: readonly BlockPosition) -> number?:
+    if target.x == solid.x and target.y == solid.y and target.z == solid.z: return 24
+    return 0
+
+test "creative ray selects the first solid cell and its placement neighbor":
+    const solid: BlockPosition = {x: 0, y: 2, z: -3}
+    expect(targetCreativeBlock(
+        {x: 0.5, y: 2.5, z: 0.5}, {x: 0, y: 0, z: -1},
+        position => blockAt(position, solid),
+    )).toEqual({block: solid, adjacent: {x: 0, y: 2, z: -2}, runtimeId: 24})
+
+test "negative coordinates and exact voxel boundaries keep the clicked face":
+    const solid: BlockPosition = {x: -2, y: 0, z: 0}
+    expect(targetCreativeBlock(
+        {x: -1, y: 0.5, z: 0.5}, {x: -1, y: 0, z: 0},
+        position => blockAt(position, solid),
+    )).toEqual({block: solid, adjacent: {x: -1, y: 0, z: 0}, runtimeId: 24})
+
+test "unknown terrain stops selection instead of treating it as air":
+    const queried: List<number> = []
+    def read(position: readonly BlockPosition) -> number?:
+        queried.append(position.z)
+        if position.z == -1: return null
+        if position.z == -2: return 24
+        return 0
+    expect(targetCreativeBlock({x: 0.5, y: 2.5, z: 0.5}, {x: 0, y: 0, z: -1}, read)).toBe(null)
+    expect(queried).toEqual([0, -1])
+
+test "creative selection stops at its distance limit":
+    const solid: BlockPosition = {x: 0, y: 0, z: -7}
+    expect(targetCreativeBlock({x: 0.5, y: 0.5, z: 0.5}, {x: 0, y: 0, z: -1}, position => blockAt(position, solid))).toBe(null)
+    expect(targetCreativeBlock({x: 0.5, y: 0.5, z: 0.5}, {x: 0, y: 0, z: -1}, position => blockAt(position, solid), 8)?.block).toEqual(solid)
+
+test "aim stops at the supported world boundary before querying an invalid cell":
+    const queried: List<number> = []
+    def read(position: readonly BlockPosition) -> number?:
+        queried.append(position.x)
+        return 0
+    expect(targetCreativeBlock(
+        {x: maximumWorldCoordinate + 0.5, y: 0.5, z: 0.5}, {x: 1, y: 0, z: 0}, read,
+    )).toBe(null)
+    expect(queried).toEqual([maximumWorldCoordinate])

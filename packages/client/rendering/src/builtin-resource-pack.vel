@@ -1,5 +1,12 @@
-import json resourcePackData from "@openvoxel/renderer/resource-pack-data"
-import {ClientResourcePackArtifact, validateClientResourcePack} from "./resource-pack.vel"
+import json resourcePackData from "@openvoxel/renderer/resource-metadata-data"
+import {ClientTextureBank, ClientResourcePackArtifact, validateClientResourcePack} from "./resource-pack.vel"
+
+import json opaqueBankData from "@openvoxel/renderer/texture-bank-opaque-data"
+import json cutoutBankData from "@openvoxel/renderer/texture-bank-cutout-data"
+import json translucentBankData from "@openvoxel/renderer/texture-bank-translucent-data"
+import json fluidBankData from "@openvoxel/renderer/texture-bank-fluid-data"
 
 /// OpenVoxel 自带资源包只在这个装配点读取 generated JSON。
-export const builtinClientResourcePack = validateClientResourcePack(ClientResourcePackArtifact.parse(resourcePackData))
+const metadata = ClientResourcePackArtifact.parse(resourcePackData)
+const banks = [ClientTextureBank.parse(opaqueBankData), ClientTextureBank.parse(cutoutBankData), ClientTextureBank.parse(translucentBankData), ClientTextureBank.parse(fluidBankData)]
+export const builtinClientResourcePack = validateClientResourcePack(ClientResourcePackArtifact.from(metadata, {textureBanks: banks}))

@@ -10,6 +10,6 @@ export component WorldMinimapPanel(attach: (canvas: CanvasElement?) -> null):
     @cleanup:
         attach(null)
 
-    return <aside look={minimapLook} aria-label="Minimap" data-minimap>
-        <canvas ref={canvas} look={minimapCanvasLook} aria-label="Live top-down world map. North up; east right, south down, west left. Arrow shows your position and heading." data-map-canvas></canvas>
+    return <aside look={minimapLook} aria-label="小地图" data-minimap>
+        <canvas ref={canvas} look={minimapCanvasLook} aria-label="实时俯视地图：上北、右东、下南、左西，箭头表示位置与朝向。" data-map-canvas></canvas>
     </aside>

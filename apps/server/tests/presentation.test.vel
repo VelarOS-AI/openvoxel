@@ -1,3 +1,4 @@
+import {basePackedBlockCatalogSource} from "@openvoxel/blocks"
 import {expect} from "velar/test"
 import {blockCatalogVersion, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
@@ -38,9 +39,9 @@ test "server presentation assembles current generation and client metadata":
     expect(catalog.generatorHash.size).toBe(64)
     expect(catalog.generatorCatalogHash.size).toBe(64)
     expect(catalog.seaLevel).toBe(64)
-    expect(catalog.blocks.size).toBe(61)
-    expect(catalog.componentProfiles.size).toBe(80)
-    expect(catalog.states.size).toBe(376)
+    expect(catalog.blocks.size).toBe(basePackedBlockCatalogSource.blocks.size)
+    expect(catalog.componentProfiles.size).toBe(basePackedBlockCatalogSource.componentProfiles.size)
+    expect(catalog.states.size).toBe(basePackedBlockCatalogSource.states.size)
     // presentation 只改变外层线上形状，大型不可变目录必须直接复用世界快照。
     expect(catalog.states == content.catalog.states).toBe(true)
     expect(catalog.resources == content.resources).toBe(true)

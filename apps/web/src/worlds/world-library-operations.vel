@@ -3,6 +3,7 @@ import {SavedWorld} from "./saved-world.vel"
 export type WorldLibraryOperations:
     createWorld: (world: SavedWorld) -> Promise<SavedWorld>
     findWorld: (id: string) -> Promise<SavedWorld>
+    deleteWorld: (id: string) -> Promise<null>
     close: () -> Promise<null>
 
 export type WorldLibraryLoader = () -> Promise<WorldLibraryOperations>
@@ -47,10 +48,15 @@ export def deferredWorldLibrary(loader: WorldLibraryLoader = loadOperations) -> 
         assert not closed else "World library page is closed"
         return await service.findWorld(id)
 
+    async def deleteWorld(id: string):
+        const service = await active()
+        assert not closed else "世界管理页面已关闭"
+        await service.deleteWorld(id)
+
     async def close():
         if closed: return
         closed = true
         const service = current
         if service != null: await service.close()
 
-    return {createWorld, findWorld, close}
+    return {createWorld, findWorld, deleteWorld, close}

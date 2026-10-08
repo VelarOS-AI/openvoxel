@@ -2,7 +2,7 @@ import {Look} from "velar/look"
 
 export const minimapLook: Look = look:
     position = "absolute"
-    right = 22px
+    left = 22px
     top = 22px
     zIndex = 2
     width = 208px
@@ -13,7 +13,7 @@ export const minimapLook: Look = look:
     if viewport.width <= 600px:
         width = 136px
         height = 136px
-        right = 12px
+        left = 12px
         top = 12px
 
 export const minimapCanvasLook: Look = look:

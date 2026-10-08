@@ -1,0 +1,276 @@
+blocks:
+  - behaviors:
+      - kind: crop_growth
+        ageProperty: age
+        epochsPerStage: 8
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState:
+      - name: age
+        value: 0
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: berries:loot/blueberry_bush
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: berries:blueberry_bush
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties:
+      - name: age
+        kind: integer
+        minimum: 0
+        maximum: 2
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: berries:texture/block/blueberry_bush
+      tint: null
+    tags:
+      - openvoxel:plant
+      - openvoxel:flammable
+    translationKey: translations.berries.blueberryBush
+    variants:
+      - when:
+          - name: age
+            value: 2
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/blueberry_ripe
+          tint: null
+  - behaviors:
+      - kind: crop_growth
+        ageProperty: age
+        epochsPerStage: 8
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState:
+      - name: age
+        value: 0
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: berries:loot/raspberry_bush
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: berries:raspberry_bush
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties:
+      - name: age
+        kind: integer
+        minimum: 0
+        maximum: 2
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: berries:texture/block/raspberry_bush
+      tint: null
+    tags:
+      - openvoxel:plant
+      - openvoxel:flammable
+    translationKey: translations.berries.raspberryBush
+    variants:
+      - when:
+          - name: age
+            value: 2
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/raspberry_ripe
+          tint: null
+  - behaviors:
+      - kind: crop_growth
+        ageProperty: age
+        epochsPerStage: 8
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState:
+      - name: age
+        value: 0
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: berries:loot/blackberry_bush
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: berries:blackberry_bush
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties:
+      - name: age
+        kind: integer
+        minimum: 0
+        maximum: 2
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: berries:texture/block/blackberry_bush
+      tint: null
+    tags:
+      - openvoxel:plant
+      - openvoxel:flammable
+    translationKey: translations.berries.blackberryBush
+    variants:
+      - when:
+          - name: age
+            value: 2
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/blackberry_ripe
+          tint: null
+  - behaviors:
+      - kind: crop_growth
+        ageProperty: age
+        epochsPerStage: 5
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState:
+      - name: age
+        value: 0
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: berries:loot/strawberry
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: berries:strawberry
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties:
+      - name: age
+        kind: integer
+        minimum: 0
+        maximum: 3
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: berries:texture/block/strawberry_0
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.berries.strawberry
+    variants:
+      - when:
+          - name: age
+            value: 1
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/strawberry_1
+          tint: null
+      - when:
+          - name: age
+            value: 2
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/strawberry_2
+          tint: null
+      - when:
+          - name: age
+            value: 3
+        render:
+          cullFaces: false
+          layer: cutout
+          material: openvoxel:material/cross
+          model: openvoxel:model/block/cross
+          textures:
+            all: berries:texture/block/strawberry_3
+          tint: null

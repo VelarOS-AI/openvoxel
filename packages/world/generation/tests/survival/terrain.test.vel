@@ -15,6 +15,7 @@ test "river carving preserves the deep ocean floor and cannot raise terrain":
 
 test "regional landform belts preserve plains independently of inland elevation":
     const fields = createGenerationFields("landform-belts")
+    fields.regions = (x, z) => ({id: "test:plain", center: {x, z}, biome: fields.profile.biomes.plains, neighboringBiome: fields.profile.biomes.plains, edgeDistance: 100, forestCover: 0, relief: 1, upland: 0})
     fields.continentalness = (x, z) => 0.5
     fields.river = (x, z) => 1
     fields.hills = (x, z) => 0

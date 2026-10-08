@@ -1,12 +1,27 @@
 import {createHash} from "node:crypto";
-import {readFile} from "node:fs/promises";
-import {dirname, resolve} from "node:path";
+import {readdir, readFile} from "node:fs/promises";
+import {dirname, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {buildCreativePreviewAssets} from "@openvoxel/game/creative-preview-assets";
+import {webgpuRuntimeAssets} from "@openvoxel/game/webgpu-runtime-assets";
 import {parse} from "yaml";
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = resolve(appRoot, "data/assets.yml");
 const outputRoot = resolve(appRoot, "public/generated");
+const audioRoot = resolve(appRoot, "data/audio");
+const controlsRoot = resolve(appRoot, "data/controls");
+
+async function authoredAudioFiles(directory = audioRoot) {
+  const files = [];
+  for (const entry of await readdir(directory, {withFileTypes: true})) {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await authoredAudioFiles(path));
+    else if (entry.isFile() && entry.name.endsWith(".flac")) files.push(path);
+    else throw new Error(`Web audio asset ${path} is not a FLAC file or directory`);
+  }
+  return files.sort();
+}
 
 function requireRecord(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(`${label} must be a record`);
@@ -58,6 +73,10 @@ export async function buildWebAssets() {
   if (source.formatVersion !== 1) throw new Error("Unsupported Web asset manifest format");
   const files = new Map();
   const sourceBytes = [];
+  for (const {name, bytes} of await webgpuRuntimeAssets()) {
+    files.set(`webgpu/${name}`, bytes);
+    sourceBytes.push(bytes);
+  }
   const fontOutputs = new Set();
   const fonts = [];
   for (const raw of requireList(source.fonts, "Web asset fonts")) {
@@ -74,7 +93,31 @@ export async function buildWebAssets() {
     fonts.push({family, weight, output});
   }
 
+  const creativeBlocks = [];
+  for (const {previewName, bytes} of await buildCreativePreviewAssets()) {
+    files.set(`creative-blocks/${previewName}.png`, bytes);
+    sourceBytes.push(bytes);
+    creativeBlocks.push(previewName);
+  }
+
+  const audio = [];
+  for (const path of await authoredAudioFiles()) {
+    const name = relative(audioRoot, path).split(/[/\\]/u).join("/");
+    const bytes = await readFile(path);
+    files.set(`audio/${name}`, bytes);
+    sourceBytes.push(bytes);
+    audio.push(name);
+  }
+
   const iconKeys = new Set();
+  const controls = [];
+  for (const name of (await readdir(controlsRoot)).sort()) {
+    if (!/^[A-Za-z_]+\.png$/u.test(name)) throw new Error(`Invalid touch control asset ${name}`);
+    const bytes = await readFile(resolve(controlsRoot, name));
+    files.set(`controls/${name}`, bytes);
+    sourceBytes.push(bytes);
+    controls.push(name);
+  }
   const icons = [];
   const symbols = [];
   for (const raw of requireList(source.icons, "Web asset icons")) {
@@ -114,13 +157,16 @@ export async function buildWebAssets() {
   }
 
   const digest = createHash("sha256");
-  digest.update(JSON.stringify(canonical({formatVersion: source.formatVersion, fonts, icons, licenses})));
+  digest.update(JSON.stringify(canonical({formatVersion: source.formatVersion, fonts, creativeBlocks, audio, controls, icons, licenses})));
   for (const bytes of sourceBytes) digest.update(bytes);
   digest.update(sprite);
   const manifest = {
     artifactVersion: 1,
     contentHash: digest.digest("hex"),
     fonts,
+    creativeBlocks,
+    audio,
+    controls,
     icons,
     licenses,
   };

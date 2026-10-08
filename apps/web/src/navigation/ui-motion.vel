@@ -1,0 +1,9 @@
+extern module "#openvoxel/web/ui-motion":
+    export def transitionMenu(update: () -> null) -> null
+    export def transitionPanel(element: Element?, update: () -> null) -> null
+
+import js {transitionMenu as runMenuTransition, transitionPanel as runPanelTransition} from "#openvoxel/web/ui-motion"
+
+export def transitionMenu(update: () -> null): runMenuTransition(update)
+
+export def transitionPanel(element: Element?, update: () -> null): runPanelTransition(element, update)

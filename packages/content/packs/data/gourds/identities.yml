@@ -1,0 +1,6 @@
+formatVersion: 3
+identities:
+  translations:
+    gourds:
+      watermelon: block.gourds.watermelon
+      watermelonVine: block.gourds.watermelon_vine

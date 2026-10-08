@@ -112,6 +112,20 @@ async function settlePromiseCallbacks() {
   await Promise.resolve();
 }
 
+test("touching the canvas never requests desktop pointer lock", () => {
+  const previousCanvas = globalThis.HTMLCanvasElement;
+  globalThis.HTMLCanvasElement = FakeCanvas;
+  const fixture = navigationFixture();
+  try {
+    fixture.canvas.emit("pointerdown", {button: 0, pointerType: "touch"});
+    assert.equal(fixture.canvas.requests, 0);
+    assert.equal(fixture.navigation.stats().pointerLocked, false);
+  } finally {
+    fixture.navigation.release();
+    globalThis.HTMLCanvasElement = previousCanvas;
+  }
+});
+
 test("a pointer-lock request that resolves after release immediately exits its canvas lock", async () => {
   const previousCanvas = globalThis.HTMLCanvasElement;
   globalThis.HTMLCanvasElement = FakeCanvas;

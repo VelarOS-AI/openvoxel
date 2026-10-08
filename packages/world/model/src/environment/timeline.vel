@@ -29,6 +29,10 @@ type WorldWeatherSample:
     windX: number
     windZ: number
 
+export readonly type WorldPrecipitationSample:
+    kind: WorldPrecipitationKind
+    intensity: number
+
 def saturate(value: number) -> number: return Math.clamp(value, 0, 1)
 
 def smoothstep(minimum: number, maximum: number, value: number) -> number:
@@ -105,6 +109,14 @@ def weatherAt(seed: string, worldMilliseconds: number, position: readonly Coordi
         windX: interpolate(current.windX, following.windX, blend),
         windZ: interpolate(current.windZ, following.windZ, blend),
     }
+
+/// 生态积雪只需要降水，不触发闪电采样与完整环境样本的验证。
+export def worldPrecipitationAt(seed: string, worldMilliseconds: number, position: readonly Coordinate3, climate: WorldClimateDefinition = defaultWorldClimate) -> WorldPrecipitationSample:
+    assert not seed.isBlank() and seed.size <= 128 else "Precipitation seed must contain from 1 through 128 characters"
+    assert worldMilliseconds.isFinite() and worldMilliseconds >= 0 and worldMilliseconds <= maximumWorldEnvironmentMilliseconds else "Precipitation world milliseconds are outside the supported range"
+    requireCoordinate3(position, "Precipitation sample")
+    const weather = weatherAt(seed, worldMilliseconds, position, climate)
+    return {kind: weather.precipitation, intensity: weather.precipitationIntensity}
 
 def lightningCellPosition(position: readonly Coordinate3) -> Coordinate3:
     const cellX = cellCoordinate(position.x, worldLightningHorizontalCellSize)

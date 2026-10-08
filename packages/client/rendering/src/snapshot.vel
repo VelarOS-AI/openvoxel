@@ -1,6 +1,11 @@
 import {ChunkPosition, requireChunkEdge, requireChunkPosition} from "@openvoxel/world"
 import {UInt32Buffer, uint32Buffer} from "velar/binary"
 
+extern module "#openvoxel/renderer/chunk-snapshot":
+    export def copyChunkInterior(target: UInt32Buffer, source: UInt32Buffer, edge: number) -> null
+
+import js {copyChunkInterior} from "#openvoxel/renderer/chunk-snapshot"
+
 def paddedIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
 
 def chunkIndex(x: number, y: number, z: number, edge: number) -> number: return x + edge * (z + edge * y)
@@ -10,15 +15,47 @@ export type ClientChunkBlockView:
     readonly position: readonly ChunkPosition
     readonly edge: number
     blockAtIndex: (index: number) -> number
+    // 返回独立副本；计算型视图可以只提供逐格读取。
+    snapshotBlocks: (() -> UInt32Buffer)?
+
+/// 只在中心底层存在水面时读取额外深度；已有 halo 不参与表面判断。
+export def snapshotNeedsFluidDepthHalo(blocks: UInt32Buffer, edge: number, waterIds: readonly Set<number>) -> bool:
+    requireChunkEdge(edge)
+    const paddedEdge = edge + 2
+    assert blocks.size == paddedEdge * paddedEdge * paddedEdge else "Chunk snapshot buffer dimensions do not match edge"
+    if waterIds.size == 0: return false
+    const plane = paddedEdge * paddedEdge
+    for z in range(edge):
+        const row = 1 + paddedEdge * (z + 1) + plane
+        for x in range(edge):
+            const index = row + x
+            if (blocks[index] in waterIds) and not (blocks[index + plane] in waterIds): return true
+    return false
+
+/// 水面恰落在 section 底层时，额外读取下方 section 的上七层，供水深着色。
+/// 首层已在普通邻域 halo 内；其余层只按本列复制，无须扩大整块 3D 邻域。
+export def snapshotFluidDepthHalo(below: readonly ClientChunkBlockView?) -> UInt32Buffer?:
+    if below == null: return null
+    const edge = below.edge
+    requireChunkEdge(edge)
+    const layers = Math.min(7, edge - 1)
+    const snapshot = uint32Buffer(edge * edge * layers)
+    for layer in range(layers):
+        const localY = edge - 2 - layer
+        for z in range(edge):
+            for x in range(edge):
+                snapshot[x + edge * (z + edge * layer)] = below.blockAtIndex(chunkIndex(x, localY, z, edge))
+    return snapshot
 
 /// 网格只读取已经捕获的中心 Chunk 与六个相邻面。先解析六个邻居，再按线性索引
 /// 复制，避免为 18³ 快照中的每个方块重复做世界坐标定位和 Chunk Map 查询。
-/// 缺失邻居以当前内容目录的空气 runtimeId 填充；调用方在邻居载入或卸载时
-/// 会让仍驻留的边界 Chunk 失效，因此共享边界的剔除结果可以收敛。
+/// 流送模式把未加载的面邻域延续为中心边界，避免先生成临时切面、随后删除。
+/// 真正空气邻居必须提供空气视图；邻居到达后正常失效重建，只添加真实外露面。
 export def snapshotChunkNeighborhood(
     center: readonly ClientChunkBlockView,
     chunk: (position: readonly ChunkPosition) -> readonly ClientChunkBlockView?,
     missingRuntimeId: number = 0,
+    sealUnloaded: bool = false,
 ) -> UInt32Buffer:
     const position = center.position
     const edge = center.edge
@@ -37,11 +74,14 @@ export def snapshotChunkNeighborhood(
             assert value.position.x == expected.x and value.position.y == expected.y and value.position.z == expected.z else "Chunk neighborhood returned the wrong position"
         return value
 
-    const centerBlockAtIndex = center.blockAtIndex
-    for y in range(edge):
-        for z in range(edge):
-            for x in range(edge):
-                snapshot[paddedIndex(x + 1, y + 1, z + 1, paddedEdge)] = centerBlockAtIndex(chunkIndex(x, y, z, edge))
+    const snapshotBlocks = center.snapshotBlocks
+    if snapshotBlocks != null: copyChunkInterior(snapshot, snapshotBlocks(), edge)
+    else:
+        const centerBlockAtIndex = center.blockAtIndex
+        for y in range(edge):
+            for z in range(edge):
+                for x in range(edge):
+                    snapshot[paddedIndex(x + 1, y + 1, z + 1, paddedEdge)] = centerBlockAtIndex(chunkIndex(x, y, z, edge))
 
     const west = resolve(-1, 0, 0)
     const east = resolve(1, 0, 0)
@@ -79,4 +119,19 @@ export def snapshotChunkNeighborhood(
         for y in range(edge):
             for x in range(edge):
                 snapshot[paddedIndex(x + 1, y + 1, edge + 1, paddedEdge)] = blockAtIndex(chunkIndex(x, y, 0, edge))
+    if sealUnloaded:
+        for a in range(edge):
+            for b in range(edge):
+                if west == null:
+                    snapshot[paddedIndex(0, a + 1, b + 1, paddedEdge)] = snapshot[paddedIndex(1, a + 1, b + 1, paddedEdge)]
+                if east == null:
+                    snapshot[paddedIndex(edge + 1, a + 1, b + 1, paddedEdge)] = snapshot[paddedIndex(edge, a + 1, b + 1, paddedEdge)]
+                if below == null:
+                    snapshot[paddedIndex(a + 1, 0, b + 1, paddedEdge)] = snapshot[paddedIndex(a + 1, 1, b + 1, paddedEdge)]
+                if above == null:
+                    snapshot[paddedIndex(a + 1, edge + 1, b + 1, paddedEdge)] = snapshot[paddedIndex(a + 1, edge, b + 1, paddedEdge)]
+                if north == null:
+                    snapshot[paddedIndex(a + 1, b + 1, 0, paddedEdge)] = snapshot[paddedIndex(a + 1, b + 1, 1, paddedEdge)]
+                if south == null:
+                    snapshot[paddedIndex(a + 1, b + 1, edge + 1, paddedEdge)] = snapshot[paddedIndex(a + 1, b + 1, edge, paddedEdge)]
     return snapshot

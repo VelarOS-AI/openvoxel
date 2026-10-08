@@ -1,6 +1,7 @@
 import {ChunkPosition} from "@openvoxel/world"
 import {Cancellation, Task, task} from "velar/task"
-import {ChunkWindowView, batchChunkWindowTransition, planChunkWindow, shouldRefreshChunkWindow, streamedChunkPositions} from "./render-window.vel"
+import {chunkRetirement} from "./chunk-retirement.vel"
+import {ChunkWindowView, batchChunkWindowTransition, chunkRetainsResidency, planChunkWindow, shouldRefreshChunkWindow, streamedChunkPositions} from "./render-window.vel"
 import {commitStreamBatch} from "./stream-commit.vel"
 
 export type ChunkStreamSource:
@@ -19,7 +20,7 @@ readonly type RequestedChunkWindow:
     version: number
 
 /// 一个流送所有者只保留最新目标。正在提交的有界批次完成 load/unload 配对后
-/// 才切到新目标，既不会因持续移动饿死生成，也不会先挖空当前驻留窗口。
+/// 才切到新目标；回收计划经最新视窗复核和有界延迟后执行。
 export def chunkStreamer(
     source: readonly ChunkStreamSource,
     minimumChunkY: number,
@@ -36,6 +37,16 @@ export def chunkStreamer(
     let owner: Task<null>? = null
     let closed = false
     let closing: Promise<null>? = null
+    // 每次实际回收复核最新视窗，不能执行已经被转身/回退取代的批次卸载计划。
+    const retirement = chunkRetirement(
+        (_key, position) => previousView != null and not chunkRetainsResidency(position, previousView),
+        source.unload,
+        64,
+    )
+
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        if closed: source.unload(positions)
+        else: retirement.defer(positions)
 
     async def stream(request: RequestedChunkWindow, cancellation: Cancellation):
         const tracked = source.trackedPositions()
@@ -45,14 +56,14 @@ export def chunkStreamer(
         loading = plan.missing.size
         changed()
         try:
-            if transition.surplus.size > 0: source.unload(transition.surplus)
+            if transition.surplus.size > 0: unload(transition.surplus)
             let loaded = 0
             for batch in transition.batches:
                 await cancellation.checkpoint()
                 const current = await commitStreamBatch(
                     batch,
                     positions => source.load(positions, cancellation),
-                    source.unload,
+                    unload,
                     () => not closed and version == request.version,
                 )
                 loaded += batch.load.size
@@ -86,6 +97,7 @@ export def chunkStreamer(
     def request(view: ChunkWindowView):
         if closed or not shouldRefreshChunkWindow(previousView, view): return
         previousView = view
+        retirement.refresh()
         version += 1
         requested = {view, version}
         resume()
@@ -96,7 +108,10 @@ export def chunkStreamer(
         loading = 0
         const active = owner
         owner = null
-        if active != null: await active.cancel("Chunk streamer closed")
+        const retiring = retirement.close()
+        try:
+            if active != null: await active.cancel("Chunk streamer closed")
+        finally: await retiring
 
     def close() -> Promise<null>:
         if closing == null: closing = shutdown()

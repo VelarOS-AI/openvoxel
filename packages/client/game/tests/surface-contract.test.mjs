@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {NullEngine} from "@babylonjs/core/Engines/nullEngine.js";
+import {Mesh} from "@babylonjs/core/Meshes/mesh.js";
 import {Scene} from "@babylonjs/core/scene.js";
 import {createSurfaceAdapter} from "../src/backends/babylon/native/surface.mjs";
 import {requireSurfaceDependencies, requireSurfaceOptions, validateChunkMesh} from "../src/backends/babylon/native/surface-contract.mjs";
@@ -87,15 +88,15 @@ test("surface construction and release unwind all acquisitions once in reverse o
   assert.throws(() => lifetime.defer(() => null), /lifetime is disposed/);
 });
 
-function materialLibrary(animation = false) {
+function materialLibrary(animation = false, scene = null) {
   const layer = animation ? "cutout" : "opaque";
   const textures = [{key: "test:first", bankKey: "test:bank", alphaCutoff: animation ? 0.5 : null, variants: [{layer: 0}]}];
   if (animation) textures.push({key: "test:next", bankKey: "test:bank", alphaCutoff: 0.5, variants: [{layer: 1}]});
-  return new VoxelMaterialLibrary(null, {
+  return new VoxelMaterialLibrary(scene, {
     materials: [{
       key: "test:material", precipitationSurface: "solid", materialEffect: "standard", waterOptics: null,
       alpha: 1, alphaCutoff: 0.5, doubleSided: false, castsShadows: true,
-      environmentIntensity: 1, clearCoat: 0, clearCoatRoughness: 0, unlit: false,
+      environmentIntensity: 1, specularWeight: 1, clearCoat: 0, clearCoatRoughness: 0, unlit: false,
     }],
     textures,
     animations: animation ? [{key: "test:animation", frames: ["test:first", "test:next"], frameDurationMs: 100}] : [],
@@ -138,8 +139,7 @@ test("invalid animation ownership fails before a PBR material can be allocated",
 test("a failed PBR construction cannot leave a material or animation in the live scene", () => {
   const engine = new NullEngine();
   const scene = new Scene(engine);
-  const library = materialLibrary(true);
-  library.scene = scene;
+  const library = materialLibrary(true, scene);
   Object.defineProperty(library.materialDefinitions.get("test:material"), "environmentIntensity", {
     get() { throw new Error("material recipe failed"); },
   });
@@ -176,7 +176,40 @@ test("mesh validation preserves full-storage buffers and rejects invalid topolog
   batch.tintRoles.fill(0);
   batch.indices[0] = 3;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /canonical quad topology/);
-  batch.indices[0] = 0;
+  batch.indices.set([0, 1, 3, 1, 2, 3]);
+  assert.doesNotThrow(() => validateChunkMesh(chunk, 16, library));
+  batch.indices.set([0, 1, 2, 0, 2, 3]);
   batch.textureLayers[0] = 1;
   assert.throws(() => validateChunkMesh(chunk, 16, library), /outside texture bank/);
+});
+
+
+test("WebGPU chunks share one recipe and animation while owning separate binding slots", () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  const library = materialLibrary(true, scene);
+  Object.defineProperty(engine, "isWebGPU", {value: true});
+  const first = new Mesh("chunk-a", scene), second = new Mesh("chunk-b", scene);
+  try {
+    const a = library.materialFor(batchFor(true), first);
+    const b = library.materialFor(batchFor(true), second);
+    assert.equal(a, b);
+    assert.equal(library.materials.size, 1);
+    assert.equal(library.animatedMaterials.length, 1);
+    assert.equal(a.meshBindings.owners.size, 2);
+    assert.notEqual(a.meshBindings.owners.get(first), a.meshBindings.owners.get(second));
+    first.dispose();
+    assert.equal(a.meshBindings.owners.size, 1);
+    assert.equal(library.animatedMaterials.length, 1);
+    second.dispose();
+    assert.equal(a.meshBindings.owners.size, 0);
+    const replacement = new Mesh("chunk-c", scene);
+    assert.equal(library.materialFor(batchFor(true), replacement), a);
+    library.dispose();
+    assert.equal(library.materials.size, 0);
+    assert.equal(library.animatedMaterials.length, 0);
+    replacement.dispose();
+  } finally {
+    library.dispose(); scene.dispose(); engine.dispose();
+  }
 });

@@ -1,4 +1,18 @@
-import {WorldGameStats, openLocalWorldGame} from "@openvoxel/game"
+import {BlockInventory} from "../components/block-inventory.vel"
+import {BlockItemIcon} from "../components/block-item-icon.vel"
+import {blockInfoLook, blockInfoIconLook, blockInfoNameLook, blockInfoIdLook, inventoryDialogLook, slotNumberLook} from "../styles/block-inventory.vel"
+import {WorldShortcuts, worldShortcuts} from "../navigation/world-shortcuts.vel"
+import {LandscapeNotice} from "../components/landscape-notice.vel"
+import {TouchControls} from "../components/touch-controls.vel"
+import {releaseGameLandscape} from "../navigation/device-display.vel"
+import {WorldLoadingOverlay} from "../components/world-loading-overlay.vel"
+import {loadSavedWorlds} from "../worlds/world-library.vel"
+import {WorldPreset} from "../worlds/saved-world.vel"
+import {worldCover} from "../worlds/world-presentation.vel"
+import {GameSettings, GameSettingsSubscription, gameSettings, subscribeGameSettings} from "@openvoxel/game"
+import {GameSettingsPanel} from "../components/game-settings-panel.vel"
+import {settingsDialogLook} from "../styles/game-settings.vel"
+import {WorldGameStats, WorldBlockControls, WorldBlockItem, openLocalWorldGame} from "@openvoxel/game"
 import {WorldGameMode, WorldManifest} from "@openvoxel/world"
 import {closeDialog, showDialog} from "velar/browser"
 import {Head, RouteContext} from "velar/web"
@@ -7,18 +21,28 @@ import {WorldMinimapPanel} from "../worlds/world-minimap.vel"
 import {asyncPageLifetime} from "../lifecycle/async-page-lifetime.vel"
 import {WorldExitGuard, releaseWorldPointerLock, worldExitGuard} from "../lifecycle/world-exit-guard.vel"
 import {navigate} from "../navigation/app-navigation.vel"
-import {primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
+import {primaryButtonLook, secondaryButtonLook} from "../styles/common.vel"
 import {navButtonLook} from "../styles/shell.vel"
-import {gameCanvasLook, loadingLook, worldChromeLook, worldExitActionsLook, worldExitBodyLook, worldExitDescriptionLook, worldExitDialogLook, worldExitTitleLook, worldStageLook} from "../styles/world-stage.vel"
+import {frameTimeLook, frameRateLook, creativeAimActiveLook, creativeAimIdleLook, creativeAimLook, creativeEditErrorLook, creativeHudLook, creativeSelectedSlotLook, creativeSlotLook, creativeToolbarLook, gameCanvasLook, loadingLook, worldBackButtonLook, worldChromeLook, worldExitActionsLook, worldExitBodyLook, worldExitDescriptionLook, worldExitDialogLook, worldExitTitleLook, worldStageLook} from "../styles/world-stage.vel"
 
 export component WorldPage(route: RouteContext):
     const lifetime = asyncPageLifetime()
     const generation = lifetime.begin()
     state world: WorldManifest? = null
     state loading = true
+    state revealed = false
+    const saved = loadSavedWorlds().find(item => item.id == route.params.get("id"))
     state failure = ""
     state stats: WorldGameStats? = null
     state leaving = false
+    state inventoryOpen = false
+    state settingsOpen = false
+    let shortcuts: WorldShortcuts? = null
+    state preferences: GameSettings = gameSettings()
+    let preferencesSubscription: GameSettingsSubscription? = null
+    let settingsDialog: DialogElement? = null
+    let inventoryDialog: DialogElement? = null
+    let blockControls: WorldBlockControls? = null
     let canvas: CanvasElement? = null
     let minimapCanvas: CanvasElement? = null
     let leaveDialog: DialogElement? = null
@@ -31,6 +55,13 @@ export component WorldPage(route: RouteContext):
         : stats == null ? "Preparing world"
         : stats.ready ? "World ready" : f"Building {stats.startupPending} nearby Chunks")
 
+    computed playable = not loading and failure.isBlank() and (stats?.ready ?? false)
+
+    watch playable:
+        if playable and not revealed:
+            revealed = true
+            exitGuard = worldExitGuard(requestHistoryLeave)
+
     def mountedCanvas() -> CanvasElement:
         const current = canvas
         assert current != null else "World canvas is not mounted"
@@ -40,11 +71,17 @@ export component WorldPage(route: RouteContext):
         if lifetime.owns(generation) and failure.isBlank(): stats = value
 
     def receiveFailure(message: string):
-        if lifetime.owns(generation): failure = message
+        if lifetime.owns(generation):
+            failure = message
+            exitGuard?.dispose()
+            exitGuard = null
 
     def mountMinimap(value: CanvasElement?): minimapCanvas = value
 
-    const experience = openLocalWorldGame(route.params.get("id") ?? "", mountedCanvas, receiveStats, receiveFailure, () => minimapCanvas)
+    def receiveBlockControls(value: WorldBlockControls?):
+        if lifetime.owns(generation): blockControls = value
+
+    const experience = openLocalWorldGame(route.params.get("id") ?? "", mountedCanvas, receiveStats, receiveFailure, () => minimapCanvas, receiveBlockControls)
     let closing: Promise<null>? = null
 
     def closeExperience() -> Promise<null>:
@@ -62,11 +99,14 @@ export component WorldPage(route: RouteContext):
             loading = false
         catch error:
             if not lifetime.owns(generation): return
-            failure = error.message
+            receiveFailure(error.message)
             loading = false
 
     def requestLeave(throughHistory: bool):
         if departureStarted or leaveRequested: return
+        if not revealed or not failure.isBlank():
+            detach depart(throughHistory)
+            return
         const current = leaveDialog
         if current == null: return
         const currentCanvas = canvas
@@ -75,7 +115,42 @@ export component WorldPage(route: RouteContext):
         historyLeaveRequested = throughHistory
         showDialog(current)
 
-    def requestHomeLeave(): requestLeave(false)
+    def openSettings():
+        settingsOpen = true
+        const currentCanvas = canvas
+        if currentCanvas != null: releaseWorldPointerLock(currentCanvas)
+        const dialog = settingsDialog
+        if dialog != null: showDialog(dialog)
+
+    def openInventory():
+        if not playable or world?.mode != WorldGameMode.creative: return
+        const currentCanvas = canvas
+        if currentCanvas != null: releaseWorldPointerLock(currentCanvas)
+        inventoryOpen = true
+        const dialog = inventoryDialog
+        if dialog != null: showDialog(dialog)
+
+    def closeInventory():
+        const dialog = inventoryDialog
+        if dialog != null: closeDialog(dialog)
+        inventoryOpen = false
+
+    def chooseBlock(item: WorldBlockItem):
+        blockControls?.assignBlock(item.stateKey)
+        closeInventory()
+
+    def chooseSlot(index: number): blockControls?.selectSlot(index)
+
+    def closeSettings():
+        settingsOpen = false
+        const dialog = settingsDialog
+        if dialog != null: closeDialog(dialog)
+
+    def requestHomeLeave():
+        closeSettings()
+        requestLeave(false)
+
+    def receivePreferences(value: GameSettings): preferences = value
 
     def requestHistoryLeave(): requestLeave(true)
 
@@ -92,11 +167,10 @@ export component WorldPage(route: RouteContext):
         const guard = exitGuard
         if guard != null: guard.cancelHistoryLeave()
 
-    action confirmLeave():
-        if departureStarted or not leaveRequested: return
+    async def depart(throughHistory: bool):
+        if departureStarted: return
         departureStarted = true
         leaving = true
-        const throughHistory = historyLeaveRequested
         const stopped = closeExperience()
         const guard = exitGuard
         if throughHistory:
@@ -108,12 +182,20 @@ export component WorldPage(route: RouteContext):
         try: await stopped
         catch error: pass
 
+    action confirmLeave():
+        if not leaveRequested: return
+        await depart(historyLeaveRequested)
+
     @mounted:
-        exitGuard = worldExitGuard(requestHistoryLeave)
+        shortcuts = worldShortcuts(mountedCanvas(), () => inventoryDialog, openInventory, closeInventory)
+        preferencesSubscription = subscribeGameSettings(receivePreferences)
         await enter()
 
     @cleanup:
+        releaseGameLandscape()
         lifetime.dispose()
+        preferencesSubscription?.close()
+        shortcuts?.dispose()
         const guard = exitGuard
         exitGuard = null
         if guard != null: guard.dispose()
@@ -123,7 +205,11 @@ export component WorldPage(route: RouteContext):
         look={worldStageLook}
         data-app
         data-screen="world"
-        data-world-ready={str(not loading and failure.isBlank() and (stats?.ready ?? false))}
+        data-world-ready={str(playable)}
+        data-world-revealed={str(revealed)}
+        data-fps={str(stats?.fps ?? 0)}
+        data-render-backend={stats?.backend ?? ""}
+        data-frame-ms={str(stats?.frameMilliseconds ?? 0)}
         data-render-pending={str(stats?.pending ?? 0)}
         data-rendered-chunks={str(stats?.chunks ?? 0)}
         data-rendered-meshes={str(stats?.meshes ?? 0)}
@@ -137,43 +223,93 @@ export component WorldPage(route: RouteContext):
         data-view-chunk-x={str(stats?.viewChunkX ?? 0)}
         data-view-chunk-y={str(stats?.viewChunkY ?? 0)}
         data-view-chunk-z={str(stats?.viewChunkZ ?? 0)}
+        data-render-status={renderStatus}
+        data-creative-target-x={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.x)}
+        data-creative-target-y={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.y)}
+        data-creative-target-z={stats?.creativeTarget == null ? null : str(stats.creativeTarget.block.z)}
+        data-creative-target-runtime-id={stats?.creativeTarget == null ? null : str(stats.creativeTarget.runtimeId)}
     >
         <Head
             title={world == null ? "OpenVoxel" : f"{world.name} · OpenVoxel"}
-            description="OpenVoxel world"
-            themeColor="#06101f"
-            language="en"
+            description="OpenVoxel 世界"
+            themeColor="#202020"
+            language="zh-CN"
         />
         <canvas
             ref={canvas}
             look={gameCanvasLook}
             aria-label={world?.mode == WorldGameMode.creative
-                ? "First-person creative world view. Click to capture the pointer and fly."
-                : "First-person survival world view. Click to capture the pointer and explore."}
+                ? "第一人称创造模式。点击画面控制视角并飞行。"
+                : "第一人称生存模式。点击画面控制视角并探索。"}
             data-voxel-canvas
             data-navigation-mode="first-person"
             data-movement-mode={world?.mode == WorldGameMode.creative ? "creative-flight" : "survival-walk"}
         ></canvas>
-        <div look={worldChromeLook}>
-            <button type="button" look={navButtonLook} on:click={requestHomeLeave} aria-label="Back to worlds" data-leave-world>
-                <Icon name={IconName.chevronLeft} />
+        <div look={worldChromeLook} data-world-chrome>
+            <button type="button" look={worldBackButtonLook} on:click={openSettings} aria-label="游戏设置" data-open-settings>
+                <Icon name={IconName.gear} />
             </button>
-            <div>
-                <strong>{world?.name ?? "Opening world"}</strong>
-                <p look={subtitleLook} aria-live="polite" data-render-status>{renderStatus}</p>
-                <p look={subtitleLook} data-first-person-controls>
-                    {world?.mode == WorldGameMode.creative
-                        ? "Click to look · WASD move · Space rise · Ctrl descend · Shift accelerate · Esc release"
-                        : "Click to look · WASD move · Space jump · C crouch · Shift sprint · Esc release"}
-                </p>
-            </div>
         </div>
-        <WorldMinimapPanel attach={mountMinimap} />
-        {loading ? <div look={loadingLook} aria-busy="true" data-world-loading>Opening world…</div> : <></>}
+        <output look={frameRateLook} aria-label="实时帧率" data-frame-rate>
+            {stats == null or stats.fps == 0 ? "FPS —" : f"{stats.fps} FPS · {stats.frameMilliseconds} ms · {stats.backend}"}
+        </output>
+        <div hidden={not preferences.minimap}><WorldMinimapPanel attach={mountMinimap} /></div>
+        <div hidden={not preferences.crosshair}><div look={creativeAimLook} aria-hidden="true" data-creative-crosshair>
+            <span look={stats?.creativeTarget == null ? creativeAimIdleLook : creativeAimActiveLook}>+</span>
+        </div></div>
+        {stats?.targetBlock == null ? <></> : <aside look={blockInfoLook} aria-label="当前瞄准的方块" data-target-block={stats.targetBlock.key}>
+            <span look={blockInfoIconLook}><BlockItemIcon item={stats.targetBlock} /></span>
+            <div>
+                <p look={blockInfoNameLook}>{stats.targetBlock.label}</p>
+                <code look={blockInfoIdLook}>{stats.targetBlock.key}</code>
+                <span look={blockInfoIdLook}>ID #{stats.targetBlock.runtimeId}</span>
+            </div>
+        </aside>}
+        {world?.mode == WorldGameMode.creative ? <>
+            <div hidden={not preferences.toolbar}><div look={creativeHudLook} data-creative-hud>
+                {stats?.creativeEditError == null ? <></> : <p look={creativeEditErrorLook} role="alert" data-creative-edit-error>{stats.creativeEditError}</p>}
+                <div look={creativeToolbarLook} aria-label="创造模式方块栏" data-creative-toolbar>
+                    {(stats?.creativeSlots ?? []).map((entry, index) => <button
+                        type="button"
+                        look={stats?.creativeSlot == index ? creativeSelectedSlotLook : creativeSlotLook}
+                        on:click={() => chooseSlot(index)}
+                        data-creative-slot={str(index + 1)}
+                        data-block-key={entry.key}
+                        data-selected={str(stats?.creativeSlot == index)}
+                        aria-pressed={str(stats?.creativeSlot == index)}
+                        title={f"{index + 1}: {entry.label} · {entry.key}"}
+                    >
+                        <BlockItemIcon item={entry} />
+                        <span look={slotNumberLook}>{index + 1}</span>
+                    </button>)}
+                </div>
+            </div></div>
+            <dialog ref={inventoryDialog} look={inventoryDialogLook} aria-labelledby="block-inventory-title" on:cancel.prevent={closeInventory} data-inventory-dialog>
+                {inventoryOpen ? <BlockInventory
+                    items={stats?.blockInventory ?? []}
+                    selected={stats == null ? "" : stats.creativeSlots[stats.creativeSlot].stateKey}
+                    slot={stats?.creativeSlot ?? 0}
+                    choose={chooseBlock}
+                    close={closeInventory}
+                /> : <></>}
+            </dialog>
+        </> : <></>}
+        <TouchControls creative={world?.mode == WorldGameMode.creative} openInventory={openInventory} />
+        <dialog ref={settingsDialog} look={settingsDialogLook} aria-labelledby="game-settings-title" on:cancel.prevent={closeSettings} data-settings-dialog>
+            {settingsOpen ? <GameSettingsPanel settings={preferences} close={closeSettings} leave={requestHomeLeave} /> : <></>}
+        </dialog>
+        <WorldLoadingOverlay
+            active={not revealed and failure.isBlank()}
+            cover={worldCover(saved?.preset ?? WorldPreset.meadow)}
+            title={world?.name ?? saved?.name ?? "进入世界"}
+            detail={loading ? "正在读取世界…" : "正在生成周围地形…"}
+            cancel={requestHomeLeave}
+        />
+        {failure.isBlank() ? <LandscapeNotice cancel={requestHomeLeave} /> : <></>}
         {failure.isBlank() ? <></> : <div look={loadingLook} role="alert" data-error>
             <div>
                 <p>{failure}</p>
-                <button type="button" look={navButtonLook} on:click={requestHomeLeave}>Back to worlds</button>
+                <button type="button" look={navButtonLook} on:click={requestHomeLeave}>返回世界列表</button>
             </div>
         </div>}
         <dialog
@@ -186,16 +322,16 @@ export component WorldPage(route: RouteContext):
             data-world-exit-pending={str(leaving)}
         >
             <div look={worldExitBodyLook}>
-                <h2 id="world-exit-title" look={worldExitTitleLook}>Leave this world?</h2>
+                <h2 id="world-exit-title" look={worldExitTitleLook}>退出当前世界？</h2>
                 <p id="world-exit-description" look={worldExitDescriptionLook}>
-                    Your current game session will close. You can stay here or leave when you are ready.
+                    世界进度会自动保存。确认返回世界列表？
                 </p>
                 <div look={worldExitActionsLook}>
                     <button type="button" look={secondaryButtonLook} on:click={stayInWorld} disabled={leaving} data-stay-in-world>
-                        Stay in world
+                        继续游戏
                     </button>
                     <button type="button" look={primaryButtonLook} on:click={confirmLeave} disabled={leaving} data-confirm-leave-world>
-                        {leaving ? "Leaving…" : "Leave world"}
+                        {leaving ? "正在退出…" : "退出世界"}
                     </button>
                 </div>
             </div>

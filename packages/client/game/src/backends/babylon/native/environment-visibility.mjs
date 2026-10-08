@@ -20,12 +20,13 @@ function requirePositiveFinite(value, label) {
  * depth instead of a gray wall. Sky, clouds and celestial meshes bypass scene
  * fog separately.
  */
-export function environmentFogRange(renderDistance, densityFactor) {
+export function environmentFogRange(renderDistance, densityFactor, fogMultiplier = 1) {
   renderDistance = requirePositiveFinite(renderDistance, "Environment render distance");
   densityFactor = requirePositiveFinite(densityFactor, "Environment fog density factor");
   const weatherAmount = Math.min(1, Math.max(0, densityFactor - 1) / (maximumFogDensityFactor - 1));
+  const scale = Math.sqrt(requirePositiveFinite(fogMultiplier, "Environment fog multiplier"));
   return {
-    start: renderDistance * (clearFogStartRatio + (severeFogStartRatio - clearFogStartRatio) * weatherAmount),
-    end: renderDistance * (clearFogEndRatio + (severeFogEndRatio - clearFogEndRatio) * weatherAmount),
+    start: renderDistance * Math.min(.78, (clearFogStartRatio + (severeFogStartRatio - clearFogStartRatio) * weatherAmount) / scale),
+    end: renderDistance * Math.min(.93, (clearFogEndRatio + (severeFogEndRatio - clearFogEndRatio) * weatherAmount) / scale),
   };
 }

@@ -37,7 +37,7 @@ npm run test:terrain -- review --discover
 npm run dev:web
 ```
 
-访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Esc` 释放指针。Creative 模式使用 `Space` 上升、`Ctrl` 下降、`Shift` 加速；Survival 模式使用 `Space` 跳跃、`C` 下蹲、`Shift` 冲刺。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
+访问 `http://127.0.0.1:7173` 后，可以在开始界面创建、打开和切换本地世界，再进入 Canvas 世界视图。点击画布进入第一人称探索：鼠标转向，`WASD` 移动，`Esc` 释放指针。Creative 模式使用 `Space` 上升、`Ctrl` 下降、`Shift` 加速；锁定指针后，准星选取六格内已同步的方块，鼠标左键挖掘、右键放置，数字键 `1`–`5` 切换快捷栏。编辑经世界会话保存，重新打开同一世界仍可看到修改。Survival 模式使用 `Space` 跳跃、`C` 下蹲、`Shift` 冲刺。生产预览固定使用 `7174`；无头浏览器验收使用独立的 `7273`–`7275` 端口，不会再与其他项目的常用开发端口争用。
 
 游戏图形后端的独立 GPU 门禁不启动正式应用或服务端。它临时构建测试夹具并随机监听空闲本地端口，在 Headless Chromium 中覆盖完整状态目录、纹理数组/PBR 通道、Chunk 接缝、透明排序、动画和上下文恢复；截图证据写入 `packages/client/game/generated/gpu-render-probe`：
 
@@ -71,7 +71,7 @@ curl http://127.0.0.1:3000/api/openapi.json
 
 每个连接通过 `ws://127.0.0.1:3000/api/worlds/{worldId}/realtime` 进入一个共享世界，命令和事件使用 MessagePack。完整契约见 [当前协议](docs/protocol.md)，可交互文档位于 `/api/docs`。
 
-Mod 人工源与运行时产物分开构建：源目录包含 `content.yml`、`identities.yml` 以及可选的 `blocks/`、`world-generation/`，构建目录只接收 `content-pack.json`。服务器在 `application.yml` 的 `content.packArtifacts` 中安装产物，并用 `defaultPacks` 选择新世界默认内容。
+Mod 人工源与运行时产物分开构建：源目录包含 `content.yml`、`identities.yml` 以及可选的 `blocks/`、`world-generation/`、`ecosystem.yml`，构建目录只接收 `content-pack.json`。服务器在 `application.yml` 的 `content.packArtifacts` 中安装产物，并用 `defaultPacks` 选择新世界默认内容。
 
 ```sh
 OPENVOXEL_CONTENT_SOURCE=/absolute/mod-source \
@@ -156,3 +156,5 @@ npm run benchmark:caves
 Canvas 世界视图已接入完整环境呈现：动态天空与 IBL、太阳和八相月亮、星空、连续云层、天气雾、雨雪与溅射粒子、闪电以及随光照变化的 PBR 方块材质共享同一权威世界时间。环境资源与方块纹理一样由独立源文件维护并进入资源哈希；GPU 探针会独立验收六种环境状态、透明深度、四通道材质和上下文恢复。
 
 OpenVoxel 的业务代码不会写入 VelarScript 主仓库或 VelarScript Libraries。只有能力具备领域无关的稳定语义、已有真实复用证据，并能独立承担兼容与验证成本时，才会进入 Libraries；进入 Libraries 也不等于晋升为 `velar/*` 标准库。
+
+可组合生态包、扩展内容及核心边界见 [ADR 0017](docs/architecture/0017-composable-ecosystem-packs.md)。

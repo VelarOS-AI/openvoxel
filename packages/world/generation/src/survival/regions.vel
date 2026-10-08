@@ -1,0 +1,114 @@
+import {ecosystemUnits, habitatWeight, stageEnabled} from "../ecosystem/composition.vel"
+import {simplex2} from "@velarscript-labs/noise"
+import {random} from "velar/random"
+import {Coordinate2, WorldBaseClimateSampler} from "@openvoxel/world"
+import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {WorldRegionSample} from "../region-sample.vel"
+import {evictOldest} from "./lru-cache.vel"
+
+readonly type RegionNode:
+    id: string
+    x: number
+    z: number
+    biome: string
+    forestCover: number
+    relief: number
+    upland: number
+
+export type RegionSampler = (x: number, z: number) -> WorldRegionSample
+
+def regionBiome(profile: readonly WorldGeneratorDefinition, temperature: number, humidity: number, variety: number) -> string:
+    const units = ecosystemUnits(profile).biomes
+    const weights = units.map(unit => unit.weight * habitatWeight(temperature, unit.temperature) * habitatWeight(humidity, unit.humidity))
+    const total = weights.sum()
+    let remaining = variety * total
+    for unit, index in units:
+        remaining -= weights[index]
+        if remaining < 0: return unit.id
+    return profile.biomes.plains
+
+/// 抖动区域中心 + 连续坐标扭曲，消除棋盘边界。带宽内所有中心参与混合，
+/// 三岔边界不会因为第二近邻切换而使高度跳变。缓存只存中心，不保存生成顺序。
+export def createRegionSampler(seed: string, profile: readonly WorldGeneratorDefinition, climate: WorldBaseClimateSampler) -> RegionSampler:
+    const root = random(seed).fork("world-regions")
+    const warpX = simplex2(f"{seed}:regions:warp-x")
+    const warpZ = simplex2(f"{seed}:regions:warp-z")
+    const nodes: Map<string, RegionNode> = Map()
+    const neighborhoods: Map<string, readonly List<RegionNode>> = Map()
+    const config = profile.regions
+    const biomes = profile.biomes
+
+    def nodeAt(cellX: number, cellZ: number) -> RegionNode:
+        const key = f"{cellX}:{cellZ}"
+        const found = nodes.get(key)
+        if found != null: return found
+        const stream = root.fork(key)
+        const x = (cellX + 0.2 + stream.number() * 0.6) * config.cellSize
+        const z = (cellZ + 0.2 + stream.number() * 0.6) * config.cellSize
+        const step = profile.sampling.horizontalStep
+        const weather = climate({x: (x / step).floor() * step, z: (z / step).floor() * step})
+        const biome = stageEnabled(profile, "regions") ? regionBiome(profile, weather.temperature, weather.humidity, stream.number()) : profile.biomes.plains
+        const definition = ecosystemUnits(profile).biomes.find(unit => unit.id == biome)
+        const forestCover = definition?.forestCover ?? 0
+        const relief = definition?.relief ?? 1
+        const upland = definition?.upland ?? 0
+        const node: RegionNode = {id: f"region:{cellX}:{cellZ}", x, z, biome, forestCover, relief, upland}
+        if nodes.size >= 256: evictOldest(nodes)
+        nodes.set(key, node)
+        return node
+
+    def neighborhood(cellX: number, cellZ: number) -> readonly List<RegionNode>:
+        const key = f"{cellX}:{cellZ}"
+        const found = neighborhoods.get(key)
+        if found != null: return found
+        const group: List<RegionNode> = []
+        // 查询点位于窗口中间一格；被排除的中心至少相距 1.7 格。
+        // 最近中心最远 sqrt(2)*0.8 格，加上最多 0.3 格混合带仍在窗口内。
+        for dx in range(-2, 2):
+            for dz in range(-2, 2): group.append(nodeAt(cellX + dx, cellZ + dz))
+        if neighborhoods.size >= 64: evictOldest(neighborhoods)
+        neighborhoods.set(key, group)
+        return group
+
+    def sample(x: number, z: number) -> WorldRegionSample:
+        const warpedX = x + config.warpAmplitude * warpX(x / config.warpPeriod + 17.3, z / config.warpPeriod - 8.9)
+        const warpedZ = z + config.warpAmplitude * warpZ(x / config.warpPeriod - 31.1, z / config.warpPeriod + 5.7)
+        const cellX = (warpedX / config.cellSize + 0.5).floor()
+        const cellZ = (warpedZ / config.cellSize + 0.5).floor()
+        const candidates = neighborhood(cellX, cellZ)
+        let nearest = candidates[0]
+        let neighbor = candidates[1]
+        let nearestSquared = Math.infinity
+        let neighborSquared = Math.infinity
+        for node in candidates:
+            const offsetX = warpedX - node.x
+            const offsetZ = warpedZ - node.z
+            const squared = offsetX * offsetX + offsetZ * offsetZ
+            if squared < nearestSquared:
+                neighbor = nearest
+                neighborSquared = nearestSquared
+                nearest = node
+                nearestSquared = squared
+            else if squared < neighborSquared:
+                neighbor = node
+                neighborSquared = squared
+        const nearestDistance = Math.sqrt(nearestSquared)
+        const influenceRadius = nearestDistance + config.transitionWidth
+        let weightSum = 0
+        let forestCover = 0
+        let relief = 0
+        let upland = 0
+        for node in candidates:
+            const offsetX = warpedX - node.x
+            const offsetZ = warpedZ - node.z
+            const squared = offsetX * offsetX + offsetZ * offsetZ
+            if squared >= influenceRadius * influenceRadius: continue
+            const amount = Math.clamp(1 - (Math.sqrt(squared) - nearestDistance) / config.transitionWidth, 0, 1)
+            const weight = amount * amount * (3 - 2 * amount)
+            weightSum += weight
+            forestCover += node.forestCover * weight
+            relief += node.relief * weight
+            upland += node.upland * weight
+        return {id: nearest.id, center: Coordinate2.from(nearest), biome: nearest.biome, neighboringBiome: neighbor.biome, edgeDistance: (Math.sqrt(neighborSquared) - nearestDistance) * 0.5, forestCover: forestCover / weightSum, relief: relief / weightSum, upland: upland / weightSum}
+
+    return sample

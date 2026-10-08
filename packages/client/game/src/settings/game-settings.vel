@@ -1,0 +1,74 @@
+export readonly type GameSettings:
+    renderBackend: string
+    renderScale: number
+    viewDistance: number
+    fov: number
+    brightness: number
+    saturation: number
+    shadows: bool
+    softShadows: bool
+    antialias: bool
+    bloom: bool
+    waterReflections: bool
+    particles: bool
+    vegetationMotion: bool
+    masterVolume: number
+    effectsVolume: number
+    ambientVolume: number
+    muteUnfocused: bool
+    sensitivity: number
+    invertY: bool
+    forwardKey: string
+    backwardKey: string
+    leftKey: string
+    rightKey: string
+    jumpKey: string
+    sprintKey: string
+    crouchKey: string
+    descendKey: string
+    minimap: bool
+    crosshair: bool
+    toolbar: bool
+    timeMode: string
+    hour: number
+    season: string
+    weather: string
+    precipitation: number
+    wind: number
+    fog: number
+
+export type GameSettingsSubscription:
+    close: () -> null
+
+type SettingsPort:
+    recommended: () -> string
+    profile: (settings: GameSettings) -> string
+    get: () -> GameSettings
+    set: (key: string, value: number | string | bool) -> GameSettings
+    reset: () -> GameSettings
+    preset: (name: string) -> GameSettings
+    error: () -> string
+    subscribe: (listener: (settings: GameSettings) -> null) -> GameSettingsSubscription
+    number: (settings: GameSettings, key: string) -> number
+    text: (settings: GameSettings, key: string) -> string
+    boolean: (settings: GameSettings, key: string) -> bool
+
+extern module "#openvoxel/game/preferences":
+    export def createGameSettingsPort() -> SettingsPort
+
+import js {createGameSettingsPort} from "#openvoxel/game/preferences"
+const port = createGameSettingsPort()
+export def gameSettings() -> GameSettings: return port.get()
+export def setGameSetting(key: string, value: number | string | bool) -> GameSettings: return port.set(key, value)
+export def resetGameSettings() -> GameSettings: return port.reset()
+export def applyGraphicsPreset(name: string) -> GameSettings: return port.preset(name)
+export def settingsPersistenceError() -> string: return port.error()
+export def subscribeGameSettings(listener: (settings: GameSettings) -> null) -> GameSettingsSubscription:
+    return port.subscribe(listener)
+export def settingNumber(settings: GameSettings, key: string) -> number: return port.number(settings, key)
+export def settingText(settings: GameSettings, key: string) -> string: return port.text(settings, key)
+export def settingBoolean(settings: GameSettings, key: string) -> bool: return port.boolean(settings, key)
+
+export def recommendedGraphicsPreset() -> string: return port.recommended()
+
+export def activeGraphicsPreset(settings: GameSettings) -> string: return port.profile(settings)

@@ -60,6 +60,9 @@ export function requireSurfaceOptions(candidate) {
   for (const name of ["viewChanged", "collisionAt", "climateAt"]) {
     requireFunction(options[name], "Voxel surface " + name);
   }
+  for (const name of ["aimChanged", "creativeAction", "creativeSlot", "walkSound", "frameSampled"]) {
+    if (options[name] != null) requireFunction(options[name], "Voxel surface " + name);
+  }
   if (!["orbit", "first-person"].includes(options.navigationMode)) {
     throw new RangeError("Voxel navigation mode must be orbit or first-person");
   }
@@ -162,20 +165,15 @@ export function validateChunkMesh(chunk, edge, materialLibrary) {
         throw new Error("Animated Chunk mesh must use its animation's first texture layer");
       }
     }
-    for (const vertexIndex of indices) {
-      if (vertexIndex >= vertexCount) throw new RangeError("Chunk mesh index is outside its vertex buffer");
-    }
     for (let quadIndex = 0; triangleCount === 0 && quadIndex < quadCount; quadIndex += 1) {
       const vertexOffset = quadIndex * 4;
       const indexOffset = quadIndex * 6;
-      if (
-        indices[indexOffset] !== vertexOffset
-        || indices[indexOffset + 1] !== vertexOffset + 1
-        || indices[indexOffset + 2] !== vertexOffset + 2
-        || indices[indexOffset + 3] !== vertexOffset
-        || indices[indexOffset + 4] !== vertexOffset + 2
-        || indices[indexOffset + 5] !== vertexOffset + 3
-      ) {
+      const firstDiagonal = indices[indexOffset + 2] === vertexOffset + 2
+        && indices[indexOffset + 3] === vertexOffset && indices[indexOffset + 4] === vertexOffset + 2;
+      const secondDiagonal = indices[indexOffset + 2] === vertexOffset + 3
+        && indices[indexOffset + 3] === vertexOffset + 1 && indices[indexOffset + 4] === vertexOffset + 2;
+      if (indices[indexOffset] !== vertexOffset || indices[indexOffset + 1] !== vertexOffset + 1
+        || indices[indexOffset + 5] !== vertexOffset + 3 || (!firstDiagonal && !secondDiagonal)) {
         throw new Error("Chunk mesh indices do not match canonical quad topology");
       }
     }

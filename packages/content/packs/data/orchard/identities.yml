@@ -1,0 +1,10 @@
+formatVersion: 3
+identities:
+  translations:
+    orchard:
+      cherryLog: block.orchard.cherry_log
+      cherryLeaves: block.orchard.cherry_leaves
+      cherrySapling: block.orchard.cherry_sapling
+      appleFruit: block.orchard.apple_fruit
+      pearFruit: block.orchard.pear_fruit
+      peachFruit: block.orchard.peach_fruit

@@ -91,7 +91,7 @@ test "terrain samples expose final density climate landform and biome facts":
     expect(seaLevel).toBe(64)
     expect(minimumWorldY).toBe(0)
     expect(maximumWorldY).toBe(255)
-    expect(sample.surfaceY).toBe(62)
+    expect(sample.surfaceY).toBe(75)
     expect(sample.slope >= 0 and sample.slope <= 1).toBe(true)
     expect(sample.continentalness >= -1 and sample.continentalness <= 1).toBe(true)
     expect(sample.erosion >= 0 and sample.erosion <= 1).toBe(true)
@@ -100,9 +100,10 @@ test "terrain samples expose final density climate landform and biome facts":
     expect(sample.terrainType).toBe(builtinIdentities.terrainTypes.river)
     expect(sample.biome).toBe(builtinIdentities.biomes.river)
 
-test "generated world ids always find a safe land spawn inside the configured radius":
+// Keep all 128 seeds; bounded batches each receive the runner's normal test timeout.
+def requireSafeSpawns(first: number, end: number):
     const profile = baseWorldGeneratorCatalog.generators[0]
-    for index in range(128):
+    for index in range(first, end):
         const seed = f"new-world-{index}"
         const generator = worldGenerator(WorldManifest.from(manifest(f"spawn-{index}"), {seed}))
         const spawn = generator.findSpawn()
@@ -118,6 +119,14 @@ test "generated world ids always find a safe land spawn inside the configured ra
                 const runtimeId = chunkBlockAtIndex(chunk, blockIndex(located.local, initialChunkEdge))
                 const state = baseWorldBlockRegistry.registry.requireStateByRuntimeId(runtimeId)
                 expect(resolveBlockShapeBoxes(state.physics.collision, state.properties)).toEqual([])
+
+test "generated world ids 0 through 31 find safe land spawns": requireSafeSpawns(0, 32)
+
+test "generated world ids 32 through 63 find safe land spawns": requireSafeSpawns(32, 64)
+
+test "generated world ids 64 through 95 find safe land spawns": requireSafeSpawns(64, 96)
+
+test "generated world ids 96 through 127 find safe land spawns": requireSafeSpawns(96, 128)
 
 test "bounded generation corpus contains caves aquifers magma minerals and land":
     const generator = worldGenerator(WorldManifest.from(manifest("feature-corpus"), {seed: "feature-corpus"}))

@@ -1,5 +1,5 @@
 import {MaterialPluginBase} from "@babylonjs/core/Materials/materialPluginBase.js";
-import {skyColorShader} from "./sky-colors.mjs";
+import {directionalSkyShader} from "./sky-colors.mjs";
 
 // Streaming visibility is predominantly horizontal. Flying above nearby ground
 // must not turn the vertical separation into a full-length horizon fog bank.
@@ -32,7 +32,15 @@ export class TerrainFogPlugin extends MaterialPluginBase {
       {name: "ovTerrainGround", size: 3, type: "vec3"},
       {name: "ovTerrainFlash", size: 1, type: "float"},
       {name: "ovTerrainFogEnabled", size: 1, type: "float"},
-    ]};
+      {name: "ovAtmosphereSun", size: 4, type: "vec4"},
+      {name: "ovAtmosphereSunColor", size: 3, type: "vec3"},
+    ], fragment: `uniform vec3 ovTerrainSkyTop;
+uniform vec3 ovTerrainHorizon;
+uniform vec3 ovTerrainGround;
+uniform float ovTerrainFlash;
+uniform float ovTerrainFogEnabled;
+uniform vec4 ovAtmosphereSun;
+uniform vec3 ovAtmosphereSunColor;`};
   }
 
   bindForSubMesh(uniformBuffer) {
@@ -42,18 +50,16 @@ export class TerrainFogPlugin extends MaterialPluginBase {
     uniformBuffer.updateFloat3("ovTerrainGround", ground.r, ground.g, ground.b);
     uniformBuffer.updateFloat("ovTerrainFlash", flash);
     uniformBuffer.updateFloat("ovTerrainFogEnabled", this.scene?.activeCamera?.metadata?.openVoxelMinimap === true ? 0 : 1);
+    const sun = this.atmosphere.sun;
+    uniformBuffer.updateFloat4("ovAtmosphereSun", sun?.x ?? 0, sun?.y ?? 1, sun?.z ?? 0, sun?.intensity ?? 0);
+    uniformBuffer.updateFloat3("ovAtmosphereSunColor", sun?.r ?? 1, sun?.g ?? 1, sun?.b ?? 1);
   }
 
   getCustomCode(shaderType) {
     if (shaderType !== "fragment") return null;
     return {
       CUSTOM_FRAGMENT_DEFINITIONS: `
-uniform vec3 ovTerrainSkyTop;
-uniform vec3 ovTerrainHorizon;
-uniform vec3 ovTerrainGround;
-uniform float ovTerrainFlash;
-uniform float ovTerrainFogEnabled;
-${skyColorShader}
+${directionalSkyShader}
 #ifdef FOG
 float ovTerrainFogTransmittance() {
   vec3 delta = vPositionW - vEyePosition.xyz;
@@ -69,7 +75,8 @@ float ovTerrainFogTransmittance() {
       CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
 #ifdef FOG
   vec3 ovAtmosphereDirection = normalize(vPositionW - vEyePosition.xyz);
-  vec3 ovAtmosphereColor = ovSkyColor(ovAtmosphereDirection.y, ovTerrainSkyTop, ovTerrainHorizon, ovTerrainGround, ovTerrainFlash);
+  vec3 ovAtmosphereColor = ovDirectionalSky(ovAtmosphereDirection, ovTerrainSkyTop, ovTerrainHorizon, ovTerrainGround, ovTerrainFlash, ovAtmosphereSun, ovAtmosphereSunColor);
+  ovAtmosphereColor *= ovSkyVisibility;
 #ifdef PREMULTIPLYALPHA
   ovAtmosphereColor *= finalColor.a;
 #endif

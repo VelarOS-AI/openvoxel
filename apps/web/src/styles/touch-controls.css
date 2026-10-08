@@ -1,0 +1,46 @@
+[data-touch-controls] { display: none; }
+@media (pointer: coarse) {
+  [data-world-chrome] { top: max(10px, env(safe-area-inset-top)); left: auto; right: max(12px, env(safe-area-inset-right)); }
+  [data-creative-slot] { width: clamp(36px, 6vw, 48px); height: clamp(36px, 6vw, 48px); pointer-events: auto; touch-action: none; }
+}
+@media (pointer: coarse) and (orientation: landscape) {
+  [data-minimap] { width: min(136px, 32dvh); height: min(136px, 32dvh); top: max(12px, env(safe-area-inset-top)); right: auto; left: max(14px, env(safe-area-inset-left)); }
+  [data-world-ready="true"] [data-touch-controls] { display: block; }
+  [data-touch-controls] {
+    --pad-size: clamp(132px, 40dvh, 208px);
+    position: absolute; inset: 0; z-index: 4; pointer-events: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  [data-touch-move] {
+    position: absolute; bottom: max(16px, env(safe-area-inset-bottom));
+    left: max(18px, env(safe-area-inset-left)); width: var(--pad-size); height: var(--pad-size);
+    pointer-events: auto; touch-action: none;
+  }
+  [data-touch-controls] img { display: block; width: 100%; height: 100%; pointer-events: none; }
+  [data-touch-controls] button { appearance: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; touch-action: none; }
+  [data-app] [data-touch-controls] button:active { transform: none; }
+  [data-touch-direction] { position: absolute; inset: 0; width: 100%; height: 100%; }
+  [data-touch-direction][data-pressed="true"] { background: url('/generated/controls/MoveRose_Pressed.png') center / contain no-repeat; }
+  [data-touch-direction="KeyW"] { clip-path: polygon(0 0, 100% 0, 50% 50%); }
+  [data-touch-direction="KeyA"] { clip-path: polygon(0 0, 50% 50%, 0 100%); }
+  [data-touch-direction="KeyS"] { clip-path: polygon(0 100%, 50% 50%, 100% 100%); }
+  [data-touch-direction="KeyD"] { clip-path: polygon(100% 0, 100% 100%, 50% 50%); }
+  [data-touch-direction="Space"] { clip-path: circle(14.3% at 50% 50%); }
+  [data-screen="world"]:has(dialog[open]) [data-touch-controls] { visibility: hidden; }
+}
+
+[data-touch-controls] [data-touch-inventory] {
+  pointer-events: auto;
+  position: absolute;
+  right: 14px;
+  top: 62px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #ffffff55;
+  border-radius: 6px;
+  background: #15151566;
+  color: white;
+  display: grid;
+  place-items: center;
+  touch-action: manipulation;
+}

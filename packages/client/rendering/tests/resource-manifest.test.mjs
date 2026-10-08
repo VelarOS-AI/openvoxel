@@ -29,6 +29,7 @@ const environment = {
     moons: Array.from({length: 8}, (_value, index) => `environment/sky/moon-${String(index + 1).padStart(2, "0")}.webp`),
   },
   clouds: {texture: "environment/sky/clouds.webp"},
+  foliage: {leaf: "environment/foliage/leaf.webp"},
   precipitation: {
     rain: "environment/weather/rain.webp",
     rainSplash: "environment/weather/rain-splash.webp",
@@ -45,6 +46,7 @@ const environmentFiles = [
   environment.precipitation.rain,
   environment.precipitation.rainSplash,
   environment.precipitation.snow,
+  environment.foliage.leaf,
 ];
 
 async function imageBytes(format = "png") {
@@ -52,12 +54,13 @@ async function imageBytes(format = "png") {
   return format === "webp" ? image.webp().toBuffer() : image.png().toBuffer();
 }
 
-async function fixture(context, {formatVersion = 11, maps = {}, variants = [], texturePipeline = null} = {}) {
+async function fixture(context, {formatVersion = 12, maps = {}, variants = [], texturePipeline = null} = {}) {
   const root = await mkdtemp(join(tmpdir(), "openvoxel-resource-manifest-"));
   context.after(() => rm(root, {recursive: true, force: true}));
   await Promise.all([
     mkdir(join(root, "environment", "sky"), {recursive: true}),
     mkdir(join(root, "environment", "weather"), {recursive: true}),
+    mkdir(join(root, "environment", "foliage"), {recursive: true}),
     mkdir(join(root, "textures", "terrain", "maps"), {recursive: true}),
   ]);
   const texture = {
@@ -108,7 +111,7 @@ async function updateYaml(path, update) {
   await writeFile(path, stringify(document));
 }
 
-test("author format v11 normalizes explicit PBR fallbacks, optional maps, and array limits", async (context) => {
+test("author format v12 normalizes explicit PBR fallbacks, optional maps, and array limits", async (context) => {
   const maps = {
     height: {file: "textures/terrain/maps/stone.height.png"},
     material: {file: "textures/terrain/maps/stone.material.png"},
@@ -119,7 +122,7 @@ test("author format v11 normalizes explicit PBR fallbacks, optional maps, and ar
   assert.deepEqual(source.textures[0].maps, maps);
   assert.deepEqual(source.surfaceProfiles.get("rock"), surfaceProfile);
   assert.deepEqual(source.packing, {tileSize: 2, maximumLayers: 32, mipmaps: true});
-  assert.equal(source.imageFiles.length, 19);
+  assert.equal(source.imageFiles.length, 20);
   assert.deepEqual(source.unusedFiles, []);
 });
 
@@ -259,6 +262,7 @@ test("material precipitation surfaces are required finite policies independent o
     doubleSided: false,
     castsShadows: true,
     environmentIntensity: 1,
+    specularWeight: 1,
     clearCoat: 0,
     clearCoatRoughness: 0,
     unlit: false,
@@ -269,6 +273,9 @@ test("material precipitation surfaces are required finite policies independent o
   assert.equal((await loadResourceManifest(root, manifestPath)).manifest.materials[0].precipitationSurface, "solid");
   await updateYaml(manifestPath, (document) => { document.materials[0].precipitationSurface = "none"; });
   assert.equal((await loadResourceManifest(root, manifestPath)).manifest.materials[0].precipitationSurface, "none");
+  await updateYaml(manifestPath, (document) => { document.materials[0].specularWeight = 1.1; });
+  await assert.rejects(loadResourceManifest(root, manifestPath), /specularWeight/u);
+  await updateYaml(manifestPath, (document) => { document.materials[0].specularWeight = 1; });
 
   for (const invalid of [null, "", "liquid", "Water", 1, true, {}, []]) {
     await updateYaml(manifestPath, (document) => { document.materials[0].precipitationSurface = invalid; });
@@ -298,6 +305,7 @@ test("water material optics are explicit, closed, and continuously wave-driven",
     doubleSided: true,
     castsShadows: false,
     environmentIntensity: 1.35,
+    specularWeight: 1,
     clearCoat: 0,
     clearCoatRoughness: 0,
     unlit: false,

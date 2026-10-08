@@ -1,3 +1,4 @@
+import {atmosphereSun, sampleSkyToRef} from "./sky-colors.mjs";
 import {CubeMapToSphericalPolynomialTools} from "@babylonjs/core/Misc/HighDynamicRange/cubemapToSphericalPolynomial.js";
 
 const colorStep = 1 / 32;
@@ -21,43 +22,44 @@ export function environmentIblNeedsRefresh(previous, next) {
   return directionDot <= minimumDirectionDot
     || Math.abs(previous.sunIntensity - next.sunIntensity) >= intensityStep
     || Math.abs(previous.weatherDimming - next.weatherDimming) >= intensityStep
+    || Math.abs((previous.cloudiness ?? 0) - (next.cloudiness ?? 0)) >= intensityStep
     || colorChanged(previous.skyTop, next.skyTop)
     || colorChanged(previous.horizon, next.horizon)
     || colorChanged(previous.ground, next.ground);
 }
 
-// WebGL cube order: +X, -X, +Y, -Y, +Z, -Z. The rows use the same
-// orientation as Babylon's diffuse-irradiance integration.
-function cubeDirection(face, u, v) {
-  const vector = [
-    [1, -v, -u], [-1, -v, u], [u, 1, v],
-    [u, -1, -v], [u, -v, 1], [-u, -v, -1],
-  ][face];
-  const length = Math.hypot(...vector);
-  return vector.map((value) => value / length);
+// Cached unit vectors avoid allocating arrays per pixel on every sky update.
+const directionCache = new Map();
+function cubeDirections(size) {
+  let result = directionCache.get(size);
+  if (result) return result;
+  result = new Float32Array(6 * size * size * 3);
+  let offset = 0;
+  for (let face = 0; face < 6; face++) for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = (x + .5) / size * 2 - 1, v = (y + .5) / size * 2 - 1;
+    const dx = face === 0 ? 1 : face === 1 ? -1 : face === 5 ? -u : u;
+    const dy = face === 2 ? 1 : face === 3 ? -1 : -v;
+    const dz = face === 0 ? -u : face === 1 ? u : face === 2 ? v : face === 3 ? -v : face === 4 ? 1 : -1;
+    const length = Math.hypot(dx, dy, dz);
+    result[offset++] = dx / length; result[offset++] = dy / length; result[offset++] = dz / length;
+  }
+  if (directionCache.size >= 2) directionCache.delete(directionCache.keys().next().value);
+  directionCache.set(size, result);
+  return result;
 }
 
 /// Keep the diffuse irradiance and reflected sky derived from the same CPU
 /// pixels. Reading six faces back from the GPU would stall the rendering thread;
 /// leaving Babylon's cached polynomial in place would preserve yesterday's light.
 export function createEnvironmentIbl(frame, size = 32) {
+  const directions = cubeDirections(size), sun = atmosphereSun(frame), color = [0, 0, 0];
   const faces = Array.from({length: 6}, (_, face) => {
     const bytes = new Uint8Array(size * size * 4);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const direction = cubeDirection(face, (x + 0.5) / size * 2 - 1, (y + 0.5) / size * 2 - 1);
-        const low = direction[1] < 0 ? frame.ground : frame.horizon;
-        const high = direction[1] < 0 ? frame.horizon : frame.skyTop;
-        const amount = direction[1] < 0 ? direction[1] + 1 : direction[1];
-        const alignment = -(direction[0] * frame.sunDirection.x + direction[1] * frame.sunDirection.y + direction[2] * frame.sunDirection.z);
-        const sun = Math.pow(Math.max(0, alignment), 384) * frame.sunIntensity * 3.5;
-        const offset = (y * size + x) * 4;
-        for (const [channel, name] of ["r", "g", "b"].entries()) {
-          const base = low[name] + (high[name] - low[name]) * amount;
-          bytes[offset + channel] = Math.round(Math.min(1, base * frame.weatherDimming + sun * [1, 0.9, 0.72][channel]) * 255);
-        }
-        bytes[offset + 3] = 255;
-      }
+    for (let pixel = 0; pixel < size * size; pixel++) {
+      const offset = (face * size * size + pixel) * 3;
+      sampleSkyToRef(directions[offset], directions[offset + 1], directions[offset + 2], frame, sun, color);
+      for (let channel = 0; channel < 3; channel++) bytes[pixel * 4 + channel] = Math.round(Math.min(1, color[channel]) * 255);
+      bytes[pixel * 4 + 3] = 255;
     }
     return bytes;
   });

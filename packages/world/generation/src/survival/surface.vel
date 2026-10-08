@@ -2,6 +2,7 @@ import {BlockBehaviorKind, BlockRegistry} from "@openvoxel/blocks"
 import {Chunk, paintChunkBlockAtIndex} from "@openvoxel/world"
 import {WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
+import {badlandsStratum, surfaceLayerDepth} from "./surface-materials.vel"
 import {evictOldest} from "./lru-cache.vel"
 import {TerrainColumnPlan, subsurfaceBlock, surfaceBlock} from "./terrain.vel"
 
@@ -57,18 +58,11 @@ export def surfacePlanner(
                 const sample = terrain.sampleAt(worldX, worldZ)
                 const topBlock = surfaceBlock(profile, blocks, sample)
                 const underBlock = subsurfaceBlock(profile, blocks, sample)
-                let thickness = profile.surface.soilDepth
-                if sample.humidity >= 11: thickness = profile.surface.wetSoilDepth
-                // 湿润平地留住厚土，高处、干旱和陡坡逐步变薄；露头本身不继续
-                // 向下刷同一表面材料，下面仍由地质层决定。
-                const altitude = Math.clamp((sample.surfaceY - profile.world.seaLevel - 36) / 72, 0, 1)
-                const dryness = Math.clamp((6 - sample.humidity) / 6, 0, 1)
-                const erosion = Math.clamp(sample.slope / profile.surface.rockSlope, 0, 1)
-                thickness = Math.max(1, (thickness * (1 - 0.65 * Math.max(altitude * dryness, erosion))).round())
+                const thickness = surfaceLayerDepth(profile, blocks, sample)
                 for depth in range(thickness):
                     const worldY = sample.surfaceY - depth
                     const chunkY = (worldY / terrain.edge).floor()
-                    const write: SurfaceWrite = {localX, worldY, localZ, runtimeId: depth == 0 ? topBlock : underBlock}
+                    const write: SurfaceWrite = {localX, worldY, localZ, runtimeId: depth == 0 ? topBlock : sample.biome == profile.biomes.badlands ? badlandsStratum(blocks, worldY) : underBlock}
                     if chunkY >= 0 and chunkY < buckets.size: buckets[chunkY].append(write)
 
         def writesFor(chunkY: number) -> readonly List<readonly SurfaceWrite>:

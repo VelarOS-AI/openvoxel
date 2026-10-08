@@ -1,0 +1,4 @@
+schemaVersion: 6
+catalogVersion: berries:v1
+sources:
+  - blocks/flora.yml

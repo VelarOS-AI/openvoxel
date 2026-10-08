@@ -1,3 +1,4 @@
+import {transitionMenu} from "./ui-motion.vel"
 import {navigate as frameworkNavigate} from "velar/web"
 
 export readonly type ApplicationNavigationOptions:
@@ -22,7 +23,10 @@ def performFrameworkNavigation(to: string, options: ApplicationNavigationOptions
 /// 所有应用内导航先推进自有 history position，再让 Velar Router 同步处理
 /// synthetic popstate；协调器随后把 position 固化到新 entry 的 state。
 export def navigate(to: string, options: ApplicationNavigationOptions = {}):
-    navigateWithHistoryPosition(to, options, performFrameworkNavigation)
+    // Menu animations never delay the navigation or the active game lifecycle.
+    if to == "/" or to == "/worlds/new" or to == "/worlds/open":
+        transitionMenu(() => navigateWithHistoryPosition(to, options, performFrameworkNavigation))
+    else: navigateWithHistoryPosition(to, options, performFrameworkNavigation)
 
 /// 原生 anchor 的修饰键和新标签行为保持由浏览器拥有；只接管普通左键导航。
 export def captureLink(event: Event) -> bool: return captureApplicationLinkClick(event)

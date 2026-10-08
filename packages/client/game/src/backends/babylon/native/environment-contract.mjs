@@ -25,6 +25,8 @@ export function requireEnvironmentResources(value) {
   const sky = value.sky;
   const clouds = value.clouds;
   const precipitation = value.precipitation;
+  const foliage = value.foliage;
+  if (typeof foliage !== "object" || foliage === null) throw new TypeError("Voxel environment foliage resources must be a record");
   if (typeof sky !== "object" || sky === null) throw new TypeError("Voxel environment sky resources must be a record");
   if (typeof clouds !== "object" || clouds === null) throw new TypeError("Voxel environment cloud resources must be a record");
   if (typeof precipitation !== "object" || precipitation === null) throw new TypeError("Voxel environment precipitation resources must be a record");
@@ -41,6 +43,7 @@ export function requireEnvironmentResources(value) {
     clouds: {
       textureDataUrl: requireEmbeddedWebp(clouds.textureDataUrl, "Voxel environment clouds"),
     },
+    foliage: {leafDataUrl: requireEmbeddedWebp(foliage.leafDataUrl, "Voxel environment leaf")},
     precipitation: {
       rainDataUrl: requireEmbeddedWebp(precipitation.rainDataUrl, "Voxel environment rain"),
       rainSplashDataUrl: requireEmbeddedWebp(precipitation.rainSplashDataUrl, "Voxel environment rain splash"),
@@ -90,6 +93,10 @@ export function requireEnvironmentFrame(value) {
   if (worldMilliseconds < 0 || worldMilliseconds > Number.MAX_SAFE_INTEGER) {
     throw new RangeError("Voxel environment world milliseconds are outside the supported range");
   }
+  const climateMilliseconds = requireFinite(value.climateMilliseconds, "Voxel climate milliseconds");
+  if (climateMilliseconds < 0 || climateMilliseconds > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Voxel climate milliseconds are outside the supported range");
+  }
   if (typeof value.samplePosition !== "object" || value.samplePosition === null) {
     throw new TypeError("Voxel environment sample position must be a record");
   }
@@ -120,6 +127,7 @@ export function requireEnvironmentFrame(value) {
   return {
     ...value,
     worldMilliseconds,
+    climateMilliseconds,
     samplePosition,
     timeOfDay: requireUnit(value.timeOfDay, "Voxel environment time of day"),
     moonPhase: requireInteger(value.moonPhase, 0, 7, "Voxel environment moon phase"),

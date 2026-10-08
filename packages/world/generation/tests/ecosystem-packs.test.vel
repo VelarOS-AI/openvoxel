@@ -1,0 +1,105 @@
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {expect} from "velar/test"
+import {WorldGenerationPack, StageUnit, WorldGeneratorCatalogSource} from "../src/definition/catalog.vel"
+import {builtinEcosystemPacks} from "../src/runtime/builtin-ecosystem.vel"
+import {composeEcosystemPacks, emptyEcosystem, ecosystemUnits} from "../src/ecosystem/composition.vel"
+import {parseWorldGenerationPack} from "../src/ecosystem/validation.vel"
+import {createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator} from "../src/generator-registry.vel"
+import {chunkChecksum} from "@openvoxel/world"
+
+const packs = builtinEcosystemPacks
+
+def extension(owner: string) -> WorldGenerationPack:
+    return {formatVersion: 1, owner, title: owner, description: "test", requires: ["terrain"], replaces: [], removes: [], units: emptyEcosystem()}
+
+test "ecosystem combination is independent of installation order":
+    const reversed: List<WorldGenerationPack> = []
+    for index in range(packs.size - 1, -1, -1): reversed.append(packs[index])
+    expect(composeEcosystemPacks(reversed)).toEqual(composeEcosystemPacks(packs))
+    expect(createWorldGeneratorRegistry(packs=reversed).definitionHash(defaultGenerator)).toBe(createWorldGeneratorRegistry(packs=packs).definitionHash(defaultGenerator))
+
+test "a terrain-only selection omits all vegetation and mineral units":
+    const selected = packs.filter(pack => pack.owner == "terrain")
+    const registry = createWorldGeneratorRegistry(packs=selected)
+    const definition = registry.definition(defaultGenerator)
+    expect(ecosystemUnits(definition).trees.size).toBe(0)
+    expect(ecosystemUnits(definition).plants.size).toBe(0)
+    expect(definition.minerals.size).toBe(0)
+    const first = instantiateWorldGenerator(defaultGenerator, "bare-foundation", 16, generators=registry)
+    const second = instantiateWorldGenerator(defaultGenerator, "bare-foundation", 16, generators=registry)
+    const position = {x: -1, y: 4, z: 0}
+    expect(chunkChecksum(first.generate(position))).toBe(chunkChecksum(second.generate(position)))
+
+test "unit replacement is explicit and conflict checked":
+    const oak = composeEcosystemPacks(packs).trees.find(tree => tree.key == "woodland:oak")!
+    const replacement = extension("orchardtest")
+    replacement.requires.append("woodland")
+    replacement.replaces.append(oak.key)
+    replacement.units.trees.append(oak)
+    replacement.units.trees[0].weight = 8
+    const combined = composeEcosystemPacks([...packs, replacement])
+    expect(combined.trees.find(tree => tree.key == oak.key)!.weight).toBe(8)
+    const collision = WorldGenerationPack.from(replacement, {owner: "conflict"})
+    expect(() => composeEcosystemPacks([...packs, replacement, collision])).toThrow()
+    expect(() => composeEcosystemPacks([...packs, WorldGenerationPack.from(replacement, {replaces: []})])).toThrow()
+
+test "removing a unit is bounded to its explicitly required owner":
+    const patch = extension("thinforest")
+    patch.requires.append("woodland")
+    patch.removes.append("woodland:oak")
+    expect(composeEcosystemPacks([...packs, patch]).trees.some(tree => tree.key == "woodland:oak")).toBe(false)
+    expect(() => composeEcosystemPacks([...packs, WorldGenerationPack.from(patch, {requires: ["terrain"]})])).toThrow()
+
+test "missing dependencies and cycles are rejected before world creation":
+    const a = extension("first")
+    a.requires = ["second"]
+    const b = extension("second")
+    b.requires = ["first"]
+    expect(() => composeEcosystemPacks([a, b])).toThrow()
+    expect(() => composeEcosystemPacks([packs.find(pack => pack.owner == "woodland")!])).toThrow()
+
+test "extension data cannot claim core ownership or change world storage boundaries":
+    expect(() => composeEcosystemPacks([extension("core")])).toThrow()
+    const attempt = extension("hostile")
+    attempt.units.stages.append({key: "hostile:storage", step: "storage", enabled: true})
+    expect(() => composeEcosystemPacks([...packs, attempt])).toThrow()
+    const injected = Json.parse(`{"formatVersion":1,"owner":"hostile","title":"x","description":"x","requires":[],"replaces":[],"removes":[],"world":{"maximumY":1000000},"units":{"biomes":[],"trees":[],"plants":[],"minerals":[],"features":[],"stages":[]}}`)
+    expect(() => parseWorldGenerationPack(injected)).toThrow()
+
+test "a declared terrain implementation replacement changes the locked generation hash":
+    const replacement = extension("flatland")
+    const original = packs.find(pack => pack.owner == "terrain")!.units.stages.find(stage => stage.step == "terrain")!
+    replacement.replaces = [original.key]
+    replacement.units.stages = [StageUnit.from(original, {algorithm: "flat"})]
+    const registry = createWorldGeneratorRegistry(packs=[...packs, replacement])
+    expect(registry.definitionHash(defaultGenerator) != createWorldGeneratorRegistry(packs=packs).definitionHash(defaultGenerator)).toBe(true)
+    const generator = instantiateWorldGenerator(defaultGenerator, "flatland", 16, generators=registry)
+    expect(generator.sample({x: 0, z: 0}).surfaceY < 80).toBe(true)
+
+test "replacement cannot change unit domains and feature providers are unambiguous":
+    const patch = extension("wrongdomain")
+    patch.requires.append("woodland")
+    patch.replaces = ["woodland:oak"]
+    patch.units.stages.append({key: "woodland:oak", step: "terrain", enabled: true})
+    expect(() => composeEcosystemPacks([...packs, patch])).toThrow()
+    const feature = extension("seconddeadwood")
+    feature.units.features.append({key: "seconddeadwood:fallen", algorithm: "deadwood", block: "openvoxel:oak_log", chance: 1})
+    expect(() => composeEcosystemPacks([...packs, feature])).toThrow()
+
+test "external catalog and definition views cannot mutate the registered generation core":
+    const input = builtinEcosystemPacks.map(pack => WorldGenerationPack.parse(pack))
+    const source = WorldGeneratorCatalogSource.parse(baseWorldGeneratorCatalog)
+    const registry = createWorldGeneratorRegistry(base=source, packs=input)
+    source.generators[0].world.maximumY = 999
+    expect(() => createWorldGeneratorRegistry(base=source)).toThrow()
+    const hash = registry.definitionHash(defaultGenerator)
+    const exposed = registry.definition(defaultGenerator)
+    exposed.world.maximumY = 999
+    exposed.ecosystem!.trees = []
+    registry.catalog.generators[0].world.maximumY = 999
+    input.find(pack => pack.owner == "woodland")!.units.trees = []
+    const palette = registry.palette(exposed.palette)
+    palette.blocks.stone = "other:stone"
+    expect(registry.definitionHash(defaultGenerator)).toBe(hash)
+    expect(registry.definition(defaultGenerator).world.maximumY).toBe(255)
+    expect(registry.definition(defaultGenerator).ecosystem!.trees.size).toBe(6)

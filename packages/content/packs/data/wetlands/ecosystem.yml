@@ -1,0 +1,774 @@
+formatVersion: 1
+owner: wetlands
+title: 河岸与湿地
+description: 垂柳林、香蒲、芦苇与蓝色兰花
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes:
+    - key: wetlands:willow_marsh
+      id: wetlands:willow_marsh
+      family: openvoxel:biome/wetland
+      temperature:
+        minimum: 6
+        idealLow: 9
+        idealHigh: 17
+        maximum: 22
+      humidity:
+        minimum: 10
+        idealLow: 12
+        idealHigh: 15
+        maximum: 15
+      weight: 0.6
+      forestCover: 0.55
+      groundCover: 2.4
+      relief: 0.2
+      upland: -2
+  trees:
+    - key: wetlands:willow
+      shape: template
+      log: wetlands:willow_log
+      leaves: wetlands:willow_leaves
+      template:
+        - x: 0
+          y: 1
+          z: 0
+          material: log
+        - x: 0
+          y: 2
+          z: 0
+          material: log
+        - x: 0
+          y: 3
+          z: 0
+          material: log
+        - x: 0
+          y: 4
+          z: 0
+          material: log
+        - x: 0
+          y: 5
+          z: 0
+          material: log
+        - x: 0
+          y: 6
+          z: 0
+          material: log
+        - x: 1
+          y: 5
+          z: 0
+          material: log_x
+        - x: -1
+          y: 5
+          z: 0
+          material: log_x
+        - x: 0
+          y: 5
+          z: 1
+          material: log_z
+        - x: 0
+          y: 5
+          z: -1
+          material: log_z
+        - x: 2
+          y: 5
+          z: 0
+          material: log_x
+        - x: -2
+          y: 5
+          z: 0
+          material: log_x
+        - x: 0
+          y: 5
+          z: 2
+          material: log_z
+        - x: 0
+          y: 5
+          z: -2
+          material: log_z
+        - x: -3
+          y: 6
+          z: -1
+          material: leaves
+        - x: -3
+          y: 7
+          z: -1
+          material: leaves
+        - x: -3
+          y: 3
+          z: -1
+          material: leaves
+        - x: -3
+          y: 4
+          z: -1
+          material: leaves
+        - x: -3
+          y: 5
+          z: -1
+          material: leaves
+        - x: -3
+          y: 6
+          z: 0
+          material: leaves
+        - x: -3
+          y: 7
+          z: 0
+          material: leaves
+        - x: -3
+          y: 8
+          z: 0
+          material: leaves
+        - x: -3
+          y: 4
+          z: 0
+          material: leaves
+        - x: -3
+          y: 5
+          z: 0
+          material: leaves
+        - x: -3
+          y: 6
+          z: 1
+          material: leaves
+        - x: -3
+          y: 7
+          z: 1
+          material: leaves
+        - x: -3
+          y: 3
+          z: 1
+          material: leaves
+        - x: -3
+          y: 4
+          z: 1
+          material: leaves
+        - x: -3
+          y: 5
+          z: 1
+          material: leaves
+        - x: -2
+          y: 6
+          z: -2
+          material: leaves
+        - x: -2
+          y: 7
+          z: -2
+          material: leaves
+        - x: -2
+          y: 8
+          z: -2
+          material: leaves
+        - x: -2
+          y: 3
+          z: -2
+          material: leaves
+        - x: -2
+          y: 4
+          z: -2
+          material: leaves
+        - x: -2
+          y: 5
+          z: -2
+          material: leaves
+        - x: -2
+          y: 6
+          z: -1
+          material: leaves
+        - x: -2
+          y: 7
+          z: -1
+          material: leaves
+        - x: -2
+          y: 8
+          z: -1
+          material: leaves
+        - x: -2
+          y: 6
+          z: 0
+          material: leaves
+        - x: -2
+          y: 7
+          z: 0
+          material: leaves
+        - x: -2
+          y: 8
+          z: 0
+          material: leaves
+        - x: -2
+          y: 6
+          z: 1
+          material: leaves
+        - x: -2
+          y: 7
+          z: 1
+          material: leaves
+        - x: -2
+          y: 8
+          z: 1
+          material: leaves
+        - x: -2
+          y: 6
+          z: 2
+          material: leaves
+        - x: -2
+          y: 7
+          z: 2
+          material: leaves
+        - x: -2
+          y: 8
+          z: 2
+          material: leaves
+        - x: -2
+          y: 3
+          z: 2
+          material: leaves
+        - x: -2
+          y: 4
+          z: 2
+          material: leaves
+        - x: -2
+          y: 5
+          z: 2
+          material: leaves
+        - x: -1
+          y: 6
+          z: -3
+          material: leaves
+        - x: -1
+          y: 7
+          z: -3
+          material: leaves
+        - x: -1
+          y: 3
+          z: -3
+          material: leaves
+        - x: -1
+          y: 4
+          z: -3
+          material: leaves
+        - x: -1
+          y: 5
+          z: -3
+          material: leaves
+        - x: -1
+          y: 6
+          z: -2
+          material: leaves
+        - x: -1
+          y: 7
+          z: -2
+          material: leaves
+        - x: -1
+          y: 8
+          z: -2
+          material: leaves
+        - x: -1
+          y: 6
+          z: -1
+          material: leaves
+        - x: -1
+          y: 7
+          z: -1
+          material: leaves
+        - x: -1
+          y: 8
+          z: -1
+          material: leaves
+        - x: -1
+          y: 6
+          z: 0
+          material: leaves
+        - x: -1
+          y: 7
+          z: 0
+          material: leaves
+        - x: -1
+          y: 8
+          z: 0
+          material: leaves
+        - x: -1
+          y: 6
+          z: 1
+          material: leaves
+        - x: -1
+          y: 7
+          z: 1
+          material: leaves
+        - x: -1
+          y: 8
+          z: 1
+          material: leaves
+        - x: -1
+          y: 6
+          z: 2
+          material: leaves
+        - x: -1
+          y: 7
+          z: 2
+          material: leaves
+        - x: -1
+          y: 8
+          z: 2
+          material: leaves
+        - x: -1
+          y: 6
+          z: 3
+          material: leaves
+        - x: -1
+          y: 7
+          z: 3
+          material: leaves
+        - x: -1
+          y: 3
+          z: 3
+          material: leaves
+        - x: -1
+          y: 4
+          z: 3
+          material: leaves
+        - x: -1
+          y: 5
+          z: 3
+          material: leaves
+        - x: 0
+          y: 6
+          z: -3
+          material: leaves
+        - x: 0
+          y: 7
+          z: -3
+          material: leaves
+        - x: 0
+          y: 8
+          z: -3
+          material: leaves
+        - x: 0
+          y: 4
+          z: -3
+          material: leaves
+        - x: 0
+          y: 5
+          z: -3
+          material: leaves
+        - x: 0
+          y: 6
+          z: -2
+          material: leaves
+        - x: 0
+          y: 7
+          z: -2
+          material: leaves
+        - x: 0
+          y: 8
+          z: -2
+          material: leaves
+        - x: 0
+          y: 6
+          z: -1
+          material: leaves
+        - x: 0
+          y: 7
+          z: -1
+          material: leaves
+        - x: 0
+          y: 8
+          z: -1
+          material: leaves
+        - x: 0
+          y: 7
+          z: 0
+          material: leaves
+        - x: 0
+          y: 8
+          z: 0
+          material: leaves
+        - x: 0
+          y: 6
+          z: 1
+          material: leaves
+        - x: 0
+          y: 7
+          z: 1
+          material: leaves
+        - x: 0
+          y: 8
+          z: 1
+          material: leaves
+        - x: 0
+          y: 6
+          z: 2
+          material: leaves
+        - x: 0
+          y: 7
+          z: 2
+          material: leaves
+        - x: 0
+          y: 8
+          z: 2
+          material: leaves
+        - x: 0
+          y: 6
+          z: 3
+          material: leaves
+        - x: 0
+          y: 7
+          z: 3
+          material: leaves
+        - x: 0
+          y: 8
+          z: 3
+          material: leaves
+        - x: 0
+          y: 4
+          z: 3
+          material: leaves
+        - x: 0
+          y: 5
+          z: 3
+          material: leaves
+        - x: 1
+          y: 6
+          z: -3
+          material: leaves
+        - x: 1
+          y: 7
+          z: -3
+          material: leaves
+        - x: 1
+          y: 3
+          z: -3
+          material: leaves
+        - x: 1
+          y: 4
+          z: -3
+          material: leaves
+        - x: 1
+          y: 5
+          z: -3
+          material: leaves
+        - x: 1
+          y: 6
+          z: -2
+          material: leaves
+        - x: 1
+          y: 7
+          z: -2
+          material: leaves
+        - x: 1
+          y: 8
+          z: -2
+          material: leaves
+        - x: 1
+          y: 6
+          z: -1
+          material: leaves
+        - x: 1
+          y: 7
+          z: -1
+          material: leaves
+        - x: 1
+          y: 8
+          z: -1
+          material: leaves
+        - x: 1
+          y: 6
+          z: 0
+          material: leaves
+        - x: 1
+          y: 7
+          z: 0
+          material: leaves
+        - x: 1
+          y: 8
+          z: 0
+          material: leaves
+        - x: 1
+          y: 6
+          z: 1
+          material: leaves
+        - x: 1
+          y: 7
+          z: 1
+          material: leaves
+        - x: 1
+          y: 8
+          z: 1
+          material: leaves
+        - x: 1
+          y: 6
+          z: 2
+          material: leaves
+        - x: 1
+          y: 7
+          z: 2
+          material: leaves
+        - x: 1
+          y: 8
+          z: 2
+          material: leaves
+        - x: 1
+          y: 6
+          z: 3
+          material: leaves
+        - x: 1
+          y: 7
+          z: 3
+          material: leaves
+        - x: 1
+          y: 3
+          z: 3
+          material: leaves
+        - x: 1
+          y: 4
+          z: 3
+          material: leaves
+        - x: 1
+          y: 5
+          z: 3
+          material: leaves
+        - x: 2
+          y: 6
+          z: -2
+          material: leaves
+        - x: 2
+          y: 7
+          z: -2
+          material: leaves
+        - x: 2
+          y: 8
+          z: -2
+          material: leaves
+        - x: 2
+          y: 3
+          z: -2
+          material: leaves
+        - x: 2
+          y: 4
+          z: -2
+          material: leaves
+        - x: 2
+          y: 5
+          z: -2
+          material: leaves
+        - x: 2
+          y: 6
+          z: -1
+          material: leaves
+        - x: 2
+          y: 7
+          z: -1
+          material: leaves
+        - x: 2
+          y: 8
+          z: -1
+          material: leaves
+        - x: 2
+          y: 6
+          z: 0
+          material: leaves
+        - x: 2
+          y: 7
+          z: 0
+          material: leaves
+        - x: 2
+          y: 8
+          z: 0
+          material: leaves
+        - x: 2
+          y: 6
+          z: 1
+          material: leaves
+        - x: 2
+          y: 7
+          z: 1
+          material: leaves
+        - x: 2
+          y: 8
+          z: 1
+          material: leaves
+        - x: 2
+          y: 6
+          z: 2
+          material: leaves
+        - x: 2
+          y: 7
+          z: 2
+          material: leaves
+        - x: 2
+          y: 8
+          z: 2
+          material: leaves
+        - x: 2
+          y: 3
+          z: 2
+          material: leaves
+        - x: 2
+          y: 4
+          z: 2
+          material: leaves
+        - x: 2
+          y: 5
+          z: 2
+          material: leaves
+        - x: 3
+          y: 6
+          z: -1
+          material: leaves
+        - x: 3
+          y: 7
+          z: -1
+          material: leaves
+        - x: 3
+          y: 3
+          z: -1
+          material: leaves
+        - x: 3
+          y: 4
+          z: -1
+          material: leaves
+        - x: 3
+          y: 5
+          z: -1
+          material: leaves
+        - x: 3
+          y: 6
+          z: 0
+          material: leaves
+        - x: 3
+          y: 7
+          z: 0
+          material: leaves
+        - x: 3
+          y: 8
+          z: 0
+          material: leaves
+        - x: 3
+          y: 4
+          z: 0
+          material: leaves
+        - x: 3
+          y: 5
+          z: 0
+          material: leaves
+        - x: 3
+          y: 6
+          z: 1
+          material: leaves
+        - x: 3
+          y: 7
+          z: 1
+          material: leaves
+        - x: 3
+          y: 3
+          z: 1
+          material: leaves
+        - x: 3
+          y: 4
+          z: 1
+          material: leaves
+        - x: 3
+          y: 5
+          z: 1
+          material: leaves
+      temperature:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 8
+        idealLow: 11
+        idealHigh: 15
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 12
+        maximum: 30
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 25
+        - biome: wetlands:willow_marsh
+          weight: 50
+  plants:
+    - key: wetlands:cattail
+      block: wetlands:cattail
+      topBlock: wetlands:cattail_top
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 18
+        maximum: 24
+      humidity:
+        minimum: 9
+        idealLow: 12
+        idealHigh: 15
+        maximum: 15
+      weight: 1.5
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 18
+        - biome: wetlands:willow_marsh
+          weight: 22
+      properties: []
+      minimumHeight: 2
+      maximumHeight: 2
+      aquatic: false
+      saltwater: null
+    - key: wetlands:reed
+      block: wetlands:reed
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 9
+        idealLow: 12
+        idealHigh: 15
+        maximum: 15
+      weight: 2
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 15
+        - biome: wetlands:willow_marsh
+          weight: 20
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: wetlands:blue_orchid
+      block: wetlands:blue_orchid
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 5
+        idealLow: 9
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 8
+        idealLow: 11
+        idealHigh: 15
+        maximum: 15
+      weight: 0.8
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 8
+        - biome: wetlands:willow_marsh
+          weight: 8
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features: []
+  stages: []

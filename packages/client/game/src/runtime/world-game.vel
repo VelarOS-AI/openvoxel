@@ -1,17 +1,28 @@
+import {gameSettings, subscribeGameSettings, GameSettingsSubscription} from "../settings/game-settings.vel"
+import {previewEnvironment} from "../settings/environment-preview.vel"
 import {ClientWorldChange, ClientWorldChangeKind, ClientWorldChangeSubscription, ClientWorldSession} from "@openvoxel/client"
 import {ClientBlockCollisionBox, loadBuiltinClientResourcePack, createClientRenderCatalog} from "@openvoxel/renderer"
-import {ChunkPosition, WorldGameMode, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
+import {BlockPosition, ChunkPosition, WorldEnvironmentSample, WorldGameMode, WorldManifest, chunkCoordinate, chunkKey, locateBlock} from "@openvoxel/world"
 import {Cancellation} from "velar/task"
-import {WorldMovementMode, WorldNavigationMode} from "../controls/world-navigation.vel"
+import {WorldCreativeAction, WorldMovementMode, WorldNavigationMode, WorldNavigationPosition} from "../controls/world-navigation.vel"
+import {worldMovementCrouchingEyeHeight, worldMovementEyeHeight} from "../controls/survival-walk.vel"
+import {WorldLighting, worldLighting} from "./world-lighting.vel"
 import {WorldGraphics, openWorldGraphics} from "../graphics/world-graphics.vel"
 import {ChunkMeshing, chunkMeshing} from "./chunk-meshing.vel"
 import {chunkMeshWorker} from "./chunk-mesh-worker.vel"
 import {ChunkStreamer, chunkStreamer} from "./chunk-streamer.vel"
 import {EnvironmentSync, environmentSync} from "./environment-sync.vel"
+import {WorldSoundAction, createWorldAudio} from "./world-audio.vel"
+import {CreativeBlockTarget} from "./creative-interaction.vel"
+import {creativeEditing} from "./creative-editing.vel"
+import {WorldBlockControls, WorldBlockItem, worldBlockItems} from "./block-items.vel"
 import {WorldGameOwner, closeWorldGameOwners} from "./ownership.vel"
-import {ChunkWindowView, environmentSamplePositionForChunk, horizontalRenderChunkRadius} from "./render-window.vel"
+import {ChunkWindowView, environmentSamplePositionForChunk} from "./render-window.vel"
 
 export readonly type WorldGameStats:
+    backend: string
+    fps: number
+    frameMilliseconds: number
     chunks: number
     meshes: number
     quads: number
@@ -36,6 +47,12 @@ export readonly type WorldGameStats:
     forwardY: number
     forwardZ: number
     pointerLocked: bool
+    creativeTarget: CreativeBlockTarget?
+    creativeSlot: number
+    creativeEditError: string?
+    targetBlock: WorldBlockItem?
+    blockInventory: readonly List<WorldBlockItem>
+    creativeSlots: readonly List<WorldBlockItem>
 
 export type WorldGameRuntime = WorldGameOwner
 
@@ -43,6 +60,10 @@ const unloadedCollisionBoxes: readonly List<ClientBlockCollisionBox> = [{
     minimumX: 0, minimumY: 0, minimumZ: 0,
     maximumX: 1, maximumY: 1, maximumZ: 1,
 }]
+
+readonly type NearbyFluidLevels:
+    water: number
+    magma: number
 
 /// 游戏运行时组合根连接会话、构网、流送、环境与图形表面的所有权。
 /// 各工作队列独立收敛，碰撞 readiness 则只接受已经完成冷热同步的 Chunk。
@@ -53,29 +74,153 @@ export async def openWorldGameRuntime(
     changed: (stats: WorldGameStats) -> null,
     failed: (message: string) -> null,
     minimapCanvas: CanvasElement? = null,
+    controlsReady: (controls: WorldBlockControls?) -> null = _controls => null,
 ) -> WorldGameRuntime:
     const resources = await loadBuiltinClientResourcePack()
     const catalog = createClientRenderCatalog(session.content, resources)
+    const blockItems = worldBlockItems(session.content)
+    const stateRuntimeIds = session.content.states.keyBy(state => state.stateKey)
+    let outlinedTarget: CreativeBlockTarget? = null
+    const profileSounds: Map<number, string> = Map()
+    for profile in session.content.componentProfiles: profileSounds.set(profile.profileId, profile.interaction.sounds)
+    const soundProfiles: Map<number, string> = Map()
+    for state in session.content.states:
+        const group = profileSounds.get(state.componentProfileId)
+        assert group != null else f"World state {state.stateKey} references an unknown component profile"
+        soundProfiles.set(state.runtimeId, group)
     const startupPositions = session.state.trackedPositions()
     assert startupPositions.size > 0 else "World renderer requires resident startup Chunks"
+    let latestEnvironment = session.environment()
+    const initialEnvironment = previewEnvironment(latestEnvironment, gameSettings())
     const collisionReady = Set(startupPositions.map(position => chunkKey(position)))
     let view: ChunkWindowView = {
         center: locateBlock(manifest.spawn, manifest.chunkEdge).chunk,
         forwardX: 0, forwardY: 0, forwardZ: -1,
-        minimap: minimapCanvas != null,
+        minimap: minimapCanvas != null and gameSettings().minimap,
+        radius: gameSettings().viewDistance,
     }
     let graphics: WorldGraphics? = null
     let meshing: ChunkMeshing? = null
     let streaming: ChunkStreamer? = null
     let environment: EnvironmentSync? = null
+    let lighting: WorldLighting? = null
     let subscription: ClientWorldChangeSubscription? = null
+    let settingsSubscription: GameSettingsSubscription? = null
     let closed = false
     let closing: Promise<null>? = null
+    let ambientSampleTicks = 0
+    let frameRate = 0
+    let frameMilliseconds = 0
+    let statsDirty = true
+    let slotStateKeys: readonly List<string> = []
+    let slotItems: readonly List<WorldBlockItem> = []
+    let publishedSlot = -1
+    let publishedEditError: string? = null
+
+    def targetBlockAt(position: readonly BlockPosition) -> number?:
+        if position.y < session.content.minimumWorldY or position.y > session.content.maximumWorldY: return null
+        if chunkKey(locateBlock(position, manifest.chunkEdge).chunk) not in collisionReady: return null
+        return session.state.block(position)
+
+    async def applyCreativeBlock(position: readonly BlockPosition, runtimeId: number):
+        await session.applyBlocks([{position, blockStateRuntimeId: runtimeId}])
+
+    const creative = creativeEditing({
+        runtimeIdFor: stateKey => stateRuntimeIds.get(stateKey)?.runtimeId,
+        blockAt: targetBlockAt,
+        applyBlock: applyCreativeBlock,
+        edited: (action, runtimeId) => playBlockSound(action, runtimeId),
+    }, manifest.mode == WorldGameMode.creative, creativeChanged)
+    const audio = createWorldAudio(canvas)
+    audio.setListenerPosition(manifest.spawn)
+    audio.setEnvironment(initialEnvironment)
+
+    def nearbyFluidLevels(x: number, y: number, z: number) -> NearbyFluidLevels:
+        const centerX = x.floor()
+        const centerY = y.floor()
+        const centerZ = z.floor()
+        let nearestWater = 5
+        let nearestMagma = 5
+        for offsetX in [-4, -3, -2, -1, 0, 1, 2, 3, 4]:
+            for offsetZ in [-4, -3, -2, -1, 0, 1, 2, 3, 4]:
+                for offsetY in [-2, -1, 0, 1, 2]:
+                    const blockX = centerX + offsetX
+                    const blockY = centerY + offsetY
+                    const blockZ = centerZ + offsetZ
+                    const deltaX = x - (blockX + 0.5)
+                    const deltaY = y - (blockY + 1)
+                    const deltaZ = z - (blockZ + 0.5)
+                    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ)
+                    if distance >= 5: continue
+                    const runtimeId = targetBlockAt({
+                        x: blockX, y: blockY, z: blockZ,
+                    })
+                    if runtimeId == null: continue
+                    const group = soundProfiles.get(runtimeId)
+                    if group == "openvoxel:sound/magma": nearestMagma = Math.min(nearestMagma, distance)
+                    if group == "openvoxel:sound/water": nearestWater = Math.min(nearestWater, distance)
+        return {water: Math.max(0, 1 - nearestWater / 5), magma: Math.max(0, 1 - nearestMagma / 5)}
+
+    const initialAmbient = nearbyFluidLevels(manifest.spawn.x, manifest.spawn.y, manifest.spawn.z)
+    audio.setAmbient(initialAmbient.water, initialAmbient.magma)
+
+    def playBlockSound(action: WorldCreativeAction, runtimeId: number):
+        const group = soundProfiles.get(runtimeId)
+        if group == null: return
+        audio.play(action == WorldCreativeAction.breakBlock ? WorldSoundAction.breakBlock : WorldSoundAction.placeBlock, group)
+
+    def walkSound(position: WorldNavigationPosition, crouching: bool, landed: bool):
+        audio.setListenerPosition(position)
+        const eyeHeight = crouching ? worldMovementCrouchingEyeHeight : worldMovementEyeHeight
+        const feet = {x: position.x.floor(), y: (position.y - eyeHeight - 0.04).floor(), z: position.z.floor()}
+        const runtimeId = targetBlockAt(feet)
+        if runtimeId == null: return
+        const group = soundProfiles.get(runtimeId)
+        if group == null: return
+        audio.play(landed ? WorldSoundAction.land : WorldSoundAction.step, group)
+
+    def applyEnvironment(sample: WorldEnvironmentSample):
+        latestEnvironment = sample
+        const visible = previewEnvironment(sample, gameSettings())
+        activeGraphics().setEnvironment(visible)
+        audio.setEnvironment(visible)
+        if ambientSampleTicks == 0:
+            const position = activeGraphics().stats()
+            audio.setListenerPosition({x: position.viewX, y: position.viewY, z: position.viewZ})
+            const feetY = manifest.mode == WorldGameMode.creative ? position.viewY : position.viewY - worldMovementEyeHeight
+            const levels = nearbyFluidLevels(position.viewX, feetY, position.viewZ)
+            audio.setAmbient(levels.water, levels.magma)
+        ambientSampleTicks = (ambientSampleTicks + 1) % 10
 
     def activeGraphics() -> WorldGraphics:
         const current = graphics
         assert current != null and not closed else "World graphics are not ready"
         return current
+
+    def queueStats(): statsDirty = true
+
+    def frameSampled(fps: number, milliseconds: number):
+        if frameRate != fps or frameMilliseconds != milliseconds: statsDirty = true
+        frameRate = fps
+        frameMilliseconds = milliseconds
+        if statsDirty: publishStats()
+
+    def updateBlockSelection(target: CreativeBlockTarget?):
+        const currentGraphics = graphics
+        if closed or currentGraphics == null or target == outlinedTarget: return
+        outlinedTarget = target
+        currentGraphics.setBlockSelection(target == null ? null : {
+            x: target.block.x, y: target.block.y, z: target.block.z,
+            boxes: catalog.selectionBoxes(target.runtimeId),
+        })
+
+    def creativeChanged():
+        if closed: return
+        const editing = creative.stats()
+        updateBlockSelection(editing.creativeTarget)
+        queueStats()
+        if publishedSlot != editing.creativeSlot or slotStateKeys != editing.creativeStateKeys or publishedEditError != editing.creativeEditError:
+            publishStats()
 
     def publishStats():
         const currentGraphics = graphics
@@ -83,7 +228,17 @@ export async def openWorldGameRuntime(
         if closed or currentGraphics == null or currentMeshing == null: return
         const mesh = currentMeshing.stats()
         const loading = streaming?.pending() ?? 0
+        const creativeStats = creative.stats()
+        const target = creativeStats.creativeTarget
+        updateBlockSelection(target)
+        statsDirty = false
+        publishedSlot = creativeStats.creativeSlot
+        publishedEditError = creativeStats.creativeEditError
+        if slotStateKeys != creativeStats.creativeStateKeys:
+            slotStateKeys = creativeStats.creativeStateKeys
+            slotItems = slotStateKeys.map(key => blockItems.item(stateRuntimeIds.get(key)!.runtimeId))
         changed(WorldGameStats.from(currentGraphics.stats(), {
+            fps: frameRate, frameMilliseconds,
             pending: mesh.active + mesh.queued + loading,
             residentChunks: mesh.resident,
             terrainPendingChunks: loading,
@@ -91,6 +246,12 @@ export async def openWorldGameRuntime(
             meshActiveChunks: mesh.active,
             startupPending: mesh.startupPending,
             ready: mesh.startupPending == 0,
+            creativeTarget: creativeStats.creativeTarget,
+            creativeSlot: creativeStats.creativeSlot,
+            creativeEditError: creativeStats.creativeEditError,
+            targetBlock: target == null ? null : blockItems.item(target.runtimeId),
+            blockInventory: blockItems.inventory,
+            creativeSlots: slotItems,
         }))
 
     def collisionAt(x: number, y: number, z: number) -> readonly List<ClientBlockCollisionBox>:
@@ -109,29 +270,46 @@ export async def openWorldGameRuntime(
         if event.kind == ClientWorldChangeKind.chunksSynchronized:
             for position in event.positions: collisionReady.add(chunkKey(position))
         meshing?.invalidate(event)
-        if event.kind == ClientWorldChangeKind.synchronizationStarted: publishStats()
+        lighting?.invalidate(event)
+        if event.kind == ClientWorldChangeKind.synchronizationStarted: queueStats()
 
     def viewChanged(x: number, y: number, z: number, forwardX: number, forwardY: number, forwardZ: number):
         if closed: return
         const centerChanged = view.center.x != x or view.center.y != y or view.center.z != z
-        view = {center: {x, y, z}, forwardX, forwardY, forwardZ, minimap: minimapCanvas != null}
+        view = {center: {x, y, z}, forwardX, forwardY, forwardZ, minimap: minimapCanvas != null and gameSettings().minimap, radius: gameSettings().viewDistance}
+        audio.setListenerPosition(environmentSamplePositionForChunk(view.center, manifest.chunkEdge))
         if centerChanged: environment?.sampleAt(environmentSamplePositionForChunk(view.center, manifest.chunkEdge))
         streaming?.request(view)
         meshing?.reconcile(true)
+
+    def applyPreferences():
+        if closed or graphics == null: return
+        applyEnvironment(latestEnvironment)
+        const preferences = gameSettings()
+        if view.radius != preferences.viewDistance or view.minimap != (minimapCanvas != null and preferences.minimap):
+            const current = activeGraphics().stats()
+            viewChanged(current.viewChunkX, current.viewChunkY, current.viewChunkZ, current.forwardX, current.forwardY, current.forwardZ)
 
     /// 正常退出和任意初始化失败共用关闭顺序。先封住回调并关闭图形表面，使
     /// 等待 GPU 提交的任务结束。各所有者先同步封口，再等待所有后台工作回收。
     async def shutdown():
         closed = true
+        controlsReady(null)
+        settingsSubscription?.close()
+        const editing = creative.close()
+        const audioClosing = audio.close()
         subscription?.close()
         subscription = null
         const ownedGraphics = graphics
         graphics = null
-        const owners: List<WorldGameOwner?> = [environment, streaming, meshing]
+        const owners: List<WorldGameOwner?> = [environment, streaming, meshing, lighting]
         const stopped = owners.map(owner => closeWorldGameOwners([owner]))
         try:
             if ownedGraphics != null: ownedGraphics.close()
-        finally: await Promise.all(stopped)
+        finally:
+            await Promise.all(stopped)
+            await editing
+            await audioClosing
         collisionReady.clear()
 
     def close() -> Promise<null>:
@@ -145,13 +323,13 @@ export async def openWorldGameRuntime(
     try:
         meshing = chunkMeshing(
             session.state, manifest.chunkEdge, startupPositions,
-            chunkMeshWorker(catalog.states, session.state, manifest.chunkEdge),
+            chunkMeshWorker(catalog.states, session.state, manifest.chunkEdge, session.content.minimumWorldY, session.content.maximumWorldY),
             {
-                enqueueChunkMesh: mesh => activeGraphics().enqueueChunkMesh(mesh),
+                enqueueChunkMesh: (mesh, mayCommit) => activeGraphics().enqueueChunkMesh(mesh, mayCommit),
                 removeChunk: (x, y, z) => activeGraphics().removeChunk(x, y, z),
             },
             () => view,
-            publishStats, failed,
+            queueStats, failed,
             () => streaming?.resume(),
         )
         streaming = chunkStreamer(
@@ -163,7 +341,7 @@ export async def openWorldGameRuntime(
             chunkCoordinate(session.content.minimumWorldY, manifest.chunkEdge),
             chunkCoordinate(session.content.maximumWorldY, manifest.chunkEdge),
             () => meshing?.stats()?.startupPending == 0,
-            publishStats, failed,
+            queueStats, failed,
         )
         graphics = await openWorldGraphics({
             canvas,
@@ -173,32 +351,41 @@ export async def openWorldGameRuntime(
             targetX: manifest.spawn.x,
             targetY: manifest.spawn.y,
             targetZ: manifest.spawn.z,
-            horizontalChunkRadius: horizontalRenderChunkRadius,
+            horizontalChunkRadius: gameSettings().viewDistance,
             viewChanged,
-            initialEnvironment: session.environment(),
+            frameSampled,
+            initialEnvironment,
             navigationMode: WorldNavigationMode.firstPerson,
             movementMode: manifest.mode == WorldGameMode.creative
                 ? WorldMovementMode.creativeFlight
                 : WorldMovementMode.survivalWalk,
             collisionAt,
+            aimChanged: creative.aimChanged,
+            creativeAction: creative.action,
+            creativeSlot: creative.selectSlot,
+            walkSound,
             minimumWorldY: session.content.minimumWorldY,
             maximumWorldY: session.content.maximumWorldY,
             worldSeed: manifest.seed,
             worldClimate: manifest.climate,
         })
         await meshing.initialize()
+        lighting = worldLighting(session.state, manifest.chunkEdge, catalog.lightStates, update => activeGraphics().setLighting(update), failed)
         subscription = session.subscribeChanges(invalidate)
+        await lighting.initialize()
         meshing.start()
         const initialView = activeGraphics().stats()
         viewChanged(initialView.viewChunkX, initialView.viewChunkY, initialView.viewChunkZ, initialView.forwardX, initialView.forwardY, initialView.forwardZ)
         environment = environmentSync(
             {environment: position => session.environment(position), refreshEcology: session.refreshEcology},
             environmentSamplePositionForChunk(view.center, manifest.chunkEdge),
-            sample => activeGraphics().setEnvironment(sample), failed,
+            applyEnvironment, failed,
         )
+        settingsSubscription = subscribeGameSettings(_settings => applyPreferences())
         publishStats()
     catch error:
         try: await close()
         finally: throw error
 
+    controlsReady(WorldBlockControls.from(creative))
     return {close}

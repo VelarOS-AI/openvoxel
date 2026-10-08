@@ -1,0 +1,50 @@
+category: vegetation
+textures:
+  - key: berries:texture/block/blueberry_bush
+    surface: plant
+    file: textures/vegetation/berries/blueberry_bush.png
+  - key: berries:texture/block/blueberry_ripe
+    surface: plant
+    file: textures/vegetation/berries/blueberry_bush.png
+    variants:
+      - weight: 1
+        layers:
+          - albedo:
+              file: textures/vegetation/berries/blueberry_ripe.png
+            blend: normal
+  - key: berries:texture/block/raspberry_bush
+    surface: plant
+    file: textures/vegetation/berries/raspberry_bush.png
+  - key: berries:texture/block/raspberry_ripe
+    surface: plant
+    file: textures/vegetation/berries/raspberry_bush.png
+    variants:
+      - weight: 1
+        layers:
+          - albedo:
+              file: textures/vegetation/berries/raspberry_ripe.png
+            blend: normal
+  - key: berries:texture/block/blackberry_bush
+    surface: plant
+    file: textures/vegetation/berries/blackberry_bush.png
+  - key: berries:texture/block/blackberry_ripe
+    surface: plant
+    file: textures/vegetation/berries/blackberry_bush.png
+    variants:
+      - weight: 1
+        layers:
+          - albedo:
+              file: textures/vegetation/berries/blackberry_ripe.png
+            blend: normal
+  - key: berries:texture/block/strawberry_0
+    surface: plant
+    file: textures/vegetation/berries/strawberry_0.png
+  - key: berries:texture/block/strawberry_1
+    surface: plant
+    file: textures/vegetation/berries/strawberry_1.png
+  - key: berries:texture/block/strawberry_2
+    surface: plant
+    file: textures/vegetation/berries/strawberry_2.png
+  - key: berries:texture/block/strawberry_3
+    surface: plant
+    file: textures/vegetation/berries/strawberry_3.png

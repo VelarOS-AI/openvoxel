@@ -79,6 +79,14 @@ export type BiomeIdentities:
     forest: string
     desert: string
     tundra: string
+    meadow: string
+    birchForest: string
+    taiga: string
+    wetland: string
+    savanna: string
+    steppe: string
+    badlands: string
+    alpine: string
 
 /// 生成器会在三个阶段使用同一批语义槽位：配置编译后保存方块 key，生成器启动
 /// 时保存当前世界的 runtimeId，创建 Chunk 模板时再保存调色板索引。字段名称和
@@ -86,6 +94,16 @@ export type BiomeIdentities:
 /// 不需要同步维护多份形状相同的记录。
 export type GeneratorBlockSlots<T>:
     air: T
+    podzol: T
+    moss: T
+    mud: T
+    coarseDirt: T
+    redSand: T
+    terracotta: T
+    ochreClay: T
+    fern: T
+    redMushroom: T
+    brownMushroom: T
     basalt: T
     birchLeaves: T
     birchLog: T
@@ -110,7 +128,7 @@ export type GeneratorBlockSlots<T>:
     kelp: T
     largeDryBush: T
     limestone: T
-    marble: T
+    paleBasalt: T
     magma: T
     mimosaLeaves: T
     mimosaLog: T
@@ -160,7 +178,27 @@ export type SurfaceConfig:
     geologyPeriod: number
     depositPeriod: number
     outcropPeriod: number
-    veinPeriod: number
+
+export type BasinConfig:
+    cellSize: number
+    chance: number
+    minimumRadius: number
+    maximumRadius: number
+    minimumDepth: number
+    maximumDepth: number
+    maximumRelief: number
+
+export type HydrologyConfig:
+    lakes: BasinConfig
+    ponds: BasinConfig
+
+export type RoadConfig:
+    cellSize: number
+    minimumWidth: number
+    maximumWidth: number
+    shoulderWidth: number
+    branchChance: number
+    maximumGrade: number
 
 export type CaveConfig:
     tunnelCellSize: number
@@ -170,6 +208,7 @@ export type CaveConfig:
     minimumRadius: number
     maximumRadius: number
     tunnelChance: number
+    entranceChance: number
     branchChance: number
     chamberChance: number
     minimumChamberRadius: number
@@ -229,6 +268,12 @@ export type SpawnConfig:
     minimumY: number
     maximumY: number
 
+export type RegionConfig:
+    cellSize: number
+    warpAmplitude: number
+    warpPeriod: number
+    transitionWidth: number
+
 export type WorldGeneratorDefinition:
     schemaVersion: number
     key: string
@@ -238,12 +283,16 @@ export type WorldGeneratorDefinition:
     terrain: TerrainConfig
     terrainTypes: TerrainTypeIdentities
     biomes: BiomeIdentities
+    regions: RegionConfig
     surface: SurfaceConfig
+    roads: RoadConfig
+    hydrology: HydrologyConfig
     caves: CaveConfig
     aquifers: AquiferConfig
     minerals: List<MineralConfig>
     vegetation: VegetationConfig
     spawn: SpawnConfig
+    ecosystem: EcosystemUnits?
 
 export type WorldGeneratorCatalogSource:
     schemaVersion: number
@@ -262,3 +311,112 @@ export type WorldGeneratorCatalogArtifact:
 export type WorldGeneratorCatalogContribution:
     owner: string
     catalog: WorldGeneratorCatalogSource
+
+/// 每个生态单元有稳定的身份。包组合只按身份增删替换，随机采样不依赖数组顺序。
+export type HabitatRange:
+    minimum: number
+    idealLow: number
+    idealHigh: number
+    maximum: number
+
+export type BiomeAffinity:
+    biome: string
+    weight: number
+
+export type BiomeUnit:
+    key: string
+    id: string
+    family: string
+    temperature: HabitatRange
+    humidity: HabitatRange
+    weight: number
+    forestCover: number
+    groundCover: number
+    relief: number
+    upland: number
+
+export type TreeVoxel:
+    x: number
+    y: number
+    z: number
+    material: string
+
+export type TreeUnit:
+    key: string
+    shape: string
+    log: string
+    leaves: string
+    fruit: string?
+    fruitChance: number?
+    template: List<TreeVoxel>?
+    temperature: HabitatRange
+    humidity: HabitatRange
+    elevation: HabitatRange
+    weight: number
+    affinities: List<BiomeAffinity>
+
+export type PlantStateChoice:
+    name: string
+    values: List<string | number | bool>
+
+export type PlantUnit:
+    key: string
+    block: string
+    topBlock: string?
+    naturalMaximumAge: number?
+    support: string
+    temperature: HabitatRange
+    humidity: HabitatRange
+    weight: number
+    affinities: List<BiomeAffinity>
+    properties: List<PlantStateChoice>
+    minimumHeight: number
+    maximumHeight: number
+    aquatic: bool
+    surfaceClearance: number?
+    saltwater: bool?
+
+export type MineralUnit:
+    key: string
+    distribution: MineralConfig
+    block: string
+    source: string
+
+/// 少量特殊形态仍由命名算法实现，但所有启用、材料与概率从包内单元注入。
+export type FeatureUnit:
+    key: string
+    algorithm: string
+    block: string
+    chance: number
+
+export type StageUnit:
+    key: string
+    algorithm: string?
+    step: string
+    enabled: bool
+    terrain: TerrainConfig?
+    regions: RegionConfig?
+    surface: SurfaceConfig?
+    roads: RoadConfig?
+    hydrology: HydrologyConfig?
+    caves: CaveConfig?
+    aquifers: AquiferConfig?
+    vegetation: VegetationConfig?
+
+export type EcosystemUnits:
+    biomes: List<BiomeUnit>
+    trees: List<TreeUnit>
+    plants: List<PlantUnit>
+    minerals: List<MineralUnit>
+    features: List<FeatureUnit>
+    stages: List<StageUnit>
+
+export type WorldGenerationPack:
+    formatVersion: number
+    owner: string
+    title: string
+    description: string
+    requires: List<string>
+    replaces: List<string>
+    removes: List<string>
+    units: EcosystemUnits

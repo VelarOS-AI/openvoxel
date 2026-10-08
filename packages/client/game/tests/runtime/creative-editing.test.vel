@@ -1,0 +1,112 @@
+import {BlockPosition} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {WorldCreativeAction} from "../../src/controls/world-navigation.vel"
+import {creativeEditing} from "../../src/runtime/creative-editing.vel"
+
+const eye = {x: 0.5, y: 0.5, z: 0.5}
+const forward = {x: 0, y: 0, z: -1}
+
+def blockAt(position: readonly BlockPosition) -> number?:
+    if position.x == 0 and position.y == 0 and position.z == -2: return 24
+    return 0
+
+test "creative owner waits for its accepted edit and seals callbacks during close":
+    let release = false
+    let writes = 0
+    let updates = 0
+    async def applyBlock(_position: readonly BlockPosition, _runtimeId: number):
+        writes += 1
+        while not release: await Promise.sleep(0ms)
+    def changed(): updates += 1
+    const editing = creativeEditing({
+        runtimeIdFor: _key => 121,
+        blockAt,
+        applyBlock,
+        edited: (_action, _runtimeId) => null,
+    }, true, changed)
+    editing.aimChanged(eye, forward)
+    editing.action(WorldCreativeAction.breakBlock, eye, forward)
+    expect(writes).toBe(1)
+    const closing = editing.close()
+    editing.action(WorldCreativeAction.breakBlock, eye, forward)
+    await Promise.sleep(0ms)
+    expect(writes).toBe(1)
+    const beforeCompletion = updates
+    release = true
+    await closing
+    expect(updates).toBe(beforeCompletion)
+    editing.selectSlot(2)
+    expect(editing.stats().creativeSlot).toBe(0)
+
+test "creative owner reports write errors and clears them on selection":
+    async def applyBlock(_position: readonly BlockPosition, _runtimeId: number): throw Error("write rejected")
+    const editing = creativeEditing({
+        runtimeIdFor: _key => 121,
+        blockAt,
+        applyBlock,
+        edited: (_action, _runtimeId) => null,
+    }, true, () => null)
+    editing.action(WorldCreativeAction.breakBlock, eye, forward)
+    while editing.stats().creativeEditError == null: await Promise.sleep(0ms)
+    expect(editing.stats().creativeEditError).toBe("write rejected")
+    editing.selectSlot(2)
+    expect(editing.stats().creativeEditError).toBe(null)
+    expect(editing.stats().creativeSlot).toBe(2)
+    await editing.close()
+
+test "creative owner emits one sound event only after an accepted edit":
+    let sound: WorldCreativeAction? = null
+    let soundRuntimeId = 0
+    def edited(action: WorldCreativeAction, runtimeId: number):
+        sound = action
+        soundRuntimeId = runtimeId
+    const editing = creativeEditing({
+        runtimeIdFor: _key => 121,
+        blockAt,
+        applyBlock: async (_position, _runtimeId) => null,
+        edited,
+    }, true, () => null)
+    editing.action(WorldCreativeAction.breakBlock, eye, forward)
+    while sound == null: await Promise.sleep(0ms)
+    expect(sound).toBe(WorldCreativeAction.breakBlock)
+    expect(soundRuntimeId).toBe(24)
+    await editing.close()
+
+test "inventory assignment replaces only the active slot and places the assigned block":
+    let placed = 0
+    async def applyBlock(_position: readonly BlockPosition, runtimeId: number): placed = runtimeId
+    const editing = creativeEditing({
+        runtimeIdFor: key => key == "orchard:cherry_log[axis=y]" ? 900 : key == "missing:block" ? null : 121,
+        blockAt,
+        applyBlock,
+        edited: (_action, _runtimeId) => null,
+    }, true, () => null)
+    editing.selectSlot(2)
+    editing.assignBlock("orchard:cherry_log[axis=y]")
+    expect(editing.stats().creativeStateKeys[2]).toBe("orchard:cherry_log[axis=y]")
+    editing.assignBlock("missing:block")
+    editing.action(WorldCreativeAction.placeBlock, eye, forward)
+    await editing.close()
+    expect(placed).toBe(900)
+    editing.assignBlock("openvoxel:dirt")
+    expect(editing.stats().creativeStateKeys[2]).toBe("orchard:cherry_log[axis=y]")
+
+test "survival can inspect target blocks without enabling creative edits":
+    let updates = 0
+    let writes = 0
+    def changed(): updates += 1
+    async def applyBlock(_position: readonly BlockPosition, _runtimeId: number): writes += 1
+    const editing = creativeEditing({
+        runtimeIdFor: _key => 121, blockAt, applyBlock,
+        edited: (_action, _runtimeId) => null,
+    }, false, changed)
+    editing.aimChanged(eye, forward)
+    expect(editing.stats().creativeTarget?.runtimeId).toBe(24)
+    editing.aimChanged(eye, forward)
+    expect(updates).toBe(1)
+    editing.selectSlot(2)
+    editing.assignBlock("orchard:cherry_log[axis=y]")
+    editing.action(WorldCreativeAction.breakBlock, eye, forward)
+    await editing.close()
+    expect(editing.stats().creativeSlot).toBe(0)
+    expect(writes).toBe(0)

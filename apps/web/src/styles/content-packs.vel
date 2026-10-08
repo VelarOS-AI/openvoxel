@@ -1,0 +1,36 @@
+import {Look, alpha, border, spacing} from "velar/look"
+import {white, ink} from "./theme.vel"
+
+export const contentPackPanelLook: Look = look:
+    border = border(1px, alpha(white, 0.16))
+    borderRadius = 12px
+    backgroundColor = alpha(ink, 0.15)
+    padding = spacing(12px, 14px)
+
+export const contentPackSummaryLook: Look = look:
+    cursor = "pointer"
+    fontWeight = 600
+    fontSize = 0.92rem
+
+export const contentPackListLook: Look = look:
+    display = "grid"
+    gap = 12px
+    marginTop = 16px
+    maxHeight = 310px
+    overflowY = "auto"
+
+export const contentPackItemLook: Look = look:
+    display = "flex"
+    alignItems = "start"
+    gap = 10px
+    cursor = "pointer"
+    fontSize = 0.86rem
+
+export const contentPackTextLook: Look = look:
+    display = "grid"
+    gap = 3px
+
+export const contentPackDescriptionLook: Look = look:
+    color = alpha(white, 0.65)
+    fontSize = 0.75rem
+    lineHeight = 1.5

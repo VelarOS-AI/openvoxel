@@ -1,1 +1,3 @@
 export {ContentCatalog, ContentPackArtifact, WorldContentSet, baseContentCatalog, baseWorldContent, createContentCatalog, createContentPackArtifact, validateContentPackArtifact} from "./content-pack.vel"
+export {builtinContentPacks, builtinContentCatalog, defaultContentPackOwners} from "./builtin-packs.vel"
+export {ContentPackDescriptor, builtinContentPackDescriptors} from "./pack-descriptors.vel"

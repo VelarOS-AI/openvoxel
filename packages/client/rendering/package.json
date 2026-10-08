@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#openvoxel/renderer/lighting-native": "./src/native/voxel-lighting.mjs",
+    "#openvoxel/renderer/mesh-scan": "./src/native/mesh-scan.mjs",
+    "#openvoxel/renderer/chunk-snapshot": "./src/native/chunk-snapshot.mjs"
+  },
   "files": [
     "data",
     "generated",
@@ -11,12 +16,20 @@
   "exports": {
     ".": "./dist/index.js",
     "./meshing-worker": "./dist/meshing-worker.js",
-    "./resource-pack-data": "./generated/client-resource-pack.json"
+    "./lighting-worker": "./dist/lighting-worker.js",
+    "./resource-pack-data": "./generated/client-resource-pack.json",
+    "./lighting-native": "./src/native/voxel-lighting.mjs",
+    "./texture-bank-opaque-data": "./generated/texture-bank-opaque.json",
+    "./texture-bank-cutout-data": "./generated/texture-bank-cutout.json",
+    "./texture-bank-translucent-data": "./generated/texture-bank-translucent.json",
+    "./texture-bank-fluid-data": "./generated/texture-bank-fluid.json",
+    "./resource-metadata-data": "./generated/resource-pack-metadata.json"
   },
   "velar": {
     "entry": "src/index.vel",
     "entries": {
-      "./meshing-worker": "src/meshing-worker.vel"
+      "./meshing-worker": "src/meshing-worker.vel",
+      "./lighting-worker": "src/lighting-worker.vel"
     },
     "targets": [
       "web",
@@ -31,6 +44,26 @@
       "./resource-pack-data": {
         "path": "generated/client-resource-pack.json",
         "type": "json"
+      },
+      "./texture-bank-opaque-data": {
+        "path": "generated/texture-bank-opaque.json",
+        "type": "json"
+      },
+      "./texture-bank-cutout-data": {
+        "path": "generated/texture-bank-cutout.json",
+        "type": "json"
+      },
+      "./texture-bank-translucent-data": {
+        "path": "generated/texture-bank-translucent.json",
+        "type": "json"
+      },
+      "./texture-bank-fluid-data": {
+        "path": "generated/texture-bank-fluid.json",
+        "type": "json"
+      },
+      "./resource-metadata-data": {
+        "path": "generated/resource-pack-metadata.json",
+        "type": "json"
       }
     }
   },
@@ -41,7 +74,8 @@
     "format": "velar format",
     "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
     "test": "node ../../../tools/run-validation.mjs --shell \"velar test && node --test --test-concurrency=1 tests/*.test.mjs\"",
-    "build": "node ../../../tools/run-validation.mjs -- velar build"
+    "build": "node ../../../tools/run-validation.mjs -- velar build",
+    "benchmark:lighting": "node ../../../tools/run-validation.mjs -- node benchmarks/voxel-lighting.mjs"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",
@@ -50,9 +84,10 @@
   },
   "devDependencies": {
     "@openvoxel/world-generation": "0.2.0",
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/web": "0.34.0",
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/web": "0.34.2",
     "sharp": "0.35.4",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "@openvoxel/content": "0.2.0"
   }
 }

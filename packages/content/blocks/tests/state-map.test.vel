@@ -55,6 +55,17 @@ test "built-in state map preserves the legacy range and appends new states":
         {runtimeId: 373, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=false]"},
         {runtimeId: 374, stateKey: "openvoxel:tall_spruce_leaves[distance=7,persistent=true]"},
         {runtimeId: 375, stateKey: "openvoxel:marble"},
+        {runtimeId: 376, stateKey: "openvoxel:pale_basalt"},
+        {runtimeId: 377, stateKey: "openvoxel:podzol"},
+        {runtimeId: 378, stateKey: "openvoxel:moss"},
+        {runtimeId: 379, stateKey: "openvoxel:mud"},
+        {runtimeId: 380, stateKey: "openvoxel:coarse_dirt"},
+        {runtimeId: 381, stateKey: "openvoxel:red_sand"},
+        {runtimeId: 382, stateKey: "openvoxel:terracotta"},
+        {runtimeId: 383, stateKey: "openvoxel:ochre_clay"},
+        {runtimeId: 384, stateKey: "openvoxel:fern"},
+        {runtimeId: 385, stateKey: "openvoxel:red_mushroom"},
+        {runtimeId: 386, stateKey: "openvoxel:brown_mushroom"},
     ])
     expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "east"}])).toBe(187)
     expect(blockStateRuntimeId("openvoxel:pumpkin", [{name: "facing", value: "north"}])).toBe(188)

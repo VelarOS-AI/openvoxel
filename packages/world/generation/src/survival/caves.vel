@@ -9,12 +9,18 @@ import {CompiledFeaturePlan, FeatureBounds, FeatureWrite, applyCompiledFeaturePl
 import {GenerationFields, TerrainColumnPlan, terrainTargetSurfaceY} from "./terrain.vel"
 
 const cavePlanCacheCapacity = 256
+const surfacePlanCacheCapacity = 64
+
+def entranceReach(profile: readonly WorldGeneratorDefinition) -> number:
+    return 12 + profile.caves.maximumLength + profile.caves.maximumRadius.ceil()
 
 export type CavePlanner:
     cachedPlanCount: () -> number
     planBuildCount: () -> number
     tunnel: (cellX: number, cellZ: number) -> readonly CompiledFeaturePlan
+    entrance: (cellX: number, cellZ: number) -> readonly CompiledFeaturePlan
     chamber: (cellX: number, cellZ: number) -> readonly CompiledFeaturePlan
+    surfaceIntact: (x: number, y: number, z: number) -> bool
 
 /// 洞穴中心线只保存球心和半径，每四个数字是一枚笔刷。真正写入某个 Chunk 的
 /// 相对方块列表在第一次相交时编译并按 Chunk 缓存，避免为远端洞穴提前展开。
@@ -45,6 +51,17 @@ def appendTunnelBrushes(
         x += Math.cos(heading) * 2
         y += vertical * 2
         z += Math.sin(heading) * 2
+
+/// 从地表斜向下开口，末端接一段地下洞道；笔刷仍按世界坐标独立裁剪到 Chunk。
+def appendEntranceBrushes(brushes: List<number>, stream: Random, x: number, surfaceY: number, z: number, length: number, minimumRadius: number, maximumRadius: number):
+    const heading = stream.number() * Math.tau
+    for step in range(8):
+        brushes.append(x + Math.cos(heading) * step * 1.5)
+        brushes.append(surfaceY - 0.5 - step * 1.8)
+        brushes.append(z + Math.sin(heading) * step * 1.5)
+        brushes.append(2.5 + 0.3 * Math.sin(step * Math.pi / 8))
+    const end = {x: x + Math.cos(heading) * 10.5, y: surfaceY - 13.1, z: z + Math.sin(heading) * 10.5}
+    appendTunnelBrushes(brushes, stream.fork("interior"), end, length, minimumRadius, maximumRadius)
 
 def brushBounds(origin: readonly Coordinate3, brushes: readonly List<number>) -> FeatureBounds:
     if brushes.size == 0:
@@ -111,6 +128,7 @@ export def cavePlanner(fields: GenerationFields, seed: string, blocks: readonly 
     const root = random(seed).fork("caves")
     const profile = fields.profile
     const plans: Map<string, CompiledFeaturePlan> = Map()
+    const surfacePlans: Map<string, List<readonly CompiledFeaturePlan>> = Map()
     let builds = 0
 
     def cachedPlanCount() -> number: return plans.size
@@ -147,6 +165,28 @@ export def cavePlanner(fields: GenerationFields, seed: string, blocks: readonly 
                     appendTunnelBrushes(brushes, owner.fork("branch"), {x: start.x, y: start.y - 2, z: start.z}, Math.max(profile.caves.minimumLength, (length * 0.64).round()), profile.caves.minimumRadius, profile.caves.maximumRadius * 0.82)
         return remember(key, lazyCaveFeature(key, origin, brushes, blocks.air))
 
+    def entrance(cellX: number, cellZ: number) -> readonly CompiledFeaturePlan:
+        const key = f"e:{cellX}:{cellZ}"
+        if plans.has(key):
+            const existing = plans.get(key)!
+            plans.remove(key)
+            plans.set(key, existing)
+            return existing
+        const size = profile.caves.tunnelCellSize
+        const origin = {x: cellX * size, y: 0, z: cellZ * size}
+        const owner = root.fork(key)
+        const brushes: List<number> = []
+        let mouth: Coordinate3 = origin
+        if owner.bool(profile.caves.entranceChance):
+            const x = origin.x + owner.int(0, size)
+            const z = origin.z + owner.int(0, size)
+            const surfaceY = terrainTargetSurfaceY(fields, {x, z})
+            if fields.waterBodies.sample(x, z) == null and surfaceY > profile.world.seaLevel + 8 and surfaceY < profile.world.maximumNaturalSurfaceY - 4:
+                mouth = {x, y: surfaceY, z}
+                const length = owner.int(profile.caves.minimumLength, profile.caves.maximumLength + 1)
+                appendEntranceBrushes(brushes, owner.fork("mouth"), x, surfaceY, z, length, profile.caves.minimumRadius, profile.caves.maximumRadius)
+        return remember(key, lazyCaveFeature(key, mouth, brushes, blocks.air))
+
     def chamber(cellX: number, cellZ: number) -> readonly CompiledFeaturePlan:
         const key = f"c:{cellX}:{cellZ}"
         if plans.has(key):
@@ -171,7 +211,40 @@ export def cavePlanner(fields: GenerationFields, seed: string, blocks: readonly 
                 brushes.append(radius)
         return remember(key, lazyCaveFeature(key, origin, brushes, blocks.air))
 
-    return {cachedPlanCount, planBuildCount, tunnel, chamber}
+    /// 按目标区块缓存可能触及其地表的入口，避免逐株植物重扫所有洞口所有者。
+    def entrancesAtSurface(chunkX: number, chunkZ: number) -> readonly List<readonly CompiledFeaturePlan>:
+        const key = f"{chunkX}:{chunkZ}"
+        if surfacePlans.has(key): return surfacePlans.get(key)!
+        const minimumX = chunkX * 16
+        const maximumX = minimumX + 15
+        const minimumZ = chunkZ * 16
+        const maximumZ = minimumZ + 15
+        const reach = entranceReach(profile)
+        const cellSize = profile.caves.tunnelCellSize
+        const relevant: List<readonly CompiledFeaturePlan> = []
+        for cellX in range(((minimumX - reach) / cellSize).floor(), ((maximumX + reach) / cellSize).floor() + 1):
+            for cellZ in range(((minimumZ - reach) / cellSize).floor(), ((maximumZ + reach) / cellSize).floor() + 1):
+                const plan = entrance(cellX, cellZ)
+                if plan.bounds.maximumY <= profile.world.seaLevel + 3 or plan.bounds.minimumX > maximumX or plan.bounds.maximumX < minimumX or plan.bounds.minimumZ > maximumZ or plan.bounds.maximumZ < minimumZ:
+                    continue
+                relevant.append(plan)
+        if surfacePlans.size >= surfacePlanCacheCapacity: evictOldest(surfacePlans)
+        surfacePlans.set(key, relevant)
+        return relevant
+
+    /// 装饰候选按原始地形高度选址；洞口挖掉的地表不能再承载树木和花草。
+    /// 普通洞道和洞室保留了地表覆盖层。
+    def surfaceIntact(x: number, y: number, z: number) -> bool:
+        if y <= profile.world.seaLevel + 3: return true
+        for plan in entrancesAtSurface((x / 16).floor(), (z / 16).floor()):
+            if x < plan.bounds.minimumX or x > plan.bounds.maximumX or y < plan.bounds.minimumY or y > plan.bounds.maximumY or z < plan.bounds.minimumZ or z > plan.bounds.maximumZ:
+                continue
+            for write in plan.bucket((x / 16).floor(), (y / 16).floor(), (z / 16).floor()):
+                if plan.origin.x + write.x == x and plan.origin.y + write.y == y and plan.origin.z + write.z == z:
+                    return false
+        return true
+
+    return {cachedPlanCount, planBuildCount, tunnel, entrance, chamber, surfaceIntact}
 
 export def carveCaves(chunk: Chunk, planner: CavePlanner, profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, registry: readonly BlockRegistry, terrain: readonly TerrainColumnPlan):
     const minimumX = chunkMinimumX(chunk)
@@ -188,6 +261,12 @@ export def carveCaves(chunk: Chunk, planner: CavePlanner, profile: readonly Worl
         if worldY > terrain.surfaceYAt(worldX, worldZ) - profile.caves.surfaceThickness: return false
         return registry.hasTag(current, builtinIdentities.tags.naturalRock) or current == blocks.dirt or current == blocks.grass or current == blocks.sand or current == blocks.clay or current == blocks.gravel
 
+    def entranceCarvable(current: number, target: number, worldX: number, worldY: number, worldZ: number) -> bool:
+        if terrain.sampleAt(worldX, worldZ).waterBody != null: return false
+        if terrain.surfaceYAt(worldX, worldZ) <= profile.world.seaLevel + 3: return false
+        if worldY > terrain.surfaceYAt(worldX, worldZ): return false
+        return registry.hasTag(current, builtinIdentities.tags.naturalRock) or current == blocks.dirt or current == blocks.grass or current == blocks.sand or current == blocks.clay or current == blocks.gravel
+
     const plans: List<readonly CompiledFeaturePlan> = []
     for cellX in range(tunnelFirstX, tunnelLastX + 1):
         for cellZ in range(tunnelFirstZ, tunnelLastZ + 1): plans.append(planner.tunnel(cellX, cellZ))
@@ -199,3 +278,7 @@ export def carveCaves(chunk: Chunk, planner: CavePlanner, profile: readonly Worl
     for cellX in range(chamberFirstX, chamberLastX + 1):
         for cellZ in range(chamberFirstZ, chamberLastZ + 1): plans.append(planner.chamber(cellX, cellZ))
     for plan in plans.sorted(by=plan => plan.sortKey): applyCompiledFeaturePlan(chunk, plan, carvable)
+    const surfaceReach = entranceReach(profile)
+    for cellX in range(((minimumX - surfaceReach) / profile.caves.tunnelCellSize).floor(), ((maximumX + surfaceReach) / profile.caves.tunnelCellSize).floor() + 1):
+        for cellZ in range(((minimumZ - surfaceReach) / profile.caves.tunnelCellSize).floor(), ((maximumZ + surfaceReach) / profile.caves.tunnelCellSize).floor() + 1):
+            applyCompiledFeaturePlan(chunk, planner.entrance(cellX, cellZ), entranceCarvable)

@@ -3,8 +3,8 @@ import {WorldPreset} from "./saved-world.vel"
 
 export def worldGameModeName(mode: WorldGameMode) -> string:
     match mode:
-        case WorldGameMode.survival: return "Survival"
-        case WorldGameMode.creative: return "Creative"
+        case WorldGameMode.survival: return "生存"
+        case WorldGameMode.creative: return "创造"
 
 export def worldCover(preset: WorldPreset) -> string:
     match preset:
@@ -15,7 +15,14 @@ export def worldCover(preset: WorldPreset) -> string:
 
 export def presetName(preset: WorldPreset) -> string:
     match preset:
-        case WorldPreset.meadow: return "Meadow"
-        case WorldPreset.coast: return "Coast"
-        case WorldPreset.highlands: return "Highlands"
-        case WorldPreset.quietShore: return "Quiet Shore"
+        case WorldPreset.meadow: return "草甸"
+        case WorldPreset.coast: return "海岸"
+        case WorldPreset.highlands: return "高地"
+        case WorldPreset.quietShore: return "静谧海岸"
+
+export def lastPlayedLabel(value: string) -> string:
+    match value:
+        case "Created just now": return "刚刚创建"
+        case "Played just now": return "刚刚玩过"
+        case "Opened just now": return "刚刚打开"
+        case _: return value

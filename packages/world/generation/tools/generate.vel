@@ -1,3 +1,7 @@
+import {validateWorldGeneratorDefinition, validateWorldGeneratorPaletteDefinition} from "../src/definition/validation.vel"
+import {sha256Text} from "velar/hash"
+import {composeWorldGeneration} from "../src/ecosystem/composition.vel"
+import {readBuiltinEcosystemPacks} from "./ecosystem-input.vel"
 import {identityTree} from "@openvoxel/identities"
 import {exists, makeDirectory, readText, writeText} from "velar/fs"
 import {compileWorldGeneratorCatalog} from "../src/compiler/catalog-compiler.vel"
@@ -6,6 +10,14 @@ import {readWorldGeneratorCatalogInputs} from "./catalog-input.vel"
 export async def generatedWorldGeneratorCatalogText() -> string:
     const inputs = await readWorldGeneratorCatalogInputs()
     const artifact = compileWorldGeneratorCatalog(inputs.manifestText, inputs.generatorSourceTexts, inputs.paletteSourceTexts, identityTree)
+    const packs = await readBuiltinEcosystemPacks()
+    for definition, index in artifact.catalog.generators:
+        const palette = artifact.catalog.palettes.find(candidate => candidate.key == definition.palette)!
+        const composed = composeWorldGeneration(definition, palette, packs)
+        artifact.catalog.generators[index] = validateWorldGeneratorDefinition(composed.definition)
+        const paletteIndex = artifact.catalog.palettes.index(palette)
+        artifact.catalog.palettes[paletteIndex!] = validateWorldGeneratorPaletteDefinition(composed.palette)
+    artifact.contentHash = sha256Text(Json.stableStringify(artifact.catalog))
     return f"{Json.stableStringify(artifact, 2)}\n"
 
 @main:
@@ -14,3 +26,7 @@ export async def generatedWorldGeneratorCatalogText() -> string:
     const path = "generated/world-generator-catalog.json"
     const output = await generatedWorldGeneratorCatalogText()
     if not await exists(path) or await readText(path, 2 * 1024 * 1024) != output: await writeText(path, output)
+    const ecosystemPath = "generated/ecosystem-packs.json"
+    const ecosystemOutput = f"{Json.stableStringify(await readBuiltinEcosystemPacks(), 2)}\n"
+    if not await exists(ecosystemPath) or await readText(ecosystemPath, 2 * 1024 * 1024) != ecosystemOutput:
+        await writeText(ecosystemPath, ecosystemOutput)

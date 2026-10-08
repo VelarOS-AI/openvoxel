@@ -36,10 +36,11 @@ export async function loadEnvironmentTextures(scene, resources, textureFactory =
       load(resources.precipitation.rainDataUrl, Texture.NEAREST_SAMPLINGMODE),
       load(resources.precipitation.rainSplashDataUrl, Texture.NEAREST_SAMPLINGMODE),
       load(resources.precipitation.snowDataUrl, Texture.NEAREST_SAMPLINGMODE),
+      load(resources.foliage.leafDataUrl, Texture.NEAREST_SAMPLINGMODE),
     ]);
     return {
       sun: textures[0], glow: textures[1], star: textures[2], moons: textures.slice(3, 11),
-      clouds: textures[11], rain: textures[12], rainSplash: textures[13], snow: textures[14], dispose,
+      clouds: textures[11], rain: textures[12], rainSplash: textures[13], snow: textures[14], leaf: textures[15], dispose,
     };
   } catch (error) {
     try { dispose(); } catch (cleanupError) {

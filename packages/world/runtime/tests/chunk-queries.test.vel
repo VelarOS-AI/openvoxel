@@ -1,0 +1,54 @@
+import {expect} from "velar/test"
+import {Cancellation, task} from "velar/task"
+import {monotonic} from "velar/time"
+import {ChunkPosition, chunkChecksum} from "@openvoxel/world"
+import {WorldGenerator} from "@openvoxel/world-generation"
+import {memoryWorldStore} from "../src/memory-world-store.vel"
+import {worldChunkQueries} from "../src/chunk-queries.vel"
+import {WorldSessionCache, WorldSessionLease, worldSessionCache} from "../src/world-sessions.vel"
+
+test "generation yields expensive batches, honors cancellation and releases the world lease":
+    const sessions = worldSessionCache(memoryWorldStore())
+    const world = sessions.prepareNew({id: "cancel-generation", name: "Cancellation", seed: "streaming"}, 1_000_000)
+    await sessions.remember(world)
+    const original = world.generator
+    let generated = 0
+    let closed = 0
+    def generate(position: readonly ChunkPosition):
+        generated += 1
+        // Make one expensive Chunk cross the CPU budget independently of the
+        // machine's terrain generation speed. Cancellation must run before #2.
+        const started = monotonic()
+        while monotonic() - started < 10: pass
+        return original.generate(position)
+    world.generator = WorldGenerator.from(original, {generate})
+    async def requireWorld(worldId: string) -> WorldSessionLease:
+        const lease = await sessions.require(worldId)
+        async def close():
+            closed += 1
+            await lease.close()
+        return WorldSessionLease.from(lease, {close})
+    const queries = worldChunkQueries(WorldSessionCache.from(sessions, {require: requireWorld}), _manifest => 0)
+    const positions = [{x: 0, y: 4, z: 0}, {x: 1, y: 4, z: 0}]
+    let captured: Cancellation? = null
+    async def load(cancellation: Cancellation):
+        captured = cancellation
+        await queries.terrainChunks(world.manifest.id, positions, cancellation)
+    const owner = task(load)
+    try:
+        while generated == 0: await Promise.sleep(0ms)
+        await owner.cancel("Player left the world")
+        await expect(owner.result()).toReject()
+        expect(generated).toBe(1)
+        expect(closed).toBe(1)
+        assert captured != null else "Query did not capture its cancellation"
+        await expect(queries.terrainChunks(world.manifest.id, positions, captured)).toReject()
+        await expect(queries.chunkDeltas(world.manifest.id, positions, captured)).toReject()
+        expect(generated).toBe(1)
+        expect(closed).toBe(1)
+        const fresh = await queries.terrainChunks(world.manifest.id, positions)
+        expect(fresh.map(chunk => chunkChecksum(chunk))).toEqual(positions.map(position => chunkChecksum(original.generate(position))))
+        expect(closed).toBe(2)
+    finally:
+        await owner.cancel()
+        await sessions.close()

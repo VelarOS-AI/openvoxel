@@ -134,6 +134,7 @@ export def mineralPlanner(
 
 export def generateMinerals(chunk: Chunk, planner: MineralPlanner, blocks: readonly SurvivalBlockPalette, registry: readonly BlockRegistry):
     def replaceable(current: number, target: number, worldX: number, worldY: number, worldZ: number) -> bool:
+        if worldY < 5: return false
         const source = planner.sourceFor(target)
         if source == null: return false
         const expected: number = source

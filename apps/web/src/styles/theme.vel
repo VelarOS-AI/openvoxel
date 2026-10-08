@@ -1,11 +1,13 @@
 import css unsafe "./fonts.css" before look
+import css unsafe "./motion.css" after look
+import css unsafe "./touch-controls.css" after look
 
-import {Color, rgb} from "velar/look"
+import {Color, rgb, rgba} from "velar/look"
 
-export const white: Color = rgb(247, 250, 255)
-export const ink: Color = rgb(6, 15, 29)
-export const panel: Color = rgb(12, 24, 42)
-export const blue: Color = rgb(48, 105, 236)
-export const brightBlue: Color = rgb(62, 129, 255)
-export const muted: Color = rgb(185, 198, 218)
-export const danger: Color = rgb(255, 128, 146)
+export const white: Color = rgb(246, 246, 242)
+export const ink: Color = rgb(24, 24, 24)
+export const panel: Color = rgba(32, 32, 32, 0.76)
+export const accent: Color = rgb(59, 84, 52)
+export const accentStrong: Color = rgb(79, 107, 64)
+export const muted: Color = rgb(218, 218, 212)
+export const danger: Color = rgb(242, 157, 142)

@@ -1,0 +1,12 @@
+import {basePackedBlockCatalogSource, blockStateRuntimeId} from "@openvoxel/blocks"
+import {expect} from "velar/test"
+import {blockPreviewName, worldBlockItems} from "../../src/runtime/block-items.vel"
+
+test "block inventory uses catalog identities and default states with shared model preview names":
+    const items = worldBlockItems(basePackedBlockCatalogSource)
+    const dirt = items.inventory.find(item => item.key == "openvoxel:dirt")!
+    expect(dirt.runtimeId).toBe(blockStateRuntimeId("openvoxel:dirt", []))
+    expect(dirt.label).toBe("泥土")
+    expect(dirt.previewName).toBe("openvoxel--dirt")
+    expect(items.inventory.some(item => item.key == "openvoxel:air")).toBe(false)
+    expect(blockPreviewName("orchard:cherry_leaves")).toBe("orchard--cherry-leaves")

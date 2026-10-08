@@ -1,0 +1,120 @@
+import {Look, alpha, border, minmax, repeat, rgb, spacing} from "velar/look"
+import {ink, white} from "./theme.vel"
+import {settingsButtonLook, settingsDialogLook} from "./game-settings.vel"
+
+export const blockIconLook: Look = look:
+    display = "block"
+    width = 100%
+    height = 100%
+    objectFit = "contain"
+    pointerEvents = "none"
+
+export const blockInfoLook: Look = look:
+    position = "absolute"
+    right = 20px
+    bottom = 20px
+    zIndex = 3
+    display = "flex"
+    alignItems = "center"
+    gap = 12px
+    maxWidth = 300px
+    padding = spacing(10px, 16px, 10px, 10px)
+    border = border(1px, alpha(white, 0.18))
+    borderRadius = 12px
+    backgroundColor = alpha(ink, 0.82)
+    pointerEvents = "none"
+    if viewport.width <= 900px:
+        right = 12px
+        bottom = 100px
+        maxWidth = 230px
+    if viewport.width <= 640px:
+        bottom = 170px
+
+export const blockInfoIconLook: Look = look:
+    width = 52px
+    height = 52px
+    flexShrink = 0
+
+export const blockInfoNameLook: Look = look:
+    margin = 0px
+    fontSize = 0.95rem
+    lineHeight = 1.6
+    fontWeight = 600
+
+export const blockInfoIdLook: Look = look:
+    display = "block"
+    color = alpha(white, 0.58)
+    fontSize = 0.68rem
+    lineHeight = 1.6
+    overflowWrap = "anywhere"
+
+export const inventoryDialogLook: Look = look:
+    ...settingsDialogLook
+    height = 620px
+    width = 720px
+    backgroundColor = alpha(ink, 0.95)
+
+export const inventoryBodyLook: Look = look:
+    display = "flex"
+    flexDirection = "column"
+    height = 100%
+
+export const inventorySearchLook: Look = look:
+    margin = spacing(0px, 24px, 16px, 24px)
+    padding = spacing(12px, 14px)
+    border = border(1px, alpha(white, 0.2))
+    borderRadius = 8px
+    backgroundColor = alpha(ink, 0.32)
+    color = white
+    fontFamily = "inherit"
+    fontSize = 0.9rem
+
+export const inventoryGridLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat("auto-fill", minmax(90px, 1fr))
+    alignContent = "start"
+    gap = 8px
+    padding = spacing(0px, 24px, 24px, 24px)
+    overflowY = "auto"
+    minHeight = 0px
+    flex = 1
+
+export const inventoryItemLook: Look = look:
+    ...settingsButtonLook
+    display = "flex"
+    flexDirection = "column"
+    alignItems = "center"
+    gap = 4px
+    padding = spacing(8px, 4px)
+    fontSize = 0.74rem
+    lineHeight = 1.4
+
+export const inventorySelectedItemLook: Look = look:
+    ...inventoryItemLook
+    borderColor = rgb(255, 255, 255)
+    backgroundColor = alpha(white, 0.08)
+
+export const inventoryIconLook: Look = look:
+    width = 60px
+    height = 60px
+
+export const inventoryHintLook: Look = look:
+    margin = 0px
+    padding = spacing(14px, 24px)
+    borderTop = border(1px, alpha(white, 0.14))
+    color = alpha(white, 0.6)
+    fontSize = 0.78rem
+
+export const inventoryEmptyLook: Look = look:
+    gridColumn = "1 / -1"
+    padding = 24px
+    textAlign = "center"
+    color = alpha(white, 0.6)
+
+export const slotNumberLook: Look = look:
+    position = "absolute"
+    top = 3px
+    left = 6px
+    fontSize = 0.65rem
+    color = alpha(white, 0.55)
+    pointerEvents = "none"

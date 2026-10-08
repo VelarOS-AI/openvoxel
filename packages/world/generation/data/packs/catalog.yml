@@ -1,0 +1,8 @@
+formatVersion: 1
+sources:
+  - terrain.yml
+  - biomes.yml
+  - woodland.yml
+  - understory.yml
+  - aquatic.yml
+  - minerals.yml

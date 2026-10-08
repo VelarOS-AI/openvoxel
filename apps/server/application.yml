@@ -27,7 +27,7 @@ database:
 # 在未显式选择时启用哪些 owner；人工 YAML 仍留在各 Mod 源目录中。
 content:
   packArtifacts: []
-  defaultPacks: []
+  defaultPacks: [terrain, biomes, woodland, understory, aquatic, minerals, orchard, berries, gourds, botanical, wetlands, geology]
 
 worldRuntime:
   # 完整世界上下文包含注册表、生成器和热状态；空闲世界按 LRU 自动卸载。

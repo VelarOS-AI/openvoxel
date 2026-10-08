@@ -22,7 +22,7 @@ const transformFields = ["rotate", "flipX", "flipY", "shiftX", "shiftY", "hue", 
 const textureFields = ["key", "surface", "file", "maps", "transform", "weight", "variants"];
 const variantFields = ["weight", "transform", "layers"];
 const layerFields = ["albedo", "maps", "mask", "opacity", "blend", "transform"];
-const materialFields = ["key", "precipitationSurface", "materialEffect", "waterOptics", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "clearCoat", "clearCoatRoughness", "unlit"];
+const materialFields = ["key", "precipitationSurface", "materialEffect", "waterOptics", "alpha", "alphaCutoff", "doubleSided", "castsShadows", "environmentIntensity", "specularWeight", "clearCoat", "clearCoatRoughness", "unlit"];
 const waterOpticsFields = ["indexOfRefraction", "roughness", "normalStrength", "waves"];
 const waterWaveFields = ["normalTexture", "scale", "speed", "directionX", "directionZ"];
 
@@ -43,11 +43,12 @@ function environmentImage(value, directory, label) {
 function environmentDefinition(value) {
   const environment = requireKnownFields(
     requireRecord(value, "environment"),
-    ["sky", "clouds", "precipitation"],
+    ["sky", "clouds", "precipitation", "foliage"],
     "environment",
   );
   const sky = requireKnownFields(requireRecord(environment.sky, "environment sky"), ["sun", "glow", "star", "moons"], "environment sky");
   const clouds = requireKnownFields(requireRecord(environment.clouds, "environment clouds"), ["texture"], "environment clouds");
+  const foliage = requireKnownFields(requireRecord(environment.foliage, "environment foliage"), ["leaf"], "environment foliage");
   const precipitation = requireKnownFields(
     requireRecord(environment.precipitation, "environment precipitation"),
     ["rain", "rainSplash", "snow"],
@@ -67,6 +68,7 @@ function environmentDefinition(value) {
     clouds: {
       texture: environmentImage(clouds.texture, "environment/sky", "environment clouds texture"),
     },
+    foliage: {leaf: environmentImage(foliage.leaf, "environment/foliage", "environment foliage leaf")},
     precipitation: {
       rain: environmentImage(precipitation.rain, "environment/weather", "environment precipitation rain"),
       rainSplash: environmentImage(precipitation.rainSplash, "environment/weather", "environment precipitation rain splash"),
@@ -100,6 +102,7 @@ function requireSectionEntries(values, label, fields) {
 function requireMaterialDefinition(raw, index) {
   const label = `materials entry ${index}`;
   const material = requireKnownFields(requireRecord(raw, label), materialFields, label);
+  requireNumber(material.specularWeight, 0, 1, `Material ${material.key} specularWeight`);
   if (!["none", "solid", "water"].includes(material.precipitationSurface)) {
     throw new Error(`Material ${material.key} precipitationSurface must be none, solid, or water`);
   }
@@ -149,7 +152,7 @@ function surfaceProfiles(values) {
       "emissiveThreshold",
     ], "surfaceProfiles entry");
     const key = requireText(entry.key, "surface profile key");
-    if (!/^[a-z][a-z0-9-]*$/u.test(key)) throw new Error(`Surface profile key ${key} is invalid`);
+    if (!/^(?:[a-z][a-z0-9_.-]*:)?[a-z][a-z0-9-]*$/u.test(key)) throw new Error(`Surface profile key ${key} is invalid`);
     if (profiles.has(key)) throw new Error(`surfaceProfiles repeats ${key}`);
     const normalFallback = requireText(entry.normalFallback, `surface profile ${key} normalFallback`);
     const materialFallback = requireText(entry.materialFallback, `surface profile ${key} materialFallback`);
@@ -223,7 +226,7 @@ function requireTextureVariants(texture, textureKey) {
   }
 }
 
-export async function loadResourceManifest(dataRoot, manifestPath) {
+export async function loadResourceManifest(dataRoot, manifestPath, contributions = []) {
   const manifestText = await readFile(manifestPath, "utf8");
   const manifest = requireKnownFields(requireRecord(parse(manifestText), "Client resource pack manifest"), [
     "formatVersion",
@@ -237,7 +240,7 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     "tints",
     "animations",
   ], "Client resource pack manifest");
-  if (manifest.formatVersion !== 11) throw new Error("Unsupported client resource pack source format");
+  if (manifest.formatVersion !== 12) throw new Error("Unsupported client resource pack source format");
   const owner = requireText(manifest.owner, "Client resource pack owner");
   if (!/^[a-z][a-z0-9_.-]*$/u.test(owner)) throw new Error("Client resource pack owner is invalid");
   const environment = environmentDefinition(manifest.environment);
@@ -270,6 +273,28 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     throw new Error("Client resource pack repeats a texture category");
   }
 
+  for (const contribution of contributions) {
+    const {owner: packOwner, document, file} = contribution;
+    requireKnownFields(requireRecord(document, `Pack ${packOwner} resources`), ["category", "textures", "models", "surfaceProfiles"], `Pack ${packOwner} resources`);
+    for (const profile of document.surfaceProfiles ?? []) {
+      if (!profile.key.startsWith(`${packOwner}:`)) throw new Error(`Pack ${packOwner} surface profile escapes its namespace`);
+      manifest.surfaceProfiles.push(profile);
+    }
+    const category = requireText(document.category, `Pack ${packOwner} resource category`);
+    const textures = requireList(document.textures, `Pack ${packOwner} textures`).map(raw => {
+      const texture = requireKnownFields(requireRecord(raw, `Pack ${packOwner} texture`), textureFields, `Pack ${packOwner} texture`);
+      if (!texture.key.startsWith(`${packOwner}:`)) throw new Error(`Pack ${packOwner} texture escapes its namespace`);
+      return {...texture, category};
+    });
+    const models = document.models ?? [];
+    requireSectionEntries(models, `Pack ${packOwner} models`, ["key", "kind", "geometry"]);
+    for (const model of models) {
+      if (!model.key.startsWith(`${packOwner}:`)) throw new Error(`Pack ${packOwner} model escapes its namespace`);
+      manifest.models.push(model);
+    }
+    catalogs.push({file, category, document, textures});
+  }
+
   const profiles = surfaceProfiles(manifest.surfaceProfiles);
   const textures = catalogs.flatMap(({textures: values}) => values);
   for (const texture of textures) {
@@ -293,6 +318,7 @@ export async function loadResourceManifest(dataRoot, manifestPath) {
     environment.precipitation.rain,
     environment.precipitation.rainSplash,
     environment.precipitation.snow,
+    environment.foliage.leaf,
   ]);
   for (const texture of textures) {
     imageReferences.add(texture.file);

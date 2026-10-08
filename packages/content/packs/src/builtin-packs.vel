@@ -1,0 +1,7 @@
+import json builtinPackData from "@openvoxel/content/builtin-packs-data"
+import {ContentPackArtifact, createContentCatalog} from "./content-pack.vel"
+
+type ContentPackArtifacts = List<ContentPackArtifact>
+export const builtinContentPacks = ContentPackArtifacts.parse(builtinPackData)
+export const defaultContentPackOwners = builtinContentPacks.map(pack => pack.owner)
+export const builtinContentCatalog = createContentCatalog(builtinContentPacks, defaultContentPackOwners)

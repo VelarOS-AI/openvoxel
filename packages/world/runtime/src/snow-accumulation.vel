@@ -1,0 +1,31 @@
+import {Coordinate3, WorldClimateDefinition, WorldPrecipitationKind, worldClimateAt, worldEcologyEpochMilliseconds, worldPrecipitationAt, worldWeatherWindowMilliseconds} from "@openvoxel/world"
+
+// 一季有略多于 53 个天气窗；完整覆盖一季，避免寒冷的晴天过早抹去雪地。
+const rememberedWeatherWindows = 54
+const epochsPerWeatherWindow = worldWeatherWindowMilliseconds / worldEcologyEpochMilliseconds
+
+/// 从同一条权威天气时间线重建地面积雪。完整天气窗用窗中心的降水量积分，
+/// 当前天气窗按已走过的生态槽累加；随机访问与重进世界得到相同厚度。
+export def snowDepthAt(seed: string, epoch: number, position: readonly Coordinate3, climate: WorldClimateDefinition) -> number:
+    assert epoch.isInteger() and epoch >= 0 else "Snow epoch must be a non-negative integer"
+    const currentWindow = (epoch / epochsPerWeatherWindow).floor()
+    let depth = 0
+    for window in range(Math.max(0, currentWindow - rememberedWeatherWindows), currentWindow):
+        const at = window * worldWeatherWindowMilliseconds + worldWeatherWindowMilliseconds / 2
+        const weather = worldPrecipitationAt(seed, at, position, climate)
+        const temperature = worldClimateAt(seed, at, position, climate).temperatureCelsius
+        if weather.kind == WorldPrecipitationKind.snow and temperature <= 1:
+            depth = Math.min(8, depth + weather.intensity * 1.8)
+        else if temperature > 1:
+            depth = Math.max(0, depth - Math.min(8, (temperature - 1) * 0.15 + (weather.kind == WorldPrecipitationKind.rain ? weather.intensity * 1.5 : 0)))
+
+    const windowStartEpoch = currentWindow * epochsPerWeatherWindow
+    for slot in range(windowStartEpoch, epoch):
+        const at = slot * worldEcologyEpochMilliseconds + worldEcologyEpochMilliseconds / 2
+        const weather = worldPrecipitationAt(seed, at, position, climate)
+        const temperature = worldClimateAt(seed, at, position, climate).temperatureCelsius
+        if weather.kind == WorldPrecipitationKind.snow and temperature <= 1:
+            depth = Math.min(8, depth + weather.intensity * 0.4)
+        else if temperature > 1:
+            depth = Math.max(0, depth - Math.min(8, (temperature - 1) * 0.025 + (weather.kind == WorldPrecipitationKind.rain ? weather.intensity * 0.25 : 0)))
+    return depth

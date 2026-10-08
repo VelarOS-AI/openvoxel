@@ -1,6 +1,6 @@
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {ChunkPosition, Coordinate3, WorldEnvironmentSample, chunkKey} from "@openvoxel/world"
-import {Cancellation} from "velar/task"
+import {Cancellation, CancellationError} from "velar/task"
 import {monotonic} from "velar/time"
 import {WorldBackend, WorldBackendContract} from "./backend.vel"
 import {chunkLoadOwnership} from "./chunk-load-ownership.vel"
@@ -102,8 +102,11 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
         if connections.closed() or owner != synchronization: return
         for event in pending: state.applyChanges(event)
 
-    async def checkpoint(cancellation: Cancellation?):
-        if cancellation != null: await cancellation.checkpoint()
+    // Transport awaits already yield. Check cancellation at each ownership
+    // boundary without inserting another browser timer into every batch.
+    def requireActive(cancellation: Cancellation?):
+        if cancellation != null and cancellation.cancelled:
+            throw CancellationError(cancellation.reason ?? "Chunk request cancelled")
 
     async def synchronize(positions: readonly List<readonly ChunkPosition>, cancellation: Cancellation? = null):
         if positions.size == 0: return
@@ -117,7 +120,7 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
                 let end = start + limit
                 if end > positions.size: end = positions.size
                 const batch = positions.slice(start, end)
-                await checkpoint(cancellation)
+                requireActive(cancellation)
                 if not connections.owns(owner): return
                 const syncRequestId = requestId("sync")
                 const event = (
@@ -125,7 +128,7 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
                         ? await owner.syncChunks(syncRequestId, batch)
                         : await owner.syncChunks(syncRequestId, batch, cancellation)
                 )
-                await checkpoint(cancellation)
+                requireActive(cancellation)
                 if not connections.owns(owner): return
                 requireSynchronizedChunkBatch(event, syncRequestId, worldId, batch)
                 state.replaceDeltas(event)
@@ -159,13 +162,13 @@ export async def openClientWorld(backend: WorldBackend, worldId: string, clock: 
             loads.claim(batch)
             let succeeded = false
             try:
-                await checkpoint(cancellation)
+                requireActive(cancellation)
                 const terrain = (
                     cancellation == null
                         ? await backend.terrainChunks(worldId, batch)
                         : await backend.terrainChunks(worldId, batch, cancellation)
                 )
-                await checkpoint(cancellation)
+                requireActive(cancellation)
                 assert not connections.closed() else "Client world session is closed"
                 const loaded = state.rememberTerrain(terrain)
                 const synchronizedBy = connections.current()

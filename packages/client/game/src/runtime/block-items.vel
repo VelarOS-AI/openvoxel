@@ -1,0 +1,57 @@
+import json labelData from "@openvoxel/game/block-labels-data"
+
+readonly type BlockLabel:
+    key: string
+    label: string
+
+type BlockLabels = List<BlockLabel>
+
+const labels = BlockLabels.parse(labelData).keyBy(entry => entry.key)
+
+export readonly type WorldBlockItem:
+    label: string
+    key: string
+    stateKey: string
+    runtimeId: number
+    previewName: string
+
+export type WorldBlockControls:
+    selectSlot: (slot: number) -> null
+    assignBlock: (stateKey: string) -> null
+
+export def blockPreviewName(key: string) -> string: return key.split(":").join("--").split("_").join("-")
+
+readonly type BlockItemRender:
+    model: string?
+
+readonly type BlockItemDefinition:
+    defaultStateRuntimeId: number
+    render: BlockItemRender
+
+readonly type BlockItemState:
+    runtimeId: number
+    blockKey: string
+    stateKey: string
+
+readonly type BlockItemCatalog:
+    blocks: readonly List<BlockItemDefinition>
+    states: readonly List<BlockItemState>
+
+readonly type WorldBlockItems:
+    item: (runtimeId: number) -> WorldBlockItem
+    inventory: readonly List<WorldBlockItem>
+
+export def worldBlockItems(content: BlockItemCatalog) -> WorldBlockItems:
+    const items: Map<number, WorldBlockItem> = Map()
+    for state in content.states:
+        items.set(state.runtimeId, {
+            label: labels.get(state.blockKey)?.label ?? state.blockKey.split(":")[1].split("_").join(" "),
+            key: state.blockKey, stateKey: state.stateKey, runtimeId: state.runtimeId,
+            previewName: blockPreviewName(state.blockKey),
+        })
+    def item(runtimeId: number) -> WorldBlockItem:
+        const value = items.get(runtimeId)
+        assert value != null else f"Unknown block item {runtimeId}"
+        return value
+    const inventory = content.blocks.filter(block => block.render.model != null).map(block => item(block.defaultStateRuntimeId))
+    return {item, inventory}

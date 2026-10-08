@@ -1,0 +1,177 @@
+formatVersion: 1
+owner: terrain
+title: 地貌与水文
+description: 大陆、丘陵、河流、湖泊、土层与洞穴
+requires: []
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants: []
+  minerals: []
+  features: []
+  stages:
+    - key: terrain:terrain
+      step: terrain
+      enabled: true
+      terrain:
+        climate:
+          humidityPeriod: 896
+          temperaturePeriod: 1024
+        continentalHeight:
+          - input: -1
+            output: 24
+          - input: -0.6
+            output: 42
+          - input: -0.32
+            output: 58
+          - input: -0.18
+            output: 63
+          - input: 0
+            output: 68
+          - input: 0.4
+            output: 72
+          - input: 1
+            output: 78
+        continentalness:
+          lacunarity: 2
+          octaves: 4
+          period: 1536
+          persistence: 0.5
+        detail:
+          lacunarity: 2
+          octaves: 2
+          period: 48
+          persistence: 0.5
+        detailAmplitude: 7
+        erosion:
+          lacunarity: 2
+          octaves: 3
+          period: 768
+          persistence: 0.55
+        foothillAmplitude: 18
+        hills:
+          lacunarity: 2
+          octaves: 3
+          period: 192
+          persistence: 0.5
+        mountainAmplitude: 112
+        ridge:
+          lacunarity: 2
+          octaves: 3
+          period: 1536
+          persistence: 0.55
+        river:
+          lacunarity: 2
+          octaves: 3
+          period: 640
+          persistence: 0.5
+        riverHalfWidth: 0.055
+        riverHighlandDepth: 18
+        riverLowlandDepth: 8
+        surfaceMicroDetailAmplitude: 0.9
+        surfaceMicroDetailPeriod: 16
+        warp:
+          continentalAmplitude: 384
+          continentalPeriod: 2048
+          riverAmplitude: 96
+          riverPeriod: 768
+    - key: terrain:regions
+      step: regions
+      enabled: true
+      regions:
+        cellSize: 288
+        transitionWidth: 64
+        warpAmplitude: 56
+        warpPeriod: 384
+    - key: terrain:surface
+      step: surface
+      enabled: true
+      surface:
+        depositPeriod: 44
+        geologyPeriod: 224
+        mixedSlope: 0.42
+        outcropPeriod: 72
+        rockSlope: 0.65
+        snowTemperature: 0
+        soilDepth: 4
+        wetSoilDepth: 6
+    - key: terrain:roads
+      step: roads
+      enabled: true
+      roads:
+        branchChance: 0.18
+        cellSize: 224
+        maximumGrade: 0.4
+        maximumWidth: 4
+        minimumWidth: 2.8
+        shoulderWidth: 0.65
+    - key: terrain:hydrology
+      step: hydrology
+      enabled: true
+      hydrology:
+        lakes:
+          cellSize: 224
+          chance: 0.68
+          maximumDepth: 10
+          maximumRadius: 32
+          maximumRelief: 7
+          minimumDepth: 5
+          minimumRadius: 16
+        ponds:
+          cellSize: 64
+          chance: 0.3
+          maximumDepth: 2
+          maximumRadius: 8
+          maximumRelief: 3
+          minimumDepth: 1
+          minimumRadius: 4
+    - key: terrain:caves
+      step: caves
+      enabled: true
+      caves:
+        branchChance: 0.2
+        chamberCellSize: 64
+        chamberChance: 0.16
+        entranceChance: 0.1
+        maximumChamberRadius: 9
+        maximumLength: 96
+        maximumRadius: 3.2
+        minimumChamberRadius: 4
+        minimumLength: 40
+        minimumRadius: 1.4
+        surfaceThickness: 7
+        tunnelCellSize: 32
+        tunnelChance: 0.18
+    - key: terrain:aquifers
+      step: aquifers
+      enabled: true
+      aquifers:
+        magmaMaximumY: 12
+        maximumWaterDepth: 26
+        minimumWaterDepth: 8
+        wetThreshold: 0.15
+    - key: terrain:vegetation
+      step: vegetation
+      enabled: true
+      vegetation:
+        aquaticCellSize: 3
+        aquaticPatchPeriod: 18
+        cactusCellSize: 8
+        cactusMaximumSlope: 0.28
+        cliffVineCellSize: 8
+        deadwoodCellSize: 16
+        groundPatchPeriod: 24
+        groundPlantCellSize: 1
+        groundPlantChance: 0.1
+        maximumTreeHeight: 23
+        treeCellSize: 4
+        treeHorizontalReach: 4
+        treeMaximumSlope: 0.42
+    - key: terrain:minerals
+      step: minerals
+      enabled: true
+    - key: terrain:snow
+      step: snow
+      enabled: true

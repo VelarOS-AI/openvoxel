@@ -1,0 +1,118 @@
+blocks:
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 6
+      breakable: true
+      drops: geology:loot/block/gold_ore
+      hardness: 3
+      sounds: openvoxel:sound/stone
+      toolTag: openvoxel:tool/pickaxe
+    key: geology:gold_ore
+    light:
+      ambientOcclusion: true
+      emission: 0
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/metal
+      model: openvoxel:model/block/cube
+      textures:
+        all: geology:texture/block/gold_ore
+    tags:
+      - openvoxel:ore
+      - openvoxel:terrain
+    translationKey: translations.geology.goldOre
+    variants: []
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 6
+      breakable: true
+      drops: geology:loot/block/emerald_ore
+      hardness: 3
+      sounds: openvoxel:sound/stone
+      toolTag: openvoxel:tool/pickaxe
+    key: geology:emerald_ore
+    light:
+      ambientOcclusion: true
+      emission: 0
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/metal
+      model: openvoxel:model/block/cube
+      textures:
+        all: geology:texture/block/emerald_ore
+    tags:
+      - openvoxel:ore
+      - openvoxel:terrain
+    translationKey: translations.geology.emeraldOre
+    variants: []
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 6
+      breakable: true
+      drops: geology:loot/block/amethyst_block
+      hardness: 3
+      sounds: openvoxel:sound/stone
+      toolTag: openvoxel:tool/pickaxe
+    key: geology:amethyst_block
+    light:
+      ambientOcclusion: true
+      emission: 2
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/metal
+      model: openvoxel:model/block/cube
+      textures:
+        all: geology:texture/block/amethyst_block
+    tags:
+      - openvoxel:ore
+      - openvoxel:terrain
+    translationKey: translations.geology.amethystBlock
+    variants: []

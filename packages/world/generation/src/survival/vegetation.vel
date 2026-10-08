@@ -1,8 +1,9 @@
+import {biomeAffinity, ecosystemUnits, habitatWeight, stageEnabled} from "../ecosystem/composition.vel"
 import {Random, random} from "velar/random"
 import {BlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, Coordinate3} from "@openvoxel/world"
-import {WorldGeneratorDefinition} from "../definition/catalog.vel"
+import {WorldGeneratorDefinition, TreeVoxel} from "../definition/catalog.vel"
 import {TerrainSample} from "../terrain-sample.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
 import {evictOldest} from "./lru-cache.vel"
@@ -33,7 +34,10 @@ enum DecorationFeatureLayer:
     ground = "2_ground"
 
 type TreeSelection:
-    shape: TreeShapeKind
+    shape: string
+    template: readonly List<readonly TreeVoxel>?
+    fruit: number?
+    fruitChance: number
     log: number
     leaves: number
 
@@ -62,37 +66,15 @@ def ownsNeighborhood(salt: number, cellX: number, cellZ: number) -> bool:
             if candidatePriority(salt, cellX + dx, cellZ + dz) >= priority: return false
     return true
 
-type TreeCandidate:
-    tree: TreeSelection
-    weight: number
-
-/// 重叠的适生区间允许混交林；气候边缘逐渐换种，而非一次 if 切换整片森林。
-def habitat(value: number, minimum: number, idealLow: number, idealHigh: number, maximum: number) -> number:
-    if value < minimum or value > maximum: return 0
-    const rising = idealLow == minimum ? 1 : Math.clamp((value - minimum) / (idealLow - minimum), 0, 1)
-    const falling = maximum == idealHigh ? 1 : Math.clamp((maximum - value) / (maximum - idealHigh), 0, 1)
-    return rising * falling
-
-def treeSelection(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample, stream: Random) -> TreeSelection?:
+def treeSelection(profile: readonly WorldGeneratorDefinition, registry: readonly BlockRegistry, sample: readonly TerrainSample, stream: Random) -> TreeSelection?:
+    const units = ecosystemUnits(profile).trees
     const temperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
-    const humidity = sample.humidity
-    const elevation = sample.surfaceY - profile.world.seaLevel
-    const lowland = habitat(elevation, 0, 0, 24, 70)
-    const cool = habitat(temperature, -8, 0, 5, 10)
-    const candidates: List<TreeCandidate> = [
-        {tree: {shape: TreeShapeKind.oak, log: blocks.oakLog, leaves: blocks.oakLeaves}, weight: habitat(temperature, 3, 9, 15, 20) * habitat(humidity, 5, 8, 15, 15) * lowland},
-        {tree: {shape: TreeShapeKind.birch, log: blocks.birchLog, leaves: blocks.birchLeaves}, weight: habitat(temperature, 4, 8, 11, 15) * habitat(humidity, 3, 9, 15, 15) * lowland},
-        {tree: {shape: TreeShapeKind.spruce, log: blocks.spruceLog, leaves: blocks.spruceLeaves}, weight: cool * habitat(humidity, 3, 8, 11, 14)},
-        {tree: {shape: TreeShapeKind.tallSpruce, log: blocks.spruceLog, leaves: blocks.tallSpruceLeaves}, weight: 0.35 * cool * habitat(humidity, 8, 11, 15, 15)},
-        {tree: {shape: TreeShapeKind.mimosa, log: blocks.mimosaLog, leaves: blocks.mimosaLeaves}, weight: habitat(temperature, 2, 5, 12, 15) * habitat(humidity, 0, 0, 4, 7)},
-        {tree: {shape: TreeShapeKind.poplar, log: blocks.poplarLog, leaves: blocks.poplarLeaves}, weight: habitat(temperature, 4, 8, 12, 15) * habitat(humidity, 6, 11, 15, 15) * lowland * 0.65},
-    ]
-    const total = candidates.map(candidate => candidate.weight).sum()
-    if total <= 0: return null
-    let remaining = stream.number() * total
-    for candidate in candidates:
-        remaining -= candidate.weight
-        if remaining < 0: return candidate.tree
+    const weights = units.map(unit => unit.weight * habitatWeight(temperature, unit.temperature) * habitatWeight(sample.humidity, unit.humidity) * habitatWeight(sample.surfaceY - profile.world.seaLevel, unit.elevation) * biomeAffinity(profile, sample.biome, unit.affinities))
+    let remaining = stream.number() * weights.sum()
+    for unit, index in units:
+        remaining -= weights[index]
+        if remaining < 0:
+            return {shape: unit.shape, template: unit.template, fruit: unit.fruit == null ? null : registry.defaultStateRuntimeIdForKey(unit.fruit), fruitChance: unit.fruitChance ?? 0, log: registry.defaultStateRuntimeIdForKey(unit.log), leaves: registry.defaultStateRuntimeIdForKey(unit.leaves)}
     return null
 
 def featureSortKey(layer: DecorationFeatureLayer, owner: string) -> string: return f"{layer}:{owner}"
@@ -100,7 +82,27 @@ def featureSortKey(layer: DecorationFeatureLayer, owner: string) -> string: retu
 def treeFeature(owner: string, ground: Coordinate3, height: number, tree: readonly TreeSelection, registry: readonly BlockRegistry, stream: Random) -> CompiledFeaturePlan:
     const logX = registry.withProperty(tree.log, "axis", "x")
     const logZ = registry.withProperty(tree.log, "axis", "z")
-    const writes = treeShapeWrites(tree.shape, height, tree.log, logX, logZ, tree.leaves, stream)
+    const writes: List<FeatureWrite> = []
+    if tree.template != null:
+        const rotation = stream.int(0, 4)
+        for voxel in tree.template:
+            const x = rotation == 0 ? voxel.x : rotation == 1 ? -voxel.z : rotation == 2 ? -voxel.x : voxel.z
+            const z = rotation == 0 ? voxel.z : rotation == 1 ? voxel.x : rotation == 2 ? -voxel.z : -voxel.x
+            const alongX = rotation % 2 == 0 ? logX : logZ
+            const alongZ = rotation % 2 == 0 ? logZ : logX
+            const runtimeId = voxel.material == "leaves" ? tree.leaves : voxel.material == "log_x" ? alongX : voxel.material == "log_z" ? alongZ : tree.log
+            writes.append({x, y: voxel.y, z, runtimeId})
+    else:
+        writes.extend(treeShapeWrites(TreeShapeKind.parse(tree.shape), height, tree.log, logX, logZ, tree.leaves, stream))
+    const fruit = tree.fruit
+    if fruit != null:
+        const occupied = Set(writes.map(write => f"{write.x}:{write.y}:{write.z}"))
+        const hanging: List<FeatureWrite> = []
+        for leaf in writes:
+            if leaf.runtimeId != tree.leaves or leaf.y < 4 or not stream.bool(tree.fruitChance): continue
+            if f"{leaf.x}:{leaf.y - 1}:{leaf.z}" in occupied: continue
+            hanging.append({x: leaf.x, y: leaf.y - 1, z: leaf.z, runtimeId: fruit})
+        writes.extend(hanging)
     return compiledFeaturePlan(owner, ground, featureSortKey(DecorationFeatureLayer.structure, owner), writes)
 
 def cactusFeature(owner: string, ground: Coordinate3, height: number, block: number) -> CompiledFeaturePlan:
@@ -149,7 +151,7 @@ export def decorationVerticalBounds(plan: readonly DecorationPlan) -> Decoration
 
 /// DecorationPlan 以水平列为缓存单位。树、仙人掌、花草和积雪候选在这里计算
 /// 一次，所有垂直 Chunk 共享；跨边界树冠仍由候选所有者的稳定计划负责。
-export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: string, blocks: readonly SurvivalBlockPalette, columns: ColumnPlanner, registry: readonly BlockRegistry, capacity: number = profile.sampling.columnCacheCapacity) -> DecorationPlanner:
+export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: string, blocks: readonly SurvivalBlockPalette, columns: ColumnPlanner, registry: readonly BlockRegistry, surfaceIntact: (x: number, y: number, z: number) -> bool = (x, y, z) => true, capacity: number = profile.sampling.columnCacheCapacity) -> DecorationPlanner:
     const root = random(seed).fork("decoration")
     const groundPatterns = createEcologyPatterns(seed, "ground", profile.vegetation.groundPatchPeriod)
     const aquaticPatterns = createEcologyPatterns(seed, "aquatic", profile.vegetation.aquaticPatchPeriod)
@@ -182,20 +184,22 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
         const lastTreeZ = ((minimumZ + 15 + treeReach) / treeSize).floor()
         for cellX in range(firstTreeX, lastTreeX + 1):
             for cellZ in range(firstTreeZ, lastTreeZ + 1):
-                if not ownsNeighborhood(treePrioritySalt, cellX, cellZ): continue
+                if not stageEnabled(profile, "vegetation") or not ownsNeighborhood(treePrioritySalt, cellX, cellZ):
+                    continue
                 const stream = root.fork(f"tree:{cellX}:{cellZ}")
                 const x = cellX * treeSize + stream.int(0, treeSize)
                 const z = cellZ * treeSize + stream.int(0, treeSize)
                 const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.roadDistance != null: continue
                 const groundBlock = surfaceBlock(profile, blocks, sample)
                 if sample.slope > profile.vegetation.treeMaximumSlope or sample.surfaceY <= profile.world.seaLevel:
                     continue
                 if not registry.hasTag(groundBlock, builtinIdentities.tags.treeSupport): continue
-                if not stream.bool(0.08 + 0.72 * sample.forestDensity): continue
-                const tree = treeSelection(profile, blocks, sample, stream)
+                if not stream.bool(0.015 + 0.96 * sample.forestDensity): continue
+                const tree = treeSelection(profile, registry, sample, stream)
                 if tree == null: continue
                 const selectedTree: TreeSelection = tree
-                const heightRange = treeShapeHeightRange(selectedTree.shape)
+                const heightRange = selectedTree.template != null ? {minimum: 7, maximum: 7} : treeShapeHeightRange(TreeShapeKind.parse(selectedTree.shape))
                 const height = stream.int(heightRange.minimum, heightRange.maximum + 1)
                 if sample.surfaceY + height + 2 > profile.world.maximumY: continue
                 const owner = f"tree:{cellX}:{cellZ}"
@@ -203,7 +207,8 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
                 const feature = treeFeature(owner, ground, height, selectedTree, registry, stream)
                 if featureClearsTerrain(feature, columns):
                     features.append(feature)
-                    const vine = treeVineFeature(owner, ground, height, sample.humidity, blocks.vine, registry, root.fork(f"tree-vine:{cellX}:{cellZ}"), feature)
+                    const vineUnit = ecosystemUnits(profile).features.find(unit => unit.algorithm == "tree_vine")
+                    const vine = vineUnit == null or not stream.bool(vineUnit.chance) ? null : treeVineFeature(owner, ground, height, sample.humidity, registry.defaultStateRuntimeIdForKey(vineUnit.block), registry, root.fork(f"tree-vine:{cellX}:{cellZ}"), feature)
                     if vine != null and featureClearsTerrain(vine, columns): features.append(vine)
 
         const cactusSize = profile.vegetation.cactusCellSize
@@ -213,23 +218,32 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
         const lastCactusZ = ((minimumZ + 15 + naturalEcologyHorizontalReach) / cactusSize).floor()
         for cellX in range(firstCactusX, lastCactusX + 1):
             for cellZ in range(firstCactusZ, lastCactusZ + 1):
+                const cactus = ecosystemUnits(profile).features.find(unit => unit.algorithm == "cactus")
+                if cactus == null or not stageEnabled(profile, "vegetation"): continue
                 if not ownsNeighborhood(treePrioritySalt + 40499.17, cellX, cellZ): continue
                 const stream = root.fork(f"cactus:{cellX}:{cellZ}")
+                if not stream.bool(cactus.chance): continue
                 const x = cellX * cactusSize + stream.int(0, cactusSize)
                 const z = cellZ * cactusSize + stream.int(0, cactusSize)
                 const sample = planAt(columns, x, z).sampleAt(x, z)
+                if sample.roadDistance != null: continue
                 const groundBlock = surfaceBlock(profile, blocks, sample)
-                if sample.biome != profile.biomes.desert or sample.slope > profile.vegetation.cactusMaximumSlope:
+                if (sample.biome != profile.biomes.desert and sample.biome != profile.biomes.badlands) or sample.slope > profile.vegetation.cactusMaximumSlope:
                     continue
                 if not registry.hasTag(groundBlock, builtinIdentities.tags.cactusSupport): continue
-                const feature = cactusFeature(f"cactus:{cellX}:{cellZ}", {x, y: sample.surfaceY, z}, stream.int(2, 5), blocks.cactus)
+                const feature = cactusFeature(f"cactus:{cellX}:{cellZ}", {x, y: sample.surfaceY, z}, stream.int(2, 5), registry.defaultStateRuntimeIdForKey(cactus.block))
                 if featureClearsTerrain(feature, columns): features.append(feature)
 
         for feature in naturalEcologyFeatures(profile, seed, blocks, columns, registry, chunkX, chunkZ, aquaticPatterns):
             // 同类枯木已经在 world owner-cell 邻域内完成唯一裁决；这里仅处理
             // 活树、树藤和仙人掌等不同结构之间的整组避让。
-            if feature.owner.startsWith("deadwood:") and features.some(existing => not existing.owner.startsWith("deadwood:") and featurePlansOverlap(existing, feature)):
-                continue
+            if feature.owner.startsWith("deadwood:"):
+                let overlaps = false
+                for existing in features:
+                    if not existing.owner.startsWith("deadwood:") and featurePlansOverlap(existing, feature):
+                        overlaps = true
+                        break
+                if overlaps: continue
             features.append(feature)
 
         const core = columns.columns(chunkX, chunkZ)
@@ -240,11 +254,18 @@ export def decorationPlanner(profile: readonly WorldGeneratorDefinition, seed: s
                 const z = minimumZ + localZ
                 const sample = core.sampleAt(x, z)
                 const adjustedTemperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
-                if adjustedTemperature <= profile.surface.snowTemperature and sample.biome != profile.biomes.desert:
+                if stageEnabled(profile, "snow") and adjustedTemperature <= profile.surface.snowTemperature and sample.biome != profile.biomes.desert:
                     features.append(singleBlockFeature(f"snow:{x}:{z}", {x, y: sample.surfaceY + 1, z}, blocks.snow, DecorationFeatureLayer.surface))
 
         const groundPlants = groundPlantFeatures(profile, blocks, registry, core, root, groundPatterns)
-        const built: DecorationPlan = {chunkX, chunkZ, features: [features, groundPlants].flatMap(group => group).sorted(by=feature => feature.sortKey)}
+            .filter(plant => plant.writes.size == 1 or not features.some(feature => featurePlansOverlap(feature, plant)))
+        const supported: List<CompiledFeaturePlan> = []
+        for feature in [features, groundPlants].flatMap(group => group):
+            const x = feature.origin.x
+            const z = feature.origin.z
+            const groundY = planAt(columns, x, z).sampleAt(x, z).surfaceY
+            if surfaceIntact(x, groundY, z): supported.append(feature)
+        const built: DecorationPlan = {chunkX, chunkZ, features: supported.sorted(by=feature => feature.sortKey)}
         builds += 1
         if plans.size >= capacity: evictOldest(plans)
         plans.set(key, built)

@@ -4,7 +4,7 @@ import {WorldBlockRegistrySnapshot, baseWorldBlockRegistrySnapshot, defaultBlock
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, blockIndex, chunkBlock, chunkPaletteTemplate, emptyChunk, emptyPaletteChunk, setChunkBlock} from "../src/chunk/chunk.vel"
 import {maximumWorldEnvironmentMilliseconds} from "../src/environment/environment.vel"
-import {Coordinate2, Coordinate3, chunkCoordinate, localCoordinate, locateBlock} from "../src/spatial/coordinates.vel"
+import {Coordinate2, Coordinate3, chunkCoordinate, chunkKey, localCoordinate, locateBlock, maximumWorldCoordinate} from "../src/spatial/coordinates.vel"
 import {WorldManifest, initialChunkEdge, validateWorldManifest, worldFormatVersion} from "../src/manifest/world-manifest.vel"
 import {WorldGameMode} from "../src/manifest/game-mode.vel"
 import {checkWorldCoordinates} from "./support/property-check.vel"
@@ -49,6 +49,18 @@ test "negative world coordinates map to stable chunks":
 
 test "coordinate decomposition round trips for generated values": checkWorldCoordinates(coordinateRoundTrip)
 
+test "Chunk keys preserve coordinate bounds and reflect changes to a reused position":
+    const position: Coordinate3 = {x: -maximumWorldCoordinate, y: 0, z: maximumWorldCoordinate}
+    expect(chunkKey(position)).toBe("-33554431:0:33554431")
+    position.x = 2
+    position.y = -3
+    position.z = 4
+    expect(chunkKey(position)).toBe("2:-3:4")
+    for invalid in [0.5, maximumWorldCoordinate + 1, -maximumWorldCoordinate - 1]:
+        expect(() => chunkKey({x: invalid, y: 0, z: 0})).toThrow()
+        expect(() => chunkKey({x: 0, y: invalid, z: 0})).toThrow()
+        expect(() => chunkKey({x: 0, y: 0, z: invalid})).toThrow()
+
 test "three dimensional coordinates inherit the horizontal coordinate contract":
     const position = Coordinate3.parse({x: 4, y: 8, z: 12})
     expect(Coordinate2.is(position)).toBe(true)
@@ -70,7 +82,7 @@ test "world manifests carry their complete runtime registry":
     const world = manifest()
     expect(world.formatVersion).toBe(6)
     expect(world.worldTimeOriginMilliseconds).toBe(1_000_000)
-    expect(world.blockRegistry.states.size).toBe(376)
+    expect(world.blockRegistry.states).toEqual(baseWorldBlockRegistrySnapshot.states)
     expect(world.blockRegistry.states[0]).toEqual({runtimeId: 0, stateKey: builtinIdentities.blocks.air})
 
 test "world manifests reject invalid world time origins":

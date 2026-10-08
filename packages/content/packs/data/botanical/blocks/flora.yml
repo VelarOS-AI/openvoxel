@@ -1,0 +1,369 @@
+blocks:
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/allium
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:allium
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: botanical:texture/block/allium
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.allium
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/lily_of_the_valley
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:lily_of_the_valley
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: botanical:texture/block/lily_of_the_valley
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.lilyOfTheValley
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/lavender
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:lavender
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: botanical:texture/block/lavender
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.lavender
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/clover
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:clover
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: botanical:texture/block/clover
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.clover
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: botanical:sunflower_stem
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/sunflower_head
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:sunflower_head
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/model
+      model: botanical:model/block/sunflower_upper
+      textures:
+        all: botanical:texture/block/sunflower_top
+      attachments:
+        - model: botanical:model/block/sunflower_flower
+          layer: cutout
+          material: openvoxel:material/model
+          textures:
+            side: botanical:texture/block/sunflower_back
+            bottom: botanical:texture/block/sunflower_back
+            top: botanical:texture/block/sunflower_front
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.sunflowerHead
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/sunflower
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:sunflower
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/model
+      model: botanical:model/block/sunflower_lower
+      textures:
+        all: botanical:texture/block/sunflower_bottom
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+      - botanical:sunflower_stem
+    translationKey: translations.botanical.sunflower
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/bamboo
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:bamboo
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        kind: custom
+        key: botanical:shape/bamboo
+        boxes:
+          - minimumX: 0.4375
+            minimumY: 0
+            minimumZ: 0.4375
+            maximumX: 0.5625
+            maximumY: 1
+            maximumZ: 0.5625
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: opaque
+      material: openvoxel:material/terrain
+      model: botanical:model/block/bamboo
+      textures:
+        all: botanical:texture/block/bamboo_stalk
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+      - openvoxel:lush_plant_support
+    translationKey: translations.botanical.bamboo
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: botanical:loot/block/bamboo_crown
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: botanical:bamboo_crown
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: botanical:texture/block/bamboo_large_leaves
+      tint: openvoxel:tint/deciduous_foliage
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.botanical.bambooCrown
+    variants: []

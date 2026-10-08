@@ -1,3 +1,4 @@
+import {weatherProfile, windGust} from "../../../environment/weather-dynamics.mjs";
 import {precipitationColumnOffsets, precipitationViewHalfHeight} from "./weather-columns.mjs";
 
 const shaftSlots = 4;
@@ -10,7 +11,7 @@ const profiles = Object.freeze({
 });
 const windResponse = Object.freeze({
   rain: Object.freeze({scale: 0.08, maximumSpeed: 2}),
-  snow: Object.freeze({scale: 0.025, maximumSpeed: 0.75}),
+  snow: Object.freeze({scale: 0.22, maximumSpeed: 3}),
 });
 
 export function precipitationParticleProfiles() {
@@ -39,11 +40,6 @@ export function precipitationWindVelocity(kind, windX, windZ) {
   if (magnitude === 0) return {x: 0, z: 0};
   const scale = Math.min(response.scale, response.maximumSpeed / magnitude);
   return {x: windX * scale, z: windZ * scale};
-}
-
-function wrapColumnCoordinate(value, column) {
-  const local = value - column;
-  return column + local - Math.floor(local);
 }
 
 function emptySplash() {
@@ -97,6 +93,7 @@ export function createWeatherSimulation({random = Math.random} = {}) {
   const shafts = new Map();
   const rainSplashes = Array.from({length: profiles.splash.capacity}, emptySplash);
   const snowSplashes = Array.from({length: profiles.snowSplash.capacity}, emptySplash);
+  let timeSeconds = 0;
   let nextRainSplash = 0;
   let nextSnowSplash = 0;
   let rainSplashContacts = 0;
@@ -141,6 +138,9 @@ export function createWeatherSimulation({random = Math.random} = {}) {
         speed: between(random, profile.minSpeed, profile.maxSpeed),
         slot: Math.min(15, Math.floor(random() * 16)),
         halfSize: 0.07,
+        flutterPhase: random() * Math.PI * 2,
+        sizeVariation: 0.7 + random() * 0.6,
+        velocityX: 0, velocityZ: 0,
         horizontal: false,
       })),
     };
@@ -160,8 +160,11 @@ export function createWeatherSimulation({random = Math.random} = {}) {
     stats: () => ({rainSplashContacts, snowSplashContacts}),
     invalidateChunkColumn(chunkX, chunkZ, chunkEdge) {
       for (const [key, shaft] of shafts) {
-        const particle = shaft.particles[0];
-        if (Math.floor(particle.x / chunkEdge) === chunkX && Math.floor(particle.z / chunkEdge) === chunkZ) shafts.delete(key);
+        const [x, z] = key.split(":").map(Number);
+        if (Math.floor(x / chunkEdge) === chunkX && Math.floor(z / chunkEdge) === chunkZ) shafts.delete(key);
+        else for (const particle of shaft.particles) {
+          if (Math.floor(particle.x / chunkEdge) === chunkX && Math.floor(particle.z / chunkEdge) === chunkZ) particle.active = false;
+        }
       }
       for (const pool of [rainSplashes, snowSplashes]) {
         for (const particle of pool) {
@@ -169,9 +172,13 @@ export function createWeatherSimulation({random = Math.random} = {}) {
         }
       }
     },
-    update(deltaMs, center, columns, kind, intensity, windX = 0, windZ = 0) {
+    update(deltaMs, center, columns, kind, intensity, windX = 0, windZ = 0, worldMilliseconds = null) {
       const dt = Math.max(0, Math.min(0.1, deltaMs / 1_000));
+      timeSeconds = worldMilliseconds === null ? timeSeconds + dt : worldMilliseconds / 1000;
       const desired = new Set();
+      const byColumn = new Map(columns.map(column => [column.x + ":" + column.z, column]));
+      const weather = weatherProfile(kind, intensity, Math.hypot(windX, windZ));
+      const gust = windGust(timeSeconds, center.x, center.z);
       const bottom = center.y - precipitationViewHalfHeight;
       const top = center.y + precipitationViewHalfHeight;
       for (const pool of [rainSplashes, snowSplashes]) {
@@ -201,8 +208,11 @@ export function createWeatherSimulation({random = Math.random} = {}) {
           shaft.lastViewY = null;
         }
         const profile = profiles[shaft.kind];
-        const wind = precipitationWindVelocity(shaft.kind, windX, windZ);
+        const wind = precipitationWindVelocity(shaft.kind, windX * gust, windZ * gust);
         const averageSpeed = (profile.minSpeed + profile.maxSpeed) / 2;
+        // Wind also carries particles out of the camera-local field. Replenish
+        // that flux so a snowstorm does not become sparser as wind strengthens.
+        const emissionSpeed = averageSpeed + Math.hypot(wind.x, wind.z) * 1.2;
         const density = kind === shaft.kind ? intensity : 0;
         const groundOffset = shaft.kind === "snow" ? 0.03 : 0;
         const newlyVisibleBottom = shaft.lastViewY === null || center.y < shaft.lastViewY ? bottom : Math.min(top, shaft.lastViewY + precipitationViewHalfHeight);
@@ -210,14 +220,27 @@ export function createWeatherSimulation({random = Math.random} = {}) {
         const initialCount = Math.max(0, newlyVisibleTop - newlyVisibleBottom) / (precipitationViewHalfHeight * 2) * shaftSlots * density;
         let toInitialize = Math.floor(initialCount) + (random() < initialCount % 1 ? 1 : 0);
         shaft.lastViewY = center.y;
-        shaft.remainder += shaftSlots * density / (precipitationViewHalfHeight * 2) * averageSpeed * dt;
+        shaft.remainder += shaftSlots * density / (precipitationViewHalfHeight * 2) * emissionSpeed * dt;
         for (const particle of shaft.particles) {
+          particle.halfSize = weather.snowSize * particle.sizeVariation;
+          particle.halfWidth = weather.rainWidth * particle.sizeVariation;
+          particle.halfHeight = weather.rainLength * particle.sizeVariation;
+          particle.opacity = weather.opacity;
+          particle.fallSpeed = particle.speed * (shaft.kind === "rain" ? weather.rainSpeed : 1);
+          const flutter = shaft.kind === "snow" ? weather.snowFlutter : 0;
+          particle.velocityX = wind.x + Math.sin(timeSeconds * 1.9 + particle.flutterPhase) * flutter;
+          particle.velocityZ = wind.z + Math.cos(timeSeconds * 1.3 + particle.flutterPhase) * flutter;
           if (particle.active) {
-            particle.x = wrapColumnCoordinate(particle.x + wind.x * dt, column.x);
-            particle.y -= particle.speed * dt;
-            particle.z = wrapColumnCoordinate(particle.z + wind.z * dt, column.z);
-            if (particle.y <= column.groundY + groundOffset) {
-              addSplash(shaft.kind, particle, column);
+            particle.x += particle.velocityX * dt;
+            particle.y -= particle.fallSpeed * dt;
+            particle.z += particle.velocityZ * dt;
+            const landing = byColumn.get(Math.floor(particle.x) + ":" + Math.floor(particle.z));
+            // Drift across cells continuously, and collide with the actual
+            // destination column. Crossing the bounded field retires the slot.
+            if (landing === undefined || landing.skyVisible === false) {
+              particle.active = false;
+            } else if (particle.y <= landing.groundY + groundOffset) {
+              addSplash(shaft.kind, particle, landing);
               particle.active = false;
             } else if (particle.y < bottom || particle.y > top) {
               particle.active = false;

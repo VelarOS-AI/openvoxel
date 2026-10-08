@@ -305,6 +305,41 @@ test "client world state snapshots composed blocks and publishes committed inval
     expect(events[2]).toBe("blocks_changed")
     subscription.close()
 
+test "mixed palette bulk expansion preserves full UInt32 ids through edits and restoration":
+    const state = clientWorldState(worldId, 4)
+    const indices = uint16Buffer(64)
+    for index in range(indices.size): indices[index] = index % 3
+    const chunk = state.rememberTerrain({worldId, chunks: [{
+        position: chunkPosition, edge: 4, palette: [0, 4294967295, 2147483648], indices,
+    }]})[0]
+    expect(chunk.blockAtIndex(1)).toBe(4294967295)
+    expect(chunk.blockAtIndex(2)).toBe(2147483648)
+    chunk.replaceDelta(delta(1, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}]))
+    expect(chunk.blockAtIndex(1)).toBe(30)
+    chunk.replaceDelta(delta(2, []))
+    expect(chunk.blockAtIndex(1)).toBe(4294967295)
+    const copied = chunk.snapshotBlocks()
+    copied[1] = 0
+    expect(chunk.blockAtIndex(1)).toBe(4294967295)
+    expect(indices[1]).toBe(1)
+
+test "uniform air and solid chunks keep isolated editable block snapshots":
+    for runtimeId in [0, 17]:
+        const state = clientWorldState(worldId, 4)
+        const chunk = state.rememberTerrain({worldId, chunks: [{
+            position: chunkPosition, edge: 4, palette: [runtimeId], indices: uint16Buffer(64),
+        }]})[0]
+        expect(chunk.snapshotBlocks().values().every(value => value == runtimeId)).toBe(true)
+        chunk.replaceDelta(delta(1, [{position: {x: 1, y: 0, z: 0}, blockStateRuntimeId: 30}]))
+        const snapshot = chunk.snapshotBlocks()
+        expect(snapshot[1]).toBe(30)
+        snapshot[0] = 99
+        expect(chunk.blockAtIndex(0)).toBe(runtimeId)
+        chunk.replaceDelta(delta(2, []))
+        expect(chunk.snapshotBlocks().values().every(value => value == runtimeId)).toBe(true)
+        expect(() => chunk.blockAtIndex(-1)).toThrow()
+        expect(() => chunk.blockAtIndex(64)).toThrow()
+
 test "client world state evicts streamed terrain and publishes one bounded invalidation":
     const state = clientWorldState(worldId, 4)
     const events: List<string> = []

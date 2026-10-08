@@ -1,0 +1,11 @@
+import {worker} from "velar/worker"
+import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
+
+/// 菜单管理使用独立 Worker；删除事务完成并释放 Worker 后才交付成功。
+export async def deleteLocalWorld(worldId: string, databaseName: string = "openvoxel-local", workerName: string = "openvoxel-local"):
+    assert not worldId.isBlank() else "世界编号不能为空"
+    const transport = worker(workerName, LocalWorkerRequest, LocalWorkerResponse, 1)
+    try:
+        const response = await transport.call({operation: localWorkerOperations.deleteWorld, databaseName, worldId})
+        assert response.operation == localWorkerOperations.deleteWorld else "删除世界失败：响应不匹配"
+    finally: await transport.close()

@@ -1,0 +1,160 @@
+import {glassPanelLook} from "./common.vel"
+import {Look, alpha, blur, border, rgb, shadow, spacing, repeat, minmax} from "velar/look"
+import {panel, accent, white, ink} from "./theme.vel"
+const paper = panel
+const text = white
+const green = accent
+
+export const settingsDialogLook: Look = look:
+    ...glassPanelLook
+    position = "fixed"
+    inset = 0px
+    margin = "auto"
+    width = 680px
+    maxWidth = 92vw
+    height = 700px
+    maxHeight = 88vh
+    boxSizing = "border-box"
+    overflow = "hidden"
+    padding = 0px
+    colorScheme = "dark"
+    fontFamily = "Inter, sans-serif"
+    if viewport.width <= 600px:
+        maxWidth = 94vw
+        maxHeight = 92vh
+        borderRadius = 14px
+    @backdrop:
+        backgroundColor = alpha(ink, 0.28)
+
+export const settingsPanelLook: Look = look:
+    display = "flex"
+    flexDirection = "column"
+    height = 100%
+
+export const settingsHeaderLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "space-between"
+    padding = spacing(22px, 28px)
+    flexShrink = 0
+
+export const settingsTitleLook: Look = look:
+    margin = 0px
+    fontSize = 1.25rem
+    fontWeight = 600
+
+export const settingsButtonLook: Look = look:
+    padding = spacing(9px, 16px)
+    border = border(1px, alpha(white, 0.14))
+    borderRadius = 8px
+    backgroundColor = alpha(white, 0.06)
+    color = text
+    cursor = "pointer"
+    fontFamily = "inherit"
+    fontSize = 0.85rem
+    if @hover:
+        backgroundColor = alpha(white, 0.12)
+    if @focusVisible:
+        outline = border(2px, green)
+        outlineOffset = 2px
+
+export const settingsDoneLook: Look = look:
+    ...settingsButtonLook
+    backgroundColor = green
+    borderColor = green
+    color = rgb(255, 255, 255)
+    if @hover:
+        backgroundColor = rgb(43, 86, 61)
+
+export const settingsPresetLook: Look = look:
+    ...settingsButtonLook
+    display = "grid"
+    justifyItems = "center"
+    gap = 4px
+    padding = spacing(10px, 4px)
+    flex = 1
+
+export const settingsTabsLook: Look = look:
+    display = "flex"
+    gap = 4px
+    padding = spacing(0px, 24px, 18px, 24px)
+    borderBottom = border(1px, alpha(white, 0.14))
+    flexShrink = 0
+
+export const settingsTabLook: Look = look:
+    ...settingsButtonLook
+    flex = 1
+    borderColor = "transparent"
+    backgroundColor = "transparent"
+    padding = spacing(9px, 4px)
+
+export const settingsActiveTabLook: Look = look:
+    ...settingsTabLook
+    backgroundColor = green
+    color = white
+    fontWeight = 600
+
+export const settingsContentLook: Look = look:
+    flex = 1
+    minHeight = 0px
+    overflowY = "auto"
+    padding = spacing(4px, 28px, 20px, 28px)
+
+export const settingsRowLook: Look = look:
+    display = "grid"
+    gap = 12px
+    padding = spacing(15px, 0px)
+    borderBottom = border(1px, alpha(white, 0.14))
+    fontSize = 0.9rem
+
+export const settingsLabelLook: Look = look:
+    display = "flex"
+    alignItems = "center"
+    justifyContent = "space-between"
+    gap = 16px
+
+export const settingsValueLook: Look = look:
+    color = alpha(white, 0.64)
+    fontSize = 0.8rem
+
+export const settingsInputLook: Look = look:
+    width = 100%
+    margin = 0px
+    accentColor = green
+    cursor = "pointer"
+
+export const settingsSelectLook: Look = look:
+    ...settingsButtonLook
+    minWidth = 132px
+
+export const settingsToggleLook: Look = look:
+    width = 18px
+    height = 18px
+    accentColor = green
+    cursor = "pointer"
+
+export const settingsFooterLook: Look = look:
+    display = "flex"
+    flexWrap = "wrap"
+    justifyContent = "space-between"
+    gap = 8px
+    padding = spacing(16px, 28px)
+    borderTop = border(1px, alpha(white, 0.14))
+    flexShrink = 0
+
+export const settingsNoteLook: Look = look:
+    margin = spacing(16px, 0px, 4px, 0px)
+    color = alpha(white, 0.64)
+    fontSize = 0.78rem
+    lineHeight = 1.5
+
+export const settingsQualityGridLook: Look = look:
+    display = "grid"
+    gridTemplateColumns = repeat(4, minmax(0px, 1fr))
+    gap = 8px
+
+export const settingsSelectedPresetLook: Look = look:
+    ...settingsPresetLook
+    color = white
+    borderColor = alpha(white, 0.32)
+    backgroundColor = green

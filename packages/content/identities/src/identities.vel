@@ -7,6 +7,16 @@
 
 /// 所有基础方块家族的稳定身份，例如 blocks.water 和 blocks.stone。
 export type BuiltinBlockKeys:
+    podzol: string
+    moss: string
+    mud: string
+    coarseDirt: string
+    redSand: string
+    terracotta: string
+    ochreClay: string
+    fern: string
+    redMushroom: string
+    brownMushroom: string
     air: string
     basalt: string
     birchLeaves: string
@@ -119,6 +129,14 @@ export type BuiltinTerrainTypeKeys:
 
 /// 群系身份描述最终气候结果；群系在地形骨架完成后选择。
 export type BuiltinBiomeKeys:
+    meadow: string
+    birchForest: string
+    taiga: string
+    wetland: string
+    savanna: string
+    steppe: string
+    badlands: string
+    alpine: string
     ocean: string
     coast: string
     river: string

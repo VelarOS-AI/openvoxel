@@ -131,3 +131,30 @@ test("wrapper disposal releases live entries, removes observers, and is idempote
     state.dispose();
   }
 });
+
+
+test("separate chunk material owners reuse the same shadow shader program", () => {
+  const state = harness();
+  const material = new PBRMaterial("second-owner", state.scene);
+  const wrapper = new SharedShadowDepthWrapper(material, state.scene, {doNotInjectCode: true});
+  try {
+    const original = state.original("shared-across-materials");
+    const first = state.add(original);
+    const mesh = new Mesh("other-chunk", state.scene);
+    mesh.subMeshes = [];
+    const subMesh = new SubMesh(0, 0, 0, 0, 0, mesh);
+    material.onEffectCreatedObservable.notifyObservers({subMesh, effect: original});
+    assert.equal(wrapper.isReadyForSubMesh(subMesh, ["#define SHADOW_TEST"], state.generator, false, 0), true);
+    const second = wrapper.getEffect(subMesh, state.generator, 0).effect;
+    assert.equal(second, first.effect);
+    assert.equal(second._refCount, 2);
+    wrapper.dispose();
+    assert.equal(second._refCount, 1);
+    assert.equal(first.effect.isReady(), true);
+    first.mesh.dispose();
+    assert.equal(second._refCount, 0);
+  } finally {
+    wrapper.dispose();
+    state.dispose();
+  }
+});

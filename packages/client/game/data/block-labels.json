@@ -1,0 +1,406 @@
+[
+  {
+    "key": "openvoxel:air",
+    "label": "空气"
+  },
+  {
+    "key": "openvoxel:basalt",
+    "label": "玄武岩"
+  },
+  {
+    "key": "openvoxel:birch_leaves",
+    "label": "白桦树叶"
+  },
+  {
+    "key": "openvoxel:birch_log",
+    "label": "白桦原木"
+  },
+  {
+    "key": "openvoxel:birch_sapling",
+    "label": "白桦树苗"
+  },
+  {
+    "key": "openvoxel:blue_flower",
+    "label": "蓝色花朵"
+  },
+  {
+    "key": "openvoxel:brown_mushroom",
+    "label": "棕蘑菇"
+  },
+  {
+    "key": "openvoxel:cactus",
+    "label": "仙人掌"
+  },
+  {
+    "key": "openvoxel:clay",
+    "label": "黏土"
+  },
+  {
+    "key": "openvoxel:coal_ore",
+    "label": "煤矿石"
+  },
+  {
+    "key": "openvoxel:coarse_dirt",
+    "label": "砂土"
+  },
+  {
+    "key": "openvoxel:copper_ore",
+    "label": "铜矿石"
+  },
+  {
+    "key": "openvoxel:cotton",
+    "label": "棉花"
+  },
+  {
+    "key": "openvoxel:deadwood",
+    "label": "枯木"
+  },
+  {
+    "key": "openvoxel:diamond_ore",
+    "label": "钻石矿石"
+  },
+  {
+    "key": "openvoxel:dirt",
+    "label": "泥土"
+  },
+  {
+    "key": "openvoxel:dry_bush",
+    "label": "枯灌木"
+  },
+  {
+    "key": "openvoxel:fallen_leaves",
+    "label": "落叶"
+  },
+  {
+    "key": "openvoxel:fern",
+    "label": "蕨类"
+  },
+  {
+    "key": "openvoxel:germanium_ore",
+    "label": "锗矿石"
+  },
+  {
+    "key": "openvoxel:granite",
+    "label": "花岗岩"
+  },
+  {
+    "key": "openvoxel:grass",
+    "label": "草方块"
+  },
+  {
+    "key": "openvoxel:gravel",
+    "label": "砂砾"
+  },
+  {
+    "key": "openvoxel:ice",
+    "label": "冰"
+  },
+  {
+    "key": "openvoxel:iron_ore",
+    "label": "铁矿石"
+  },
+  {
+    "key": "openvoxel:kelp",
+    "label": "海带"
+  },
+  {
+    "key": "openvoxel:large_dry_bush",
+    "label": "大型枯灌木"
+  },
+  {
+    "key": "openvoxel:limestone",
+    "label": "石灰岩"
+  },
+  {
+    "key": "openvoxel:magma",
+    "label": "熔岩"
+  },
+  {
+    "key": "openvoxel:marble",
+    "label": "大理石"
+  },
+  {
+    "key": "openvoxel:mimosa_leaves",
+    "label": "合欢树叶"
+  },
+  {
+    "key": "openvoxel:mimosa_log",
+    "label": "合欢原木"
+  },
+  {
+    "key": "openvoxel:mimosa_sapling",
+    "label": "合欢树苗"
+  },
+  {
+    "key": "openvoxel:moss",
+    "label": "苔藓"
+  },
+  {
+    "key": "openvoxel:mud",
+    "label": "泥巴"
+  },
+  {
+    "key": "openvoxel:oak_leaves",
+    "label": "橡树叶"
+  },
+  {
+    "key": "openvoxel:oak_log",
+    "label": "橡原木"
+  },
+  {
+    "key": "openvoxel:oak_sapling",
+    "label": "橡树苗"
+  },
+  {
+    "key": "openvoxel:ochre_clay",
+    "label": "赭色黏土"
+  },
+  {
+    "key": "openvoxel:pale_basalt",
+    "label": "浅色玄武岩"
+  },
+  {
+    "key": "openvoxel:podzol",
+    "label": "灰化土"
+  },
+  {
+    "key": "openvoxel:poplar_leaves",
+    "label": "杨树叶"
+  },
+  {
+    "key": "openvoxel:poplar_log",
+    "label": "杨原木"
+  },
+  {
+    "key": "openvoxel:poplar_sapling",
+    "label": "杨树苗"
+  },
+  {
+    "key": "openvoxel:pumpkin",
+    "label": "南瓜"
+  },
+  {
+    "key": "openvoxel:pumpkin_stem",
+    "label": "南瓜茎"
+  },
+  {
+    "key": "openvoxel:purple_flower",
+    "label": "紫色花朵"
+  },
+  {
+    "key": "openvoxel:red_flower",
+    "label": "红色花朵"
+  },
+  {
+    "key": "openvoxel:red_mushroom",
+    "label": "红蘑菇"
+  },
+  {
+    "key": "openvoxel:red_sand",
+    "label": "红沙"
+  },
+  {
+    "key": "openvoxel:rotten_pumpkin",
+    "label": "腐烂南瓜"
+  },
+  {
+    "key": "openvoxel:rye",
+    "label": "黑麦"
+  },
+  {
+    "key": "openvoxel:saltpeter_ore",
+    "label": "硝石矿石"
+  },
+  {
+    "key": "openvoxel:sand",
+    "label": "沙子"
+  },
+  {
+    "key": "openvoxel:sandstone",
+    "label": "砂岩"
+  },
+  {
+    "key": "openvoxel:sea_urchin",
+    "label": "海胆"
+  },
+  {
+    "key": "openvoxel:seagrass",
+    "label": "海草"
+  },
+  {
+    "key": "openvoxel:snow",
+    "label": "积雪"
+  },
+  {
+    "key": "openvoxel:spruce_leaves",
+    "label": "云杉树叶"
+  },
+  {
+    "key": "openvoxel:spruce_log",
+    "label": "云杉原木"
+  },
+  {
+    "key": "openvoxel:spruce_sapling",
+    "label": "云杉树苗"
+  },
+  {
+    "key": "openvoxel:starfish",
+    "label": "海星"
+  },
+  {
+    "key": "openvoxel:stone",
+    "label": "石头"
+  },
+  {
+    "key": "openvoxel:sulphur_ore",
+    "label": "硫矿石"
+  },
+  {
+    "key": "openvoxel:tall_grass",
+    "label": "高草"
+  },
+  {
+    "key": "openvoxel:tall_spruce_leaves",
+    "label": "高云杉树叶"
+  },
+  {
+    "key": "openvoxel:terracotta",
+    "label": "陶土"
+  },
+  {
+    "key": "openvoxel:vine",
+    "label": "藤蔓"
+  },
+  {
+    "key": "openvoxel:water",
+    "label": "水"
+  },
+  {
+    "key": "openvoxel:wheat",
+    "label": "小麦"
+  },
+  {
+    "key": "openvoxel:white_flower",
+    "label": "白色花朵"
+  },
+  {
+    "key": "openvoxel:yellow_flower",
+    "label": "黄色花朵"
+  },
+  {
+    "key": "berries:blackberry_bush",
+    "label": "黑莓丛"
+  },
+  {
+    "key": "berries:blueberry_bush",
+    "label": "蓝莓丛"
+  },
+  {
+    "key": "berries:raspberry_bush",
+    "label": "覆盆子丛"
+  },
+  {
+    "key": "berries:strawberry",
+    "label": "草莓"
+  },
+  {
+    "key": "botanical:allium",
+    "label": "绒球葱"
+  },
+  {
+    "key": "botanical:bamboo",
+    "label": "竹子"
+  },
+  {
+    "key": "botanical:bamboo_crown",
+    "label": "竹叶"
+  },
+  {
+    "key": "botanical:clover",
+    "label": "三叶草"
+  },
+  {
+    "key": "botanical:lavender",
+    "label": "薰衣草"
+  },
+  {
+    "key": "botanical:lily_of_the_valley",
+    "label": "铃兰"
+  },
+  {
+    "key": "botanical:sunflower",
+    "label": "向日葵"
+  },
+  {
+    "key": "botanical:sunflower_head",
+    "label": "向日葵花盘"
+  },
+  {
+    "key": "geology:amethyst_block",
+    "label": "紫水晶"
+  },
+  {
+    "key": "geology:emerald_ore",
+    "label": "绿宝石矿石"
+  },
+  {
+    "key": "geology:gold_ore",
+    "label": "金矿石"
+  },
+  {
+    "key": "gourds:watermelon",
+    "label": "西瓜"
+  },
+  {
+    "key": "gourds:watermelon_vine",
+    "label": "西瓜藤"
+  },
+  {
+    "key": "orchard:apple_fruit",
+    "label": "苹果"
+  },
+  {
+    "key": "orchard:cherry_leaves",
+    "label": "樱花树叶"
+  },
+  {
+    "key": "orchard:cherry_log",
+    "label": "樱花原木"
+  },
+  {
+    "key": "orchard:cherry_sapling",
+    "label": "樱花树苗"
+  },
+  {
+    "key": "orchard:peach_fruit",
+    "label": "桃子"
+  },
+  {
+    "key": "orchard:pear_fruit",
+    "label": "梨"
+  },
+  {
+    "key": "wetlands:blue_orchid",
+    "label": "蓝色兰花"
+  },
+  {
+    "key": "wetlands:cattail",
+    "label": "香蒲"
+  },
+  {
+    "key": "wetlands:cattail_top",
+    "label": "香蒲穗"
+  },
+  {
+    "key": "wetlands:reed",
+    "label": "芦苇"
+  },
+  {
+    "key": "wetlands:willow_leaves",
+    "label": "柳树叶"
+  },
+  {
+    "key": "wetlands:willow_log",
+    "label": "柳原木"
+  }
+]

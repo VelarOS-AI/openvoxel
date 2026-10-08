@@ -1,0 +1,7 @@
+import {readText} from "velar/fs"
+import {builtinPackArtifacts, descriptorText} from "./generate.vel"
+
+@main:
+    const artifacts = await builtinPackArtifacts()
+    assert await readText("generated/builtin-packs.json", 8 * 1024 * 1024) == f"{Json.stableStringify(artifacts, 2)}\n" else "Bundled content artifacts are stale"
+    assert await readText("generated/pack-descriptors.json", 64 * 1024) == descriptorText(artifacts) else "Bundled content descriptors are stale"

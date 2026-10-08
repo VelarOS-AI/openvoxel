@@ -1,0 +1,274 @@
+blocks:
+  - behaviors:
+      - ignitionChance: 0.05
+        kind: flammable
+        spreadChance: 0.05
+      - kind: placement
+        strategy: axis_from_face
+    defaultState:
+      - name: axis
+        value: y
+    interaction:
+      blastResistance: 2
+      breakable: true
+      drops: orchard:loot/cherry_log
+      hardness: 2
+      sounds: openvoxel:sound/wood
+      toolTag: openvoxel:tool/axe
+    key: orchard:cherry_log
+    light:
+      ambientOcclusion: true
+      emission: 0
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties:
+      - kind: enum
+        name: axis
+        values:
+          - x
+          - y
+          - z
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/terrain
+      model: openvoxel:model/block/column
+      textures:
+        top: orchard:texture/block/cherry_log_top
+        bottom: orchard:texture/block/cherry_log_top
+        side: orchard:texture/block/cherry_log
+    tags:
+      - openvoxel:flammable
+      - openvoxel:snow_support
+      - openvoxel:vine_support
+      - openvoxel:wood
+    translationKey: translations.orchard.cherryLog
+    variants: []
+  - behaviors:
+      - ignitionChance: 0.3
+        kind: flammable
+        spreadChance: 0.6
+      - handler: openvoxel:handler/leaf_decay
+        kind: random_tick
+    defaultState:
+      - name: distance
+        value: 7
+      - name: persistent
+        value: false
+    interaction:
+      blastResistance: 0.2
+      breakable: true
+      drops: orchard:loot/cherry_leaves
+      hardness: 0.2
+      sounds: openvoxel:sound/leaves
+      toolTag: openvoxel:tool/shears
+    key: orchard:cherry_leaves
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 1
+      skylight: diffuse
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties:
+      - kind: integer
+        maximum: 7
+        minimum: 1
+        name: distance
+      - kind: boolean
+        name: persistent
+    render:
+      cullFaces: true
+      layer: cutout
+      material: openvoxel:material/leaves
+      model: openvoxel:model/block/cube
+      textures:
+        all: orchard:texture/block/cherry_leaves
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:leaves
+      - openvoxel:snow_support
+    translationKey: translations.orchard.cherryLeaves
+    variants: []
+  - behaviors:
+      - ignitionChance: 0.55
+        kind: flammable
+        spreadChance: 0.9
+      - face: below
+        kind: support
+        supportingTag: openvoxel:tree_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: orchard:loot/cherry_sapling
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: orchard:cherry_sapling
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: orchard:texture/block/cherry_sapling
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.orchard.cherrySapling
+    variants: []
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: orchard:loot/apple_fruit
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: orchard:apple_fruit
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: orchard:texture/block/apple_fruit
+      tint: null
+    tags: []
+    translationKey: translations.orchard.appleFruit
+    variants: []
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: orchard:loot/pear_fruit
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: orchard:pear_fruit
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: orchard:texture/block/pear_fruit
+      tint: null
+    tags: []
+    translationKey: translations.orchard.pearFruit
+    variants: []
+  - behaviors: []
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: orchard:loot/peach_fruit
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: orchard:peach_fruit
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: orchard:texture/block/peach_fruit
+      tint: null
+    tags: []
+    translationKey: translations.orchard.peachFruit
+    variants: []

@@ -1,0 +1,88 @@
+blocks:
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState: []
+    interaction:
+      blastResistance: 6
+      breakable: true
+      drops: gourds:loot/watermelon
+      hardness: 1
+      sounds: openvoxel:sound/grass
+      toolTag: openvoxel:tool/pickaxe
+    key: gourds:watermelon
+    light:
+      ambientOcclusion: true
+      emission: 0
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/terrain
+      model: openvoxel:model/block/cube
+      textures:
+        top: gourds:texture/block/melon_top
+        bottom: gourds:texture/block/melon_top
+        side: gourds:texture/block/melon_side
+    tags:
+      - openvoxel:plant
+    translationKey: translations.gourds.watermelon
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:crop_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: gourds:loot/watermelon_vine
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: gourds:watermelon_vine
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: gourds:texture/block/melon_stem
+      tint: openvoxel:tint/biome_grass
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.gourds.watermelonVine
+    variants: []

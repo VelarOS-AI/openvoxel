@@ -1,0 +1,9 @@
+extern module "#openvoxel/web/device-display":
+    export def requestGameLandscape() -> null
+    export def releaseGameLandscape() -> null
+
+import js {requestGameLandscape as requestLandscape, releaseGameLandscape as releaseLandscape} from "#openvoxel/web/device-display"
+
+export def requestGameLandscape(): requestLandscape()
+
+export def releaseGameLandscape(): releaseLandscape()

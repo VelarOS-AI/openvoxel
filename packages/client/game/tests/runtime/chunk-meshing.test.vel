@@ -1,10 +1,12 @@
+import {BlockRenderLayer} from "@openvoxel/blocks"
 import {ClientWorldChangeKind, ClientWorldState, clientWorldState} from "@openvoxel/client"
 import {ChunkMesh} from "@openvoxel/renderer"
-import {ChunkPosition} from "@openvoxel/world"
-import {uint16Buffer} from "velar/binary"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {float32Buffer, uint16Buffer, uint32Buffer} from "velar/binary"
 import {Cancellation} from "velar/task"
 import {expect} from "velar/test"
 import {chunkMeshing} from "../../src/runtime/chunk-meshing.vel"
+import {MeshPriorityView} from "../../src/runtime/mesh-priority.vel"
 
 const position: ChunkPosition = {x: 0, y: 0, z: 0}
 const view = {center: position, forwardX: 0, forwardY: 0, forwardZ: -1}
@@ -45,6 +47,46 @@ test "mesh initialization failure still closes its Worker exactly once":
     expect(message).toBe("worker initialization failed")
     expect(workerClosed).toBe(1)
     expect(owner.stats().active).toBe(0)
+
+test "cached mesh demand reopens a blocked corridor after a portal edit":
+    const state = clientWorldState("mesh-owner", 16)
+    const positions = range(5).map(index => ({x: 0, y: 0, z: -index}))
+    state.rememberTerrain({
+        worldId: "mesh-owner",
+        chunks: positions.map(candidate => ({position: candidate, edge: 16, palette: [0], indices: uint16Buffer(4096)})),
+    })
+    let blocked = true
+    const installed: Set<string> = Set()
+    const failures: List<string> = []
+    async def build(candidate: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        const wall = blocked and candidate.z == -2
+        return ChunkMesh.from(mesh(ticket), {
+            position: candidate,
+            portalSummary: {
+                empty: not wall, fullyOccluding: wall,
+                openFaces: wall ? 0 : 63,
+                connectedFaces: wall ? 0 : Math.pow(2, 36) - 1,
+            },
+        })
+    async def upload(value: ChunkMesh) -> bool:
+        installed.add(chunkKey(value.position))
+        return true
+    def remove(x: number, y: number, z: number): installed.remove(chunkKey({x, y, z}))
+    const owner = chunkMeshing(state, 16, positions, {
+        initialize: async () => null, build, close: async () => null,
+    }, {enqueueChunkMesh: upload, removeChunk: remove}, () => view, () => null, message => failures.append(message), () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        await Promise.sleep(1s)
+        expect(installed.has(chunkKey(positions[4]))).toBe(false)
+        blocked = false
+        owner.invalidate({kind: ClientWorldChangeKind.blocksChanged, generation: 0, sequence: 0, positions: [positions[2]], changes: []})
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(installed.has(chunkKey(positions[4]))).toBe(true)
+        expect(failures).toEqual([])
+    finally: await owner.close()
 
 test "a newly streamed Chunk with an unchanged complete delta still enters meshing":
     const state = clientWorldState("mesh-owner", 16)
@@ -115,6 +157,37 @@ test "superseded GPU commit remains owned and rebuilds with a strictly newer tic
         expect(failures).toEqual([])
     finally:
         releaseFirst = true
+        await owner.close()
+
+test "a superseded queued mesh is rejected before GPU presentation":
+    const state = chunkState()
+    const attempted: List<number> = []
+    const presented: List<number> = []
+    let release = false
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        return mesh(ticket)
+    async def enqueue(value: ChunkMesh, mayCommit: () -> bool) -> bool:
+        attempted.append(value.ticket)
+        if attempted.size == 1:
+            while not release: await Promise.sleep(0ms)
+        const allowed = mayCommit()
+        if allowed: presented.append(value.ticket)
+        return allowed
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {enqueueChunkMesh: enqueue, removeChunk: (_x, _y, _z) => null}, () => view, () => null, _message => null, () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while attempted.size == 0: await Promise.sleep(0ms)
+        owner.invalidate({kind: ClientWorldChangeKind.chunksSynchronized, generation: 0, sequence: 0, positions: [position], changes: []})
+        release = true
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(attempted.size).toBe(2)
+        expect(presented).toEqual([attempted[1]])
+        expect(owner.stats().startupPending).toBe(0)
+    finally:
+        release = true
         await owner.close()
 
 test "a late GPU commit for an evicted Chunk is removed after its physical installation":
@@ -226,3 +299,123 @@ test "meshing owns resident topology without repeated world-state snapshots":
     finally:
         subscription.close()
         await owner.close()
+
+test "unchanged mesh demand skips resident policy scans but edits and view changes still rebuild":
+    const state = chunkState()
+    let viewReads = 0
+    let builds = 0
+    def readView() -> MeshPriorityView:
+        viewReads += 1
+        return view
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        builds += 1
+        return mesh(ticket)
+    const failures: List<string> = []
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: async _mesh => true, removeChunk: (_x, _y, _z) => null,
+    }, readView, () => null, message => failures.append(message), () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        owner.reconcile()
+        viewReads = 0
+        for _attempt in range(50): owner.reconcile()
+        expect(viewReads).toBe(0)
+        expect(builds).toBe(1)
+        owner.reconcile(true)
+        expect(viewReads > 0).toBe(true)
+        owner.invalidate({kind: ClientWorldChangeKind.blocksChanged, generation: 0, sequence: 0, positions: [position], changes: []})
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(builds).toBe(2)
+        expect(failures).toEqual([])
+    finally: await owner.close()
+
+test "turns retain empty sections until movement leaves the spatial cache":
+    const state = chunkState()
+    let currentView: MeshPriorityView = {center: {x: 0, y: 0, z: 4}, forwardX: 0, forwardY: 0, forwardZ: -1}
+    let builds = 0
+    let removed = 0
+    const failures: List<string> = []
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        builds += 1
+        return mesh(ticket)
+    def remove(_x: number, _y: number, _z: number): removed += 1
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: async _mesh => true, removeChunk: remove,
+    }, () => currentView, () => null, message => failures.append(message), () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: 1}
+        owner.reconcile(true)
+        await Promise.sleep(150ms)
+        expect(removed).toBe(0)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: -1}
+        owner.reconcile(true)
+        await Promise.sleep(1s)
+        expect(removed).toBe(0)
+        expect(builds).toBe(1)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: 1}
+        owner.reconcile(true)
+        await Promise.sleep(1s)
+        expect(removed).toBe(0)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: -1}
+        owner.reconcile(true)
+        await Promise.sleep(0ms)
+        expect(builds).toBe(1)
+        currentView = {center: {x: 0, y: 0, z: 10}, forwardX: 0, forwardY: 0, forwardZ: 1}
+        owner.reconcile(true)
+        await Promise.sleep(1s)
+        expect(removed).toBe(1)
+        expect(failures).toEqual([])
+    finally: await owner.close()
+
+test "turning evicts over-budget GPU meshes while retaining world data and rebuilds on return":
+    const state = chunkState()
+    let currentView: MeshPriorityView = {center: {x: 0, y: 0, z: 4}, forwardX: 0, forwardY: 0, forwardZ: -1}
+    let builds = 0
+    let removed = 0
+    const failures: List<string> = []
+    async def build(_position: readonly ChunkPosition, ticket: number, _cancellation: Cancellation) -> ChunkMesh:
+        builds += 1
+        return ChunkMesh.from(mesh(ticket), {
+            byteSize: 17 * 1024 * 1024,
+            batches: [{
+                pipelineKey: "test", layer: BlockRenderLayer.opaque, bankKey: "test", materialKey: "test", animationKey: null,
+                positions: float32Buffer(0), normals: float32Buffer(0), uvs: float32Buffer(0),
+                textureLayers: float32Buffer(0), tintRoles: float32Buffer(0), colors: float32Buffer(0),
+                indices: uint32Buffer(0), triangleCount: 0, quadCount: 0,
+            }],
+        })
+    def remove(_x: number, _y: number, _z: number): removed += 1
+    const owner = chunkMeshing(state, 16, [position], {
+        initialize: async () => null, build, close: async () => null,
+    }, {
+        enqueueChunkMesh: async _mesh => true, removeChunk: remove,
+    }, () => currentView, () => null, message => failures.append(message), () => null)
+    try:
+        await owner.initialize()
+        owner.start()
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: 1}
+        owner.reconcile(true)
+        // Repeated reconciliation must not reinsert an already retiring mesh
+        // and perpetually postpone its release.
+        for _index in range(12):
+            await Promise.sleep(100ms)
+            owner.reconcile()
+        expect(removed).toBe(1)
+        expect(state.chunk(position) != null).toBe(true)
+        expect(builds).toBe(1)
+        currentView = {center: currentView.center, forwardX: 0, forwardY: 0, forwardZ: -1}
+        owner.reconcile(true)
+        while owner.stats().active > 0 or owner.stats().queued > 0: await Promise.sleep(0ms)
+        expect(builds).toBe(2)
+        expect(failures).toEqual([])
+    finally: await owner.close()

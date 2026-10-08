@@ -30,7 +30,7 @@ test("terrain fog integration matches exactly one installed Babylon PBR fog coef
   assert.match(adapted, /float fog=ovTerrainFogTransmittance\(\)/u);
   assert.doesNotMatch(adapted, /fog=toLinearSpace\(fog\)/u);
   assert.doesNotMatch(adapted, /finalColor.rgb=mix/u);
-  assert.match(code.CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR, /ovSkyColor/u);
+  assert.match(code.CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR, /ovDirectionalSky/u);
   assert.ok(code.CUSTOM_FRAGMENT_DEFINITIONS.includes(skyColorShader));
   assert.ok(pbrPixelShader.shader.indexOf("#include<pbrBlockImageProcessing>") < pbrPixelShader.shader.indexOf("#define CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR"));
   assert.equal(TerrainFogPlugin.prototype.getCustomCode("vertex"), null);
@@ -39,7 +39,7 @@ test("terrain fog integration matches exactly one installed Babylon PBR fog coef
 test("terrain fog binds live sky colors and the transient lightning flash from its environment owner", () => {
   const atmosphere = {skyTop: {r: 0.1, g: 0.2, b: 0.3}, horizon: {r: 0.4, g: 0.5, b: 0.6}, ground: {r: 0.2, g: 0.3, b: 0.4}, flash: 0};
   const values = new Map();
-  const buffer = {updateFloat3: (key, ...value) => values.set(key, value), updateFloat: (key, value) => values.set(key, value)};
+  const buffer = {updateFloat4: (key, ...value) => values.set(key, value), updateFloat3: (key, ...value) => values.set(key, value), updateFloat: (key, value) => values.set(key, value)};
   TerrainFogPlugin.prototype.bindForSubMesh.call({atmosphere}, buffer);
   assert.deepEqual(values.get("ovTerrainHorizon"), [0.4, 0.5, 0.6]);
   atmosphere.horizon = {r: 0.8, g: 0.7, b: 0.6};

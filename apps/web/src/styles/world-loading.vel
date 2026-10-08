@@ -1,0 +1,53 @@
+import {Look, alpha, border, spacing, shadow} from "velar/look"
+import {ink, white} from "./theme.vel"
+
+export const worldLoaderLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    zIndex = 8
+    display = "grid"
+    placeItems = "center"
+    overflow = "hidden"
+    backgroundColor = ink
+    color = white
+
+export const worldLoaderShadeLook: Look = look:
+    position = "absolute"
+    inset = 0px
+    backgroundColor = alpha(ink, 0.38)
+
+export const worldLoaderContentLook: Look = look:
+    position = "relative"
+    display = "grid"
+    justifyItems = "center"
+    gap = 18px
+    maxWidth = 84vw
+    padding = 24px
+    textAlign = "center"
+    textShadow = shadow(0px, 2px, 12px, alpha(ink, 0.4))
+
+export const worldLoaderTitleLook: Look = look:
+    margin = 0px
+    fontSize = 2rem
+    fontWeight = 600
+    overflowWrap = "anywhere"
+
+export const worldLoaderDetailLook: Look = look:
+    margin = 0px
+    color = alpha(white, 0.76)
+    fontSize = 0.95rem
+
+export const worldLoaderTrackLook: Look = look:
+    width = 160px
+    height = 3px
+    margin = spacing(6px, 0px, 18px, 0px)
+    overflow = "hidden"
+    borderRadius = 2px
+    backgroundColor = alpha(white, 0.18)
+
+export const worldLoaderFlowLook: Look = look:
+    display = "block"
+    width = 55%
+    height = 100%
+    borderRadius = 2px
+    backgroundColor = alpha(white, 0.86)

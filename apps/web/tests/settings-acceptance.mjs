@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import {mkdir, readFile, writeFile} from "node:fs/promises";
+import {join} from "node:path";
+import {chromium} from "playwright";
+import sharp from "sharp";
+import {assertWorldMinimap} from "./support/minimap-acceptance.mjs";
+import {builtHtmlPath, projectRoot} from "./support/ui-acceptance-paths.mjs";
+import {availablePort, graphicsBackend, processes, requireSuccess, start, stop, waitForUrl} from "./support/ui-acceptance-runtime.mjs";
+import {createWorld, leaveWorldToHome, waitForWorkerCount} from "./support/ui-acceptance-world.mjs";
+
+const output = join(projectRoot, "apps/web/generated/settings-acceptance");
+let browser, page;
+const failures = [];
+const report = {};
+async function setting(name, value) {
+  const input = page.locator(`[data-setting="${name}"]`);
+  await input.fill(String(value));
+  await page.waitForFunction(({name, value}) => JSON.parse(localStorage.getItem("openvoxel.settings.v1"))?.[name] === value, {name, value});
+}
+async function tab(name) { await page.locator(`[data-settings-tab="${name}"]`).click(); }
+async function screenshot(name) { const path = join(output, name + ".png"); await page.screenshot({path}); return path; }
+async function brightness(path) {
+  const {data, info} = await sharp(path).extract({left: 1010, top: 300, width: 220, height: 380}).removeAlpha().raw().toBuffer({resolveWithObject: true});
+  let sum = 0;
+  for (let i = 0; i < data.length; i += info.channels) sum += data[i] * .2126 + data[i + 1] * .7152 + data[i + 2] * .0722;
+  return sum / (info.width * info.height);
+}
+try {
+  await mkdir(output, {recursive: true});
+  if (!process.argv.includes("--reuse-build")) await requireSuccess(start("Settings build", ["build", "apps/web"]), 120_000);
+  const port = await availablePort();
+  const url = `http://127.0.0.1:${port}/`;
+  const preview = start("Settings preview", ["preview", "apps/web", "--port", String(port)]);
+  await waitForUrl(url, preview, await readFile(builtHtmlPath, "utf8"));
+  browser = await chromium.launch({headless: true, args: ["--enable-gpu"]});
+  report.graphics = await graphicsBackend(browser);
+  const context = await browser.newContext({viewport: {width: 1280, height: 800}, deviceScaleFactor: 1});
+  page = await context.newPage();
+  page.on("pageerror", error => failures.push(error.message));
+  page.on("console", message => { if (message.type() === "error") failures.push(message.text()); });
+  await page.goto(url);
+  await page.locator('[data-create-first-world]').click();
+  await createWorld(page, {id: "settings-review", name: "设置体验", preset: "meadow", mode: "Creative", seed: "settings-review-1"});
+  await assertWorldMinimap(page, output);
+  await page.locator('[data-open-settings]').click();
+  const panel = page.locator('[data-settings-dialog]');
+  await panel.waitFor({state: "visible"});
+  assert.equal(await page.locator('[data-settings-tab]').count(), 5);
+  assert.equal(await page.locator('[data-world-chrome] button').count(), 1);
+  await screenshot("01-graphics");
+  const canvas = page.locator('[data-voxel-canvas]');
+  const originalWidth = await canvas.getAttribute("width");
+  await setting("renderScale", .7);
+  await page.waitForFunction(width => document.querySelector('[data-voxel-canvas]').width < width * .9, Number(originalWidth));
+  await setting("fov", 80);
+  await page.locator('[data-preset-quality="low"]').click();
+  assert.equal(await page.locator('[data-setting="viewDistance"]').inputValue(), "3");
+  assert.equal(await page.locator('[data-setting="waterReflections"]').isChecked(), false);
+  assert.equal(await page.locator('[data-setting="softShadows"]').isChecked(), false);
+  await page.locator('[data-preset-quality="high"]').click();
+  assert.equal(await page.locator('[data-setting="viewDistance"]').inputValue(), "6");
+  assert.equal(await page.locator('[data-setting="softShadows"]').isChecked(), true);
+  await page.locator('[data-setting="softShadows"]').uncheck();
+  await page.locator('[data-setting="softShadows"]').check();
+  await tab("audio");
+  await setting("masterVolume", .4);
+  await setting("ambientVolume", .25);
+  await tab("controls");
+  await page.locator('[data-setting="forwardKey"]').selectOption("KeyS");
+  assert.equal(await page.locator('[data-setting="backwardKey"]').inputValue(), "KeyW");
+  await setting("sensitivity", 1.4);
+  await tab("interface");
+  await page.locator('[data-setting="minimap"]').uncheck();
+  await page.locator('[data-setting="toolbar"]').uncheck();
+  assert.equal(await page.locator('[data-minimap]').isVisible(), false);
+  assert.equal(await page.locator('[data-creative-toolbar]').isVisible(), false);
+  await tab("environment");
+  await page.locator('[data-setting="timeMode"]').selectOption("fixed");
+  await page.locator('[data-setting="weather"]').selectOption("clear");
+  await setting("hour", 12);
+  await page.waitForTimeout(1400);
+  report.dayBrightness = await brightness(await screenshot("02-day"));
+  await page.getByRole("button", {name: "午夜", exact: true}).click();
+  await page.waitForTimeout(1800);
+  report.nightBrightness = await brightness(await screenshot("03-night"));
+  assert.ok(report.dayBrightness > report.nightBrightness * 1.5, "fixed time changes the rendered world");
+  await page.locator('[data-setting="weather"]').selectOption("snow");
+  await setting("precipitation", .8);
+  await page.waitForTimeout(1200);
+  await screenshot("04-weather");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({state: "hidden"});
+  // Reload after leaving the world so the existing unsaved-exit guard remains active.
+  await leaveWorldToHome(page);
+  await waitForWorkerCount(page, 0, "Settings world exit");
+  await page.reload();
+  await page.locator('[data-play-world]').click();
+  await page.locator('[data-world-ready="true"]').waitFor({timeout: 60_000});
+  await page.locator('[data-open-settings]').click();
+  await tab("audio");
+  assert.equal(await page.locator('[data-setting="masterVolume"]').inputValue(), "0.4");
+  await tab("controls");
+  assert.equal(await page.locator('[data-setting="forwardKey"]').inputValue(), "KeyS");
+  assert.equal(await page.locator('[data-setting="backwardKey"]').inputValue(), "KeyW");
+  await tab("environment");
+  assert.equal(await page.locator('[data-setting="weather"]').inputValue(), "snow");
+  assert.equal(await page.locator('[data-setting="hour"]').inputValue(), "0");
+  await page.setViewportSize({width: 390, height: 844});
+  await screenshot("05-mobile");
+  const bounds = await panel.boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.height <= 844);
+  assert.equal(await page.locator('[data-close-settings]').isVisible(), true);
+  assert.equal(await page.locator('[data-reset-settings]').isVisible(), true);
+  await page.locator('[data-reset-settings]').click();
+  await page.locator('[data-reset-settings]').click();
+  assert.equal(await page.locator('[data-setting="weather"]').inputValue(), "auto");
+  assert.equal(await page.locator('[data-setting="timeMode"]').inputValue(), "auto");
+  assert.equal(await page.locator('[data-minimap]').isVisible(), true);
+  await page.locator('[data-close-settings]').click();
+  await panel.waitFor({state: "hidden"});
+  await page.setViewportSize({width: 1280, height: 800});
+  await assertWorldMinimap(page, output);
+  await leaveWorldToHome(page);
+  await waitForWorkerCount(page, 0, "Settings reset and exit");
+  assert.deepEqual(failures, []);
+  report.passed = true;
+  await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report));
+} catch (error) {
+  if (page) await screenshot("failure").catch(() => {});
+  console.error("Browser failures:", failures);
+  throw error;
+} finally {
+  if (browser) await browser.close();
+  for (const process of processes.toReversed()) await stop(process);
+}

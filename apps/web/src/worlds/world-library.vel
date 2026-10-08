@@ -10,4 +10,6 @@ export def rememberWorld(world: SavedWorld):
     worlds.append(world)
     storage.set(savedWorldsKey, worlds)
 
-export def touchWorld(world: SavedWorld): rememberWorld(SavedWorld.from(world, {lastPlayed: "Played just now"}))
+export def touchWorld(world: SavedWorld): rememberWorld(SavedWorld.from(world, {lastPlayed: "刚刚玩过"}))
+
+export def forgetWorld(id: string): storage.set(savedWorldsKey, loadSavedWorlds().filter(world => world.id != id))

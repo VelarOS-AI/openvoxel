@@ -1,0 +1,15 @@
+import {Coordinate2} from "@openvoxel/world"
+
+/// 区域身份独立于地表河流、海岸和海拔覆盖。玩法可用 id 保存一次性遭遇、
+/// 资源刷新和探索状态；边缘混合只影响连续地形与生态密度，不改变所有者。
+export readonly type WorldRegionSample:
+    id: string
+    center: Coordinate2
+    biome: string
+    neighboringBiome: string
+    /// 到次近区域边界的近似距离，单位为方块。
+    edgeDistance: number
+    /// 连续混合后的森林承载量与地形参数。
+    forestCover: number
+    relief: number
+    upland: number

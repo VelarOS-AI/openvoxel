@@ -81,7 +81,7 @@ export function uniqueByKey(values, owner, label) {
   for (const raw of requireList(values, label)) {
     const value = requireRecord(raw, `${label} entry`);
     const key = requireText(value.key, `${label} key`);
-    if (!key.startsWith(`${owner}:`)) throw new Error(`${label} key ${key} does not belong to ${owner}`);
+    if (!(Array.isArray(owner) ? owner : [owner]).some(namespace => key.startsWith(`${namespace}:`))) throw new Error(`${label} key ${key} does not belong to ${owner}`);
     if (keys.has(key)) throw new Error(`${label} repeats ${key}`);
     keys.add(key);
   }

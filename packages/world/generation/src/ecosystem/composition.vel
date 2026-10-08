@@ -1,0 +1,128 @@
+import {ecosystemUnitKeys} from "./unit-keys.vel"
+import {validateWorldGenerationPack} from "./validation.vel"
+import {BiomeUnit, TreeUnit, PlantUnit, MineralUnit, FeatureUnit, StageUnit, MineralConfig, TerrainConfig, RegionConfig, SurfaceConfig, RoadConfig, HydrologyConfig, CaveConfig, AquiferConfig, VegetationConfig, BiomeAffinity, EcosystemUnits, HabitatRange, WorldGenerationPack, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "../definition/catalog.vel"
+
+export def emptyEcosystem() -> EcosystemUnits:
+    return {biomes: [], trees: [], plants: [], minerals: [], features: [], stages: []}
+
+export def habitatWeight(value: number, habitat: readonly HabitatRange) -> number:
+    if value < habitat.minimum or value > habitat.maximum: return 0
+    const rising = habitat.idealLow == habitat.minimum ? 1 : Math.clamp((value - habitat.minimum) / (habitat.idealLow - habitat.minimum), 0, 1)
+    const falling = habitat.maximum == habitat.idealHigh ? 1 : Math.clamp((habitat.maximum - value) / (habitat.maximum - habitat.idealHigh), 0, 1)
+    return rising * falling
+
+export def ecosystemUnits(profile: readonly WorldGeneratorDefinition) -> readonly EcosystemUnits:
+    const units = profile.ecosystem
+    assert units != null else "World generator must be assembled from ecosystem packs before sampling"
+    return units
+
+export def biomeFamily(profile: readonly WorldGeneratorDefinition, biome: string) -> string:
+    return ecosystemUnits(profile).biomes.find(unit => unit.id == biome)?.family ?? biome
+
+export def biomeAffinity(profile: readonly WorldGeneratorDefinition, biome: string, affinities: readonly List<readonly BiomeAffinity>) -> number:
+    const exact = affinities.find(affinity => affinity.biome == biome)
+    if exact != null: return exact.weight
+    const family = biomeFamily(profile, biome)
+    return affinities.find(affinity => affinity.biome == family)?.weight ?? 1
+
+export def stageEnabled(profile: readonly WorldGeneratorDefinition, step: string) -> bool:
+    return ecosystemUnits(profile).stages.some(stage => stage.step == step and stage.enabled)
+
+/// 依赖关系决定组合顺序；同级按 owner 排序。缺失依赖、循环、隐式覆盖以及
+/// 两个互不依赖的包修改同一单元都会立即拒绝。
+export def composeEcosystemPacks(packs: readonly List<readonly WorldGenerationPack>) -> EcosystemUnits:
+    const installed: Map<string, readonly WorldGenerationPack> = Map()
+    for pack in packs:
+        validateWorldGenerationPack(pack)
+        assert not installed.has(pack.owner) else f"Duplicate ecosystem pack {pack.owner}"
+        installed.set(pack.owner, pack)
+    let pending = packs.copy().sorted(by=pack => pack.owner)
+    const applied: Set<string> = Set()
+    const provenance: Map<string, string> = Map()
+    const units = emptyEcosystem()
+    while pending.size > 0:
+        const next = pending.find(pack => pack.requires.every(owner => owner in applied))
+        assert next != null else "Ecosystem packs have missing or cyclic dependencies"
+        const pack: readonly WorldGenerationPack = next
+        const keys = ecosystemUnitKeys(pack.units)
+        const existing = Set(ecosystemUnitKeys(units))
+        const removed = Set(pack.removes)
+        const replaced = Set(pack.replaces)
+        for key in [pack.removes, pack.replaces].flatMap(group => group):
+            assert key in existing else f"Pack {pack.owner} targets unknown unit {key}"
+            const previous = provenance.get(key)!
+            assert previous in pack.requires else f"Pack {pack.owner} must explicitly depend on {previous} to change {key}"
+        const existingGroups = [units.biomes.map(unit => unit.key), units.trees.map(unit => unit.key), units.plants.map(unit => unit.key), units.minerals.map(unit => unit.key), units.features.map(unit => unit.key), units.stages.map(unit => unit.key)]
+        const incomingGroups = [pack.units.biomes.map(unit => unit.key), pack.units.trees.map(unit => unit.key), pack.units.plants.map(unit => unit.key), pack.units.minerals.map(unit => unit.key), pack.units.features.map(unit => unit.key), pack.units.stages.map(unit => unit.key)]
+        for group, index in existingGroups:
+            for key in group:
+                if key in replaced:
+                    assert key in incomingGroups[index] else f"Replacement {key} must keep its unit domain"
+        for key in pack.replaces:
+            assert (key in keys) and (key not in removed) else f"Replacement {key} must supply exactly one new unit"
+        for key in keys:
+            assert key not in removed else f"Pack {pack.owner} both removes and supplies {key}"
+            assert (key not in existing) or (key in replaced) else f"Pack {pack.owner} implicitly overwrites unit {key}"
+            provenance.set(key, pack.owner)
+        units.biomes = units.biomes.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.biomes.extend(pack.units.biomes.map(unit => BiomeUnit.parse(unit)))
+        units.trees = units.trees.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.trees.extend(pack.units.trees.map(unit => TreeUnit.parse(unit)))
+        units.plants = units.plants.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.plants.extend(pack.units.plants.map(unit => PlantUnit.parse(unit)))
+        units.minerals = units.minerals.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.minerals.extend(pack.units.minerals.map(unit => MineralUnit.parse(unit)))
+        units.features = units.features.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.features.extend(pack.units.features.map(unit => FeatureUnit.parse(unit)))
+        units.stages = units.stages.filter(unit => (unit.key not in removed) and (unit.key not in replaced))
+        units.stages.extend(pack.units.stages.map(unit => StageUnit.parse(unit)))
+        applied.add(pack.owner)
+        pending = pending.filter(candidate => candidate.owner != pack.owner)
+    units.biomes = units.biomes.sorted(by=unit => unit.key)
+    units.trees = units.trees.sorted(by=unit => unit.key)
+    units.plants = units.plants.sorted(by=unit => unit.key)
+    units.minerals = units.minerals.sorted(by=unit => unit.key)
+    units.features = units.features.sorted(by=unit => unit.key)
+    units.stages = units.stages.sorted(by=unit => unit.key)
+    const steps: Set<string> = Set()
+    for stage in units.stages:
+        assert stage.step not in steps else f"Ecosystem supplies multiple implementations for stage {stage.step}"
+        steps.add(stage.step)
+    const biomes: Set<string> = Set()
+    for biome in units.biomes:
+        assert biome.id not in biomes else f"Ecosystem supplies duplicate biome {biome.id}"
+        biomes.add(biome.id)
+    const features: Set<string> = Set()
+    for feature in units.features:
+        assert feature.algorithm not in features else f"Ecosystem supplies multiple implementations for feature {feature.algorithm}"
+        features.add(feature.algorithm)
+    const sources: Map<string, string> = Map()
+    for mineral in units.minerals:
+        const previous = sources.get(mineral.block)
+        assert previous == null or previous == mineral.source else f"Mineral {mineral.block} has ambiguous substrate bindings"
+        sources.set(mineral.block, mineral.source)
+    return units
+
+export type ComposedGeneration:
+    definition: WorldGeneratorDefinition
+    palette: WorldGeneratorPaletteDefinition
+
+/// 核心世界边界、Chunk 布局、采样包络和身份协议不属于包的可写字段。
+/// 扩展只取得自己的有限配置和单元表，不能接触生成器闭包或存档状态。
+export def composeWorldGeneration(base: readonly WorldGeneratorDefinition, basePalette: readonly WorldGeneratorPaletteDefinition, packs: readonly List<readonly WorldGenerationPack>) -> ComposedGeneration:
+    const units = composeEcosystemPacks(packs)
+    const definition = WorldGeneratorDefinition.parse(base)
+    const palette = WorldGeneratorPaletteDefinition.parse(basePalette)
+    definition.ecosystem = units
+    definition.minerals = units.minerals.map(unit => MineralConfig.from(unit.distribution, {key: unit.key}))
+    palette.minerals = units.minerals.map(unit => ({key: unit.key, block: unit.block, source: unit.source}))
+    for stage in units.stages:
+        if stage.terrain != null: definition.terrain = TerrainConfig.parse(stage.terrain)
+        if stage.regions != null: definition.regions = RegionConfig.parse(stage.regions)
+        if stage.surface != null: definition.surface = SurfaceConfig.parse(stage.surface)
+        if stage.roads != null: definition.roads = RoadConfig.parse(stage.roads)
+        if stage.hydrology != null: definition.hydrology = HydrologyConfig.parse(stage.hydrology)
+        if stage.caves != null: definition.caves = CaveConfig.parse(stage.caves)
+        if stage.aquifers != null: definition.aquifers = AquiferConfig.parse(stage.aquifers)
+        if stage.vegetation != null: definition.vegetation = VegetationConfig.parse(stage.vegetation)
+    return {definition, palette}

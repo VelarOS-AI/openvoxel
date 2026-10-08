@@ -5,22 +5,41 @@
   "type": "module",
   "files": [
     "src",
-    "tools"
+    "tools",
+    "data",
+    "generated"
   ],
   "velar": {
     "entry": "src/index.vel",
-    "targets": ["core"],
+    "targets": [
+      "core"
+    ],
     "requires": {
       "capabilities": []
+    },
+    "resources": {
+      "./builtin-packs-data": {
+        "path": "generated/builtin-packs.json",
+        "type": "json"
+      },
+      "./pack-descriptors-data": {
+        "path": "generated/pack-descriptors.json",
+        "type": "json"
+      }
+    },
+    "entries": {
+      "./descriptors": "src/pack-descriptors.vel"
     }
   },
   "scripts": {
-    "compile:mod": "velar run tools/compile-mod.vel",
+    "compile:mod": "node ../../../tools/run-validation.mjs -- velar run tools/compile-mod.vel",
     "check": "node ../../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
     "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
     "test": "node ../../../tools/run-validation.mjs -- velar test",
-    "build": "node ../../../tools/run-validation.mjs -- velar build"
+    "build": "node ../../../tools/run-validation.mjs -- velar build",
+    "generate": "node ../../../tools/run-validation.mjs -- velar run tools/generate.vel",
+    "generate:check": "node ../../../tools/run-validation.mjs -- velar run tools/check-generated.vel"
   },
   "dependencies": {
     "@openvoxel/blocks": "0.2.0",
@@ -30,7 +49,13 @@
     "@velarscript-labs/yaml": "0.1.5"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/node": "0.34.0"
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/node": "0.34.2"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./builtin-packs-data": "./generated/builtin-packs.json",
+    "./pack-descriptors-data": "./generated/pack-descriptors.json",
+    "./descriptors": "./dist/pack-descriptors.js"
   }
 }

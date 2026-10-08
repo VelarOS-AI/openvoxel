@@ -1,0 +1,31 @@
+import {WorldBlockItem} from "@openvoxel/game"
+import {BlockItemIcon} from "./block-item-icon.vel"
+import {settingsHeaderLook, settingsTitleLook, settingsDoneLook} from "../styles/game-settings.vel"
+import {inventoryBodyLook, inventorySearchLook, inventoryGridLook, inventoryItemLook, inventorySelectedItemLook, inventoryIconLook, inventoryHintLook, inventoryEmptyLook} from "../styles/block-inventory.vel"
+
+export component BlockInventory(items: readonly List<WorldBlockItem>, selected: string, slot: number, choose: (item: WorldBlockItem) -> null, close: () -> null):
+    state query = ""
+    computed search = query.trim().lower()
+    computed visible = items.filter(item => item.label.has(search) or item.key.lower().has(search))
+    return <section look={inventoryBodyLook}>
+        <header look={settingsHeaderLook}>
+            <h2 id="block-inventory-title" look={settingsTitleLook}>方块物品栏</h2>
+            <button type="button" look={settingsDoneLook} on:click={close} data-close-inventory>完成</button>
+        </header>
+        <input
+            look={inventorySearchLook}
+            type="search"
+            bind:value={query}
+            placeholder="搜索方块名称或 ID"
+            aria-label="搜索方块名称或 ID"
+            data-inventory-search
+        />
+        <div look={inventoryGridLook} data-inventory-grid>
+            {visible.map(item => <button key={item.key} type="button" look={selected == item.stateKey ? inventorySelectedItemLook : inventoryItemLook} on:click={() => choose(item)} title={f"{item.label} · {item.key} · #{item.runtimeId}"} aria-pressed={str(selected == item.stateKey)} data-inventory-block={item.key}>
+                <span look={inventoryIconLook}><BlockItemIcon item={item} /></span>
+                <span>{item.label}</span>
+            </button>)}
+            {visible.size == 0 ? <p look={inventoryEmptyLook}>没有找到匹配的方块</p> : <></>}
+        </div>
+        <p look={inventoryHintLook}>选择方块放入快捷栏第 {slot + 1} 格 · {items.size} 种方块</p>
+    </section>

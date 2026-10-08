@@ -1,4 +1,4 @@
-import {localBackend} from "@openvoxel/client"
+import {deleteLocalWorld, localBackend} from "@openvoxel/client"
 import {SavedWorld, WorldPreset} from "./saved-world.vel"
 import {WorldLibraryOperations} from "./world-library-operations.vel"
 
@@ -7,11 +7,11 @@ export def localWorldLibrary() -> WorldLibraryOperations:
     const backend = localBackend()
 
     async def createWorld(world: SavedWorld) -> SavedWorld:
-        const created = await backend.createWorld({id: world.id, name: world.name, seed: world.seed, mode: world.mode})
-        return SavedWorld.from(created, {mode: created.mode, preset: world.preset, lastPlayed: "Created just now"})
+        const created = await backend.createWorld({id: world.id, name: world.name, seed: world.seed, mode: world.mode, contentPacks: world.contentPacks})
+        return SavedWorld.from(created, {mode: created.mode, preset: world.preset, lastPlayed: "刚刚创建", contentPacks: created.content.packs.map(pack => pack.owner)})
 
     async def findWorld(id: string) -> SavedWorld:
         const found = await backend.findWorld(id)
-        return SavedWorld.from(found, {mode: found.mode, preset: WorldPreset.meadow, lastPlayed: "Opened just now"})
+        return SavedWorld.from(found, {mode: found.mode, preset: WorldPreset.meadow, lastPlayed: "刚刚打开", contentPacks: found.content.packs.map(pack => pack.owner)})
 
-    return {createWorld, findWorld, close: backend.close}
+    return {createWorld, findWorld, deleteWorld: deleteLocalWorld, close: backend.close}

@@ -1,0 +1,179 @@
+formatVersion: 1
+owner: woodland
+title: 林木与枯木
+description: 橡树、白桦、云杉、合欢、杨树、藤蔓与倒木
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees:
+    - key: woodland:oak
+      shape: oak
+      log: openvoxel:oak_log
+      leaves: openvoxel:oak_leaves
+      temperature:
+        minimum: 3
+        idealLow: 9
+        idealHigh: 15
+        maximum: 20
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 24
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 5
+        - biome: openvoxel:biome/wetland
+          weight: 4
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+    - key: woodland:birch
+      shape: birch
+      log: openvoxel:birch_log
+      leaves: openvoxel:birch_leaves
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 11
+        maximum: 15
+      humidity:
+        minimum: 3
+        idealLow: 9
+        idealHigh: 15
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 24
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/birch_forest
+          weight: 5
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+    - key: woodland:spruce
+      shape: spruce
+      log: openvoxel:spruce_log
+      leaves: openvoxel:spruce_leaves
+      temperature:
+        minimum: -8
+        idealLow: 0
+        idealHigh: 5
+        maximum: 10
+      humidity:
+        minimum: 3
+        idealLow: 8
+        idealHigh: 11
+        maximum: 14
+      elevation: &a1
+        minimum: 0
+        idealLow: 0
+        idealHigh: 200
+        maximum: 255
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/taiga
+          weight: 5
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+    - key: woodland:tall_spruce
+      shape: tall_spruce
+      log: openvoxel:spruce_log
+      leaves: openvoxel:tall_spruce_leaves
+      temperature:
+        minimum: -8
+        idealLow: 0
+        idealHigh: 5
+        maximum: 10
+      humidity:
+        minimum: 8
+        idealLow: 11
+        idealHigh: 15
+        maximum: 15
+      elevation: *a1
+      weight: 0.35
+      affinities:
+        - biome: openvoxel:biome/taiga
+          weight: 5
+    - key: woodland:mimosa
+      shape: mimosa
+      log: openvoxel:mimosa_log
+      leaves: openvoxel:mimosa_leaves
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 12
+        maximum: 15
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 4
+        maximum: 7
+      elevation: *a1
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/savanna
+          weight: 6
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+    - key: woodland:poplar
+      shape: poplar
+      log: openvoxel:poplar_log
+      leaves: openvoxel:poplar_leaves
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 12
+        maximum: 15
+      humidity:
+        minimum: 3
+        idealLow: 15
+        idealHigh: 15
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 24
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 4
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+  plants: []
+  minerals: []
+  features:
+    - key: woodland:deadwood
+      algorithm: deadwood
+      block: openvoxel:deadwood
+      chance: 1
+    - key: woodland:tree_vine
+      algorithm: tree_vine
+      block: openvoxel:vine
+      chance: 1
+    - key: woodland:cliff_vine
+      algorithm: cliff_vine
+      block: openvoxel:vine
+      chance: 1
+  stages: []

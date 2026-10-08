@@ -1,0 +1,24 @@
+category: vegetation
+textures:
+  - key: wetlands:texture/block/willow_log_top
+    surface: wood
+    file: textures/vegetation/wetlands/willow_log_top.png
+  - key: wetlands:texture/block/willow_log
+    surface: wood
+    file: textures/vegetation/wetlands/willow_log.png
+  - key: wetlands:texture/block/leaves_willow
+    surface: foliage
+    file: textures/vegetation/wetlands/leaves_willow.png
+  - key: wetlands:texture/block/tall_cattail_upper
+    surface: plant
+    file: textures/vegetation/wetlands/tall_cattail_upper.png
+  - key: wetlands:texture/block/tall_cattail_lower
+    surface: plant
+    file: textures/vegetation/wetlands/tall_cattail_lower.png
+  - key: wetlands:texture/block/reed
+    surface: plant
+    file: textures/vegetation/wetlands/reed.png
+  - key: wetlands:texture/block/blue_orchid
+    surface: plant
+    file: textures/vegetation/wetlands/blue_orchid.png
+models: []

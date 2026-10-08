@@ -1,3 +1,5 @@
+import {builtinContentCatalog, defaultContentPackOwners} from "@openvoxel/content"
+import {baseBlockCatalogSource, createWorldBlockRegistry, packBlockCatalog} from "@openvoxel/blocks"
 import {BlockBehaviorKind, BlockComponentProfile, BlockRender, BlockRenderLayer, BlockStateProperty, PackedBlockStateDefinition, basePackedBlockCatalogSource, blockCatalogVersion, blockStateCatalog, collectBlockRenderResources} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
 import {uint32Buffer} from "velar/binary"
@@ -178,6 +180,9 @@ test "render catalog resolves gameplay collision independently from visual layer
         maximumZ: 0.9375,
     }])
     expect(snow.collisionBoxes[0].maximumY).toBe(0.5)
+    expect(catalog.selectionBoxes(snow.runtimeId)[0].maximumY).toBe(0.5)
+    expect(catalog.selectionBoxes(cross.runtimeId).size).toBe(1)
+    expect(catalog.selectionBoxes(invisible.runtimeId)).toEqual([])
 
 test "resource packs fail before rendering when their target content build differs":
     const incompatible = ClientResourcePackArtifact.from(builtinClientResourcePack, {
@@ -186,8 +191,8 @@ test "resource packs fail before rendering when their target content build diffe
     expect(() => createClientRenderCatalog(contentResponse(), incompatible)).toThrow()
 
 test "built-in resources expose role-scoped generated texture arrays":
-    expect(builtinClientResourcePack.artifactVersion).toBe(9)
-    expect(builtinClientResourcePack.formatVersion).toBe(9)
+    expect(builtinClientResourcePack.artifactVersion).toBe(10)
+    expect(builtinClientResourcePack.formatVersion).toBe(10)
     expect(builtinClientResourcePack.textureBanks.size).toBe(4)
     const roles = Set(builtinClientResourcePack.textureBanks.map(bank => bank.role))
     expect(ClientTextureBankRole.opaque in roles).toBe(true)
@@ -232,13 +237,17 @@ test "material families preserve lighting, shadow, and PBR response semantics":
     expect(water.unlit).toBe(false)
     expect(magma.unlit).toBe(false)
     expect(water.environmentIntensity > terrain.environmentIntensity).toBe(true)
+    // 干燥植物与土石保留弱高光，水面的镜面响应更强。
+    expect(cross.specularWeight > 0 and cross.specularWeight < terrain.specularWeight).toBe(true)
+    expect(terrain.specularWeight < water.specularWeight).toBe(true)
+    expect(water.specularWeight).toBe(1)
     expect(water.materialEffect).toBe(ClientMaterialEffect.water)
     expect(terrain.materialEffect).toBe(ClientMaterialEffect.standard)
     expect(terrain.waterOptics).toBe(null)
     const waterOptics = water.waterOptics
     assert waterOptics != null else "Expected dedicated water optics"
     expect(waterOptics.indexOfRefraction).toBe(1.333)
-    expect(waterOptics.roughness).toBe(0.055)
+    expect(waterOptics.roughness > 0 and waterOptics.roughness <= 0.1).toBe(true)
     expect(waterOptics.waves.size).toBe(2)
     expect(Set(waterOptics.waves.map(wave => wave.normalTexture)).size).toBe(2)
     expect(cross.castsShadows).toBe(false)
@@ -256,7 +265,11 @@ test "precipitation feedback follows material metadata through catalog projectio
     expect(cross.precipitationSurface).toBe(ClientPrecipitationSurface.permeable)
     const waterKey = water.key
     const crossKey = cross.key
-    expect(catalog.materials.filter(material => material.key != waterKey and material.key != crossKey).every(material => material.precipitationSurface == ClientPrecipitationSurface.solid)).toBe(true)
+    const vine = catalog.materials.find(material => material.key == "openvoxel:material/vine")
+    assert vine != null else "Expected the authored vine material"
+    expect(vine.precipitationSurface).toBe(ClientPrecipitationSurface.permeable)
+    const vineKey = vine.key
+    expect(catalog.materials.filter(material => material.key != waterKey and material.key != crossKey and material.key != vineKey).every(material => material.precipitationSurface == ClientPrecipitationSurface.solid)).toBe(true)
     const custom = ClientMaterialResource.from(water, {key: "example:material/custom"})
     expect(custom.precipitationSurface).toBe(ClientPrecipitationSurface.water)
     const frozen = ClientMaterialResource.from(water, {precipitationSurface: ClientPrecipitationSurface.solid})
@@ -274,6 +287,7 @@ test "material parsing rejects unrecognized precipitation surface values":
         doubleSided: material.doubleSided,
         castsShadows: material.castsShadows,
         environmentIntensity: material.environmentIntensity,
+        specularWeight: material.specularWeight,
         clearCoat: material.clearCoat,
         clearCoatRoughness: material.clearCoatRoughness,
         unlit: material.unlit,
@@ -410,7 +424,7 @@ def bankRolesForPack() -> Map<string, ClientTextureBankRole>:
     return roles
 
 test "render catalog rejects cutout textures filtered for another material threshold":
-    const texture = builtinClientResourcePack.textures.find(candidate => candidate.alphaCutoff == 0.45)
+    const texture = builtinClientResourcePack.textures.find(candidate => candidate.alphaCutoff == 0.45 and candidate.key.startsWith("openvoxel:"))
     assert texture != null else "Expected a thresholded cutout texture"
     const textureKey = texture.key
     const changed = ClientTextureResource.from(texture, {alphaCutoff: 0.35})
@@ -438,3 +452,70 @@ test "resource pack validation rejects texture layouts outside the memory envelo
         })),
     })
     expect(() => validateClientResourcePack(aggregate)).toThrow()
+
+test "installed ecosystem selections resolve every custom state and reject changed pack builds":
+    for owners in [defaultContentPackOwners, ["terrain", "geology"], ["terrain"]]:
+        const selected = builtinContentCatalog.select(owners)
+        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, selected.blockContributions)
+        const packed = packBlockCatalog(blocks.source)
+        const content = WorldContentResponse.from(contentResponse(), {
+            content: selected.identity,
+            blocks: packed.blocks,
+            componentProfiles: packed.componentProfiles,
+            states: packed.states,
+            resources: collectBlockRenderResources(blocks.registry.states()),
+        })
+        const catalog = createClientRenderCatalog(content, builtinClientResourcePack)
+        expect(catalog.states.size).toBe(packed.states.size)
+        for state in packed.states:
+            if state.blockKey.startsWith("openvoxel:"): continue
+            const resolved = catalog.requireState(state.runtimeId)
+            expect(resolved.model != null and resolved.textures != null).toBe(true)
+        const tampered = WorldContentResponse.from(content, {content: {contentHash: content.content.contentHash, packs: content.content.packs.map(pack => ({owner: pack.owner, contentHash: "f".repeat(64)}))}})
+        expect(() => createClientRenderCatalog(tampered, builtinClientResourcePack)).toThrow()
+
+test "sunflower stems meet at full height across a chunk seam and carry a complete flower":
+    const selected = builtinContentCatalog.select(["terrain", "botanical"])
+    const blocks = createWorldBlockRegistry(baseBlockCatalogSource, selected.blockContributions)
+    const packed = packBlockCatalog(blocks.source)
+    const content = WorldContentResponse.from(contentResponse(), {
+        content: selected.identity,
+        blocks: packed.blocks,
+        componentProfiles: packed.componentProfiles,
+        states: packed.states,
+        resources: collectBlockRenderResources(blocks.registry.states()),
+    })
+    const catalog = createClientRenderCatalog(content, builtinClientResourcePack)
+    const lower = catalog.requireState(packed.states.find(state => state.blockKey == "botanical:sunflower")!.runtimeId)
+    const upper = catalog.requireState(packed.states.find(state => state.blockKey == "botanical:sunflower_head")!.runtimeId)
+    expect(lower.geometry != null and upper.geometry != null).toBe(true)
+    expect(upper.textures!.side.key).toBe("botanical:texture/block/sunflower_top")
+    expect(upper.attachments.size).toBe(1)
+    const flower = upper.attachments[0]
+    expect(flower.geometry != null).toBe(true)
+    expect(flower.textures.top.key).toBe("botanical:texture/block/sunflower_front")
+    expect(flower.textures.side.key).toBe("botanical:texture/block/sunflower_back")
+    // Each piece uses the authored model pipeline, which preserves shared joins.
+    expect(lower.materialKey).toBe(upper.materialKey)
+    expect(flower.materialKey).toBe(upper.materialKey!)
+    expect(lower.materialKey).toBe("openvoxel:material/model")
+    const lowerVolume = uint32Buffer(18 * 18 * 18)
+    const upperVolume = uint32Buffer(18 * 18 * 18)
+    lowerVolume[5 + 18 * (5 + 18 * 16)] = lower.runtimeId
+    upperVolume[5 + 18 * (5 + 18)] = upper.runtimeId
+    const lowerMesh = meshChunk({x: -1, y: 4, z: -1}, 16, lowerVolume, catalog.states, 1)
+    const upperMesh = meshChunk({x: -1, y: 5, z: -1}, 16, upperVolume, catalog.states, 1)
+    const lowerJoin: List<string> = []
+    const upperJoin: List<string> = []
+    for batch in lowerMesh.batches:
+        for vertex in range(batch.positions.size / 3):
+            const offset = vertex * 3
+            if batch.positions[offset + 1] == 16:
+                lowerJoin.append(f"{batch.positions[offset]}:{batch.positions[offset + 2]}")
+    for batch in upperMesh.batches:
+        for vertex in range(batch.positions.size / 3):
+            const offset = vertex * 3
+            if batch.positions[offset + 1] == 0:
+                upperJoin.append(f"{batch.positions[offset]}:{batch.positions[offset + 2]}")
+    expect(lowerJoin.size > 0).toBe(true)
+    expect(lowerJoin.unique().sorted()).toEqual(upperJoin.unique().sorted())

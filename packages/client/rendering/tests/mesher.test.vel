@@ -1,10 +1,14 @@
 import {BlockRenderLayer} from "@openvoxel/blocks"
 import {expect} from "velar/test"
 import {Float32Buffer, UInt32Buffer, uint32Buffer} from "velar/binary"
+import {scanGeometry} from "../src/meshing/scan.vel"
+import {centerChunkStates, indexRenderStates} from "../src/meshing/catalog.vel"
+import {summarizeChunkPortals} from "../src/meshing/portals.vel"
 import {meshChunk} from "../src/mesher.vel"
 import {ClientBlockModelKind, ClientClimateTint, ClientRenderAttachment, ClientRenderState, ClientRenderTexture, ClientTextureVariant, ClientTintCoverage, chunkPortalFaceCount, chunkPortalFaceIndices} from "../src/contracts.vel"
 import {climateTintRole, topFace} from "../src/meshing/faces.vel"
 import {stableCoordinateOffset} from "../src/meshing/variation.vel"
+import {snapshotChunkNeighborhood} from "../src/snapshot.vel"
 
 const edge = 4
 const paddedEdge = edge + 2
@@ -94,6 +98,49 @@ const snowLayer = state(15, ClientBlockModelKind.snowLayer, false, BlockRenderLa
 const groundCover = state(18, ClientBlockModelKind.groundCover, false, BlockRenderLayer.cutout)
 const glass = state(17, ClientBlockModelKind.cube, false, BlockRenderLayer.translucent)
 
+test "unloaded streaming boundaries never publish temporary solid cut walls":
+    const position = {x: -1, y: 0, z: 1}
+    const center = {position, edge, blockAtIndex: _index => stone.runtimeId}
+    const unknown = snapshotChunkNeighborhood(center, _position => null, sealUnloaded=true)
+    const sealed = meshChunk(position, edge, unknown, [air, stone], 1)
+    expect(sealed.quadCount).toBe(0)
+    const complete = snapshotChunkNeighborhood(center, candidate => ({position: candidate, edge, blockAtIndex: _index => stone.runtimeId}), sealUnloaded=true)
+    expect(meshChunk(position, edge, complete, [air, stone], 2).quadCount).toBe(0)
+    const exposed = snapshotChunkNeighborhood(center, candidate => ({position: candidate, edge, blockAtIndex: _index => air.runtimeId}), sealUnloaded=true)
+    expect(meshChunk(position, edge, exposed, [air, stone], 3).quadCount).toBe(6 * edge * edge)
+
+test "water surface carries depth and flow while keeping mesh vertex alpha disabled":
+    const still = ClientRenderState.from(water, {runtimeId: 20, climateTint: ClientClimateTint.water})
+    const flowing = ClientRenderState.from(water, {runtimeId: 21, climateTint: ClientClimateTint.water, falling: true})
+    const volume = blocks()
+    volume[index(2, 2, 2)] = still.runtimeId
+    volume[index(3, 2, 2)] = flowing.runtimeId
+    volume[index(3, 1, 2)] = flowing.runtimeId
+    volume[index(3, 0, 2)] = flowing.runtimeId
+    const batch = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, still, flowing], 32).batches[0]
+    const topCodes: List<number> = []
+    for vertex in range(batch.tintRoles.size):
+        if batch.normals[vertex * 3 + 1] > 0.5: topCodes.append(batch.colors[vertex * 4 + 3])
+    expect(topCodes.some(code => code < 0.1)).toBe(true)
+    expect(topCodes.some(code => code > 0.6 and code < 1)).toBe(true)
+
+test "water depth continues through the loaded lower section":
+    const stream = ClientRenderState.from(water, {climateTint: ClientClimateTint.water})
+    const volume = blocks()
+    volume[index(2, 1, 2)] = stream.runtimeId
+    volume[index(3, 1, 2)] = stream.runtimeId
+    volume[index(2, 0, 2)] = stream.runtimeId
+    volume[index(3, 0, 2)] = stream.runtimeId
+    const halo = uint32Buffer(edge * edge * (edge - 1))
+    halo[1 + edge * 1] = stream.runtimeId
+    const batch = meshChunk({x: 0, y: 4, z: 0}, edge, volume, [air, stream], 33, halo).batches[0]
+    const topCodes: List<number> = []
+    for vertex in range(batch.tintRoles.size):
+        if batch.normals[vertex * 3 + 1] > 0.5: topCodes.append(batch.colors[vertex * 4 + 3])
+    expect(topCodes.every(code => code < 0.5)).toBe(true)
+    expect(topCodes.some(code => code > 0.1 and code < 0.13)).toBe(true)
+    expect(topCodes.some(code => code > 0.15 and code < 0.18)).toBe(true)
+
 test "fluid culling follows canonical identity across material changes":
     const volume = blocks()
     volume[index(2, 2, 2)] = water.runtimeId
@@ -106,6 +153,37 @@ test "fluid culling follows canonical identity across material changes":
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, water, styledWater], 1).quadCount).toBe(10)
     const otherFluid = ClientRenderState.from(water, {runtimeId: 19, canonicalFluidKey: "test:oil"})
     expect(meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, water, otherFluid], 2).quadCount).toBe(12)
+
+test "water and ice share one transparent face at their boundary":
+    const ice = ClientRenderState.from(glass, {
+        runtimeId: 31,
+        materialKey: "test:ice",
+        pipelineKey: f"translucent|{textureBankKey}|test:ice|-",
+    })
+    const side = blocks()
+    side[index(2, 2, 2)] = water.runtimeId
+    side[index(3, 2, 2)] = ice.runtimeId
+    const sideMesh = meshChunk({x: 0, y: 0, z: 0}, edge, side, [air, water, ice], 35)
+    expect(sideMesh.batches.find(batch => batch.materialKey == water.materialKey)?.quadCount).toBe(5)
+    expect(sideMesh.batches.find(batch => batch.materialKey == ice.materialKey)?.quadCount).toBe(6)
+
+    const seam = blocks()
+    seam[index(4, 2, 2)] = water.runtimeId
+    seam[index(5, 2, 2)] = ice.runtimeId
+    const seamMesh = meshChunk({x: 0, y: 0, z: 0}, edge, seam, [air, water, ice], 38)
+    expect(seamMesh.batches.find(batch => batch.materialKey == water.materialKey)?.quadCount).toBe(5)
+
+    const stacked = blocks()
+    stacked[index(2, 2, 2)] = water.runtimeId
+    stacked[index(2, 3, 2)] = ice.runtimeId
+    const stackedMesh = meshChunk({x: 0, y: 0, z: 0}, edge, stacked, [air, water, ice], 36)
+    expect(stackedMesh.batches.find(batch => batch.materialKey == water.materialKey)?.quadCount).toBe(5)
+    expect(stackedMesh.batches.find(batch => batch.materialKey == ice.materialKey)?.quadCount).toBe(6)
+
+    const lowWater = ClientRenderState.from(water, {runtimeId: 32, level: 4})
+    stacked[index(2, 2, 2)] = lowWater.runtimeId
+    const separatedMesh = meshChunk({x: 0, y: 0, z: 0}, edge, stacked, [air, lowWater, ice], 37)
+    expect(separatedMesh.batches.find(batch => batch.materialKey == water.materialKey)?.quadCount).toBe(6)
 
 test "attachment geometry shares a bounded Chunk budget across all pipelines":
     const size = 16
@@ -283,6 +361,28 @@ test "neighbor halo culls a Chunk seam while cross and fluid models keep their o
     expect(mesh.batches.size).toBe(2)
     expect(mesh.quadCount).toBe(8)
     expect(mesh.byteSize > 0).toBe(true)
+
+test "ground plants vary by world position while roots and bounds stay inside their supporting cell":
+    const volume = blocks()
+    volume[index(2, 2, 2)] = plant.runtimeId
+    const a = meshChunk({x: -4, y: 0, z: 3}, edge, volume, [air, plant], 1).batches[0]
+    const b = meshChunk({x: -4, y: 0, z: 3}, edge, volume, [air, plant], 2).batches[0]
+    const c = meshChunk({x: -3, y: 0, z: 3}, edge, volume, [air, plant], 3).batches[0]
+    expect(a.quadCount).toBe(2)
+    let changed = false
+    let roots = 0
+    for vertex in range(8):
+        const offset = vertex * 3
+        expect(a.positions[offset] >= 1 and a.positions[offset] <= 2).toBe(true)
+        expect(a.positions[offset + 2] >= 1 and a.positions[offset + 2] <= 2).toBe(true)
+        const height = a.positions[offset + 1]
+        expect(height == 1 or (height >= 1.8 and height <= 2)).toBe(true)
+        if height == 1: roots += 1
+        for axis in range(3):
+            expect(a.positions[offset + axis]).toBe(b.positions[offset + axis])
+            if a.positions[offset + axis] != c.positions[offset + axis]: changed = true
+    expect(roots).toBe(4)
+    expect(changed).toBe(true)
 
 test "submerged attachments preserve water volume and batch cutout geometry separately":
     const grass = attachment(16, ClientBlockModelKind.submergedCross)
@@ -499,3 +599,46 @@ test "weighted texture variants are deterministic and distributed by world posit
         expect(first.batches[0].uvs[offset + 5]).toBe(1)
         expect(first.batches[0].uvs[offset + 6]).toBe(0)
         expect(first.batches[0].uvs[offset + 7]).toBe(1)
+
+test "terrain corner occlusion responds to solid neighbours and keeps plants and water clear":
+    for neighbour in [stone, plant, water]:
+        const volume = blocks()
+        volume[index(2, 2, 2)] = stone.runtimeId
+        volume[index(1, 3, 2)] = neighbour.runtimeId
+        volume[index(2, 3, 1)] = neighbour.runtimeId
+        const mesh = meshChunk({x: 0, y: 0, z: 0}, edge, volume, [air, stone, plant, water], 50)
+        const batch = mesh.batches.filter(candidate => candidate.layer == BlockRenderLayer.opaque)[0]
+        let dark = 1
+        let bright = 0
+        for vertex in range(batch.tintRoles.size):
+            const offset = vertex * 3
+            if batch.normals[offset + 1] != 1 or batch.positions[offset + 1] != 2: continue
+            dark = Math.min(dark, batch.colors[vertex * 4])
+            bright = Math.max(bright, batch.colors[vertex * 4])
+        expect(bright).toBe(1)
+        if neighbour.occludes: expect(dark > 0.63 and dark < 0.65).toBe(true)
+        else: expect(dark).toBe(1)
+
+test "compact geometry scan matches portal topology through mixed and disconnected cells":
+    const states = [state(0, null, false), state(1, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque), state(2, ClientBlockModelKind.cross, false, BlockRenderLayer.cutout)]
+    const indexed = indexRenderStates(states)
+    for seed in range(32):
+        const blocks = uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
+        for index in range(blocks.size):
+            const value = (index * 37 + seed * 47 + (index / 7).floor() * 13) % 11
+            blocks[index] = value < seed % 9 ? 1 : value == 10 ? 2 : 0
+        const scan = scanGeometry(edge, blocks, indexed)
+        const center = centerChunkStates(edge, blocks, indexed)
+        expect(scan.portalSummary).toEqual(summarizeChunkPortals(edge, center))
+        expect(scan.visibleBlocks).toBe(center.filter(item => item.model != null).size)
+
+test "compact scan discards enclosed cubes while preserving non-box content":
+    const indexed = indexRenderStates([state(0, null, false), state(1, ClientBlockModelKind.cube, true, BlockRenderLayer.opaque), state(2, ClientBlockModelKind.cross, false, BlockRenderLayer.cutout)])
+    const blocks = uint32Buffer(paddedEdge * paddedEdge * paddedEdge)
+    for index in range(blocks.size): blocks[index] = 1
+    const solid = scanGeometry(edge, blocks, indexed)
+    expect(solid.indices.size).toBe(0)
+    expect(solid.visibleBlocks).toBe(edge * edge * edge)
+    expect(solid.portalSummary.fullyOccluding).toBe(true)
+    blocks[1 + paddedEdge * (1 + paddedEdge)] = 2
+    expect(scanGeometry(edge, blocks, indexed).indices.size > 0).toBe(true)

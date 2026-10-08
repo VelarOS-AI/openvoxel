@@ -1,0 +1,121 @@
+import {random} from "velar/random"
+import {BasinConfig, HydrologyConfig} from "../definition/catalog.vel"
+import {WaterBodyKind} from "../terrain-sample.vel"
+import {evictOldest} from "./lru-cache.vel"
+
+export type BasinGround:
+    height: number
+    riverStrength: number
+    humidity: number
+    wetland: bool?
+
+export type BasinSample:
+    kind: WaterBodyKind
+    floorY: number
+    waterLevel: number
+    weight: number
+
+export type WaterBodyPlanner:
+    sample: (x: number, z: number) -> BasinSample?
+    cachedRegionCount: () -> number
+
+type Basin:
+    kind: WaterBodyKind
+    x: number
+    z: number
+    radiusX: number
+    radiusZ: number
+    angle: number
+    phase: number
+    depth: number
+    waterLevel: number
+
+def smooth(value: number) -> number:
+    const t = Math.clamp(value, 0, 1)
+    return t * t * (3 - 2 * t)
+
+/// 候选属于世界网格；相邻 Chunk、负坐标与不同查询顺序共享同一盆地。
+/// 两种尺度分别生成开阔湖泊和林间水坑，缓存只保留 256 个候选区域。
+export def createWaterBodyPlanner(seed: string, config: HydrologyConfig, seaLevel: number, groundAt: (x: number, z: number) -> BasinGround) -> WaterBodyPlanner:
+    const cache: Map<string, Basin?> = Map()
+    // Recipes are fixed for this world. Reuse their collection for every density
+    // column instead of allocating and classifying a new list per terrain sample.
+    const recipes = [config.lakes, config.ponds]
+
+    def candidate(kind: WaterBodyKind, recipe: BasinConfig, cx: number, cz: number) -> Basin?:
+        const key = f"{kind}:{cx}:{cz}"
+        if cache.has(key): return cache.get(key) ?? null
+        const stream = random(f"{seed}:basin:{key}")
+        let result: Basin? = null
+        const chance = stream.number()
+        const x = (cx + 0.25 + stream.number() * 0.5) * recipe.cellSize
+        const z = (cz + 0.25 + stream.number() * 0.5) * recipe.cellSize
+        const center = groundAt(x, z)
+        const marshPool = kind == WaterBodyKind.pond and center.wetland == true
+        if chance < (marshPool ? Math.max(0.8, recipe.chance) : recipe.chance):
+            const radiusX = recipe.minimumRadius + stream.number() * (recipe.maximumRadius - recipe.minimumRadius)
+            const radiusZ = radiusX * (0.72 + stream.number() * 0.28)
+            const angle = stream.number() * Math.tau
+            let lowest = center.height
+            let highest = center.height
+            let river = center.riverStrength
+            for index in range(12):
+                const theta = index / 12 * Math.tau
+                const dx = Math.cos(theta) * radiusX * 1.3
+                const dz = Math.sin(theta) * radiusZ * 1.3
+                const rim = groundAt(x + dx * Math.cos(angle) - dz * Math.sin(angle), z + dx * Math.sin(angle) + dz * Math.cos(angle))
+                lowest = Math.min(lowest, rim.height)
+                highest = Math.max(highest, rim.height)
+                river = Math.max(river, rim.riverStrength)
+            if lowest > seaLevel + (marshPool ? 1 : 4) and highest - lowest <= recipe.maximumRelief and river < 0.35 and center.humidity >= 4:
+                result = {
+                    kind, x, z, radiusX, radiusZ, angle,
+                    phase: stream.number() * Math.tau,
+                    depth: recipe.minimumDepth + stream.number() * (recipe.maximumDepth - recipe.minimumDepth),
+                    waterLevel: Math.min(center.height - 0.5, lowest + 0.5).floor(),
+                }
+        // A pond keeps its entire shore outside any lake basin, so independent
+        // water levels never cut across one another at the shoreline.
+        if result != null and kind == WaterBodyKind.pond:
+            const pond = result
+            const reach = (pond.radiusX + config.lakes.maximumRadius) * 1.32
+            const size = config.lakes.cellSize
+            for lakeX in range(((pond.x - reach) / size).floor(), ((pond.x + reach) / size).floor() + 1):
+                for lakeZ in range(((pond.z - reach) / size).floor(), ((pond.z + reach) / size).floor() + 1):
+                    const lake = candidate(WaterBodyKind.lake, config.lakes, lakeX, lakeZ)
+                    if lake != null:
+                        const distance = Math.sqrt((pond.x - lake.x) ** 2 + (pond.z - lake.z) ** 2)
+                        if distance < (pond.radiusX + lake.radiusX) * 1.32: result = null
+        if cache.size >= 256: evictOldest(cache)
+        cache.set(key, result)
+        return result
+
+    def sample(x: number, z: number) -> BasinSample?:
+        // 湖泊优先，避免小水坑在同一大湖内部形成第二个悬空水面。
+        for recipe, index in recipes:
+            const kind = index == 0 ? WaterBodyKind.lake : WaterBodyKind.pond
+            const cx = (x / recipe.cellSize).floor()
+            const cz = (z / recipe.cellSize).floor()
+            // 半径被配置约束在网格 1/5 内；候选中心离网格边界至少 1/4 格。
+            const basin = candidate(kind, recipe, cx, cz)
+            if basin == null: continue
+            const dx = x - basin.x
+            const dz = z - basin.z
+            const u = (dx * Math.cos(basin.angle) + dz * Math.sin(basin.angle)) / basin.radiusX
+            const v = (-dx * Math.sin(basin.angle) + dz * Math.cos(basin.angle)) / basin.radiusZ
+            const theta = Math.atan2(v, u)
+            const shore = 1 + 0.06 * Math.sin(theta * 3 + basin.phase) + 0.04 * Math.sin(theta * 5 - basin.phase)
+            const radius = Math.sqrt(u * u + v * v) / shore
+            if radius >= 1.2: continue
+            const bowl = smooth(radius)
+            return {
+                kind,
+                floorY: basin.waterLevel - basin.depth - 0.5 + (basin.depth + 2.5) * bowl,
+                waterLevel: basin.waterLevel,
+                weight: 1 - smooth((radius - 1) / 0.2),
+            }
+        return null
+
+    def cachedRegionCount() -> number: return cache.size
+
+    return {sample, cachedRegionCount}

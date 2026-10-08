@@ -66,10 +66,12 @@ test "stream owner finishes one bounded batch before converging on a superseding
         streamer.request(view(6, 1))
         releaseFirst = true
         while loads < 2 or streamer.pending() > 0: await Promise.sleep(0ms)
+        // 旧窗口在有界缓冲之后才回收；稳定目标最终仍须精确收敛。
+        await Promise.sleep(1s)
         const desired = streamedChunkPositions(view(6, 1), 0, 0, resident.values())
         expect(Set(resident.keys())).toEqual(Set(desired.map(position => chunkKey(position))))
         expect(maximumActive).toBe(1)
-        expect(peak <= desired.size + 4).toBe(true)
+        expect(peak <= desired.size + 64 + 4).toBe(true)
         expect(failures).toEqual([])
     finally:
         releaseFirst = true
@@ -95,6 +97,42 @@ test "a failed first stream load preserves the old residency and clears pending 
         expect(streamer.pending()).toBe(0)
         expect(failures).toEqual(["terrain unavailable"])
     finally: await streamer.close()
+
+test "turning back during a load keeps nearby chunks from the superseded eviction plan":
+    const old: ChunkPosition = {x: 0, y: 0, z: 0}
+    const resident: Map<string, readonly ChunkPosition> = Map()
+    resident.set(chunkKey(old), old)
+    const removed: List<string> = []
+    const failures: List<string> = []
+    let loads = 0
+    let releaseFirst = false
+    async def load(positions: readonly List<readonly ChunkPosition>, _cancellation: Cancellation):
+        loads += 1
+        if loads == 1:
+            while not releaseFirst: await Promise.sleep(0ms)
+        for position in positions: resident.set(chunkKey(position), position)
+    def unload(positions: readonly List<readonly ChunkPosition>):
+        for position in positions:
+            removed.append(chunkKey(position))
+            resident.remove(chunkKey(position))
+    const streamer = chunkStreamer(
+        {trackedPositions: () => resident.values(), load, unload},
+        0, 0, () => true, () => null, message => failures.append(message),
+    )
+    try:
+        streamer.request(view(10))
+        while loads == 0: await Promise.sleep(0ms)
+        streamer.request(view(0))
+        releaseFirst = true
+        while loads < 2 or streamer.pending() > 0: await Promise.sleep(0ms)
+        await Promise.sleep(1s)
+        expect(chunkKey(old) in removed).toBe(false)
+        expect(resident.has(chunkKey(old))).toBe(true)
+        expect(Set(resident.keys())).toEqual(Set(streamedChunkPositions(view(0), 0, 0, resident.values()).map(position => chunkKey(position))))
+        expect(failures).toEqual([])
+    finally:
+        releaseFirst = true
+        await streamer.close()
 
 test "stream close seals future requests but still retires a completed paired batch":
     const old: ChunkPosition = {x: 0, y: 0, z: 0}

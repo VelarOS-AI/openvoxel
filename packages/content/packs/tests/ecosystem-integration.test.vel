@@ -1,0 +1,58 @@
+import {createContentCatalog} from "../src/content-pack.vel"
+import {expect} from "velar/test"
+import {baseBlockCatalogSource, createWorldBlockRegistry} from "@openvoxel/blocks"
+import {createWorldGeneratorRegistry, defaultGenerator, instantiateWorldGenerator} from "@openvoxel/world-generation"
+import {builtinContentCatalog, builtinContentPacks, defaultContentPackOwners} from "../src/builtin-packs.vel"
+import {toggleContentPack} from "../src/pack-descriptors.vel"
+
+test "every installed pack composes into the same deterministic world regardless of selection order":
+    const selected = builtinContentCatalog.defaultContent()
+    const reversed = builtinContentCatalog.select(defaultContentPackOwners.reversed())
+    expect(selected.identity).toEqual(reversed.identity)
+    expect(selected.identity.packs.size).toBe(12)
+    const blocks = createWorldBlockRegistry(baseBlockCatalogSource, selected.blockContributions)
+    const generators = createWorldGeneratorRegistry(contributions=selected.generatorContributions, packs=selected.ecosystemPacks)
+    const profile = generators.definition(defaultGenerator)
+    expect(profile.ecosystem!.trees.size).toBe(11)
+    expect(profile.ecosystem!.biomes.size).toBe(17)
+    expect(profile.ecosystem!.minerals.size).toBe(10)
+    // Constructing a generator eagerly validates all plant states, fruit and template materials.
+    const generator = instantiateWorldGenerator(defaultGenerator, "pack-integration", 16, blocks, generators)
+    const sample = generator.sample({x: -128, z: 128})
+    expect(sample.surfaceY >= 5 and sample.surfaceY <= 255).toBe(true)
+    expect(builtinContentCatalog.resolve(selected.identity).identity).toEqual(selected.identity)
+
+test "each expansion is independently selectable with its declared dependency closure":
+    for owner in ["orchard", "berries", "gourds", "botanical", "wetlands", "geology"]:
+        const selected = builtinContentCatalog.select(toggleContentPack(["terrain"], owner))
+        const blocks = createWorldBlockRegistry(baseBlockCatalogSource, selected.blockContributions)
+        const generators = createWorldGeneratorRegistry(packs=selected.ecosystemPacks)
+        const generator = instantiateWorldGenerator(defaultGenerator, owner, 16, blocks, generators)
+        expect(generator.generate({x: 0, y: 4, z: 0}).indices.size).toBe(4096)
+        for state in blocks.source.states:
+            if state.blockKey.startsWith("openvoxel:"): continue
+            expect(selected.identity.packs.some(pack => state.blockKey.startsWith(f"{pack.owner}:"))).toBe(true)
+
+test "disabling original woodland preserves independent orchard and terrain alone has no ecology contributions":
+    const selected = toggleContentPack(defaultContentPackOwners, "woodland")
+    expect(selected.some(owner => owner == "woodland")).toBe(false)
+    expect(selected.some(owner => owner == "orchard")).toBe(true)
+    const trees = createWorldGeneratorRegistry(packs=builtinContentCatalog.select(selected).ecosystemPacks).definition(defaultGenerator).ecosystem!.trees
+    expect(trees.size).toBe(5)
+    const terrain = builtinContentCatalog.select(["terrain"])
+    const profile = createWorldGeneratorRegistry(packs=terrain.ecosystemPacks).definition(defaultGenerator)
+    expect(profile.ecosystem!.trees.size).toBe(0)
+    expect(profile.ecosystem!.plants.size).toBe(0)
+    expect(profile.ecosystem!.minerals.size).toBe(0)
+    expect(toggleContentPack(["terrain"], "terrain")).toEqual(["terrain"])
+    expect(builtinContentPacks.every(pack => pack.ecosystem != null)).toBe(true)
+
+test "installed content owns independent copies of submitted and returned pack data":
+    const original = builtinContentCatalog.requirePack("woodland")
+    const installed = createContentCatalog([builtinContentCatalog.requirePack("terrain"), original], ["terrain", "woodland"])
+    original.ecosystem!.units.trees = []
+    const defaults = builtinContentCatalog.defaultContent()
+    defaults.ecosystemPacks.find(pack => pack.owner == "woodland")!.units.trees = []
+    expect(installed.requirePack("woodland").ecosystem!.units.trees.size).toBe(6)
+    expect(builtinContentCatalog.requirePack("woodland").ecosystem!.units.trees.size).toBe(6)
+    expect(builtinContentCatalog.defaultContent().ecosystemPacks.find(pack => pack.owner == "woodland")!.units.trees.size).toBe(6)

@@ -2,6 +2,7 @@ node_modules/
 dist/
 generated/
 .velar/
+.wrangler/
 .DS_Store
 *.sqlite
 *.sqlite-shm

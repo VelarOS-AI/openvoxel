@@ -45,7 +45,10 @@ export def featurePlansOverlap(left: readonly CompiledFeaturePlan, right: readon
     if left.bounds.maximumY < right.bounds.minimumY or left.bounds.minimumY > right.bounds.maximumY: return false
     if left.bounds.maximumZ < right.bounds.minimumZ or left.bounds.minimumZ > right.bounds.maximumZ: return false
     const occupied = Set(left.writes.map(write => f"{left.origin.x + write.x}:{left.origin.y + write.y}:{left.origin.z + write.z}"))
-    return right.writes.some(write => occupied.has(f"{right.origin.x + write.x}:{right.origin.y + write.y}:{right.origin.z + write.z}"))
+    for write in right.writes:
+        if occupied.has(f"{right.origin.x + write.x}:{right.origin.y + write.y}:{right.origin.z + write.z}"):
+            return true
+    return false
 
 def worldIndex(chunk: readonly Chunk, worldX: number, worldY: number, worldZ: number) -> number:
     const localX = worldX - chunkMinimumX(chunk)

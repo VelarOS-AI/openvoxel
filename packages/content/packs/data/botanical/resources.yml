@@ -1,0 +1,45 @@
+category: vegetation
+textures:
+  - key: botanical:texture/block/allium
+    surface: plant
+    file: textures/vegetation/botanical/allium.png
+  - key: botanical:texture/block/lily_of_the_valley
+    surface: plant
+    file: textures/vegetation/botanical/lily_of_the_valley.png
+  - key: botanical:texture/block/lavender
+    surface: plant
+    file: textures/vegetation/botanical/lavender.png
+  - key: botanical:texture/block/clover
+    surface: plant
+    file: textures/vegetation/botanical/clover.png
+  - key: botanical:texture/block/sunflower_front
+    surface: plant
+    file: textures/vegetation/botanical/sunflower_front.png
+  - key: botanical:texture/block/sunflower_bottom
+    surface: plant
+    file: textures/vegetation/botanical/sunflower_bottom.png
+  - key: botanical:texture/block/sunflower_top
+    surface: plant
+    file: textures/vegetation/botanical/sunflower_top.png
+  - key: botanical:texture/block/sunflower_back
+    surface: plant
+    file: textures/vegetation/botanical/sunflower_back.png
+  - key: botanical:texture/block/bamboo_stalk
+    surface: plant
+    file: textures/vegetation/botanical/bamboo_stalk.png
+  - key: botanical:texture/block/bamboo_large_leaves
+    surface: foliage
+    file: textures/vegetation/botanical/bamboo_large_leaves.png
+models:
+  - key: botanical:model/block/sunflower_lower
+    kind: cross
+    geometry: models/vegetation/sunflower-lower.json
+  - key: botanical:model/block/sunflower_upper
+    kind: cross
+    geometry: models/vegetation/sunflower-upper.json
+  - key: botanical:model/block/sunflower_flower
+    kind: cross
+    geometry: models/vegetation/sunflower-flower.json
+  - key: botanical:model/block/bamboo
+    kind: cube
+    geometry: models/vegetation/bamboo.minecraft.json

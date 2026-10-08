@@ -1,0 +1,14 @@
+category: terrain
+textures:
+  - key: geology:texture/block/gold_ore
+    surface: geology:mineral
+    file: textures/terrain/geology/gold_ore.png
+  - key: geology:texture/block/emerald_ore
+    surface: geology:mineral
+    file: textures/terrain/geology/emerald_ore.png
+  - key: geology:texture/block/amethyst_block
+    surface: geology:mineral
+    file: textures/terrain/geology/amethyst_block.png
+models: []
+surfaceProfiles:
+  - {key: "geology:mineral", normalFallback: albedo-height, materialFallback: uniform, normalStrength: 0.18, occlusionStrength: 0.3, roughness: 0.82, roughnessVariation: 0, metallic: 0, metallicVariation: 0, emissive: 0, emissiveThreshold: 1}

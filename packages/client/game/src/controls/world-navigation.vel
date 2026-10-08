@@ -9,6 +9,10 @@ export enum WorldMovementMode:
     creativeFlight = "creative-flight"
     survivalWalk = "survival-walk"
 
+export enum WorldCreativeAction:
+    breakBlock = "break"
+    placeBlock = "place"
+
 export readonly type WorldNavigationPosition:
     x: number
     y: number
@@ -66,6 +70,10 @@ export readonly type WorldNavigationOptions:
     rotateView: (horizontalRadians: number, verticalRadians: number) -> null
     releaseView: () -> null
     viewChanged: (chunkX: number, chunkY: number, chunkZ: number, forwardX: number, forwardY: number, forwardZ: number) -> null
+    aimChanged: (origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeAction: (action: WorldCreativeAction, origin: WorldNavigationPosition, forward: WorldNavigationPosition) -> null
+    creativeSlot: (slot: number) -> null
+    walkSound: (position: WorldNavigationPosition, crouching: bool, landed: bool) -> null
 
 export type WorldNavigation:
     update: (deltaMilliseconds: number) -> null

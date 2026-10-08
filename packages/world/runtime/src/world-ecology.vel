@@ -4,6 +4,7 @@ import {WorldClimateDefinition, defaultWorldClimate, ChunkPosition, blockIndex, 
 import {ActiveWorldState} from "./active-world-state.vel"
 import {BlockOverride, StoredChunkDelta} from "./contracts.vel"
 import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
+import {snowDepthAt} from "./snow-accumulation.vel"
 import {Random, random} from "velar/random"
 
 export type WorldEcology:
@@ -113,6 +114,8 @@ export def worldEcology(
                 output.append(WorldChunkSnapshot.from(delta, {ecologyEpoch: epoch}))
                 continue
             const combined: Map<number, BlockOverride> = Map()
+            let snowDepth: number? = null
+            let snowCenterTemperature: number? = null
             for candidate in candidates[index]:
                 const x = position.x * edge + candidate.position.x
                 const y = position.y * edge + candidate.position.y
@@ -130,7 +133,18 @@ export def worldEcology(
                         const supportOverride = allOverrides.get(f"{x}:{y - 1}:{z}")
                         const supportPresent = supportOverride == null or supportOverride in shelterBlocks
                         const exposed = candidate.exposed and (topShelter.get(f"{x}:{z}") ?? -Math.infinity) < y and supportPresent
-                        runtimeId = exposed and climate.snowCover >= 0.2 ? candidate.coldBlockStateRuntimeId : candidate.warmBlockStateRuntimeId
+                        if exposed:
+                            if snowDepth == null:
+                                const center = {x: position.x * edge + edge / 2, y: position.y * edge + edge / 2, z: position.z * edge + edge / 2}
+                                snowDepth = snowDepthAt(seed, epoch, center, climateDefinition)
+                                snowCenterTemperature = worldClimateAt(seed, epoch * worldEcologyEpochMilliseconds, center, climateDefinition).temperatureCelsius
+                            assert snowDepth != null and snowCenterTemperature != null else "Snow sample was not initialized"
+                            const localDepth = snowDepth + (snowCenterTemperature - climate.temperatureCelsius) * 0.16
+                            let layers = Math.clamp(localDepth.floor(), 0, 8)
+                            if candidate.baselineBlockStateRuntimeId == candidate.coldBlockStateRuntimeId and climate.snowCover >= 0.2:
+                                layers = Math.max(1, layers)
+                            runtimeId = layers > 0 ? registry.withProperty(candidate.coldBlockStateRuntimeId, "layers", layers) : candidate.warmBlockStateRuntimeId
+                        else: runtimeId = candidate.warmBlockStateRuntimeId
                 if runtimeId != candidate.baselineBlockStateRuntimeId:
                     combined.set(blockIndex(candidate.position, edge), {position: candidate.position, blockStateRuntimeId: runtimeId})
             for entry in delta.overrides:

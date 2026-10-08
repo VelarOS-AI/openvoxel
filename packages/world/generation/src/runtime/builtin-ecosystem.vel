@@ -1,0 +1,5 @@
+import json ecosystemPackData from "@openvoxel/world-generation/ecosystem-packs-data"
+import {WorldGenerationPack} from "../definition/catalog.vel"
+
+type EcosystemPackList = List<WorldGenerationPack>
+export const builtinEcosystemPacks = EcosystemPackList.parse(ecosystemPackData)

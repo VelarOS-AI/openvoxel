@@ -1,7 +1,8 @@
+import {compileModWorldGeneratorContribution} from "@openvoxel/world-generation/compiler"
 import {BlockCatalogContribution, BlockCatalogManifest, BlockSourceFile, BlockTypeSource, compileModBlockCatalogContribution} from "@openvoxel/blocks"
 import {BuiltinIdentityDocument, IdentityResolution, mergeIdentityTrees, resolveIdentityReferences} from "@openvoxel/identities"
 import {identityTree} from "@openvoxel/identities"
-import {WorldGeneratorCatalogContribution, compileModWorldGeneratorContribution} from "@openvoxel/world-generation"
+import {WorldGenerationPack, parseWorldGenerationPack, validateWorldGenerationPack, WorldGeneratorCatalogContribution} from "@openvoxel/world-generation"
 import {parseYaml} from "@velarscript-labs/yaml"
 import {ContentPackArtifact, createContentPackArtifact} from "../src/content-pack.vel"
 
@@ -12,6 +13,7 @@ export type ContentPackManifest:
     owner: string
     blocks: bool
     worldGeneration: bool
+    ecosystem: bool?
 
 export type ContentPackSourceTexts:
     manifestText: string
@@ -21,6 +23,7 @@ export type ContentPackSourceTexts:
     generatorManifestText: string?
     generatorSourceTexts: List<string>
     paletteSourceTexts: List<string>
+    ecosystemText: string?
 
 def compileBlockContribution(
     owner: string,
@@ -50,7 +53,7 @@ export def compileModContentPack(
 ) -> ContentPackArtifact:
     const manifest = ContentPackManifest.parse(parseYaml(inputs.manifestText))
     assert manifest.formatVersion == 1 else "Unsupported content pack manifest version"
-    assert manifest.blocks or manifest.worldGeneration else f"Content pack {manifest.owner} must enable at least one content domain"
+    assert manifest.blocks or manifest.worldGeneration or manifest.ecosystem else f"Content pack {manifest.owner} must enable at least one content domain"
 
     let blocks: BlockCatalogContribution? = null
     if manifest.blocks:
@@ -73,4 +76,10 @@ export def compileModContentPack(
     else:
         assert inputs.generatorManifestText == null and inputs.generatorSourceTexts.size == 0 and inputs.paletteSourceTexts.size == 0 else f"Content pack {manifest.owner} disables world generation but supplied generator sources"
 
-    return createContentPackArtifact(manifest.owner, blocks, worldGeneration)
+    let ecosystem: WorldGenerationPack? = null
+    if manifest.ecosystem:
+        assert inputs.ecosystemText != null else "Ecosystem pack is missing ecosystem.yml"
+        ecosystem = parseWorldGenerationPack(parseYaml(inputs.ecosystemText))
+        validateWorldGenerationPack(ecosystem)
+    else: assert inputs.ecosystemText == null else "Pack disables ecosystem but supplies ecosystem.yml"
+    return createContentPackArtifact(manifest.owner, blocks, worldGeneration, ecosystem)

@@ -13,8 +13,9 @@ def fixture(calls: List<string>) -> WorldLibraryOperations:
     async def findWorld(id: string) -> SavedWorld:
         calls.append("find")
         return {id, name: id, seed: id, mode: WorldGameMode.creative, preset: WorldPreset.meadow, lastPlayed: "Now"}
+    async def deleteWorld(id: string): calls.append(f"delete:{id}")
     async def close(): calls.append("close")
-    return {createWorld, findWorld, close}
+    return {createWorld, findWorld, deleteWorld, close}
 
 test "world library is lazy shares one module load and closes once":
     const calls: List<string> = []
@@ -59,3 +60,12 @@ test "world library retries after a failed module load":
     await library.close()
     expect(attempts).toBe(2)
     expect(calls).toEqual(["find", "close"])
+
+test "world deletion loads the library lazily and respects its lifetime":
+    const calls: List<string> = []
+    async def load() -> WorldLibraryOperations: return fixture(calls)
+    const library = deferredWorldLibrary(load)
+    await library.deleteWorld("selected")
+    await library.close()
+    await expect(library.deleteWorld("later")).toReject()
+    expect(calls).toEqual(["delete:selected", "close"])

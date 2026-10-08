@@ -1,14 +1,15 @@
+import {random} from "velar/random"
 import {expect} from "velar/test"
 import {baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
-import {chunkBlock, emptyChunk} from "@openvoxel/world"
 import {TerrainSample} from "../../src/terrain-sample.vel"
+import {VegetationConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
 import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
 import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
-import {CompiledFeaturePlan} from "../../src/survival/feature-plan.vel"
-import {naturalEcologyFeatures} from "../../src/survival/natural-ecology.vel"
+import {CompiledFeaturePlan, featurePlansOverlap} from "../../src/survival/feature-plan.vel"
+import {deadwoodFeature, naturalEcologyFeatures} from "../../src/survival/natural-ecology.vel"
 import {ColumnPlanner, TerrainColumnPlan, columnPlanner, createGenerationFields, surfaceBlock} from "../../src/survival/terrain.vel"
-import {DecorationPlan, decorationPlanner, generateVegetation} from "../../src/survival/vegetation.vel"
+import {decorationPlanner} from "../../src/survival/vegetation.vel"
 
 def featureSignature(features: readonly List<readonly CompiledFeaturePlan>) -> string:
     return Json.stableStringify(features.map(feature => ({
@@ -18,6 +19,17 @@ def featureSignature(features: readonly List<readonly CompiledFeaturePlan>) -> s
         writes: feature.writes,
     })))
 
+/// Ownership tests use one explicit forest floor instead of relying on a changing
+/// continent to happen to contain a flat forest at historical coordinates.
+def fixedWoodland(profile: readonly WorldGeneratorDefinition, seed: string) -> ColumnPlanner:
+    const terrain = columnPlanner(createGenerationFields(seed, profile), 16)
+    const actual = terrain.columns(0, 0)
+    def sampleAt(x: number, z: number) -> readonly TerrainSample:
+        return TerrainSample.from(actual.samples[0], {position: {x, z}, surfaceY: 72, slope: 0, temperature: 10, humidity: 9, forestDensity: 1, biome: profile.biomes.forest, biomeFamily: profile.biomes.forest, terrainType: profile.terrainTypes.plain, geology: 0, deposit: 0, exposure: 0, roadDistance: null, waterBody: null, waterLevel: 64})
+    def columns(x: number, z: number) -> TerrainColumnPlan:
+        return TerrainColumnPlan.from(actual, {minimumX: x * 16, minimumZ: z * 16, sampleAt, surfaceYAt: (wx, wz) => 72, waterLevelAt: (wx, wz) => 64})
+    return ColumnPlanner.from(terrain, {columns})
+
 test "sparse ecology candidates obey climate water depth and substrate contracts":
     const profile = baseWorldGeneratorCatalog.generators[0]
     const registry = baseWorldBlockRegistry.registry
@@ -25,7 +37,6 @@ test "sparse ecology candidates obey climate water depth and substrate contracts
     const seed = "continental-ridges"
     const columns = columnPlanner(createGenerationFields(seed, profile), 16, 32)
     let deadwood = 0
-    let vines = 0
     let kelp = 0
     let seagrass = 0
     let seaUrchins = 0
@@ -40,29 +51,26 @@ test "sparse ecology candidates obey climate water depth and substrate contracts
                     deadwood += 1
                     expect(sample.surfaceY > profile.world.seaLevel).toBe(true)
                     expect(registry.hasTag(substrate, builtinIdentities.tags.treeSupport)).toBe(true)
-                else if feature.owner.startsWith("vine-cliff:"):
-                    vines += 1
-                    expect(sample.humidity >= 10).toBe(true)
+                else if feature.owner.startsWith("vine-cliff:"): expect(sample.humidity >= 10).toBe(true)
                 else:
                     const waterTop = columns.columns((feature.origin.x / 16).floor(), (feature.origin.z / 16).floor()).waterLevelAt(feature.origin.x, feature.origin.z).floor()
                     expect(waterTop - sample.surfaceY >= 2).toBe(true)
-                    if feature.owner.startsWith("kelp:"):
+                    if feature.owner.startsWith("aquatic:kelp:"):
                         kelp += 1
                         expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast).toBe(true)
                         expect(registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)).toBe(true)
-                    else if feature.owner.startsWith("seagrass:"):
+                    else if feature.owner.startsWith("aquatic:seagrass:"):
                         seagrass += 1
-                        expect(sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast or sample.biome == profile.biomes.river).toBe(true)
+                        expect(sample.waterBody != null or sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast or sample.biome == profile.biomes.river).toBe(true)
                         expect(registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)).toBe(true)
-                    else if feature.owner.startsWith("sea-urchin:"):
+                    else if feature.owner.startsWith("aquatic:urchin:"):
                         seaUrchins += 1
                         expect(registry.hasTag(substrate, builtinIdentities.tags.bottomDwellerSupport)).toBe(true)
-                    else if feature.owner.startsWith("starfish:"):
+                    else if feature.owner.startsWith("aquatic:starfish:"):
                         starfish += 1
                         expect(registry.hasTag(substrate, builtinIdentities.tags.bottomDwellerSupport)).toBe(true)
 
     assert deadwood > 0 else "Expected deterministic deadwood candidates"
-    assert vines > 0 else "Expected deterministic cliff vine candidates"
     assert kelp > 0 and seagrass > 0 else "Expected both tall and short aquatic plants"
     assert seaUrchins > 0 and starfish > 0 else "Expected both salt-water bottom dwellers"
 
@@ -92,13 +100,13 @@ test "every admitted fallen log has one decision across all intersecting Chunks"
     const registry = baseWorldBlockRegistry.registry
     const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
     const seed = "deadwood-boundaries"
-    const columns = columnPlanner(createGenerationFields(seed, profile), 16, 32)
+    const columns = fixedWoodland(profile, seed)
     const planner = decorationPlanner(profile, seed, blocks, columns, registry)
     const inspected: Set<string> = Set()
     let crossing = 0
 
-    for chunkX in range(-20, 21):
-        for chunkZ in range(-20, 21):
+    for chunkX in range(-6, 7):
+        for chunkZ in range(-6, 7):
             const features = planner.decorations(chunkX, chunkZ).features
             for feature in features:
                 if not feature.owner.startsWith("deadwood:") or feature.writes.size < 2 or feature.owner in inspected:
@@ -119,47 +127,33 @@ test "every admitted fallen log has one decision across all intersecting Chunks"
 
     expect(crossing > 0).toBe(true)
 
-test "deadwood overlap winner is resolved before the losing log crosses a Chunk seam":
-    const profile = baseWorldGeneratorCatalog.generators[0]
+test "overlapping fallen trees reject the complete losing owner across every touched Chunk":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const profile = WorldGeneratorDefinition.from(base, {vegetation: VegetationConfig.from(base.vegetation, {deadwoodCellSize: 8})})
     const registry = baseWorldBlockRegistry.registry
     const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
     const seed = "deadwood-seam-direct"
-    const terrain = columnPlanner(createGenerationFields(seed, profile), 16, 32)
-    // 这是重叠裁决回归，用固定支撑平面隔离大陆、河床和表土规则的变化。
-    def fixedColumn(x: number, z: number) -> TerrainColumnPlan:
-        const actual = terrain.columns(x, z)
-
-        def sampleAt(worldX: number, worldZ: number) -> readonly TerrainSample:
-            return TerrainSample.from(actual.sampleAt(worldX, worldZ), {
-                position: {x: worldX, z: worldZ},
-                surfaceY: 69, slope: 0, humidity: 12, forestDensity: 1,
-                biome: profile.biomes.forest, terrainType: profile.terrainTypes.plain,
-                geology: 0, deposit: 0, exposure: 0, stoneVein: 1,
-            })
-
-        return TerrainColumnPlan.from(actual, {sampleAt})
-
-    const columns = ColumnPlanner.from(terrain, {columns: fixedColumn})
-    const winner = "deadwood:-1663:-477"
-    const loser = "deadwood:-1662:-477"
-    const first = naturalEcologyFeatures(profile, seed, blocks, columns, registry, -1247, -358)
-    const second = naturalEcologyFeatures(profile, seed, blocks, columns, registry, -1247, -357)
-
-    expect(first.some(feature => feature.owner == winner)).toBe(true)
-    expect(first.some(feature => feature.owner == loser)).toBe(false)
-    expect(second.some(feature => feature.owner == loser)).toBe(false)
-
-    const western = emptyChunk({x: -1247, y: 4, z: -358}, 16, blocks.air)
-    const eastern = emptyChunk({x: -1247, y: 4, z: -357}, 16, blocks.air)
-    const westPlan: DecorationPlan = {chunkX: -1247, chunkZ: -358, features: first}
-    const eastPlan: DecorationPlan = {chunkX: -1247, chunkZ: -357, features: second}
-    generateVegetation(western, westPlan, blocks, registry)
-    generateVegetation(eastern, eastPlan, blocks, registry)
-    // 败者不能留下木结构；同一位置仍可由地表群落正常生长花草。
-    expect(registry.hasTag(chunkBlock(western, {x: 9, y: 6, z: 13}), builtinIdentities.tags.wood)).toBe(false)
-    expect(registry.requireStateByRuntimeId(chunkBlock(western, {x: 9, y: 6, z: 14})).blockKey).toBe(builtinIdentities.blocks.deadwood)
-    expect(registry.hasTag(chunkBlock(western, {x: 9, y: 6, z: 15}), builtinIdentities.tags.wood)).toBe(false)
-    expect(registry.hasTag(chunkBlock(eastern, {x: 9, y: 6, z: 0}), builtinIdentities.tags.wood)).toBe(false)
+    const columns = fixedWoodland(profile, seed)
+    const root = random(seed).fork("natural-ecology")
+    const candidates: List<CompiledFeaturePlan> = []
+    let stumps = 0
+    for x in range(-16, 17):
+        for z in range(-12, 13):
+            const feature = deadwoodFeature(profile, blocks, columns, registry, x, z, root.fork(f"deadwood:{x}:{z}"))
+            if feature == null: continue
+            candidates.append(feature)
+            if feature.writes.size <= 2: stumps += 1
+    expect(candidates.size > 50).toBe(true)
+    expect(stumps < candidates.size * 0.13).toBe(true)
+    let overlaps = 0
+    for loser, index in candidates:
+        if not candidates.slice(0, index).some(winner => featurePlansOverlap(winner, loser)): continue
+        overlaps += 1
+        for x in range((loser.bounds.minimumX / 16).floor(), (loser.bounds.maximumX / 16).floor() + 1):
+            for z in range((loser.bounds.minimumZ / 16).floor(), (loser.bounds.maximumZ / 16).floor() + 1):
+                const admitted = naturalEcologyFeatures(profile, seed, blocks, columns, registry, x, z)
+                expect(admitted.some(feature => feature.owner == loser.owner)).toBe(false)
+    expect(overlaps > 0).toBe(true)
 
 test "ground vegetation can select every new authored ecology family":
     const profile = baseWorldGeneratorCatalog.generators[0]
@@ -178,7 +172,7 @@ test "ground vegetation can select every new authored ecology family":
             for chunkX in range(centerX - 5, centerX + 6):
                 for chunkZ in range(centerZ - 5, centerZ + 6):
                     for feature in planner.decorations(chunkX, chunkZ).features:
-                        if not feature.owner.startsWith("plant:"): continue
+                        if not feature.sortKey.startsWith("2_ground:"): continue
                         const block = registry.requireStateByRuntimeId(feature.writes[0].runtimeId).blockKey
                         if not (block in seen): observed.append(block)
                         seen.add(block)
@@ -186,7 +180,7 @@ test "ground vegetation can select every new authored ecology family":
     for block in [
         builtinIdentities.blocks.yellowFlower,
         builtinIdentities.blocks.blueFlower,
-        builtinIdentities.blocks.wheat,
+        builtinIdentities.blocks.rye,
         builtinIdentities.blocks.pumpkinStem,
         builtinIdentities.blocks.rottenPumpkin,
         builtinIdentities.blocks.oakSapling,
@@ -197,3 +191,25 @@ test "ground vegetation can select every new authored ecology family":
         builtinIdentities.blocks.fallenLeaves,
     ]:
         assert block in seen else f"Expected generated ecology block {block}; observed {Json.stringify(observed.sorted())}"
+
+test "humid cliff faces generate attached vines independently of regional geography":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const woodland = fixedWoodland(profile, "cliff-vine-habitat")
+    def columnsAt(cx: number, cz: number) -> TerrainColumnPlan:
+        const actual = woodland.columns(cx, cz)
+        def sampleAt(x: number, z: number) -> readonly TerrainSample:
+            const raised = ((x % 32) + 32) % 32 >= 16
+            return TerrainSample.from(actual.sampleAt(x, z), {surfaceY: raised ? 80 : 72, humidity: 12})
+        return TerrainColumnPlan.from(actual, {sampleAt})
+    const columns = ColumnPlanner.from(woodland, {columns: columnsAt})
+    let vines = 0
+    for cx in range(-4, 5):
+        for cz in range(-4, 5):
+            for feature in naturalEcologyFeatures(profile, "cliff-vine-habitat", blocks, columns, registry, cx, cz):
+                if not feature.owner.startsWith("vine-cliff:"): continue
+                vines += 1
+                expect(feature.writes.size >= 1 and feature.writes.size <= 3).toBe(true)
+                expect(feature.origin.y).toBe(80)
+    expect(vines > 0).toBe(true)

@@ -1,0 +1,17 @@
+import {secondaryButtonLook} from "../styles/common.vel"
+import {backgroundImageLook} from "../styles/shell.vel"
+import {worldLoaderLook, worldLoaderShadeLook, worldLoaderContentLook, worldLoaderTitleLook, worldLoaderDetailLook, worldLoaderTrackLook, worldLoaderFlowLook} from "../styles/world-loading.vel"
+
+export component WorldLoadingOverlay(active: bool, cover: string, title: string, detail: string, cancel: () -> null, animateIn: bool = false):
+    return <section look={worldLoaderLook} hidden={not active} inert={not active} aria-hidden={str(not active)} aria-busy={str(active)} data-world-loading data-animate-in={str(animateIn)}>
+        <img look={backgroundImageLook} src={cover} alt="" aria-hidden={true} />
+        <div look={worldLoaderShadeLook}></div>
+        <div look={worldLoaderContentLook}>
+            <h2 look={worldLoaderTitleLook}>{title}</h2>
+            <p look={worldLoaderDetailLook} role="status" aria-live="polite">{detail}</p>
+            <div look={worldLoaderTrackLook} aria-hidden={true}>
+                <span look={worldLoaderFlowLook} data-loading-flow></span>
+            </div>
+            <button type="button" look={secondaryButtonLook} on:click={cancel} data-cancel-world-loading>返回世界列表</button>
+        </div>
+    </section>

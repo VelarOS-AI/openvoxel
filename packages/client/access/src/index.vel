@@ -8,3 +8,5 @@ export {onlineBackend} from "./online-backend.vel"
 export {indexedDbWorldStore} from "./indexeddb-world-store.vel"
 export {localBackend} from "./local-backend.vel"
 export {serveLocalBackendWorker} from "./local-worker.vel"
+
+export {deleteLocalWorld} from "./delete-local-world.vel"

@@ -1,0 +1,91 @@
+import {expect} from "velar/test"
+import {createGenerationFields, columnPlanner, terrainTargetSurfaceY} from "../../src/survival/terrain.vel"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {TerrainSample} from "../../src/terrain-sample.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {surfaceBlock} from "../../src/survival/surface-materials.vel"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {RegionConfig, WorldGeneratorDefinition} from "../../src/definition/catalog.vel"
+
+test "regional ownership is stable across negative coordinates query order and cache eviction":
+    const first = createGenerationFields("regional-ownership")
+    const second = createGenerationFields("regional-ownership")
+    const positions = [{x: -289, z: -1}, {x: 0, z: 0}, {x: 577, z: -812}]
+    const expected = positions.map(position => first.regions(position.x, position.z))
+    for x in range(-16, 17):
+        for z in range(-16, 17): second.regions(x * 288, z * 288)
+    for index in range(positions.size - 1, -1, -1):
+        const position = positions[index]
+        expect(second.regions(position.x, position.z)).toEqual(expected[index])
+    const other = createGenerationFields("regional-ownership-other")
+    expect(other.regions(-289, -1).center.x != expected[0].center.x).toBe(true)
+
+test "regional atlas has broad coherent habitats instead of per-column noise":
+    const fields = createGenerationFields("continental-ridges")
+    const habitats: Set<string> = Set()
+    let sameRegion = 0
+    let total = 0
+    for x in range(-2048, 2049, 128):
+        for z in range(-2048, 2049, 128):
+            const region = fields.regions(x, z)
+            habitats.add(region.biome)
+            if fields.regions(x + 16, z + 16).id == region.id: sameRegion += 1
+            total += 1
+            expect(region.forestCover >= 0 and region.forestCover <= 1).toBe(true)
+    expect(habitats.size >= 9).toBe(true)
+    expect(sameRegion / total > 0.8).toBe(true)
+
+test "ecotone relief and density remain continuous across region borders":
+    const fields = createGenerationFields("ecotone-continuity")
+    let crossings = 0
+    for x in range(-1536, 1536):
+        const a = fields.regions(x, -211)
+        const b = fields.regions(x + 1, -211)
+        expect((a.upland - b.upland).abs() < 1.8).toBe(true)
+        expect((a.forestCover - b.forestCover).abs() < 0.09).toBe(true)
+        if a.id != b.id: crossings += 1
+    expect(crossings >= 5).toBe(true)
+
+test "region blend is continuous when its cached neighborhood window changes":
+    const base = baseWorldGeneratorCatalog.generators[0]
+    const profile = WorldGeneratorDefinition.from(base, {regions: RegionConfig.from(base.regions, {cellSize: 128, warpAmplitude: 0, transitionWidth: 38.4})})
+    const fields = createGenerationFields("neighborhood-continuity", profile)
+    for cx in range(-16, 17):
+        for cz in range(-16, 17):
+            for fraction in [0, 0.5]:
+                const x = (cx + fraction) * 128
+                const z = cz * 128
+                for axis in [0, 1]:
+                    const a = fields.regions(x - (axis == 0 ? 0.001 : 0), z - (axis == 1 ? 0.001 : 0))
+                    const b = fields.regions(x + (axis == 0 ? 0.001 : 0), z + (axis == 1 ? 0.001 : 0))
+                    expect((a.upland - b.upland).abs() < 0.01).toBe(true)
+                    expect((a.forestCover - b.forestCover).abs() < 0.001).toBe(true)
+
+test "region metadata and density agree in adjacent chunk halos":
+    const fields = createGenerationFields("regional-seams")
+    const columns = columnPlanner(fields, 16)
+    const west = columns.columns(-1, -1)
+    const east = columns.columns(0, -1)
+    for z in range(-16, 0):
+        for x in [-1, 0]:
+            expect(west.sampleAt(x, z).region).toEqual(east.sampleAt(x, z).region)
+            expect(west.surfaceYAt(x, z)).toBe(east.surfaceYAt(x, z))
+
+test "forest floors wetland mud and badland strata use distinct materials":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const base: TerrainSample = {position: {x: 0, z: 0}, surfaceY: 80, slope: 0.1, continentalness: 0.3, erosion: 0.5, ridge: 0.2, riverStrength: 0, temperature: 8, humidity: 10, forestDensity: 0.8, terrainType: profile.terrainTypes.plain, biome: profile.biomes.taiga, deposit: 0}
+    expect(surfaceBlock(profile, blocks, base)).toBe(blocks.podzol)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {deposit: 0.5}))).toBe(blocks.moss)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {biome: profile.biomes.wetland, deposit: -0.4}))).toBe(blocks.mud)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {biome: profile.biomes.badlands}))).toBe(blocks.redSand)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {biome: profile.biomes.badlands, slope: 0.5}))).toBe(blocks.terracotta)
+
+test "regional uplift preserves ocean floors and varied inland relief":
+    const fields = createGenerationFields("regional-relief")
+    fields.continentalness = (x, z) => -0.8
+    for x in range(-1024, 1025, 256): expect(terrainTargetSurfaceY(fields, {x, z: -119}) < 46).toBe(true)
+    fields.continentalness = (x, z) => 0.5
+    fields.river = (x, z) => 1
+    fields.ridge = (x, z) => 0.5
+    expect(terrainTargetSurfaceY(fields, {x: 0, z: 0}) > 108).toBe(true)

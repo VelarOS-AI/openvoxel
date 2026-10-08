@@ -1,0 +1,10 @@
+import {WorldBlockItem} from "@openvoxel/game"
+import {blockIconLook} from "../styles/block-inventory.vel"
+
+export component BlockItemIcon(item: WorldBlockItem):
+    return <img
+        look={blockIconLook}
+        src={f"/generated/creative-blocks/{item.previewName}.png"}
+        alt={item.label}
+        draggable={false}
+    />

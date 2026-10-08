@@ -2,10 +2,11 @@ import {expect} from "velar/test"
 import {BlockBehaviorKind, BlockDefinition, BlockPropertyKind, BlockTypeSource, baseBlockCatalogSource, baseWorldBlockRegistry, compileModBlockCatalogContribution, createWorldBlockRegistry, defaultBlockStateRuntimeId} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {EcologyCandidate, EcologyCandidateKind, WorldGenerator} from "@openvoxel/world-generation"
-import {ChunkPosition, Coordinate2, emptyChunk, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds, worldYearMilliseconds} from "@openvoxel/world"
+import {ChunkPosition, Coordinate2, WorldPrecipitationKind, defaultWorldClimate, emptyChunk, worldClimateAt, worldEcologyEpoch, worldEcologyEpochMilliseconds, worldPrecipitationAt, worldWeatherWindowMilliseconds, worldYearMilliseconds} from "@openvoxel/world"
 import {activeWorldState} from "../src/active-world-state.vel"
 import {memoryWorldStore} from "../src/memory-world-store.vel"
 import {worldEcology} from "../src/world-ecology.vel"
+import {snowDepthAt} from "../src/snow-accumulation.vel"
 import {initialWorldMilliseconds} from "../src/world-creation.vel"
 import {WorldChunkSnapshot} from "../src/world-chunk-snapshot.vel"
 
@@ -26,12 +27,33 @@ const summer = worldYearMilliseconds * 0.25
 const winter = worldYearMilliseconds * 0.75
 const naturalGrowthOriginEpoch = worldEcologyEpoch(initialWorldMilliseconds)
 
+type SnowfallFixture:
+    seed: string
+    startEpoch: number
+
+def snowfallFixture() -> SnowfallFixture:
+    const firstWindow = (winter / worldWeatherWindowMilliseconds).floor()
+    const center = {x: 8, y: 72, z: 8}
+    for index in range(100):
+        const seed = f"snowfall-{index}"
+        for offset in range(24):
+            const window = firstWindow + offset
+            const midpoint = window * worldWeatherWindowMilliseconds + worldWeatherWindowMilliseconds / 2
+            const weather = worldPrecipitationAt(seed, midpoint, center)
+            if weather.kind != WorldPrecipitationKind.snow or weather.intensity < 0.5: continue
+            const startEpoch = window * (worldWeatherWindowMilliseconds / worldEcologyEpochMilliseconds)
+            const initial = snowDepthAt(seed, startEpoch, center, defaultWorldClimate).floor()
+            const accumulated = snowDepthAt(seed, startEpoch + 5, center, defaultWorldClimate).floor()
+            if accumulated > initial: return {seed, startEpoch}
+    throw Error("Snowfall fixture requires a storm that adds a visible layer")
+
 def coldSeed() -> string:
     for index in range(100):
         const seed = f"ecology-{index}"
         const climate = worldClimateAt(seed, winter, {x: 0, y: 64, z: 0})
-        if climate.frozenWater and climate.snowCover >= 0.3: return seed
-    throw Error("Ecology fixture requires a freezing humid region")
+        if climate.frozenWater and climate.snowCover >= 0.3 and snowDepthAt(seed, worldEcologyEpoch(winter), {x: 8, y: 72, z: 8}, defaultWorldClimate) >= 1:
+            return seed
+    throw Error("Ecology fixture requires a freezing region with accumulated snowfall")
 
 const candidates: readonly List<EcologyCandidate> = [
     {position: {x: 0, y: 0, z: 0}, kind: EcologyCandidateKind.water, baselineBlockStateRuntimeId: water, warmBlockStateRuntimeId: water, coldBlockStateRuntimeId: ice, exposed: true},
@@ -65,7 +87,7 @@ test "seasonal ice and exposed snow freeze thaw and preserve player edits withou
     const frozen = (await ecology.deltas([position], winter))[0]
     expect(frozen.ecologyEpoch).toBe(worldEcologyEpoch(winter))
     expect(frozen.overrides.some(entry => entry.position.x == 0 and entry.blockStateRuntimeId == ice)).toBe(true)
-    expect(frozen.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
+    expect(frozen.overrides.some(entry => entry.position.x == 1 and baseWorldBlockRegistry.registry.requireStateByRuntimeId(entry.blockStateRuntimeId).blockKey == builtinIdentities.blocks.snow)).toBe(true)
     expect(frozen.overrides.some(entry => entry.position.x == 4 and entry.blockStateRuntimeId == ice)).toBe(true)
     expect(frozen.overrides.some(entry => entry.position.x == 5 and entry.blockStateRuntimeId == ice)).toBe(true)
     expect(frozen.overrides.some(entry => entry.position.x == 2 and entry.blockStateRuntimeId == air)).toBe(true)
@@ -86,6 +108,33 @@ test "seasonal ice and exposed snow freeze thaw and preserve player edits withou
     expect(preserved.overrides.some(entry => entry.position.x == 1 and entry.blockStateRuntimeId == snow)).toBe(true)
     await state.close()
     await store.close()
+
+test "falling snow adds visible layers across ecology epochs and warm weather melts them":
+    const fixture = snowfallFixture()
+    const center = {x: 8, y: 72, z: 8}
+    const firstDepth = snowDepthAt(fixture.seed, fixture.startEpoch, center, defaultWorldClimate)
+    const laterDepth = snowDepthAt(fixture.seed, fixture.startEpoch + 5, center, defaultWorldClimate)
+    expect(laterDepth.floor() > firstDepth.floor()).toBe(true)
+    expect(snowDepthAt(fixture.seed, fixture.startEpoch + 5, center, defaultWorldClimate)).toBe(laterDepth)
+
+    const natural: readonly List<EcologyCandidate> = [
+        {position: {x: 8, y: 8, z: 8}, kind: EcologyCandidateKind.snow, baselineBlockStateRuntimeId: air, warmBlockStateRuntimeId: air, coldBlockStateRuntimeId: snow, exposed: true},
+    ]
+    const store = memoryWorldStore()
+    const state = activeWorldState("snowfall", store.deltas, 64, 1024, validateRuntimeId)
+    try:
+        const ecology = worldEcology(fixture.seed, 16, 0, 255, generator(natural), baseWorldBlockRegistry.registry, state, naturalGrowthOriginEpoch)
+        const first = (await ecology.deltas([position], fixture.startEpoch * worldEcologyEpochMilliseconds))[0]
+        const later = (await ecology.deltas([position], (fixture.startEpoch + 5) * worldEcologyEpochMilliseconds))[0]
+        expect(first.overrides.size).toBe(firstDepth.floor() > 0 ? 1 : 0)
+        expect(later.overrides.size).toBe(1)
+        expect(later.overrides[0].blockStateRuntimeId).toBe(baseWorldBlockRegistry.registry.withProperty(snow, "layers", laterDepth.floor()))
+        expect((await state.deltas([position]))[0].overrides).toEqual([])
+        const warm = (await ecology.deltas([position], summer))[0]
+        expect(warm.overrides).toEqual([])
+    finally:
+        await state.close()
+        await store.close()
 
 test "snapshot epochs belong to visible ecology while storage keeps only player deltas":
     const store = memoryWorldStore()
@@ -191,6 +240,25 @@ test "crop phases start at the new-world epoch and spread work inside each stage
         const completeStage = (await ecology.deltas([position], initialWorldMilliseconds + worldEcologyEpochMilliseconds * 4))[0]
         expect(completeStage.overrides.size).toBe(phasedCandidates.size)
         expect(completeStage.overrides.every(entry => entry.blockStateRuntimeId == age1)).toBe(true)
+    finally:
+        await state.close()
+        await store.close()
+
+test "wild cotton stays green through long time jumps while planted cotton becomes white":
+    const registry = baseWorldBlockRegistry.registry
+    const store = memoryWorldStore()
+    const state = activeWorldState("cotton", store.deltas, 64, 1024, validateRuntimeId)
+    const natural: List<EcologyCandidate> = [
+        {position: {x: 5, y: 1, z: 0}, kind: EcologyCandidateKind.cropGrowth, baselineBlockStateRuntimeId: cotton, ageProperty: "age", baselineAge: 0, maximumAge: 1, epochsPerStage: 4},
+    ]
+    try:
+        await state.commitBlocks([{chunk: position, local: {x: 7, y: 1, z: 0}, blockStateRuntimeId: cotton, growthOriginEpoch: 10, visibleChanged: true}])
+        const ecology = worldEcology("cotton", 16, 0, 255, generator(natural), registry, state, 10)
+        for epoch in [100, 10000]:
+            const snapshot = (await ecology.deltas([position], epoch * worldEcologyEpochMilliseconds))[0]
+            expect(snapshot.overrides.find(entry => entry.position.x == 5)?.blockStateRuntimeId).toBe(cottonAge1)
+            expect(snapshot.overrides.find(entry => entry.position.x == 7)?.blockStateRuntimeId).toBe(registry.withProperty(cotton, "age", 2))
+        expect((await state.deltas([position]))[0].overrides.size).toBe(1)
     finally:
         await state.close()
         await store.close()

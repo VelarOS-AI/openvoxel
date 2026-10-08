@@ -4,8 +4,8 @@ import {ChunkWindowBatch} from "./render-window.vel"
 export type ChunkBatchLoader = (positions: readonly List<readonly ChunkPosition>) -> Promise<null>
 export type ChunkBatchUnloader = (positions: readonly List<readonly ChunkPosition>) -> null
 
-/// 一次地形 load 成功后，配对 unload 就属于同一个不可拆分的容量提交。
-/// `current` 只决定是否继续旧目标，不允许在两者之间提前返回。
+/// 地形 load 成功后始终交付配对回收计划，由调用方按最新视窗和缓冲容量处理。
+/// `current` 只决定是否继续旧目标，不能使已完成批次的回收计划丢失。
 export async def commitStreamBatch(
     batch: ChunkWindowBatch,
     load: ChunkBatchLoader,

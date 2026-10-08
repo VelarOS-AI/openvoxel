@@ -2,12 +2,20 @@ import {ClientWorldChange, ClientWorldChangeKind, ClientWorldState} from "@openv
 import {ChunkMesh, ChunkPortalSummary} from "@openvoxel/renderer"
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
 import {Cancellation, Task, task} from "velar/task"
-import {ChunkMeshDemand, MeshPriorityView, chunkMeshDemand, chunkNeedsMesh, priorityPendingChunk} from "./mesh-priority.vel"
+import {chunkRetirement} from "./chunk-retirement.vel"
+import {CachedMeshCost, meshCache} from "./mesh-cache.vel"
+import {ChunkMeshCandidate, ChunkMeshDemand, MeshPriorityView, chunkMeshDemand, chunkNeedsMesh, priorityPendingChunkKey} from "./mesh-priority.vel"
 import {chunkMeshValidity, meshTicketSequence} from "./mesh-validity.vel"
 import {pendingStartupChunkMeshes, queuedChunkMeshMayBeDropped, settleStartupChunkMesh} from "./render-readiness.vel"
-import {retainedNeighborsAfterEviction} from "./render-window.vel"
+import {chunkWindowQuery, retainedNeighborsAfterEviction} from "./render-window.vel"
 
 export const meshingWorkerCount = 2
+// 两个计算槽之外保留一帧的提交缓冲；Worker 可在 GPU 提交前预备下一块。
+// 上限固定，防止持续飞行时已完成的网格无限积压。
+const meshingPipelineCapacity = meshingWorkerCount + 2
+
+readonly type QueuedChunkMesh extends ChunkMeshCandidate:
+    ticket: number
 
 export type ChunkMeshWorker:
     initialize: () -> Promise<null>
@@ -15,7 +23,7 @@ export type ChunkMeshWorker:
     close: () -> Promise<null>
 
 export type ChunkMeshSurface:
-    enqueueChunkMesh: (mesh: ChunkMesh) -> Promise<bool>
+    enqueueChunkMesh: (mesh: ChunkMesh, mayCommit: () -> bool) -> Promise<bool>
     removeChunk: (x: number, y: number, z: number) -> null
 
 export readonly type ChunkMeshingStats:
@@ -54,44 +62,113 @@ export def chunkMeshing(
     const residents: Map<string, readonly ChunkPosition> = Map()
     for position in startupPositions: residents.set(chunkKey(position), position)
     const demand: ChunkMeshDemand = chunkMeshDemand()
-    const queued: Map<string, readonly ChunkPosition> = Map()
-    const queuedTickets: Map<string, number> = Map()
+    const queued: Map<string, QueuedChunkMesh> = Map()
     const startupPending = pendingStartupChunkMeshes(startupPositions)
     let active = 0
     let demandTopologyDirty = true
+    let cachedDemand: Set<string>? = null
+    let reconciledDemandRevision = -1
+    let meshStateDirty = true
     let started = false
     let closed = false
     let closing: Promise<null>? = null
+    const retiringKeys: Set<string> = Set()
+    const cachedMeshes = meshCache()
+    const meshCosts: Map<string, CachedMeshCost> = Map()
+
+    def retireMeshes(positions: readonly List<readonly ChunkPosition>):
+        if positions.size > 0: meshStateDirty = true
+        for position in positions:
+            const key = chunkKey(position)
+            retiringKeys.remove(key)
+            surface.removeChunk(position.x, position.y, position.z)
+            validity.remove(key)
+            cachedMeshes.remove(key)
+            meshCosts.remove(key)
+
+    const retirement = chunkRetirement(
+        (key, _position) => key in retiringKeys,
+        retireMeshes,
+        128,
+    )
+
+    // Worker completion, GPU commit guard and reconciliation usually observe
+    // the same portal graph. Reuse its result until facts or the view change.
+    def currentDemand() -> Set<string>:
+        if demandTopologyDirty:
+            demand.rebuild(residents.values(), view())
+            demandTopologyDirty = false
+            cachedDemand = null
+        if cachedDemand == null: cachedDemand = demand.demandedKeys(portals)
+        return cachedDemand!
+
+    def rememberPortal(key: string, summary: ChunkPortalSummary) -> bool:
+        const previous = portals.get(key)
+        portals.set(key, summary)
+        // 未知摘要原本按全连通处理；空 section 或同拓扑的重建无需再遍历
+        // 整个视区。empty 只描述网格内容，不改变 Portal 连通性。
+        const changed = (previous == null
+            ? summary.fullyOccluding or summary.openFaces != 63 or summary.connectedFaces != Math.pow(2, 36) - 1
+            : previous.fullyOccluding != summary.fullyOccluding or previous.openFaces != summary.openFaces or previous.connectedFaces != summary.connectedFaces)
+        if changed: cachedDemand = null
+        return changed
+
+    def forgetPortal(key: string):
+        if portals.remove(key): cachedDemand = null
+
+    def mayPresent(position: readonly ChunkPosition, ticket: number) -> bool:
+        const key = chunkKey(position)
+        if closed or tickets.get(key) != ticket or state.chunk(position) == null: return false
+        if key in startupPending: return true
+        return (key in currentDemand()) or cachedMeshes.has(key)
 
     async def build(position: readonly ChunkPosition, ticket: number, cancellation: Cancellation):
         let shouldReconcile = false
         try:
-            await cancellation.checkpoint()
+            if cancellation.cancelled: await cancellation.checkpoint()
             if closed: return
             const mesh = await worker.build(position, ticket, cancellation)
             const key = chunkKey(position)
             if closed or tickets.get(key) != ticket:
+                meshStateDirty = true
                 shouldReconcile = true
                 return
-            const committed = await surface.enqueueChunkMesh(mesh)
+            // 摘要先参与可见性，再决定是否上传。排队到实际帧提交之间，世界状态
+            // 仍可能改变；Surface 在写入 GPU 前再次执行同一个身份/需求检查。
+            shouldReconcile = rememberPortal(key, mesh.portalSummary)
+            if not mayPresent(position, ticket):
+                meshStateDirty = true
+                shouldReconcile = true
+                return
+            const committed = await surface.enqueueChunkMesh(mesh, () => mayPresent(position, ticket))
             if not committed:
+                meshStateDirty = true
                 shouldReconcile = true
                 return
             if closed: return
             // 先记录物理提交，再复核内容身份；迟到 GPU 提交仍须被后续移除发现。
             validity.markInstalled(key)
+            meshCosts.set(key, {position, bytes: mesh.byteSize, meshes: mesh.batches.size})
+            if cachedMeshes.has(key):
+                meshStateDirty = true
+                shouldReconcile = true
             if state.chunk(position) == null:
+                meshStateDirty = true
                 surface.removeChunk(position.x, position.y, position.z)
                 validity.remove(key)
-                portals.remove(key)
+                meshCosts.remove(key)
+                cachedMeshes.remove(key)
+                forgetPortal(key)
                 shouldReconcile = true
                 return
             if tickets.get(key) != ticket:
+                meshStateDirty = true
                 validity.markDirty(key)
                 shouldReconcile = true
                 return
-            portals.set(key, mesh.portalSummary)
-            shouldReconcile = true
+            if key in startupPending:
+                meshStateDirty = true
+                shouldReconcile = true
             if settleStartupChunkMesh(startupPending, position, true): startupReady()
         catch error:
             settleStartupChunkMesh(startupPending, position, false)
@@ -108,14 +185,14 @@ export def chunkMeshing(
                     changed()
 
     def drain():
-        while started and not closed and active < meshingWorkerCount:
-            const position = priorityPendingChunk(queued.values(), activeKeys, view())
-            if position == null: return
-            const selected: readonly ChunkPosition = position
-            const key = chunkKey(selected)
-            const ticket = queuedTickets.get(key)!
+        while started and not closed and queued.size > 0 and active < meshingPipelineCapacity:
+            const nextKey = priorityPendingChunkKey(queued.values(), activeKeys, view())
+            if nextKey == null: return
+            const key: string = nextKey
+            const entry = queued.get(key)!
+            const selected = entry.position
+            const ticket = entry.ticket
             queued.remove(key)
-            queuedTickets.remove(key)
             activeKeys.add(key)
             active += 1
             async def run(cancellation: Cancellation): await build(selected, ticket, cancellation)
@@ -123,36 +200,66 @@ export def chunkMeshing(
 
     def schedule(position: readonly ChunkPosition):
         if closed or chunkKey(position) not in residents: return
+        meshStateDirty = true
         const key = chunkKey(position)
         validity.markDirty(key)
         const ticket = sequence.issue()
         tickets.set(key, ticket)
-        queued.set(key, position)
-        queuedTickets.set(key, ticket)
+        queued.set(key, {key, position, ticket})
         drain()
 
     def reconcile(topologyChanged: bool = false):
         if closed or not started: return
         if topologyChanged: demandTopologyDirty = true
-        if demandTopologyDirty:
-            demand.rebuild(residents.values(), view())
-            demandTopologyDirty = false
-        const demanded = demand.demandedKeys(portals)
-        for key in startupPending: demanded.add(key)
-        for position in queued.values():
-            const key = chunkKey(position)
-            if not queuedChunkMeshMayBeDropped(startupPending, position, key in demanded): continue
+        const demanded = currentDemand()
+        const revision = demand.revision()
+        // 摘要变化不一定改变实际可见集合。只要窗口与网格事实未变，
+        // 复用上次协调；仍立即派发已有队列，不引入帧延迟或计时器。
+        if not meshStateDirty and revision == reconciledDemandRevision:
+            drain()
+            changed()
+            return
+        for entry in queued.values():
+            const key = entry.key
+            if not queuedChunkMeshMayBeDropped(startupPending, entry.position, key in demanded): continue
             queued.remove(key)
-            queuedTickets.remove(key)
             tickets.remove(key)
-        for key, position in residents:
-            if key not in demanded:
-                if validity.hasInstalled(key):
-                    surface.removeChunk(position.x, position.y, position.z)
-                    validity.remove(key)
+        const retiring: List<readonly ChunkPosition> = []
+        const window = chunkWindowQuery(view())
+        const needs = window.needs
+        const retains = window.retains
+        const retainRetirement = retirement.retain
+        const removeCachedMesh = cachedMeshes.remove
+        const retainCachedMesh = cachedMeshes.retain
+        const hasInstalled = validity.hasInstalled
+        const requiresBuild = validity.requiresBuild
+        // 已安装且仍需要的区块无需读取位置记录；只在策略实际使用坐标时取值。
+        for key in residents:
+            if (key not in demanded) and (key not in startupPending):
+                const cost = meshCosts.get(key)
+                // 世界数据继续保留；只有有限量的背向网格留在 GPU 供快速回头复用。
+                // 空 section 没有绘制对象，不占 GPU 缓存预算。
+                if cost != null and key not in retiringKeys:
+                    const position = cost.position
+                    if not needs(position) and retains(position):
+                        retainRetirement(key)
+                        if cost.meshes > 0:
+                            for evicted in retainCachedMesh(cost):
+                                retiringKeys.add(chunkKey(evicted))
+                                retiring.append(evicted)
+                        continue
+                if hasInstalled(key):
+                    retiringKeys.add(key)
+                    retiring.append(residents.get(key)!)
                 continue
-            if not validity.requiresBuild(key) or (key in activeKeys) or (key in queued): continue
-            schedule(position)
+            retiringKeys.remove(key)
+            removeCachedMesh(key)
+            retainRetirement(key)
+            if not requiresBuild(key) or (key in activeKeys) or (key in queued): continue
+            schedule(residents.get(key)!)
+        retirement.defer(retiring)
+        reconciledDemandRevision = revision
+        meshStateDirty = false
         drain()
         changed()
 
@@ -180,11 +287,14 @@ export def chunkMeshing(
                     residents.remove(key)
                     demandTopologyDirty = true
                 validity.remove(key)
-                portals.remove(key)
+                cachedMeshes.remove(key)
+                meshCosts.remove(key)
+                retiringKeys.remove(key)
+                retirement.retain(key)
+                forgetPortal(key)
                 const ticket = sequence.issue()
                 tickets.set(key, ticket)
                 queued.remove(key)
-                queuedTickets.remove(key)
                 const previous = tasks.get(key)
                 if previous == null: tickets.remove(key)
                 else: detach cancelEvicted(previous, key, ticket)
@@ -202,7 +312,7 @@ export def chunkMeshing(
 
         if event.kind == ClientWorldChangeKind.blocksChanged and event.changes.size > 0:
             for change in event.changes:
-                portals.remove(chunkKey(change.chunk))
+                forgetPortal(chunkKey(change.chunk))
                 add(change.chunk)
                 const local = change.local
                 if local.x == 0: add({x: change.chunk.x - 1, y: change.chunk.y, z: change.chunk.z})
@@ -213,7 +323,7 @@ export def chunkMeshing(
                 if local.z == edge - 1: add({x: change.chunk.x, y: change.chunk.y, z: change.chunk.z + 1})
         else:
             for position in event.positions:
-                portals.remove(chunkKey(position))
+                forgetPortal(chunkKey(position))
                 add(position)
             for position in retainedNeighborsAfterEviction(event.positions, builtOrActive):
                 targets.set(chunkKey(position), position)
@@ -232,15 +342,19 @@ export def chunkMeshing(
     async def shutdown():
         closed = true
         try:
+            await retirement.close()
             for owner in tasks.values(): await owner.cancel("Chunk meshing closed")
         finally:
             tasks.clear()
             activeKeys.clear()
             validity.clear()
+            cachedMeshes.clear()
+            meshCosts.clear()
+            retiringKeys.clear()
             portals.clear()
+            cachedDemand = null
             residents.clear()
             queued.clear()
-            queuedTickets.clear()
             tickets.clear()
             await worker.close()
 

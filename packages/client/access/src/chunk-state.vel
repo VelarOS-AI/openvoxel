@@ -1,7 +1,12 @@
-import {UInt32Buffer, uint32Buffer} from "velar/binary"
+import {UInt16Buffer, UInt32Buffer, uint32Buffer} from "velar/binary"
 import {RealtimeBlockChange, RealtimeChunkDelta} from "@openvoxel/protocol"
 import {ChunkPosition, LocalPosition, blockIndex, chunkKey} from "@openvoxel/world"
 import {ClientTerrainChunkSnapshot} from "./terrain-snapshot.vel"
+
+extern module "#openvoxel/client/chunk-palette":
+    export def expandChunkPalette(target: UInt32Buffer, palette: readonly List<number>, indices: UInt16Buffer) -> null
+
+import js {expandChunkPalette} from "#openvoxel/client/chunk-palette"
 
 export enum ClientChunkDeltaResult:
     stale
@@ -33,15 +38,23 @@ def requireRuntimeId(value: number):
 export def clientChunkState(terrain: ClientTerrainChunkSnapshot) -> ClientChunkState:
     const palette = terrain.palette
     const indices = terrain.indices
-    const blocks = uint32Buffer(indices.size)
-    for index in range(indices.size): blocks[index] = palette[indices[index]]
+    const volume = indices.size
+    const blocks = uint32Buffer(volume)
+    // 冷快照已在 backend 边界验证。单一调色板无需逐格查询索引；
+    // 空气块直接使用已清零的工作缓冲，后续热增量仍独立维护。
+    if palette.size == 1:
+        const runtimeId = palette[0]
+        if runtimeId != 0:
+            for index in range(volume): blocks[index] = runtimeId
+    // 批量内核只写入当前 Chunk 私有的目标缓冲，不暴露世界可变状态。
+    else: expandChunkPalette(blocks, palette, indices)
 
     let currentRevision = 0
     let currentEcologyEpoch = 0
     const overrides: Map<number, number> = Map()
 
     def requireIndex(index: number):
-        assert index.isInteger() and index >= 0 and index < indices.size else "Client Chunk index is outside the Chunk"
+        assert index.isInteger() and index >= 0 and index < volume else "Client Chunk index is outside the Chunk"
 
     def blockAtIndex(index: number) -> number:
         requireIndex(index)

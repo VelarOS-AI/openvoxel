@@ -40,3 +40,14 @@ test("fog range rejects invalid renderer input", () => {
   assert.throws(() => environmentFogRange(0, 1), /render distance/u);
   assert.throws(() => environmentFogRange(nominalRenderDistance, Number.NaN), /density factor/u);
 });
+
+
+test("user fog strength changes clear-weather haze while keeping the streaming edge covered", () => {
+  const normal = environmentFogRange(96, 1);
+  const light = environmentFogRange(96, 1, .5);
+  const dense = environmentFogRange(96, 1, 2);
+  assert.ok(light.start > normal.start && normal.start > dense.start);
+  assert.ok(light.end > normal.end && normal.end > dense.end);
+  assert.ok(light.end < 96);
+  assert.ok(dense.start < dense.end);
+});

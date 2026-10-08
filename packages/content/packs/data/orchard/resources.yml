@@ -1,0 +1,23 @@
+category: vegetation
+textures:
+  - key: orchard:texture/block/cherry_log_top
+    surface: wood
+    file: textures/vegetation/orchard/cherry_log_top.png
+  - key: orchard:texture/block/cherry_log
+    surface: wood
+    file: textures/vegetation/orchard/cherry_log.png
+  - key: orchard:texture/block/cherry_leaves
+    surface: foliage
+    file: textures/vegetation/orchard/cherry_leaves.png
+  - key: orchard:texture/block/cherry_sapling
+    surface: plant
+    file: textures/vegetation/orchard/cherry_sapling.png
+  - key: orchard:texture/block/apple_fruit
+    surface: plant
+    file: textures/vegetation/orchard/apple_fruit.png
+  - key: orchard:texture/block/pear_fruit
+    surface: plant
+    file: textures/vegetation/orchard/pear_fruit.png
+  - key: orchard:texture/block/peach_fruit
+    surface: plant
+    file: textures/vegetation/orchard/peach_fruit.png

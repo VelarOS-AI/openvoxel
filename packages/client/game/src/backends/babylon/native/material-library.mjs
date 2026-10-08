@@ -1,10 +1,14 @@
 import {Color3} from "@babylonjs/core/Maths/math.color.js";
-import {PBRMaterial} from "@babylonjs/core/Materials/PBR/pbrMaterial.js";
+import {StreamingPBRMaterial} from "./streaming-pbr-material.mjs";
+import {SharedPluginUniforms} from "./shared-plugin-uniforms.mjs";
 import {Material} from "@babylonjs/core/Materials/material.js";
 import {SharedShadowDepthWrapper} from "./shared-shadow-depth-wrapper.mjs";
 import {VoxelTextureArrayPlugin} from "./texture-bank.mjs";
 import {VoxelWaterSurfacePlugin, WaterSurfaceRuntime} from "./water-surface.mjs";
 import {TerrainFogPlugin} from "./terrain-fog.mjs";
+import {VegetationMotionPlugin, VegetationMotionRuntime} from "./vegetation-motion.mjs";
+import {VoxelLightingPlugin} from "./voxel-lighting.mjs";
+import {DistanceDetailFramePlugin, DistanceDetailPlugin, stableShaderCode} from "./distance-detail.mjs";
 
 function finiteNumber(value, minimum, maximum, label) {
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
@@ -16,14 +20,18 @@ function finiteNumber(value, minimum, maximum, label) {
 // Resource recipes are resolved once per material pipeline. Upload validation
 // and PBR construction consume the same result, including animation layer ownership.
 export class VoxelMaterialLibrary {
-  constructor(scene, options, textureBanks, climateTintField, atmosphere) {
+  constructor(scene, options, textureBanks, climateTintField, atmosphere, lighting = null) {
     this.scene = scene;
     this.textureBanks = textureBanks;
     this.climateTintField = climateTintField;
     this.atmosphere = atmosphere;
+    this.lighting = lighting;
+    this.sharedUniforms = new SharedPluginUniforms(scene);
     this.pipelines = new Map();
     this.animationClockMs = 0;
-    this.waterSurfaceRuntime = new WaterSurfaceRuntime();
+    this.waterSurfaceRuntime = new WaterSurfaceRuntime(scene);
+    this.waterSurfaceRuntime.setEnvironmentFrame(options.environmentFrame ?? {windX: 0, windZ: 0});
+    this.vegetationMotionRuntime = new VegetationMotionRuntime(options.environmentFrame ?? {windX: 0, windZ: 0});
     this.materialDefinitions = new Map(options.materials.map((definition) => [definition.key, definition]));
     this.textureDefinitions = new Map(options.textures.map((definition) => [definition.key, definition]));
     this.animationDefinitions = new Map(options.animations.map((definition) => [definition.key, definition]));
@@ -40,6 +48,8 @@ export class VoxelMaterialLibrary {
       }
     }
     this.materials = new Map();
+    this.bindingBudget = {count: 0};
+    this.disposed = false;
     this.animatedMaterials = [];
   }
 
@@ -130,34 +140,65 @@ export class VoxelMaterialLibrary {
     return pipeline;
   }
 
-  materialFor(batch) {
+  materialFor(batch, owner = null) {
     const pipeline = this.resolvePipeline(batch);
+    const retained = this.scene.getEngine().isWebGPU;
     const key = batch.pipelineKey;
     const existing = this.materials.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (retained && owner) existing.attachMesh(owner, this.bindingBudget);
+      return existing;
+    }
     const {materialDefinition: definition, waterOptics, textureBank, animation, frames} = pipeline;
     const isWater = definition.materialEffect === "water";
-    const material = new PBRMaterial("material:" + key, this.scene);
+    const material = new StreamingPBRMaterial("material:" + key, this.scene, true);
+    // No mesh owns this material yet. Batch recipe/plugin setup instead of
+    // scanning all resident submeshes after every individual property setter.
+    material.blockDirtyMechanism = true;
     try {
-      const texturePlugin = new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField, {neutralSurface: isWater});
-      new TerrainFogPlugin(material, this.atmosphere);
-      if (isWater) new VoxelWaterSurfacePlugin(material, textureBank.normal, waterOptics, this.waterSurfaceRuntime);
+      const texturePlugin = stableShaderCode(new VoxelTextureArrayPlugin(material, textureBank, this.climateTintField, {
+        terrainSurface: definition.key === "openvoxel:material/terrain", neutralSurface: isWater, atmosphere: this.atmosphere, grassPlant: definition.key === "openvoxel:material/cross",
+      }));
+      stableShaderCode(new DistanceDetailPlugin(material, definition.key));
+      stableShaderCode(this.sharedUniforms.attach(new DistanceDetailFramePlugin(material, this.vegetationMotionRuntime), "detail"));
+      stableShaderCode(new VoxelLightingPlugin(material, this.lighting));
+      material.maxSimultaneousLights = 5;
+      stableShaderCode(this.sharedUniforms.attach(new TerrainFogPlugin(material, this.atmosphere), "fog"));
+      const vegetationMode = {"openvoxel:material/cross": "cross", "openvoxel:material/leaves": "leaves", "openvoxel:material/vine": "vine"}[definition.key];
+      if (vegetationMode !== undefined) {
+        stableShaderCode(this.sharedUniforms.attach(new VegetationMotionPlugin(material, vegetationMode, this.vegetationMotionRuntime), "vegetation"));
+      }
+      if (isWater) stableShaderCode(this.sharedUniforms.attach(new VoxelWaterSurfacePlugin(material, textureBank.normal, waterOptics, this.waterSurfaceRuntime), batch.pipelineKey));
       material.albedoColor = Color3.White();
       material.ambientColor = new Color3(0.38, 0.4, 0.38);
       material.emissiveColor = Color3.Black();
       material.metallic = isWater ? 0 : 1;
+      material.enableSpecularAntiAliasing = true;
       material.roughness = isWater ? waterOptics.roughness : 1;
+      material.metallicF0Factor = finiteNumber(definition.specularWeight, 0, 1, "Material specular weight");
       material.environmentIntensity = definition.environmentIntensity;
       material.clearCoat.isEnabled = definition.clearCoat > 0;
       material.clearCoat.intensity = definition.clearCoat;
       material.clearCoat.roughness = definition.clearCoatRoughness;
       material.unlit = definition.unlit;
+      if (vegetationMode !== undefined) {
+        // Thin leaves/grass transmit filtered light on their back face without
+        // screen-space scattering targets or changing alpha-test depth writes.
+        material.subSurface.isTranslucencyEnabled = true;
+        material.subSurface.translucencyIntensity = vegetationMode === "leaves" ? 0.24 : 0.32;
+        material.subSurface.useAlbedoToTintTranslucency = true;
+        material.subSurface.minimumThickness = 0;
+        material.subSurface.maximumThickness = 0.06;
+      }
       // OpenVoxel 的网格从外侧观察使用逆时针顶点绕序。Babylon 的右手场景会
       // 默认把 Mesh 设为顺时针正面，因此这里必须在材质边界显式对齐。
       material.sideOrientation = Material.CounterClockWiseSideOrientation;
       material.backFaceCulling = !definition.doubleSided;
       material.twoSidedLighting = definition.doubleSided;
-      material.separateCullingPass = definition.doubleSided;
+      // One no-cull draw already covers both sides. Splitting it duplicates
+      // submission work and conflicts with WebGPU's retained render bundles.
+      // Translucent quad order is owned by the world's depth sorter.
+      material.separateCullingPass = false;
       if (isWater) {
         // Babylon's PBR reflection path consumes scene.environmentTexture, so every
         // water batch reuses the scene IBL without allocating per-Chunk render targets.
@@ -182,10 +223,13 @@ export class VoxelMaterialLibrary {
       if (batch.layer === "cutout" && definition.castsShadows) {
         material.shadowDepthWrapper = new SharedShadowDepthWrapper(material, this.scene);
       }
-      if (!isWater && animation !== null && frames.length > 1) {
-        this.animatedMaterials.push({frameDurationMs: animation.frameDurationMs, frames, frameIndex: -1, plugin: texturePlugin});
-      }
+      const animated = !isWater && animation !== null && frames.length > 1
+        ? {frameDurationMs: animation.frameDurationMs, frames, frameIndex: -1, plugin: texturePlugin} : null;
+      material.blockDirtyMechanism = false;
+      material.checkReadyOnlyOnce = retained;
+      if (retained && owner) material.attachMesh(owner, this.bindingBudget);
       this.materials.set(key, material);
+      if (animated) this.animatedMaterials.push(animated);
       return material;
     } catch (error) {
       material.shadowDepthWrapper?.dispose();
@@ -195,8 +239,20 @@ export class VoxelMaterialLibrary {
     }
   }
 
-  update(deltaMs) {
+  disposeMaterial(material) {
+    material.shadowDepthWrapper?.dispose();
+    material.shadowDepthWrapper = null;
+    material.dispose(false, false);
+  }
+
+  setEnvironmentFrame(frame) {
+    this.vegetationMotionRuntime.setEnvironmentFrame(frame);
+    this.waterSurfaceRuntime.setEnvironmentFrame(frame);
+  }
+
+  update(deltaMs, playerPosition = this.vegetationMotionRuntime.player) {
     this.waterSurfaceRuntime.update(deltaMs);
+    this.vegetationMotionRuntime.update(deltaMs, playerPosition);
     if (this.animatedMaterials.length === 0) return;
     this.animationClockMs += deltaMs;
     for (const animation of this.animatedMaterials) {
@@ -209,14 +265,13 @@ export class VoxelMaterialLibrary {
   }
 
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     this.animatedMaterials.length = 0;
-    for (const material of this.materials.values()) {
-      material.shadowDepthWrapper?.dispose();
-      material.shadowDepthWrapper = null;
-      material.dispose(true, false);
-    }
+    for (const material of this.materials.values()) this.disposeMaterial(material);
     this.materials.clear();
     this.pipelines.clear();
+    this.sharedUniforms.dispose();
     this.waterSurfaceRuntime.dispose();
   }
 }

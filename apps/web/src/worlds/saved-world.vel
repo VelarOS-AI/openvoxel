@@ -13,6 +13,7 @@ export readonly type SavedWorld:
     mode: WorldGameMode
     preset: WorldPreset
     lastPlayed: string
+    contentPacks: readonly List<string>?
 
 export type SavedWorlds = List<SavedWorld>
 

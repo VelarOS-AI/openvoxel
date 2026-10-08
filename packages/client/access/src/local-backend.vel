@@ -3,7 +3,7 @@ import {WorldBackend, WorldBackendConnection, WorldBackendContract} from "./back
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, CreateWorldRequest, RealtimeBlockEdit, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent} from "@openvoxel/protocol"
 import {ChunkPosition, WorldManifest} from "@openvoxel/world"
 import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
-import {Cancellation} from "velar/task"
+import {Cancellation, CancellationError} from "velar/task"
 import {ClientTerrainBatchSnapshot} from "./terrain-snapshot.vel"
 
 def request(operation: string) -> LocalWorkerRequest: return {operation}
@@ -44,7 +44,8 @@ export def localBackend(
         return ready
 
     async def call(message: LocalWorkerRequest, cancellation: Cancellation? = null) -> LocalWorkerResponse:
-        if cancellation != null: await cancellation.checkpoint()
+        if cancellation != null and cancellation.cancelled:
+            throw CancellationError(cancellation.reason ?? "Local request cancelled")
         const current = await activeTransport()
         const response = await current.call(message, cancellation)
         assert response.operation == message.operation else "LocalBackend Worker returned the wrong operation"

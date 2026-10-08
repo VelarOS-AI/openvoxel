@@ -13,6 +13,7 @@ export readonly type WorldGraphicsColor:
 /// 每帧只投影图形后端真正消费的有界数值。sunDirection 和 moonDirection 是
 /// 光线传播方向；天空中的天体位置使用其相反方向。
 export type WorldGraphicsEnvironmentFrame extends WorldEnvironmentSample:
+    readonly climateMilliseconds: number
     readonly sunDirection: WorldGraphicsVector3
     readonly moonDirection: WorldGraphicsVector3
     readonly daylightIntensity: number
@@ -72,40 +73,41 @@ def lightningFlash(sample: WorldEnvironmentSample) -> number:
 
 /// 把权威世界环境样本投影为纯渲染参数。闪电年龄只由世界时间计算，重复应用同一
 /// 样本或网络重连都不会把已经衰减的闪光重置到零时刻。
-export def worldGraphicsEnvironmentFrame(sample: WorldEnvironmentSample) -> WorldGraphicsEnvironmentFrame:
+export def worldGraphicsEnvironmentFrame(sample: WorldEnvironmentSample, climateMilliseconds: number? = null) -> WorldGraphicsEnvironmentFrame:
     const current = validateWorldEnvironmentSample(sample)
+    const climateTime = climateMilliseconds ?? current.worldMilliseconds
 
     // 0 为午夜、0.5 为正午。35° 纬度下太阳沿季节升降，夏季日长、冬季日短；
     // 正午仍保留真实的斜射角，树木和高低台阶可以在地面投下可见阴影。
     const hourAngle = (current.timeOfDay - 0.5) * 2 * Math.pi
     const latitude = 35 * Math.pi / 180
-    const declination = Math.sin((worldYearProgress(current.worldMilliseconds) - 0.125) * 2 * Math.pi) * 23.44 * Math.pi / 180
+    const declination = Math.sin((worldYearProgress(climateTime) - 0.125) * 2 * Math.pi) * 23.44 * Math.pi / 180
     const celestialX = -Math.cos(declination) * Math.sin(hourAngle)
     const celestialY = Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle)
     const celestialZ = Math.cos(latitude) * Math.sin(declination) - Math.sin(latitude) * Math.cos(declination) * Math.cos(hourAngle)
     const sunDirection: WorldGraphicsVector3 = {x: -celestialX, y: -celestialY, z: -celestialZ}
     const moonDirection: WorldGraphicsVector3 = {x: celestialX, y: celestialY, z: celestialZ}
 
-    const daylightIntensity = smoothstep(-0.12, 0.22, celestialY)
+    const daylightIntensity = smoothstep(-0.16, 0.28, celestialY)
     const nightIntensity = 1 - smoothstep(-0.22, 0.06, celestialY)
     const twilight = smoothstep(-0.24, -0.02, celestialY) * (1 - smoothstep(0.04, 0.42, celestialY))
     const weatherDimming = Math.clamp(1 - current.cloudiness * 0.42 - current.precipitationIntensity * 0.36, 0.22, 1)
     const flash = lightningFlash(current)
     const phaseDistance = Math.min(current.moonPhase, 8 - current.moonPhase)
     const moonPhaseVisibility = 1 - phaseDistance / 4
-    const sunIntensity = saturate(daylightIntensity * weatherDimming)
-    const moonIntensity = saturate(nightIntensity * (0.045 + 0.24 * moonPhaseVisibility) * weatherDimming)
+    const sunIntensity = saturate(smoothstep(-0.025, 0.55, celestialY) * weatherDimming)
+    const moonIntensity = saturate(nightIntensity * (0.008 + 0.10 * moonPhaseVisibility) * weatherDimming)
     // 星光按昼夜和降水共同的透光率平方衰减；云的遮挡由云层贴图覆盖承担。
     const starIntensity = Math.pow((1 - daylightIntensity) * (1 - current.precipitationIntensity), 2)
-    const skyIntensity = saturate((0.09 + 0.91 * daylightIntensity + 0.58 * moonIntensity) * (0.55 + 0.45 * weatherDimming) + flash * 0.14)
+    const skyIntensity = saturate((0.012 + 0.988 * daylightIntensity + 0.20 * moonIntensity) * (0.55 + 0.45 * weatherDimming) + flash * 0.14)
 
-    const nightTop = color(0.026, 0.05, 0.115)
+    const nightTop = color(0.009, 0.018, 0.046)
     const dayTop = color(0.18, 0.47, 0.84)
     const twilightTop = color(0.08, 0.18, 0.34)
-    const nightHorizon = color(0.07, 0.1, 0.19)
+    const nightHorizon = color(0.022, 0.035, 0.068)
     const dayHorizon = color(0.7, 0.84, 0.96)
     const twilightHorizon = color(0.95, 0.43, 0.18)
-    const nightGround = color(0.025, 0.034, 0.065)
+    const nightGround = color(0.005, 0.009, 0.018)
     const dayGround = color(0.12, 0.17, 0.19)
     const twilightGround = color(0.08, 0.065, 0.06)
     const skyWeatherScale = 0.55 + 0.45 * weatherDimming
@@ -131,6 +133,7 @@ export def worldGraphicsEnvironmentFrame(sample: WorldEnvironmentSample) -> Worl
     const cloudBrightness = saturate(mix(0.03, 1, daylightIntensity * daylightIntensity) * mix(1, 0.2, current.precipitationIntensity) + flash * 0.3)
 
     return WorldGraphicsEnvironmentFrame.from(current, {
+        climateMilliseconds: climateTime,
         sunDirection,
         moonDirection,
         daylightIntensity,

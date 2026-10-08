@@ -1,3 +1,4 @@
+import {ecosystemUnits, stageEnabled} from "../ecosystem/composition.vel"
 import {BlockRegistry, WorldBlockRegistry, baseWorldBlockRegistry, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {Chunk, ChunkPosition, Coordinate2, Coordinate3, chunkKey, chunkPaletteTemplate, emptyChunk} from "@openvoxel/world"
 import {WorldGenerator} from "../contracts.vel"
@@ -18,7 +19,7 @@ import {coastalSpawnAffinity, coastalSpawnScore} from "./coastal-spawn.vel"
 
 /// 生成结果的代码语义版本，与可调 YAML 参数一起锁定世界。修改地形、树冠
 /// 或阶段顺序时同步递增，保证旧清单不会悄悄使用新算法生成邻接区块。
-export const survivalAlgorithmRevision = 1
+export const survivalAlgorithmRevision = 7
 
 export def generateBaseTerrain(
     chunk: Chunk,
@@ -115,6 +116,19 @@ export def survivalWorldGenerator(
 ) -> WorldGenerator:
     requireTreeShapeEnvelope(profile.vegetation.maximumTreeHeight, profile.vegetation.treeHorizontalReach)
     assert profile.palette == palette.key else f"World generator {profile.key} requires palette {profile.palette}, received {palette.key}"
+    const units = ecosystemUnits(profile)
+    for tree in units.trees:
+        const trunk = worldBlocks.registry.defaultStateRuntimeIdForKey(tree.log)
+        worldBlocks.registry.withProperty(trunk, "axis", "x")
+        worldBlocks.registry.withProperty(trunk, "axis", "z")
+        worldBlocks.registry.defaultStateRuntimeIdForKey(tree.leaves)
+        if tree.fruit != null: worldBlocks.registry.defaultStateRuntimeIdForKey(tree.fruit)
+    for plant in units.plants:
+        const base = worldBlocks.registry.defaultStateRuntimeIdForKey(plant.block)
+        if plant.topBlock != null: worldBlocks.registry.defaultStateRuntimeIdForKey(plant.topBlock)
+        for property in plant.properties:
+            for value in property.values: worldBlocks.registry.withProperty(base, property.name, value)
+    for feature in units.features: worldBlocks.registry.defaultStateRuntimeIdForKey(feature.block)
     const blocks = createSurvivalBlockPalette(worldBlocks.registry, palette.blocks)
     // 基础填充会写满 4096 个位置。提前建立完整局部调色板后可直接写 UInt16
     // 索引，避免每个方块重复做 runtimeId 合法性校验和动态调色板扩容查询。
@@ -125,7 +139,7 @@ export def survivalWorldGenerator(
     const caves = cavePlanner(fields, seed, blocks)
     const minerals = mineralPlanner(profile, palette, seed, worldBlocks.registry)
     const surfaces = surfacePlanner(profile, blocks)
-    const decorations = decorationPlanner(profile, seed, blocks, columns, worldBlocks.registry)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, worldBlocks.registry, (x, y, z) => not stageEnabled(profile, "caves") or caves.surfaceIntact(x, y, z))
     let minimumMineralY = profile.world.maximumY
     let maximumMineralY = profile.world.minimumY
     for mineral in profile.minerals:
@@ -160,13 +174,15 @@ export def survivalWorldGenerator(
         const generatedChunk = generationChunkPalette.instantiate(position, edge)
         // 固定阶段顺序是生成结果的一部分：后续阶段只覆盖前一阶段明确允许的方块。
         generateBaseTerrain(generatedChunk, fields, plan, generationPalette.indices)
-        carveCaves(generatedChunk, caves, profile, blocks, worldBlocks.registry, plan)
+        if stageEnabled(profile, "caves"):
+            carveCaves(generatedChunk, caves, profile, blocks, worldBlocks.registry, plan)
         const highestAquiferY = Math.max(profile.world.seaLevel - profile.aquifers.minimumWaterDepth, profile.aquifers.magmaMaximumY)
-        if minimumY <= highestAquiferY: generateAquifers(generatedChunk, fields, plan, blocks)
-        if maximumY >= minimumMineralY and minimumY <= maximumMineralY:
+        if stageEnabled(profile, "aquifers") and minimumY <= highestAquiferY:
+            generateAquifers(generatedChunk, fields, plan, blocks)
+        if stageEnabled(profile, "minerals") and maximumY >= minimumMineralY and minimumY <= maximumMineralY:
             generateMinerals(generatedChunk, minerals, blocks, worldBlocks.registry)
         const minimumSurfacePaintY = plan.minimumSurfaceY - profile.surface.wetSoilDepth + 1
-        if maximumY >= minimumSurfacePaintY and minimumY <= plan.maximumSurfaceY:
+        if stageEnabled(profile, "surface") and maximumY >= minimumSurfacePaintY and minimumY <= plan.maximumSurfaceY:
             generateSurface(generatedChunk, surfaces.surface(plan), blocks, worldBlocks.registry)
         // 精确包络同时覆盖本列所有者与跨边界所有者，不会漏掉高邻地形伸来的树冠。
         if decorationBounds != null and maximumY >= decorationBounds.minimumY and minimumY <= decorationBounds.maximumY:

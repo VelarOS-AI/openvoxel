@@ -5,7 +5,8 @@ import {WorldChunkSnapshot} from "./world-chunk-snapshot.vel"
 import {maximumChunkBatchSize} from "./runtime-limits.vel"
 import {WorldRequestError} from "./world-errors.vel"
 import {WorldSessionCache} from "./world-sessions.vel"
-import {Cancellation} from "velar/task"
+import {Cancellation, CancellationError} from "velar/task"
+import {monotonic} from "velar/time"
 
 /// 区块查询服务集中实现所有只读世界查询。
 /// 调用方不需要知道一个 Chunk 是现场生成的，也不需要知道玩家修改按稀疏增量保存。
@@ -29,8 +30,9 @@ def applyDelta(blocks: WorldBlockRegistry, chunk: Chunk, delta: WorldChunkSnapsh
     chunk.revision = delta.revision
 
 export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (manifest: WorldManifest) -> number) -> WorldChunkQueries:
-    async def checkpoint(cancellation: Cancellation?):
-        if cancellation != null: await cancellation.checkpoint()
+    def requireActive(cancellation: Cancellation?):
+        if cancellation != null and cancellation.cancelled:
+            throw CancellationError(cancellation.reason ?? "Chunk query cancelled")
 
     def validateBatch(positions: readonly List<readonly ChunkPosition>):
         if positions.size == 0: throw WorldRequestError("A chunk batch cannot be empty")
@@ -52,15 +54,21 @@ export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (ma
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
     ) -> List<Chunk>:
-        await checkpoint(cancellation)
+        requireActive(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)
         try:
             const output: List<Chunk> = []
+            let yieldedAt = monotonic()
             for position in positions:
-                await checkpoint(cancellation)
+                requireActive(cancellation)
                 output.append(lease.world.generator.generate(position))
-            await checkpoint(cancellation)
+                // Yield CPU work by elapsed time, not once per cheap/empty
+                // Chunk. Browser timer clamping otherwise limits throughput.
+                if cancellation != null and monotonic() - yieldedAt >= 8:
+                    await cancellation.checkpoint()
+                    yieldedAt = monotonic()
+            requireActive(cancellation)
             return output
         finally: await lease.close()
 
@@ -69,12 +77,12 @@ export def worldChunkQueries(sessions: WorldSessionCache, worldMilliseconds: (ma
         positions: readonly List<readonly ChunkPosition>,
         cancellation: Cancellation? = null,
     ) -> readonly List<WorldChunkSnapshot>:
-        await checkpoint(cancellation)
+        requireActive(cancellation)
         validateBatch(positions)
         const lease = await sessions.require(worldId)
         try:
             const deltas = await lease.world.ecology.deltas(positions, worldMilliseconds(lease.world.manifest))
-            await checkpoint(cancellation)
+            requireActive(cancellation)
             return deltas
         finally: await lease.close()
 

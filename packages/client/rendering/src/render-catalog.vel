@@ -1,5 +1,7 @@
-import {BlockComponentProfile, BlockPropertyValue, BlockRenderAttachment, BlockRenderLayer, BlockShapeKind, BlockTextures, PackedBlockStateDefinition, findFluidBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
+import {sha256Text} from "velar/hash"
+import {BlockComponentProfile, BlockPropertyValue, BlockRenderAttachment, BlockRenderLayer, BlockShapeKind, BlockSkylightMode, BlockTextures, PackedBlockStateDefinition, findFluidBehavior, resolveBlockShapeBoxes} from "@openvoxel/blocks"
 import {WorldContentResponse} from "@openvoxel/protocol"
+import {ClientLightState} from "./lighting-contracts.vel"
 import {ClientBlockCollisionBox, ClientBlockModelKind, ClientClimateTint, ClientRenderAttachment, ClientRenderState, ClientRenderTexture, ClientResolvedBlockTextures, ClientTintCoverage} from "./contracts.vel"
 import {ClientAnimationResource, ClientMaterialEffect, ClientMaterialResource, ClientModelResource, ClientResourceEnvironment, ClientResourcePackArtifact, ClientTextureBank, ClientTextureBankRole, ClientTextureResource, ClientTintResource, validateClientResourcePack} from "./resource-pack.vel"
 
@@ -12,7 +14,9 @@ export type ClientRenderCatalog:
     readonly textures: readonly List<ClientTextureResource>
     readonly animations: readonly List<ClientAnimationResource>
     readonly states: readonly List<ClientRenderState>
+    readonly lightStates: readonly List<ClientLightState>
     requireState: (runtimeId: number) -> ClientRenderState
+    selectionBoxes: (runtimeId: number) -> readonly List<ClientBlockCollisionBox>
 
 def propertyValue(state: PackedBlockStateDefinition, name: string) -> BlockPropertyValue?:
     const property = state.properties.find(candidate => candidate.name == name)
@@ -70,7 +74,8 @@ def resolvedAttachment(
     assert source.layer == BlockRenderLayer.cutout else f"Render attachment on {state.stateKey} must use the cutout layer"
     const model = models.get(source.model)
     assert model != null else f"Render attachment on {state.stateKey} references unknown model {source.model}"
-    assert model.kind in [ClientBlockModelKind.submergedCross, ClientBlockModelKind.submergedSurface, ClientBlockModelKind.wallOverlay] else f"Render attachment on {state.stateKey} uses a volume-owning model"
+    const authoredPlant = model.kind == ClientBlockModelKind.cross and model.geometry != null
+    assert authoredPlant or model.kind in [ClientBlockModelKind.submergedCross, ClientBlockModelKind.submergedSurface, ClientBlockModelKind.wallOverlay] else f"Render attachment on {state.stateKey} uses a volume-owning model"
     const material = materials.get(source.material)
     assert material != null else f"Render attachment on {state.stateKey} references unknown material {source.material}"
     assert material.materialEffect == ClientMaterialEffect.standard else f"Render attachment on {state.stateKey} cannot create a second water volume"
@@ -139,7 +144,14 @@ export def createClientRenderCatalog(
     candidate: ClientResourcePackArtifact,
 ) -> ClientRenderCatalog:
     const pack = validateClientResourcePack(candidate)
-    assert pack.targetContentHash == content.content.contentHash else "Client resource pack targets a different world content build"
+    if pack.targetContentHash != content.content.contentHash:
+        const base = pack.contentBase
+        assert base != null else "Client resource pack targets a different world content build"
+        for required in content.content.packs:
+            const available = pack.supportedPacks?.find(candidate => candidate.owner == required.owner)
+            assert available != null and available.contentHash == required.contentHash else f"Client resources do not support installed build of pack {required.owner}"
+        const expected = sha256Text(Json.stableStringify({blockCatalogHash: base.blockCatalogHash, worldGeneratorCatalogHash: base.worldGeneratorCatalogHash, packs: content.content.packs}))
+        assert expected == content.content.contentHash else "Client resource pack targets a different world content build"
 
     const models: Map<string, ClientModelResource> = Map()
     const materials: Map<string, ClientMaterialResource> = Map()
@@ -185,6 +197,7 @@ export def createClientRenderCatalog(
         profiles.set(profile.profileId, profile)
 
     const states: List<ClientRenderState> = []
+    const lightStates: List<ClientLightState> = []
     const byRuntimeId: Map<number, ClientRenderState> = Map()
     for state in content.states:
         assert not byRuntimeId.has(state.runtimeId) else f"World content repeats runtimeId {state.runtimeId}"
@@ -259,6 +272,7 @@ export def createClientRenderCatalog(
                     assert materialResource != null and frameTexture.alphaCutoff == materialResource.alphaCutoff else f"Animation {animation.key} frame {frame} was filtered for a different alpha cutoff"
         const pipelineKey = materialKey == null or layer == null or bankKey == null ? null : f"{layer}|{bankKey}|{materialKey}|{animationKey ?? "-"}"
         const blockEmission = profile.light.emission
+        lightStates.append({runtimeId: state.runtimeId, opacity: profile.light.opacity, emission: blockEmission, passesSkylight: profile.light.skylight == BlockSkylightMode.passThrough})
         const attachments = (profile.render.attachments ?? []).map(attachment => resolvedAttachment(
             attachment, state, blockEmission, models, materials, textureBanks, renderTextures, tints, animations,
         ))
@@ -304,4 +318,18 @@ export def createClientRenderCatalog(
         assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
         return state
 
-    return ClientRenderCatalog.from(pack, {states, requireState})
+    const selectionStates = content.states.keyBy(state => state.runtimeId)
+    const selectionCache: Map<number, readonly List<ClientBlockCollisionBox>> = Map()
+    def selectionBoxes(runtimeId: number) -> readonly List<ClientBlockCollisionBox>:
+        const cached = selectionCache.get(runtimeId)
+        if cached != null: return cached
+        const state = selectionStates.get(runtimeId)
+        assert state != null else f"Unknown block selection {runtimeId}"
+        const shape = profiles.get(state.componentProfileId)!.physics.selection
+        // Key-only plant shapes select their voxel; explicit boxes retain their authored bounds.
+        const selection = shape.kind == BlockShapeKind.custom and shape.boxes == null ? {kind: BlockShapeKind.fullCube} : shape
+        const boxes = resolveBlockShapeBoxes(selection, state.properties).map(box => ClientBlockCollisionBox.from(box))
+        selectionCache.set(runtimeId, boxes)
+        return boxes
+
+    return ClientRenderCatalog.from(pack, {targetContentHash: content.content.contentHash, states, lightStates, requireState, selectionBoxes})

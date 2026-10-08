@@ -2,9 +2,8 @@ import {WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {TerrainSample} from "../terrain-sample.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
 
-/// 世界场决定连续岩性带；表土剥蚀后露出相同岩性，而不是统一刷成石头。
+/// 岩性由地质场决定；石路只铺在地表，不把整条地下岩层变成铺路石。
 export def surfaceBedrock(blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
-    if (sample.stoneVein ?? 1).abs() < 0.045: return blocks.marble
     const geology = sample.geology ?? 0
     if geology < -0.48: return blocks.basalt
     if geology < -0.18: return blocks.granite
@@ -12,34 +11,79 @@ export def surfaceBedrock(blocks: readonly SurvivalBlockPalette, sample: readonl
     return blocks.stone
 
 export def surfaceBlock(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
-    const rock = surfaceBedrock(blocks, sample)
+    const bedrock = surfaceBedrock(blocks, sample)
+    const rock = bedrock == blocks.basalt and (sample.exposure ?? 0) > 0.55 ? blocks.paleBasalt : bedrock
     const exposure = sample.exposure ?? 0
     const deposit = sample.deposit ?? 0
     const height = sample.surfaceY - profile.world.seaLevel
-    if sample.slope >= profile.surface.rockSlope: return rock
-    if sample.biome == profile.biomes.desert:
-        return sample.slope >= profile.surface.mixedSlope or exposure > 0.4 ? blocks.sandstone : blocks.sand
-    if sample.biome == profile.biomes.ocean or height <= 0:
+    if sample.waterBody != null and sample.surfaceY < (sample.waterLevel ?? 0):
+        return sample.humidity >= 11 and deposit > 0.25 ? blocks.clay : sample.slope >= 0.65 ? rock : blocks.sand
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.ocean or height <= 0:
         if sample.humidity >= 9 and deposit > 0.1 and height > -16: return blocks.clay
-        if exposure > 0.15: return sample.slope >= 0.25 ? rock : blocks.gravel
+        if exposure > 0.7 and sample.slope >= 0.6: return rock
+        if sample.slope >= 0.4 and deposit > 0.3: return blocks.gravel
         return blocks.sand
-    if sample.biome == profile.biomes.river:
-        if sample.slope >= profile.surface.mixedSlope: return rock
-        return sample.humidity >= 9 and deposit > -0.15 ? blocks.clay : blocks.gravel
-    if sample.biome == profile.biomes.coast:
-        if exposure > 0.3 or sample.slope >= 0.25: return rock
-        return deposit > 0.05 ? blocks.gravel : blocks.sand
-    // 露头在连续岩脉处穿过草坡，形成有走向的浅色石径；薄土边缘过渡为碎石。
-    if rock == blocks.marble and exposure > 0.3 and sample.slope >= 0.12: return rock
-    if exposure > 0.55 and sample.slope >= 0.18: return rock
-    if sample.terrainType == profile.terrainTypes.mountain and sample.slope >= 0.3: return rock
-    if sample.slope >= profile.surface.mixedSlope: return blocks.gravel
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.river:
+        if exposure > 0.7 and sample.slope >= 0.6: return rock
+        if sample.humidity >= 9 and deposit > -0.15: return blocks.clay
+        return deposit < -0.25 ? blocks.gravel : blocks.sand
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.coast:
+        if exposure > 0.65 and sample.slope >= 0.6: return rock
+        return deposit > 0.35 and sample.slope >= 0.25 ? blocks.gravel : blocks.sand
+    if sample.roadDistance != null and sample.slope < profile.roads.maximumGrade:
+        if sample.roadDistance <= 0: return blocks.paleBasalt
+        if sample.roadDistance <= profile.roads.shoulderWidth:
+            return (sample.biomeFamily ?? sample.biome) == profile.biomes.desert ? blocks.sand : blocks.dirt
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.badlands:
+        return sample.slope < 0.22 and deposit < 0.15 ? blocks.redSand : badlandsStratum(blocks, sample.surfaceY)
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.wetland and sample.slope < 0.42:
+        return deposit > 0.18 ? blocks.moss : deposit < -0.12 ? blocks.mud : blocks.grass
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.desert:
+        return sample.slope >= 0.52 and exposure > 0.55 ? blocks.sandstone : blocks.sand
+    if sample.slope >= profile.surface.rockSlope: return rock
+    if sample.terrainType == profile.terrainTypes.mountain and height >= 48 and sample.slope >= 0.38 and exposure > 0.25:
+        return rock
+    if exposure > 0.72 and sample.slope >= 0.46 and height >= 24: return rock
+    if sample.slope >= profile.surface.mixedSlope and deposit > 0.2: return blocks.gravel
     if sample.humidity >= 10 and sample.riverStrength > 0.15 and deposit > 0.2: return blocks.clay
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.taiga:
+        return deposit > 0.3 ? blocks.moss : deposit > -0.4 ? blocks.podzol : blocks.grass
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.forest and sample.forestDensity > 0.48:
+        return deposit > 0.15 ? blocks.moss : deposit > -0.3 ? blocks.podzol : blocks.grass
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.birchForest and deposit > 0.42: return blocks.podzol
+    if ((sample.biomeFamily ?? sample.biome) == profile.biomes.steppe or (sample.biomeFamily ?? sample.biome) == profile.biomes.savanna) and deposit > 0.15:
+        return blocks.coarseDirt
+    if (sample.biomeFamily ?? sample.biome) == profile.biomes.alpine and height >= 64:
+        return deposit > 0.1 ? blocks.gravel : rock
     return blocks.grass
+
+/// 风化层按世界标高分带，跨区块保持同一条沉积岩层。
+export def badlandsStratum(blocks: readonly SurvivalBlockPalette, y: number) -> number:
+    const band = ((y / 3).floor() % 7 + 7) % 7
+    return band == 0 or band == 4 ? blocks.ochreClay : blocks.terracotta
 
 export def subsurfaceBlock(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
     const surface = surfaceBlock(profile, blocks, sample)
+    if surface == blocks.paleBasalt:
+        if sample.roadDistance != null and sample.roadDistance <= 0:
+            return (sample.biomeFamily ?? sample.biome) == profile.biomes.desert ? blocks.sandstone : blocks.dirt
+        return surfaceBedrock(blocks, sample)
+    if surface == blocks.redSand: return badlandsStratum(blocks, sample.surfaceY - 1)
+    if surface == blocks.podzol or surface == blocks.moss or surface == blocks.coarseDirt: return blocks.dirt
     if surface == blocks.grass or surface == blocks.dirt: return blocks.dirt
-    if surface == blocks.sand: return blocks.sandstone
+    if surface == blocks.sand: return blocks.sand
     if surface == blocks.gravel: return surfaceBedrock(blocks, sample)
     return surface
+
+/// 草皮是土层的顶面。只要表面仍然覆土，侵蚀就不能把整层土削成一张草皮。
+/// 海岸、河床和沙漠保留数层松散沉积物，再交给下方的地质岩层。
+export def surfaceLayerDepth(profile: readonly WorldGeneratorDefinition, blocks: readonly SurvivalBlockPalette, sample: readonly TerrainSample) -> number:
+    const top = surfaceBlock(profile, blocks, sample)
+    const fullDepth = sample.humidity >= 11 ? profile.surface.wetSoilDepth : profile.surface.soilDepth
+    const altitude = Math.clamp((sample.surfaceY - profile.world.seaLevel - 36) / 72, 0, 1)
+    const dryness = Math.clamp((6 - sample.humidity) / 6, 0, 1)
+    const erosion = Math.clamp(sample.slope / profile.surface.rockSlope, 0, 1)
+    const erodedDepth = (fullDepth * (1 - 0.65 * Math.max(altitude * dryness, erosion))).round()
+    const soil = top == blocks.grass or top == blocks.dirt or top == blocks.podzol or top == blocks.moss or top == blocks.coarseDirt or top == blocks.mud or top == blocks.clay
+    const minimumDepth = soil or top == blocks.sand ? Math.min(3, fullDepth) : 1
+    return Math.max(minimumDepth, erodedDepth)

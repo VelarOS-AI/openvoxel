@@ -8,11 +8,10 @@ export async function assertWorldMinimap(page, screenshotsDirectory) {
   await panel.waitFor();
   await page.waitForFunction(() => Number(document.querySelector("[data-map-canvas]")?.getAttribute("data-map-frames")) > 2);
   assert.equal(await panel.locator("button, select, input").count(), 0);
-  assert.match(await canvas.getAttribute("aria-label"), /North up/u);
+  assert.match(await canvas.getAttribute("aria-label"), /上北/u);
   assert.equal(await panel.evaluate((element) => getComputedStyle(element).borderRadius), "50%");
   const bounds = await panel.boundingBox();
-  const viewport = page.viewportSize();
-  assert.ok(bounds.x > viewport.width / 2 && bounds.y < 30, "Minimap must mount in the top-right corner");
+  assert.ok(bounds.x < 30 && bounds.y < 30, "Minimap must mount in the top-left corner");
   assert.ok(Number(await canvas.getAttribute("data-map-meshes")) > 0, "Minimap must render the uploaded world meshes");
   const start = Number(await canvas.getAttribute("data-map-frames"));
   await page.waitForTimeout(1100);

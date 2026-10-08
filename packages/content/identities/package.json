@@ -14,8 +14,12 @@
   },
   "velar": {
     "entry": "src/index.vel",
-    "targets": ["core"],
-    "requires": {"capabilities": []},
+    "targets": [
+      "core"
+    ],
+    "requires": {
+      "capabilities": []
+    },
     "resources": {
       "./identity-data": {
         "path": "generated/identities.json",
@@ -36,7 +40,7 @@
     "@velarscript-labs/yaml": "0.1.5"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/node": "0.34.0"
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/node": "0.34.2"
   }
 }

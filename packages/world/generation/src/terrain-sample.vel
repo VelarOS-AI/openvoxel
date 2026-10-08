@@ -1,4 +1,9 @@
+import {WorldRegionSample} from "./region-sample.vel"
 import {Coordinate2} from "@openvoxel/world"
+
+export enum WaterBodyKind:
+    lake
+    pond
 
 /// 地形采样是生成器向诊断接口和客户端公开的稳定只读结果。
 /// 它描述世界坐标处的基础地形，不包含已保存的方块覆盖。
@@ -23,8 +28,14 @@ export type TerrainSample:
     terrainType: string
     /// 在最终高度、坡度和地形类型确定后选出的群系身份。
     biome: string
+    biomeFamily: string?
+    /// 采用区域划分的生成器提供稳定所有者，供后续玩法与地图查询。
+    region: WorldRegionSample?
     /// 连续地质/沉积/露头场，由生成器填入，供表层与生态共同判断最终基底。
     geology: number?
     deposit: number?
     exposure: number?
-    stoneVein: number?
+    /// 世界道路到铺装边缘的距离；负数为路内，正数为路肩，无路处为 null。
+    roadDistance: number?
+    waterBody: WaterBodyKind?
+    waterLevel: number?

@@ -2,11 +2,16 @@
 export {WorldGenerator} from "./contracts.vel"
 export {worldGeneratorClimate} from "./generator-climate.vel"
 export {CropGrowthEcologyCandidate, EcologyCandidate, EcologyCandidateKind, SnowEcologyCandidate, WaterEcologyCandidate} from "./ecology-candidate.vel"
-export {BiomeIdentities, CaveConfig, CurvePoint, DensitySamplingConfig, DomainWarpConfig, FractalNoiseConfig, GeneratorBlockIdentities, MineralConfig, MineralMaterialBinding, SpawnConfig, SurfaceConfig, TerrainConfig, TerrainTypeIdentities, VegetationConfig, WorldGeneratorCatalogArtifact, WorldGeneratorCatalogContribution, WorldGeneratorCatalogManifest, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, WorldHeightConfig} from "./definition/catalog.vel"
-export {compileModWorldGeneratorContribution, compileWorldGeneratorCatalog, validateWorldGeneratorDefinition} from "./compiler/catalog-compiler.vel"
+export {BasinConfig, HydrologyConfig, BiomeIdentities, CaveConfig, CurvePoint, DensitySamplingConfig, DomainWarpConfig, FractalNoiseConfig, GeneratorBlockIdentities, MineralConfig, MineralMaterialBinding, RegionConfig, RoadConfig, SpawnConfig, SurfaceConfig, TerrainConfig, TerrainTypeIdentities, VegetationConfig, WorldGeneratorCatalogArtifact, WorldGeneratorCatalogContribution, WorldGeneratorCatalogManifest, WorldGeneratorCatalogSource, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition, WorldHeightConfig} from "./definition/catalog.vel"
+export {validateWorldGeneratorDefinition, validateWorldGeneratorPaletteDefinition} from "./definition/validation.vel"
 export {baseWorldGeneratorCatalog, requireBuiltinWorldGeneratorDefinition, worldGeneratorCatalogHash} from "./runtime/builtin-catalog.vel"
 export {WorldGeneratorRegistry, baseWorldGeneratorRegistry, createWorldGeneratorRegistry, defaultGenerator, defaultGeneratorHash, generateChunk, instantiateWorldGenerator, worldGenerator, worldGeneratorDefinitionHash} from "./generator-registry.vel"
+export {WorldRegionSample} from "./region-sample.vel"
 export {TerrainSample} from "./terrain-sample.vel"
 
 /// 当前内建生存生成器公开的查询结果和世界范围。
 export {maximumWorldY, minimumWorldY, sampleTerrain, seaLevel} from "./survival/terrain.vel"
+export {HabitatRange, BiomeAffinity, BiomeUnit, TreeUnit, PlantUnit, PlantStateChoice, MineralUnit, FeatureUnit, StageUnit, EcosystemUnits, WorldGenerationPack} from "./definition/catalog.vel"
+export {composeEcosystemPacks, composeWorldGeneration, emptyEcosystem} from "./ecosystem/composition.vel"
+export {parseWorldGenerationPack, validateWorldGenerationPack} from "./ecosystem/validation.vel"
+export {builtinEcosystemPacks} from "./runtime/builtin-ecosystem.vel"

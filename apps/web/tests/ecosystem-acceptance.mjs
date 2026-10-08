@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import {mkdir, readFile, writeFile} from "node:fs/promises";
+import {join} from "node:path";
+import {chromium} from "playwright";
+import {builtHtmlPath, projectRoot} from "./support/ui-acceptance-paths.mjs";
+import {availablePort, processes, start, stop, waitForUrl} from "./support/ui-acceptance-runtime.mjs";
+import {createWorld} from "./support/ui-acceptance-world.mjs";
+import {waitForRenderStatus} from "./support/ui-acceptance-visual.mjs";
+
+const evidence = join(projectRoot, "apps/web/generated/ecosystem-acceptance");
+await mkdir(evidence, {recursive: true});
+let browser;
+try {
+  const port = await availablePort();
+  const url = `http://127.0.0.1:${port}/`;
+  const preview = start("Ecosystem preview", ["preview", "apps/web", "--port", `${port}`]);
+  await waitForUrl(url, preview, await readFile(builtHtmlPath, "utf8"));
+  browser = await chromium.launch({headless: true, args: ["--enable-gpu"]});
+  const page = await browser.newPage({viewport: {width: 1440, height: 1000}, deviceScaleFactor: 1});
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto(url);
+  await page.locator("[data-create-first-world]").click();
+  await page.locator("[data-content-packs] summary").click();
+  assert.equal(await page.locator("[data-content-pack]").count(), 12);
+  assert.equal(await page.locator("[data-content-pack]:checked").count(), 12);
+  assert.equal(await page.locator('[data-content-pack="terrain"]').isDisabled(), true);
+  await page.screenshot({path: join(evidence, "pack-selection.png")});
+  await page.locator('[data-content-pack="woodland"]').uncheck();
+  assert.equal(await page.locator('[data-content-pack="orchard"]').isChecked(), true);
+  assert.equal(await page.locator("[data-content-pack]:checked").count(), 11);
+  const id = `ecosystem-${Date.now()}`;
+  await createWorld(page, {id, name: "生态扩展验证", seed: "ecosystem-web", mode: "Creative", preset: "meadow"});
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("openvoxel.worlds.v1")));
+  const world = saved.find(value => value.id === id);
+  assert.equal(world.contentPacks.length, 11);
+  assert.equal(world.contentPacks.includes("woodland"), false);
+  assert.equal(world.contentPacks.includes("orchard"), true);
+  await page.screenshot({path: join(evidence, "world.png")});
+  page.on("dialog", dialog => dialog.accept());
+  await page.reload();
+  await page.locator('[data-world-ready="true"]').waitFor({timeout: 60_000});
+  await waitForRenderStatus(page, "World ready", 120_000);
+  assert.equal(await page.locator("[data-error]").count(), 0);
+  assert.deepEqual(errors, []);
+  await writeFile(join(evidence, "report.json"), JSON.stringify({id, packs: world.contentPacks, reopened: true, errors}, null, 2));
+  console.log("Ecosystem UI passed: pack selection, independent woodland toggle, persisted selection, rendered world and reopen");
+} finally {
+  await browser?.close();
+  for (const process of [...processes].reverse()) await stop(process);
+}

@@ -1,3 +1,4 @@
+import {parse as parseYaml} from "yaml";
 import {readFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -23,6 +24,8 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataRoot = resolve(packageRoot, "data");
 const manifestPath = resolve(dataRoot, "resource-pack.yml");
 const blockCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/blocks/block-catalog-data"));
+const contentPackPath = fileURLToPath(import.meta.resolve("@openvoxel/content/builtin-packs-data"));
+const contentDataRoot = resolve(packageRoot, "../../content/packs/data");
 const generatorCatalogPath = fileURLToPath(import.meta.resolve("@openvoxel/world-generation/world-generator-catalog-data"));
 const bankRoles = ["opaque", "cutout", "translucent", "fluid"];
 const textureChannels = ["albedo", "normal", "material", "emissive"];
@@ -206,6 +209,7 @@ export async function loadEnvironmentResources(root, environment) {
     {key: "clouds", file: environment.clouds.texture, label: "Environment clouds texture", shape: "square"},
     {key: "rain", file: environment.precipitation.rain, label: "Environment precipitation rain", shape: "portrait"},
     {key: "rain-splash", file: environment.precipitation.rainSplash, label: "Environment precipitation rain splash", shape: "square"},
+    {key: "leaf", file: environment.foliage.leaf, label: "Environment foliage leaf", shape: "square"},
     {key: "snow", file: environment.precipitation.snow, label: "Environment precipitation snow", shape: "square"},
   ];
   const sourceImages = await Promise.all(definitions.map(async ({file, label, shape}) => (
@@ -224,6 +228,7 @@ export async function loadEnvironmentResources(root, environment) {
         moonDataUrls: moonKeys.map(imageUrl),
       },
       clouds: {textureDataUrl: imageUrl("clouds")},
+      foliage: {leafDataUrl: imageUrl("leaf")},
       precipitation: {
         rainDataUrl: imageUrl("rain"),
         rainSplashDataUrl: imageUrl("rain-splash"),
@@ -319,19 +324,29 @@ export function computeResourceHash({manifest, catalogs, sourceImages, bankAssig
 }
 
 export async function buildResourcePack() {
+  const installedPacks = JSON.parse(await readFile(contentPackPath, "utf8"));
+  const sourceManifest = parseYaml(await readFile(resolve(contentDataRoot, "catalog.yml"), "utf8"));
+  const contributions = await Promise.all(sourceManifest.sources.map(async owner => {
+    if (!/^[a-z][a-z0-9-]*$/.test(owner) || !installedPacks.some(pack => pack.owner === owner)) throw new Error(`Unknown installed resource owner ${owner}`);
+    const file = resolve(contentDataRoot, owner, "resources.yml");
+    return {owner, file: `content-packs/${owner}/resources.yml`, document: parseYaml(await readFile(file, "utf8"))};
+  }));
   const [source, blockText, generatorText] = await Promise.all([
-    loadResourceManifest(dataRoot, manifestPath),
+    loadResourceManifest(dataRoot, manifestPath, contributions),
     readFile(blockCatalogPath, "utf8"),
     readFile(generatorCatalogPath, "utf8"),
   ]);
   const {manifest, owner, environment} = source;
   const blockCatalog = JSON.parse(blockText);
   const generatorCatalog = JSON.parse(generatorText);
+  for (const pack of installedPacks) {
+    for (const state of pack.blocks?.catalog.states ?? []) blockCatalog.catalog.componentProfiles.push(state);
+  }
   const required = requiredResources(blockCatalog);
 
-  const declaredModels = uniqueByKey(manifest.models, owner, "models");
+  const declaredModels = uniqueByKey(manifest.models, [owner, ...installedPacks.map(pack => pack.owner)], "models");
   const declaredMaterials = uniqueByKey(manifest.materials, owner, "materials");
-  const declaredTextures = uniqueByKey(source.textures, owner, "textures");
+  const declaredTextures = uniqueByKey(source.textures, [owner, ...installedPacks.map(pack => pack.owner)], "textures");
   const declaredTints = uniqueByKey(manifest.tints, owner, "tints");
   const declaredAnimations = uniqueByKey(manifest.animations, owner, "animations");
 
@@ -371,6 +386,7 @@ export async function buildResourcePack() {
       doubleSided: requireBoolean(entry.doubleSided, `material ${entry.key} doubleSided`),
       castsShadows: requireBoolean(entry.castsShadows, `material ${entry.key} castsShadows`),
       environmentIntensity: requireNumber(entry.environmentIntensity, 0, 4, `material ${entry.key} environmentIntensity`),
+      specularWeight: requireNumber(entry.specularWeight, 0, 1, `material ${entry.key} specularWeight`),
       clearCoat: requireNumber(entry.clearCoat, 0, 1, `material ${entry.key} clearCoat`),
       clearCoatRoughness: requireNumber(entry.clearCoatRoughness, 0, 1, `material ${entry.key} clearCoatRoughness`),
       unlit: requireBoolean(entry.unlit, `material ${entry.key} unlit`),
@@ -496,10 +512,12 @@ export async function buildResourcePack() {
   )));
   const targetContentHash = worldContentHash(blockCatalog, generatorCatalog);
   const payload = {
-    artifactVersion: 9,
-    formatVersion: 9,
+    artifactVersion: 10,
+    formatVersion: 10,
     owner,
     targetContentHash,
+    contentBase: {blockCatalogHash: blockCatalog.contentHash, worldGeneratorCatalogHash: generatorCatalog.contentHash},
+    supportedPacks: installedPacks.map(({owner, contentHash}) => ({owner, contentHash})),
     textureBanks: bankArtifacts,
     environment: environmentResources.artifact,
     models,
@@ -522,7 +540,8 @@ export async function buildResourcePack() {
     const metadata = await sharp(bytes).metadata();
     return {path, width: metadata.width, height: metadata.height, sha256: sha256([bytes])};
   }));
-  const categories = Object.fromEntries(source.catalogs.map(({category, textures: entries}) => [category, entries.length]));
+  const categories = {};
+  for (const {category, textures: entries} of source.catalogs) categories[category] = (categories[category] ?? 0) + entries.length;
   const memory = requireClientTextureMemoryBudget(
     bankAudits.map((bank) => bank.memory),
     environmentResources.memory,

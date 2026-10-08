@@ -1,0 +1,687 @@
+formatVersion: 1
+owner: orchard
+title: 樱花与果园
+description: 樱花林、苹果树、梨树与桃树
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes:
+    - key: orchard:cherry_grove
+      id: orchard:cherry_grove
+      family: openvoxel:biome/birch_forest
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 11
+        maximum: 15
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 12
+        maximum: 15
+      weight: 0.8
+      forestCover: 0.67
+      groundCover: 1.9
+      relief: 0.5
+      upland: 1
+    - key: orchard:orchard
+      id: orchard:orchard
+      family: openvoxel:biome/meadow
+      temperature:
+        minimum: 6
+        idealLow: 9
+        idealHigh: 15
+        maximum: 20
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 12
+        maximum: 15
+      weight: 0.7
+      forestCover: 0.45
+      groundCover: 1.5
+      relief: 0.4
+      upland: 0
+  trees:
+    - key: orchard:cherry
+      shape: template
+      log: orchard:cherry_log
+      leaves: orchard:cherry_leaves
+      fruit: null
+      fruitChance: 0
+      template:
+        - x: 0
+          y: 1
+          z: 0
+          material: log
+        - x: 0
+          y: 2
+          z: 0
+          material: log
+        - x: 0
+          y: 3
+          z: 0
+          material: log
+        - x: 0
+          y: 4
+          z: 0
+          material: log
+        - x: 0
+          y: 5
+          z: 0
+          material: log
+        - x: -1
+          y: 5
+          z: 0
+          material: log_x
+        - x: -2
+          y: 6
+          z: 0
+          material: log_x
+        - x: 1
+          y: 5
+          z: 0
+          material: log_x
+        - x: 2
+          y: 6
+          z: 0
+          material: log_x
+        - x: 0
+          y: 5
+          z: -1
+          material: log_z
+        - x: 0
+          y: 6
+          z: -2
+          material: log_z
+        - x: -4
+          y: 6
+          z: -1
+          material: leaves
+        - x: -4
+          y: 6
+          z: 0
+          material: leaves
+        - x: -4
+          y: 6
+          z: 1
+          material: leaves
+        - x: -3
+          y: 6
+          z: -2
+          material: leaves
+        - x: -3
+          y: 5
+          z: -1
+          material: leaves
+        - x: -3
+          y: 6
+          z: -1
+          material: leaves
+        - x: -3
+          y: 7
+          z: -1
+          material: leaves
+        - x: -3
+          y: 5
+          z: 0
+          material: leaves
+        - x: -3
+          y: 6
+          z: 0
+          material: leaves
+        - x: -3
+          y: 7
+          z: 0
+          material: leaves
+        - x: -3
+          y: 5
+          z: 1
+          material: leaves
+        - x: -3
+          y: 6
+          z: 1
+          material: leaves
+        - x: -3
+          y: 7
+          z: 1
+          material: leaves
+        - x: -3
+          y: 6
+          z: 2
+          material: leaves
+        - x: -2
+          y: 6
+          z: -2
+          material: leaves
+        - x: -2
+          y: 5
+          z: -1
+          material: leaves
+        - x: -2
+          y: 6
+          z: -1
+          material: leaves
+        - x: -2
+          y: 7
+          z: -1
+          material: leaves
+        - x: -2
+          y: 5
+          z: 0
+          material: leaves
+        - x: -2
+          y: 7
+          z: 0
+          material: leaves
+        - x: -2
+          y: 5
+          z: 1
+          material: leaves
+        - x: -2
+          y: 6
+          z: 1
+          material: leaves
+        - x: -2
+          y: 7
+          z: 1
+          material: leaves
+        - x: -2
+          y: 6
+          z: 2
+          material: leaves
+        - x: -1
+          y: 6
+          z: -2
+          material: leaves
+        - x: -1
+          y: 5
+          z: -1
+          material: leaves
+        - x: -1
+          y: 6
+          z: -1
+          material: leaves
+        - x: -1
+          y: 7
+          z: -1
+          material: leaves
+        - x: -1
+          y: 6
+          z: 0
+          material: leaves
+        - x: -1
+          y: 7
+          z: 0
+          material: leaves
+        - x: -1
+          y: 5
+          z: 1
+          material: leaves
+        - x: -1
+          y: 6
+          z: 1
+          material: leaves
+        - x: -1
+          y: 7
+          z: 1
+          material: leaves
+        - x: -1
+          y: 6
+          z: 2
+          material: leaves
+        - x: 0
+          y: 6
+          z: -1
+          material: leaves
+        - x: 0
+          y: 6
+          z: 0
+          material: leaves
+        - x: 0
+          y: 6
+          z: 1
+          material: leaves
+        - x: 0
+          y: 7
+          z: 0
+          material: leaves
+        - x: 0
+          y: 7
+          z: 1
+          material: leaves
+        - x: 0
+          y: 7
+          z: 2
+          material: leaves
+        - x: 1
+          y: 7
+          z: -1
+          material: leaves
+        - x: 1
+          y: 6
+          z: 0
+          material: leaves
+        - x: 1
+          y: 7
+          z: 0
+          material: leaves
+        - x: 1
+          y: 8
+          z: 0
+          material: leaves
+        - x: 1
+          y: 6
+          z: 1
+          material: leaves
+        - x: 1
+          y: 7
+          z: 1
+          material: leaves
+        - x: 1
+          y: 8
+          z: 1
+          material: leaves
+        - x: 1
+          y: 6
+          z: 2
+          material: leaves
+        - x: 1
+          y: 7
+          z: 2
+          material: leaves
+        - x: 1
+          y: 8
+          z: 2
+          material: leaves
+        - x: 1
+          y: 7
+          z: 3
+          material: leaves
+        - x: 2
+          y: 7
+          z: -1
+          material: leaves
+        - x: 2
+          y: 7
+          z: 0
+          material: leaves
+        - x: 2
+          y: 8
+          z: 0
+          material: leaves
+        - x: 2
+          y: 6
+          z: 1
+          material: leaves
+        - x: 2
+          y: 7
+          z: 1
+          material: leaves
+        - x: 2
+          y: 8
+          z: 1
+          material: leaves
+        - x: 2
+          y: 6
+          z: 2
+          material: leaves
+        - x: 2
+          y: 7
+          z: 2
+          material: leaves
+        - x: 2
+          y: 8
+          z: 2
+          material: leaves
+        - x: 2
+          y: 7
+          z: 3
+          material: leaves
+        - x: 3
+          y: 7
+          z: -1
+          material: leaves
+        - x: 3
+          y: 6
+          z: 0
+          material: leaves
+        - x: 3
+          y: 7
+          z: 0
+          material: leaves
+        - x: 3
+          y: 8
+          z: 0
+          material: leaves
+        - x: 3
+          y: 6
+          z: 1
+          material: leaves
+        - x: 3
+          y: 7
+          z: 1
+          material: leaves
+        - x: 3
+          y: 8
+          z: 1
+          material: leaves
+        - x: 3
+          y: 6
+          z: 2
+          material: leaves
+        - x: 3
+          y: 7
+          z: 2
+          material: leaves
+        - x: 3
+          y: 8
+          z: 2
+          material: leaves
+        - x: 3
+          y: 7
+          z: 3
+          material: leaves
+        - x: 4
+          y: 7
+          z: 0
+          material: leaves
+        - x: 4
+          y: 7
+          z: 1
+          material: leaves
+        - x: 4
+          y: 7
+          z: 2
+          material: leaves
+        - x: -2
+          y: 7
+          z: -3
+          material: leaves
+        - x: -2
+          y: 7
+          z: -2
+          material: leaves
+        - x: -1
+          y: 7
+          z: -4
+          material: leaves
+        - x: -1
+          y: 6
+          z: -3
+          material: leaves
+        - x: -1
+          y: 7
+          z: -3
+          material: leaves
+        - x: -1
+          y: 8
+          z: -3
+          material: leaves
+        - x: -1
+          y: 7
+          z: -2
+          material: leaves
+        - x: -1
+          y: 8
+          z: -2
+          material: leaves
+        - x: -1
+          y: 8
+          z: -1
+          material: leaves
+        - x: 0
+          y: 7
+          z: -4
+          material: leaves
+        - x: 0
+          y: 6
+          z: -3
+          material: leaves
+        - x: 0
+          y: 7
+          z: -3
+          material: leaves
+        - x: 0
+          y: 8
+          z: -3
+          material: leaves
+        - x: 0
+          y: 7
+          z: -2
+          material: leaves
+        - x: 0
+          y: 8
+          z: -2
+          material: leaves
+        - x: 0
+          y: 7
+          z: -1
+          material: leaves
+        - x: 0
+          y: 8
+          z: -1
+          material: leaves
+        - x: 1
+          y: 7
+          z: -4
+          material: leaves
+        - x: 1
+          y: 6
+          z: -3
+          material: leaves
+        - x: 1
+          y: 7
+          z: -3
+          material: leaves
+        - x: 1
+          y: 8
+          z: -3
+          material: leaves
+        - x: 1
+          y: 6
+          z: -2
+          material: leaves
+        - x: 1
+          y: 7
+          z: -2
+          material: leaves
+        - x: 1
+          y: 8
+          z: -2
+          material: leaves
+        - x: 1
+          y: 6
+          z: -1
+          material: leaves
+        - x: 1
+          y: 8
+          z: -1
+          material: leaves
+        - x: 2
+          y: 7
+          z: -3
+          material: leaves
+        - x: 2
+          y: 7
+          z: -2
+          material: leaves
+        - x: -1
+          y: 5
+          z: 2
+          material: leaves
+        - x: -1
+          y: 7
+          z: 2
+          material: leaves
+        - x: -1
+          y: 6
+          z: 3
+          material: leaves
+        - x: 0
+          y: 5
+          z: 1
+          material: leaves
+        - x: 0
+          y: 5
+          z: 2
+          material: leaves
+        - x: 0
+          y: 6
+          z: 2
+          material: leaves
+        - x: 0
+          y: 6
+          z: 3
+          material: leaves
+        - x: 1
+          y: 5
+          z: 1
+          material: leaves
+        - x: 1
+          y: 5
+          z: 2
+          material: leaves
+        - x: 1
+          y: 6
+          z: 3
+          material: leaves
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 12
+        maximum: 17
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 35
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: orchard:cherry_grove
+          weight: 50
+        - biome: openvoxel:biome/meadow
+          weight: 0.6
+    - key: orchard:apple
+      shape: oak
+      log: openvoxel:oak_log
+      leaves: openvoxel:oak_leaves
+      fruit: orchard:apple_fruit
+      fruitChance: 0.32
+      template: null
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 14
+        maximum: 20
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 12
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 35
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: orchard:orchard
+          weight: 18
+        - biome: openvoxel:biome/meadow
+          weight: 2
+        - biome: orchard:cherry_grove
+          weight: 0.2
+    - key: orchard:pear
+      shape: birch
+      log: openvoxel:oak_log
+      leaves: openvoxel:oak_leaves
+      fruit: orchard:pear_fruit
+      fruitChance: 0.32
+      template: null
+      temperature:
+        minimum: 5
+        idealLow: 9
+        idealHigh: 14
+        maximum: 20
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 35
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: orchard:orchard
+          weight: 18
+        - biome: openvoxel:biome/meadow
+          weight: 2
+        - biome: orchard:cherry_grove
+          weight: 0.2
+    - key: orchard:peach
+      shape: mimosa
+      log: openvoxel:oak_log
+      leaves: openvoxel:oak_leaves
+      fruit: orchard:peach_fruit
+      fruitChance: 0.32
+      template: null
+      temperature:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 16
+        maximum: 23
+      humidity:
+        minimum: 3
+        idealLow: 6
+        idealHigh: 11
+        maximum: 14
+      elevation:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 35
+        maximum: 70
+      weight: 1
+      affinities:
+        - biome: orchard:orchard
+          weight: 18
+        - biome: openvoxel:biome/meadow
+          weight: 2
+        - biome: orchard:cherry_grove
+          weight: 0.2
+  plants:
+    - key: orchard:cherry_sapling
+      block: orchard:cherry_sapling
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 12
+        maximum: 17
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 0.7
+      affinities:
+        - biome: orchard:cherry_grove
+          weight: 12
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features: []
+  stages: []

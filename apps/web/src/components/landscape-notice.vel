@@ -1,0 +1,11 @@
+import {requestGameLandscape} from "../navigation/device-display.vel"
+import {primaryButtonLook, secondaryButtonLook} from "../styles/common.vel"
+
+export component LandscapeNotice(cancel: () -> null):
+    return <aside data-landscape-notice aria-label="横屏提示">
+        <span data-phone-glyph aria-hidden={true}></span>
+        <h2>请横屏游玩</h2>
+        <p>将手机横过来，获得更完整的视野。</p>
+        <button type="button" look={primaryButtonLook} on:click={requestGameLandscape}>切换横屏</button>
+        <button type="button" look={secondaryButtonLook} on:click={cancel}>返回世界列表</button>
+    </aside>

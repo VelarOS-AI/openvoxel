@@ -1,9 +1,14 @@
+import {builtinContentPackDescriptors, toggleContentPack} from "@openvoxel/content/descriptors"
+import {contentPackPanelLook, contentPackSummaryLook, contentPackListLook, contentPackItemLook, contentPackTextLook, contentPackDescriptionLook} from "../styles/content-packs.vel"
+import {requestGameLandscape, releaseGameLandscape} from "../navigation/device-display.vel"
+import {WorldLoadingOverlay} from "../components/world-loading-overlay.vel"
 import {deferredWorldLibrary} from "../worlds/world-library-operations.vel"
 import {WorldGameMode} from "@openvoxel/world/game-mode"
 import {Head} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
 import {asyncPageLifetime, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+import {transitionMenu} from "../navigation/ui-motion.vel"
 import {navigate} from "../navigation/app-navigation.vel"
 import {displayTitleLook, errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
 import {advancedButtonLook, advancedFieldsLook, createIntroLook, createLayoutLook, formPanelLook, presetGridLook, presetImageLook, presetLabelLook, presetLook, segmentLook, segmentButtonLook, selectedPresetLook, selectedSegmentButtonLook} from "../styles/create-world.vel"
@@ -16,15 +21,20 @@ import {worldRoute} from "../worlds/world-route.vel"
 export component CreateWorldPage:
     const backend = deferredWorldLibrary()
     const lifetime = asyncPageLifetime()
-    state name = "New World"
+    state name = "新世界"
     state seed = ""
     state mode: WorldGameMode = WorldGameMode.survival
     state preset: WorldPreset = WorldPreset.meadow
     state advancedOpen = false
     state worldId = ""
     state failure = ""
+    state selectedPacks = builtinContentPackDescriptors.map(pack => pack.owner)
 
-    def selectPreset(value: WorldPreset): preset = value
+    def togglePack(owner: string): selectedPacks = toggleContentPack(selectedPacks, owner)
+
+    def setPreset(value: WorldPreset): preset = value
+
+    def selectPreset(value: WorldPreset): transitionMenu(() => setPreset(value))
 
     def selectSurvival(): mode = WorldGameMode.survival
 
@@ -32,24 +42,29 @@ export component CreateWorldPage:
 
     def toggleAdvanced(): advancedOpen = not advancedOpen
 
-    def cancel(): navigate("/")
+    def cancel():
+        releaseGameLandscape()
+        navigate("/")
 
     action createWorld():
+        requestGameLandscape()
         const generation = lifetime.begin()
         failure = ""
         try:
             const cleanName = name.trim()
-            assert not cleanName.isBlank() else "World name cannot be blank"
+            assert not cleanName.isBlank() else "世界名称不能为空"
             const requestedId = worldId.trim()
             const id = requestedId.isBlank() ? worldIdFromName(cleanName) : requestedId
             const cleanSeed = seed.trim().isBlank() ? id : seed.trim()
-            const command: SavedWorld = {id, name: cleanName, seed: cleanSeed, mode, preset, lastPlayed: "Created just now"}
+            const command: SavedWorld = {id, name: cleanName, seed: cleanSeed, mode, preset, lastPlayed: "刚刚创建", contentPacks: selectedPacks}
             const created = await backend.createWorld(command)
             if not lifetime.owns(generation): return
             rememberWorld(created)
             navigate(worldRoute(created.id))
         catch error:
-            if lifetime.owns(generation): failure = error.message
+            if lifetime.owns(generation):
+                releaseGameLandscape()
+                failure = error.message
 
     @cleanup:
         lifetime.dispose()
@@ -60,7 +75,7 @@ export component CreateWorldPage:
             type="button"
             look={preset == value ? selectedPresetLook : presetLook}
             on:click={() => selectPreset(value)}
-            aria-pressed={preset == value}
+            aria-pressed={str(preset == value)}
             data-preset={value}
         >
             <img look={presetImageLook} src={worldCover(value)} alt="" aria-hidden={true} />
@@ -72,10 +87,10 @@ export component CreateWorldPage:
 
     return <div look={appShellLook} data-app data-screen="create-world">
         <Head
-            title="Create a world · OpenVoxel"
-            description="Create a new OpenVoxel world"
-            themeColor="#06101f"
-            language="en"
+            title="创建世界 · OpenVoxel"
+            description="创建新的 OpenVoxel 世界"
+            themeColor="#202020"
+            language="zh-CN"
         />
         <img look={backgroundImageLook} src={worldCover(preset)} alt="" aria-hidden={true} data-preset-background />
         <div look={backgroundShadeLook}></div>
@@ -86,10 +101,10 @@ export component CreateWorldPage:
         <main look={createLayoutLook}>
             <section look={createIntroLook}>
                 <div look={worldInfoLook}>
-                    <h1 look={displayTitleLook}>Create a new world</h1>
-                    <p look={subtitleLook}>Shape your adventure. Choose a landscape and start building your world.</p>
+                    <h1 look={displayTitleLook}>创建新世界</h1>
+                    <p look={subtitleLook}>选择地形，开启你的冒险。</p>
                 </div>
-                <div look={presetGridLook} aria-label="World preset">
+                <div look={presetGridLook} aria-label="地形类型">
                     {presetButton(WorldPreset.meadow, IconName.leaf)}
                     {presetButton(WorldPreset.coast, IconName.water)}
                     {presetButton(WorldPreset.highlands, IconName.mountainSun)}
@@ -97,7 +112,7 @@ export component CreateWorldPage:
             </section>
             <form look={formPanelLook} on:submit.prevent={createWorld} aria-busy={createWorld.pending} data-create-world-form>
                 <label look={labelLook}>
-                    World name
+                    世界名称
                     <input
                         look={fieldLook}
                         name="name"
@@ -107,60 +122,88 @@ export component CreateWorldPage:
                         data-world-name-input
                     />
                 </label>
-                <div look={segmentLook} aria-label="Game mode">
-                    <button type="button" look={mode == WorldGameMode.survival ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={mode == WorldGameMode.survival} data-mode="survival">
+                <div look={segmentLook} aria-label="游戏模式">
+                    <button type="button" look={mode == WorldGameMode.survival ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectSurvival} aria-pressed={str(mode == WorldGameMode.survival)} data-mode="survival">
                         <Icon name={IconName.shieldHalved} />
-                        Survival
+                        生存
                     </button>
-                    <button type="button" look={mode == WorldGameMode.creative ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={mode == WorldGameMode.creative} data-mode="creative">
+                    <button type="button" look={mode == WorldGameMode.creative ? selectedSegmentButtonLook : segmentButtonLook} on:click={selectCreative} aria-pressed={str(mode == WorldGameMode.creative)} data-mode="creative">
                         <Icon name={IconName.wandMagicSparkles} />
-                        Creative
+                        创造
                     </button>
                 </div>
                 <label look={labelLook}>
-                    Seed (optional)
+                    种子（选填）
                     <input
                         look={fieldLook}
                         name="seed"
                         bind:value={seed}
                         maxlength="128"
-                        placeholder="Leave blank for a random seed"
+                        placeholder="留空使用自动种子"
                         disabled={createWorld.pending}
                         data-seed-input
                     />
                 </label>
-                <button type="button" look={advancedButtonLook} on:click={toggleAdvanced} aria-expanded={advancedOpen} data-advanced-settings>
-                    <span><Icon name={IconName.sliders} /> Advanced settings</span>
-                    <Icon name={advancedOpen ? IconName.chevronUp : IconName.chevronDown} />
+                <details look={contentPackPanelLook} data-content-packs>
+                    <summary look={contentPackSummaryLook}>{f"生态内容 · {selectedPacks.size} 个包"}</summary>
+                    <div look={contentPackListLook}>
+                        {builtinContentPackDescriptors.map(pack => <label key={pack.owner} look={contentPackItemLook}>
+                            <input
+                                type="checkbox"
+                                checked={pack.owner in selectedPacks}
+                                disabled={pack.required or createWorld.pending}
+                                on:change={() => togglePack(pack.owner)}
+                                data-content-pack={pack.owner}
+                            />
+                            <span look={contentPackTextLook}>
+                                <strong>{pack.title}</strong>
+                                <span look={contentPackDescriptionLook}>{pack.description}</span>
+                            </span>
+                        </label>)}
+                    </div>
+                </details>
+                <button type="button" look={advancedButtonLook} on:click={toggleAdvanced} aria-expanded={str(advancedOpen)} data-advanced-settings>
+                    <span><Icon name={IconName.sliders} /> 高级设置</span>
+                    <Icon name={IconName.chevronDown} />
                 </button>
-                {advancedOpen ? <div look={advancedFieldsLook} data-advanced-fields>
+                <div data-advanced-wrap data-expanded={str(advancedOpen)} inert={not advancedOpen} aria-hidden={str(not advancedOpen)}>
+                <div look={advancedFieldsLook} data-advanced-fields>
                     <label look={labelLook}>
-                        World identifier
+                        世界编号
                         <input
                             look={fieldLook}
                             name="worldId"
                             bind:value={worldId}
                             maxlength="64"
-                            placeholder="Generated from name"
+                            placeholder="根据名称自动生成"
                             disabled={createWorld.pending}
                             data-world-id-input
                         />
                     </label>
                     <label look={labelLook}>
-                        Generator
-                        <input look={fieldLook} value="OpenVoxel Overworld" disabled={true} />
+                        生成器
+                        <input look={fieldLook} value="OpenVoxel 主世界" disabled={true} />
                     </label>
-                </div> : <></>}
+                </div>
+                </div>
                 {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
                 <div look={formActionsLook}>
                     <button type="submit" look={primaryButtonLook} disabled={createWorld.pending} data-create-world>
-                        {createWorld.pending ? "Creating…" : "Create world"}
+                        {createWorld.pending ? "正在创建…" : "创建世界"}
                         <Icon name={IconName.arrowRight} />
                     </button>
                     <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={createWorld.pending}>
-                        Cancel
+                        取消
                     </button>
                 </div>
             </form>
         </main>
+        <WorldLoadingOverlay
+            active={createWorld.pending}
+            cover={worldCover(preset)}
+            title={name.trim().isBlank() ? "新世界" : name}
+            detail="正在创建世界…"
+            cancel={cancel}
+            animateIn={true}
+        />
     </div>

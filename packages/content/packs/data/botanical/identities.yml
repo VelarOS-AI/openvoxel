@@ -1,0 +1,12 @@
+formatVersion: 3
+identities:
+  translations:
+    botanical:
+      allium: block.botanical.allium
+      lilyOfTheValley: block.botanical.lily_of_the_valley
+      lavender: block.botanical.lavender
+      clover: block.botanical.clover
+      sunflowerHead: block.botanical.sunflower_head
+      sunflower: block.botanical.sunflower
+      bamboo: block.botanical.bamboo
+      bambooCrown: block.botanical.bamboo_crown

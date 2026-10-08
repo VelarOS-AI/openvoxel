@@ -1,5 +1,5 @@
-import {Look, alpha, border, brightness, linearGradient, shadow, spacing, transition} from "velar/look"
-import {blue, brightBlue, danger, ink, white} from "./theme.vel"
+import {Look, alpha, blur, border, brightness, linearGradient, shadow, spacing, transition} from "velar/look"
+import {accent, accentStrong, danger, ink, panel, white} from "./theme.vel"
 
 export const worldInfoLook: Look = look:
     display = "grid"
@@ -35,10 +35,10 @@ export const primaryButtonLook: Look = look:
     minHeight = 52px
     padding = spacing(12px, 24px)
     color = white
-    backgroundImage = linearGradient(135deg, brightBlue, blue)
+    backgroundImage = linearGradient(135deg, accentStrong, accent)
     border = border(1px, alpha(white, 0.28))
     borderRadius = 13px
-    boxShadow = shadow(0px, 12px, 30px, alpha(blue, 0.34))
+    boxShadow = shadow(0px, 5px, 14px, alpha(ink, 0.18))
     fontFamily = "Inter, sans-serif"
     fontSize = 1rem
     fontWeight = 600
@@ -48,7 +48,7 @@ export const primaryButtonLook: Look = look:
 
     if @hover:
         filter = brightness(1.09)
-    if @focus:
+    if @focusVisible:
         outline = border(2px, white)
         outlineOffset = 3px
     if @disabled:
@@ -62,7 +62,7 @@ export const secondaryButtonLook: Look = look:
     gap = 10px
     minHeight = 46px
     padding = spacing(10px, 14px)
-    color = alpha(white, 0.88)
+    color = "inherit"
     backgroundColor = "transparent"
     border = border(1px, alpha(white, 0))
     borderRadius = 11px
@@ -73,16 +73,16 @@ export const secondaryButtonLook: Look = look:
     cursor = "pointer"
 
     if @hover:
-        color = white
-        backgroundColor = alpha(white, 0.09)
-    if @focus:
-        outline = border(2px, brightBlue)
+        color = "inherit"
+        backgroundColor = alpha(accent, 0.12)
+    if @focusVisible:
+        outline = border(2px, accentStrong)
         outlineOffset = 2px
 
 export const labelLook: Look = look:
     display = "grid"
     gap = 8px
-    color = alpha(white, 0.82)
+    color = white
     fontSize = 0.84rem
     fontWeight = 500
 
@@ -92,15 +92,15 @@ export const fieldLook: Look = look:
     boxSizing = "border-box"
     padding = spacing(12px, 14px)
     color = white
-    backgroundColor = alpha(ink, 0.52)
-    border = border(1px, alpha(white, 0.2))
+    backgroundColor = alpha(ink, 0.22)
+    border = border(1px, alpha(white, 0.18))
     borderRadius = 11px
     fontFamily = "Inter, sans-serif"
     fontSize = 0.98rem
 
-    if @focus:
-        borderColor = brightBlue
-        outline = border(2px, alpha(brightBlue, 0.28))
+    if @focusVisible:
+        borderColor = accentStrong
+        outline = border(2px, alpha(accentStrong, 0.28))
         outlineOffset = 1px
 
 export const formActionsLook: Look = look:
@@ -117,3 +117,16 @@ export const errorLook: Look = look:
     border = border(1px, alpha(danger, 0.4))
     borderRadius = 10px
     fontSize = 0.88rem
+
+export const panelSubtitleLook: Look = look:
+    ...subtitleLook
+    color = alpha(white, 0.72)
+    textShadow = "none"
+
+export const glassPanelLook: Look = look:
+    color = white
+    backgroundColor = panel
+    border = border(1px, alpha(white, 0.16))
+    borderRadius = 18px
+    backdropFilter = blur(18px)
+    boxShadow = shadow(0px, 18px, 56px, alpha(ink, 0.3))

@@ -1,0 +1,79 @@
+import {ClientWorldChange, ClientWorldState} from "@openvoxel/client"
+import {ClientLightState, LightingChunkInput, LightingWorkerRequest, LightingWorkerResponse, WorldLightingUpdate} from "@openvoxel/renderer"
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {Cancellation, Task, task} from "velar/task"
+import {workerPool} from "velar/worker"
+
+export type WorldLighting:
+    initialize: () -> Promise<null>
+    invalidate: (event: ClientWorldChange) -> null
+    close: () -> Promise<null>
+
+/// 光场与网格独立更新；区块数据批次合并后交给一个纯计算 Worker。
+/// 一个请求在途，最多积累下一份位置集合，空闲世界不扫描方块。
+export def worldLighting(
+    state: readonly ClientWorldState,
+    edge: number,
+    states: readonly List<ClientLightState>,
+    apply: (update: WorldLightingUpdate) -> null,
+    failed: (message: string) -> null,
+) -> WorldLighting:
+    const pool = workerPool("openvoxel-lighting", LightingWorkerRequest, LightingWorkerResponse, 1, 2)
+    const pending: Map<string, readonly ChunkPosition> = Map()
+    let owner: Task<null>? = null
+    let closed = false
+    let closing: Promise<null>? = null
+
+    def invalidate(event: ClientWorldChange):
+        if closed: return
+        for position in event.positions: pending.set(chunkKey(position), position)
+
+    async def flush(cancellation: Cancellation? = null):
+        const chunks: List<LightingChunkInput> = []
+        const removed: List<readonly ChunkPosition> = []
+        for position in pending.values():
+            const chunk = state.chunk(position)
+            if chunk == null: removed.append(position)
+            else: chunks.append({position, blocks: chunk.snapshotBlocks()})
+        pending.clear()
+        if chunks.size == 0 and removed.size == 0: return
+        const response = await pool.call({operation: "update", chunks, removed}, cancellation, 30s)
+        if closed: return
+        const update = response.update
+        assert update != null else "Lighting Worker returned no light field"
+        apply({
+            chunks: update.chunks.filter(chunk => state.chunk(chunk.position) != null),
+            removed: update.removed.filter(position => state.chunk(position) == null),
+            sources: update.sources.filter(source => state.chunk({
+                x: (source.x / edge).floor(), y: (source.y / edge).floor(), z: (source.z / edge).floor(),
+            }) != null),
+        })
+
+    async def run(cancellation: Cancellation):
+        try:
+            while not closed:
+                await Promise.sleep(100ms)
+                await cancellation.checkpoint()
+                if not closed: await flush(cancellation)
+        catch error:
+            if not closed: failed(error.message)
+
+    async def initialize():
+        await pool.broadcast({operation: "initialize", edge, states}, null, 10s)
+        if closed: return
+        for position in state.trackedPositions(): pending.set(chunkKey(position), position)
+        await flush()
+        if not closed: owner = task(run)
+
+    async def shutdown():
+        closed = true
+        pending.clear()
+        try:
+            if owner != null: await owner.cancel("World lighting closed")
+        finally: await pool.close()
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    return {initialize, invalidate, close}

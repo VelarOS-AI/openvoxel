@@ -1,0 +1,4 @@
+import {EcosystemUnits} from "../definition/catalog.vel"
+
+export def ecosystemUnitKeys(units: readonly EcosystemUnits) -> List<string>:
+    return [units.biomes.map(unit => unit.key), units.trees.map(unit => unit.key), units.plants.map(unit => unit.key), units.minerals.map(unit => unit.key), units.features.map(unit => unit.key), units.stages.map(unit => unit.key)].flatMap(keys => keys)

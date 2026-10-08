@@ -1,10 +1,11 @@
+import {requestGameLandscape, releaseGameLandscape} from "../navigation/device-display.vel"
 import {deferredWorldLibrary} from "../worlds/world-library-operations.vel"
 import {Head} from "velar/web"
 import {Brand} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
 import {asyncPageLifetime, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
 import {navigate} from "../navigation/app-navigation.vel"
-import {errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, subtitleLook} from "../styles/common.vel"
+import {errorLook, fieldLook, formActionsLook, labelLook, primaryButtonLook, secondaryButtonLook, panelSubtitleLook} from "../styles/common.vel"
 import {openPanelLook, panelTitleLook} from "../styles/open-world.vel"
 import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
 import {WorldPreset} from "../worlds/saved-world.vel"
@@ -18,20 +19,25 @@ export component OpenWorldPage:
     state worldId = ""
     state failure = ""
 
-    def cancel(): navigate("/")
+    def cancel():
+        releaseGameLandscape()
+        navigate("/")
 
     action openWorld():
+        requestGameLandscape()
         const generation = lifetime.begin()
         failure = ""
         try:
             const id = worldId.trim()
-            assert not id.isBlank() else "World identifier cannot be blank"
+            assert not id.isBlank() else "世界编号不能为空"
             const found = await backend.findWorld(id)
             if not lifetime.owns(generation): return
             rememberWorld(found)
             navigate(worldRoute(found.id))
         catch error:
-            if lifetime.owns(generation): failure = error.message
+            if lifetime.owns(generation):
+                releaseGameLandscape()
+                failure = error.message
 
     @cleanup:
         lifetime.dispose()
@@ -39,10 +45,10 @@ export component OpenWorldPage:
 
     return <div look={appShellLook} data-app data-screen="open-world">
         <Head
-            title="Open a world · OpenVoxel"
-            description="Open an existing OpenVoxel world"
-            themeColor="#06101f"
-            language="en"
+            title="打开世界 · OpenVoxel"
+            description="打开已有的 OpenVoxel 世界"
+            themeColor="#202020"
+            language="zh-CN"
         />
         <img look={backgroundImageLook} src={worldCover(WorldPreset.meadow)} alt="" aria-hidden={true} />
         <div look={backgroundShadeLook}></div>
@@ -51,10 +57,10 @@ export component OpenWorldPage:
             <Brand back={true} />
         </header>
         <form look={openPanelLook} on:submit.prevent={openWorld} aria-busy={openWorld.pending} data-open-world-form>
-            <h1 look={panelTitleLook}>Open existing world</h1>
-            <p look={subtitleLook}>Enter the identifier of a world stored on this device.</p>
+            <h1 look={panelTitleLook}>打开已有世界</h1>
+            <p look={panelSubtitleLook}>输入此设备上已保存的世界编号。</p>
             <label look={labelLook}>
-                World identifier
+                世界编号
                 <input
                     look={fieldLook}
                     name="worldId"
@@ -68,11 +74,11 @@ export component OpenWorldPage:
             {failure.isBlank() ? <></> : <p look={errorLook} role="alert" data-error>{failure}</p>}
             <div look={formActionsLook}>
                 <button type="submit" look={primaryButtonLook} disabled={openWorld.pending} data-open-world>
-                    {openWorld.pending ? "Opening…" : "Open world"}
+                    {openWorld.pending ? "正在打开…" : "打开世界"}
                     <Icon name={IconName.arrowRight} />
                 </button>
                 <button type="button" look={secondaryButtonLook} on:click={cancel} disabled={openWorld.pending}>
-                    Cancel
+                    取消
                 </button>
             </div>
         </form>

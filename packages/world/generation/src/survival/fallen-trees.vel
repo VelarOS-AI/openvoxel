@@ -1,0 +1,21 @@
+import {FeatureWrite} from "./feature-plan.vel"
+
+/// 一根倒木是连续主干、两段残枝和断裂根部组成的整体；其局部包络最大为
+/// 六格。世界规划器负责整组落地、道路避让及跨 Chunk 裁剪。
+export def fallenTreeWrites(length: number, alongX: bool, direction: number, trunk: number, branch: number, upright: number) -> List<FeatureWrite>:
+    assert length >= 6 and length <= 10 else "Fallen tree length must be from six through ten blocks"
+    assert direction == -1 or direction == 1 else "Fallen tree direction must be signed"
+    const writes: List<FeatureWrite> = []
+    const first = - (length / 2).floor()
+    for offset in range(length):
+        const distance = (first + offset) * direction
+        writes.append({x: alongX ? distance : 0, y: 0, z: alongX ? 0 : distance, runtimeId: trunk})
+    // 两侧残枝长度和主干位置不同，避免每棵倒木都是同一个十字形。
+    for limb in range(2):
+        const distance = (first + 2 + limb * 3) * direction
+        const side = limb == 0 ? direction : -direction
+        for offset in range(1, limb == 0 ? 3 : 2):
+            writes.append({x: alongX ? distance : offset * side, y: 0, z: alongX ? offset * side : distance, runtimeId: branch})
+    const root = first * direction
+    writes.append({x: alongX ? root : 0, y: 1, z: alongX ? 0 : root, runtimeId: upright})
+    return writes

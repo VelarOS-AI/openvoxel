@@ -1,0 +1,197 @@
+formatVersion: 1
+owner: botanical
+title: 竹林与花野
+description: 竹林、薰衣草花野、向日葵、绒球葱、铃兰与三叶草
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes:
+    - key: botanical:bamboo_forest
+      id: botanical:bamboo_forest
+      family: openvoxel:biome/forest
+      temperature:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 17
+        maximum: 23
+      humidity:
+        minimum: 8
+        idealLow: 11
+        idealHigh: 15
+        maximum: 15
+      weight: 0.7
+      forestCover: 0.12
+      groundCover: 3.2
+      relief: 0.6
+      upland: 0
+    - key: botanical:flower_fields
+      id: botanical:flower_fields
+      family: openvoxel:biome/meadow
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 14
+        maximum: 20
+      humidity:
+        minimum: 3
+        idealLow: 6
+        idealHigh: 10
+        maximum: 13
+      weight: 0.8
+      forestCover: 0.025
+      groundCover: 1.4
+      relief: 0.4
+      upland: 0
+  trees: []
+  plants:
+    - key: botanical:allium
+      block: botanical:allium
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 16
+        maximum: 24
+      humidity:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 0.5
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 1.5
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: botanical:lily_of_the_valley
+      block: botanical:lily_of_the_valley
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 16
+        maximum: 24
+      humidity:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/birch_forest
+          weight: 6
+        - biome: orchard:cherry_grove
+          weight: 5
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: botanical:lavender
+      block: botanical:lavender
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 16
+        maximum: 24
+      humidity:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 0.65
+      affinities:
+        - biome: botanical:flower_fields
+          weight: 5
+        - biome: openvoxel:biome/meadow
+          weight: 1.5
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: botanical:clover
+      block: botanical:clover
+      topBlock: null
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 16
+        maximum: 24
+      humidity:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 3
+      affinities:
+        - biome: openvoxel:biome/plains
+          weight: 5
+        - biome: orchard:orchard
+          weight: 4
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: botanical:sunflower
+      block: botanical:sunflower
+      topBlock: botanical:sunflower_head
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 5
+        idealLow: 9
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 0.8
+      affinities:
+        - biome: botanical:flower_fields
+          weight: 8
+        - biome: openvoxel:biome/plains
+          weight: 3
+      properties: []
+      minimumHeight: 2
+      maximumHeight: 2
+      aquatic: false
+      saltwater: null
+    - key: botanical:bamboo
+      block: botanical:bamboo
+      topBlock: botanical:bamboo_crown
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: botanical:bamboo_forest
+          weight: 100
+      properties: []
+      minimumHeight: 3
+      maximumHeight: 6
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features: []
+  stages: []

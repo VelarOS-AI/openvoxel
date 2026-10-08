@@ -89,7 +89,7 @@ test("whole-image rain splash flips never relocate falling or landed snow atlas 
   assert.deepEqual([...rainSplash.uvs], [1, 1, 0, 1, 0, 0, 1, 0]);
 });
 
-test("snow falls at a constant speed with a stable slot and constant 0.14 square size", () => {
+test("snow falls at a constant speed with a stable slot and a bounded flutter and stable individual size", () => {
   const simulation = createWeatherSimulation({random: () => 0.5});
   const columns = [{x: 0, z: 0, groundY: 60, surface: "solid"}];
   simulation.update(0, center, columns, "snow", 1);
@@ -97,14 +97,14 @@ test("snow falls at a constant speed with a stable slot and constant 0.14 square
   const before = {...particle};
   for (let index = 0; index < 10; index += 1) simulation.update(100, center, columns, "snow", 1);
   close(particle.y, before.y - 1.75);
-  assert.equal(particle.x, before.x);
-  assert.equal(particle.z, before.z);
+  assert.ok(Math.hypot(particle.x - before.x, particle.z - before.z) < 0.2);
+  assert.notEqual(particle.x, before.x, "calm flakes flutter instead of falling like rigid hail");
   assert.equal(particle.slot, before.slot);
-  assert.equal(particle.halfSize, 0.07);
+  assert.equal(particle.halfSize, before.halfSize);
   const buffers = createWeatherSpriteBuffers(1);
   writeWeatherSprite(buffers, 0, "snow", particle, axes, 1, 1);
-  close(Math.abs(buffers.positions[0] - buffers.positions[3]), 0.14);
-  close(Math.abs(buffers.positions[7] - buffers.positions[1]), 0.14);
+  close(Math.abs(buffers.positions[0] - buffers.positions[3]), particle.halfSize * 2);
+  close(Math.abs(buffers.positions[7] - buffers.positions[1]), particle.halfSize * 2);
 });
 
 test("terrain invalidation immediately drops affected shafts and impacts without inventing contacts", () => {
@@ -132,36 +132,25 @@ test("terrain invalidation immediately drops affected shafts and impacts without
   }
 });
 
-test("opposite winds reverse bounded rain and snow drift while zero wind preserves vertical fall", () => {
+test("wind reverses drift around snow flutter and remains bounded", () => {
   const columns = [{x: 0, z: 0, groundY: 60, surface: "solid"}];
   for (const kind of ["rain", "snow"]) {
     const results = [];
-    for (const wind of [{x: 8, z: -4}, {x: 0, z: 0}, {x: -8, z: 4}]) {
+    for (const [wind, side] of [[8, 0], [0, 8], [-8, 0]]) {
       const simulation = createWeatherSimulation({random: () => 0.5});
-      simulation.update(0, center, columns, kind, 1, wind.x, wind.z);
-      const shaft = simulation.shafts.get("0:0");
-      const particle = shaft.particles[0];
+      simulation.update(0, center, columns, kind, 1, wind, side);
+      const particle = simulation.shafts.get("0:0").particles[0];
       const before = {...particle};
-      simulation.update(100, center, columns, kind, 1, wind.x, wind.z);
-      results.push({x: particle.x - before.x, y: particle.y - before.y, z: particle.z - before.z});
-      assert.equal(shaft.particles.length, 4);
+      simulation.update(100, center, columns, kind, 1, wind, side);
+      results.push(particle.x - before.x);
+      close(particle.x - before.x, particle.velocityX * 0.1);
       assert.equal(particle.slot, before.slot);
-      assert.equal(particle.halfSize, before.halfSize);
-      assert.equal(simulation.rainSplashes.length, precipitationParticleProfiles().splash.capacity);
-      assert.equal(simulation.snowSplashes.length, precipitationParticleProfiles().snowSplash.capacity);
     }
-    const expected = precipitationWindVelocity(kind, 8, -4);
-    close(results[0].x, expected.x * 0.1);
-    close(results[0].z, expected.z * 0.1);
-    close(results[0].x, -results[2].x);
-    close(results[0].z, -results[2].z);
-    close(results[1].x, 0);
-    close(results[1].z, 0);
-    close(results[0].y, results[1].y);
-    close(results[1].y, results[2].y);
+    assert.ok(results[0] > results[1] && results[1] > results[2]);
+    close(results[0] - results[1], results[1] - results[2]);
   }
   close(Math.hypot(...Object.values(precipitationWindVelocity("rain", 64, 0))), 2);
-  close(Math.hypot(...Object.values(precipitationWindVelocity("snow", 64, 0))), 0.75);
+  close(Math.hypot(...Object.values(precipitationWindVelocity("snow", 64, 0))), 3);
 });
 
 test("the same weather update sequence produces the same wind-driven particles", () => {
@@ -176,44 +165,25 @@ test("the same weather update sequence produces the same wind-driven particles",
   assert.deepEqual(left.stats(), right.stats());
 });
 
-test("long-lived snow wraps through its source column under maximum wind without changing its fixed pool", () => {
+test("snow crosses cells continuously and lands on the destination surface", () => {
   const simulation = createWeatherSimulation({random: () => 0.5});
-  const columns = [{x: 0, z: 0, groundY: -100, surface: "solid"}];
-  const maximumComponent = 64 / Math.SQRT2;
-  simulation.update(0, center, columns, "snow", 1, maximumComponent, -maximumComponent);
+  const columns = [{x: 0, z: 0, groundY: 60, surface: "solid"}, {x: 1, z: 0, groundY: 70, surface: "water"}];
+  simulation.update(0, center, columns, "snow", 1, 16, 0);
   const shaft = simulation.shafts.get("0:0");
-  const initialX = [0.1, 0.3, 0.6, 0.9];
-  const initialZ = [0.9, 0.6, 0.3, 0.1];
-  for (let index = 0; index < shaft.particles.length; index += 1) {
-    shaft.particles[index].x = initialX[index];
-    shaft.particles[index].y = 74;
-    shaft.particles[index].z = initialZ[index];
-    shaft.particles[index].speed = 0.5;
-  }
-  const slots = shaft.particles.map((particle) => particle.slot);
-  let wrappedX = false;
-  let wrappedZ = false;
-  let previousX = shaft.particles[3].x;
-  let previousZ = shaft.particles[3].z;
-  for (let step = 1; step < 200; step += 1) {
-    simulation.update(100, {...center, y: 70 - step * 0.05}, columns, "snow", 1, maximumComponent, -maximumComponent);
-    assert.equal(simulation.shafts.get("0:0"), shaft);
-    assert.ok(shaft.particles.every((particle) => (
-      particle.active
-      && particle.x >= 0 && particle.x < 1
-      && particle.z >= 0 && particle.z < 1
-    )));
-    if (shaft.particles[3].x < previousX) wrappedX = true;
-    if (shaft.particles[3].z > previousZ) wrappedZ = true;
-    previousX = shaft.particles[3].x;
-    previousZ = shaft.particles[3].z;
-  }
-  assert.equal(wrappedX, true);
-  assert.equal(wrappedZ, true);
-  assert.deepEqual(shaft.particles.map((particle) => particle.slot), slots);
-  assert.ok(shaft.particles.every((particle) => particle.halfSize === 0.07));
-  assert.equal(shaft.particles.length, precipitationParticleProfiles().snow.slotsPerColumn);
-  assert.equal(simulation.snowSplashes.length, precipitationParticleProfiles().snowSplash.capacity);
+  const particle = shaft.particles[0];
+  particle.x = 0.98; particle.y = 70.1;
+  simulation.update(100, center, columns, "snow", 1, 16, 0);
+  assert.ok(particle.x > 1, "crossing a cell never wraps back to the source");
+  assert.equal(particle.active, false);
+  assert.ok(simulation.snowSplashes.some(p => p.active && p.x > 1 && p.y > 70));
+  assert.equal(shaft.particles.length, 4);
+  // An unknown destination must retire a particle, never invent a ground hit.
+  const contacts = simulation.stats().snowSplashContacts;
+  for (const entry of simulation.shafts.values()) for (const other of entry.particles) other.y = 74;
+  particle.active = true; particle.x = 1.98; particle.y = 70.1;
+  simulation.update(100, center, columns, "snow", 1, 16, 0);
+  assert.equal(particle.active, false);
+  assert.equal(simulation.stats().snowSplashContacts, contacts);
 });
 
 test("weather intensity changes density while neutral sky light and top fade control premultiplied color", () => {
@@ -364,6 +334,8 @@ test("weather batches use premultiplied blending, fixed buffers and shared textu
       assert.equal(batch.mesh.isPickable, false);
       assert.equal(batch.mesh.material.fogEnabled, false);
     }
+    engine.onContextRestoredObservable.notifyObservers(engine);
+    assert.equal(weather.snow.mesh.getVerticesData("position").length, buffer.length, "context restore recreates full capacity after a partial upload");
     assert.equal(weather.rain.mesh.material.disableDepthWrite, true);
     assert.equal(weather.snow.mesh.material.disableDepthWrite, true);
     assert.equal(weather.splash.mesh.material.forceDepthWrite, true);

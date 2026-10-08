@@ -1,0 +1,110 @@
+import {CurvePoint, WorldGeneratorDefinition, WorldGeneratorPaletteDefinition} from "./catalog.vel"
+import {requireTreeShapeEnvelope} from "../survival/tree-shapes.vel"
+import {worldGeneratorClimate} from "../generator-climate.vel"
+
+def requirePositiveInteger(value: number, label: string):
+    assert value.isInteger() and value > 0 else f"{label} must be a positive integer"
+
+def requireProbability(value: number, label: string):
+    assert value.isFinite() and value >= 0 and value <= 1 else f"{label} must be between 0 and 1"
+
+def requireNamespacedKey(value: string, label: string):
+    assert Text.matches(value, r"^[a-z][a-z0-9_.-]*:[a-z0-9][a-z0-9_./-]*$") else f"{label} must be a lowercase namespaced key"
+
+def validateCurve(points: readonly List<readonly CurvePoint>):
+    assert points.size >= 2 else "Continental height curve requires at least two points"
+    let previousInput = -Math.infinity
+    for point in points:
+        assert point.input.isFinite() and point.output.isFinite() else "Continental height curve values must be finite"
+        assert point.input > previousInput else "Continental height curve inputs must be strictly increasing"
+        previousInput = point.input
+    assert points[0].input <= -1 and points[points.size - 1].input >= 1 else "Continental height curve must cover -1 through 1"
+
+/// 校验一个生成器定义中的跨字段约束。Type.parse 已经保证字段完整和类型正确，
+/// 这里继续保证世界边界、采样步长、概率和曲线能够组成可执行的有限算法。
+export def validateWorldGeneratorDefinition(definition: WorldGeneratorDefinition) -> WorldGeneratorDefinition:
+    worldGeneratorClimate(definition)
+    assert definition.schemaVersion == 1 else "Unsupported world generator definition schema version"
+    requireNamespacedKey(definition.key, "World generator key")
+    requireNamespacedKey(definition.palette, "World generator palette key")
+    assert definition.world.minimumY == 0 and definition.world.maximumY == 255 else "Survival world height must be 0 through 255"
+    assert definition.world.minimumY < definition.world.seaLevel and definition.world.seaLevel < definition.world.maximumNaturalSurfaceY else "Sea level must sit inside the natural surface range"
+    assert definition.world.maximumNaturalSurfaceY < definition.world.maximumY else "Natural surface limit must be below world maximum"
+    requirePositiveInteger(definition.world.bedrockDepth, "Bedrock depth")
+    requirePositiveInteger(definition.sampling.horizontalStep, "Horizontal density step")
+    requirePositiveInteger(definition.sampling.verticalStep, "Vertical density step")
+    assert 16 % definition.sampling.horizontalStep == 0 else "Horizontal density step must divide a Chunk edge"
+    assert 256 % definition.sampling.verticalStep == 0 else "Vertical density step must divide world height"
+    assert definition.sampling.halo == 1 else "Terrain column halo must be one block"
+    requirePositiveInteger(definition.sampling.columnCacheCapacity, "Column cache capacity")
+    assert definition.sampling.columnCacheCapacity <= 1024 else "Column cache capacity cannot exceed 1024 horizontal columns"
+    const regions = definition.regions
+    assert regions.cellSize.isInteger() and regions.cellSize >= 128 and regions.cellSize <= 768 else "Region size must be from 128 through 768 blocks"
+    assert regions.warpAmplitude.isFinite() and regions.warpAmplitude >= 0 and regions.warpAmplitude <= regions.cellSize * 0.3 else "Region warp must fit inside its owner neighborhood"
+    assert regions.warpPeriod.isFinite() and regions.warpPeriod >= regions.cellSize else "Region warp period must be at least the region size"
+    assert regions.transitionWidth.isFinite() and regions.transitionWidth >= 16 and regions.transitionWidth <= regions.cellSize * 0.3 else "Region transition must be from 16 through 30 percent of the region size"
+    validateCurve(definition.terrain.continentalHeight)
+    assert definition.terrain.foothillAmplitude >= 0 and definition.terrain.foothillAmplitude <= 32 else "Foothill amplitude must be within zero through 32"
+    requirePositiveInteger(definition.surface.geologyPeriod, "Geology period")
+    requirePositiveInteger(definition.surface.depositPeriod, "Deposit period")
+    requirePositiveInteger(definition.surface.outcropPeriod, "Outcrop period")
+    assert definition.roads.cellSize.isInteger() and definition.roads.cellSize >= 128 and definition.roads.cellSize <= 512 else "Road cell size must be an integer from 128 through 512"
+    assert definition.roads.minimumWidth.isFinite() and definition.roads.minimumWidth >= 2.5 and definition.roads.minimumWidth <= definition.roads.maximumWidth else "Road minimum width must be at least 2.5 and no greater than maximum width"
+    assert definition.roads.maximumWidth.isFinite() and definition.roads.maximumWidth <= 6 else "Road maximum width cannot exceed six blocks"
+    assert definition.roads.shoulderWidth.isFinite() and definition.roads.shoulderWidth >= 0 and definition.roads.shoulderWidth <= 1.5 else "Road shoulder width must be from zero through 1.5"
+    requireProbability(definition.roads.branchChance, "Road branch chance")
+    for basin in [definition.hydrology.lakes, definition.hydrology.ponds]:
+        assert basin.cellSize.isInteger() and basin.cellSize >= 32 and basin.cellSize <= 512 else "Basin cell size must be from 32 through 512"
+        requireProbability(basin.chance, "Basin chance")
+        assert basin.minimumRadius >= 3 and basin.maximumRadius >= basin.minimumRadius and basin.maximumRadius * 1.32 < basin.cellSize * 0.25 else "Basin radii must fit inside their owner cell"
+        assert basin.minimumDepth >= 1 and basin.maximumDepth >= basin.minimumDepth and basin.maximumDepth <= 16 else "Basin depth must be from 1 through 16"
+        assert basin.maximumRelief.isFinite() and basin.maximumRelief >= 0 and basin.maximumRelief <= 12 else "Basin relief must be from zero through 12"
+    assert definition.roads.maximumGrade.isFinite() and definition.roads.maximumGrade > 0 and definition.roads.maximumGrade <= 0.4 else "Road maximum grade must be greater than zero and at most 0.4"
+    assert definition.terrain.surfaceMicroDetailAmplitude.isFinite() and definition.terrain.surfaceMicroDetailAmplitude >= 0.5 and definition.terrain.surfaceMicroDetailAmplitude <= 0.9 else "Surface micro-detail amplitude must be from 0.5 through 0.9 blocks"
+    assert definition.terrain.surfaceMicroDetailPeriod.isInteger() and definition.terrain.surfaceMicroDetailPeriod >= 16 and definition.terrain.surfaceMicroDetailPeriod <= 32 else "Surface micro-detail period must be an integer from 16 through 32 blocks"
+    assert definition.terrain.riverHalfWidth > 0 and definition.terrain.riverHalfWidth <= 1 else "River half width must be between 0 and 1"
+    requireProbability(definition.caves.branchChance, "Cave branch chance")
+    requireProbability(definition.caves.tunnelChance, "Cave tunnel chance")
+    requireProbability(definition.caves.entranceChance, "Cave entrance chance")
+    requireProbability(definition.caves.chamberChance, "Cave chamber chance")
+    requirePositiveInteger(definition.vegetation.treeCellSize, "Tree candidate cell size")
+    requirePositiveInteger(definition.vegetation.treeHorizontalReach, "Tree horizontal reach")
+    requirePositiveInteger(definition.vegetation.maximumTreeHeight, "Maximum tree height")
+    requireTreeShapeEnvelope(definition.vegetation.maximumTreeHeight, definition.vegetation.treeHorizontalReach)
+    assert definition.vegetation.treeHorizontalReach <= 8 else "Tree horizontal reach must not exceed eight blocks"
+    assert definition.vegetation.maximumTreeHeight <= 32 else "Maximum tree height must not exceed 32 blocks"
+    requirePositiveInteger(definition.vegetation.cactusCellSize, "Cactus candidate cell size")
+    requirePositiveInteger(definition.vegetation.deadwoodCellSize, "Deadwood candidate cell size")
+    requirePositiveInteger(definition.vegetation.cliffVineCellSize, "Cliff vine candidate cell size")
+    requirePositiveInteger(definition.vegetation.aquaticCellSize, "Aquatic candidate cell size")
+    assert definition.vegetation.deadwoodCellSize >= 8 else "Deadwood candidate cells must be at least eight blocks"
+    assert definition.vegetation.cliffVineCellSize >= 4 else "Cliff vine candidate cells must be at least four blocks"
+    assert definition.vegetation.aquaticCellSize >= 3 else "Aquatic candidate cells must be at least three blocks"
+    requirePositiveInteger(definition.vegetation.groundPlantCellSize, "Ground plant candidate cell size")
+    requireProbability(definition.vegetation.groundPlantChance, "Ground plant chance")
+    requirePositiveInteger(definition.vegetation.groundPatchPeriod, "Ground community period")
+    requirePositiveInteger(definition.vegetation.aquaticPatchPeriod, "Aquatic community period")
+    assert definition.caves.minimumLength <= definition.caves.maximumLength else "Cave length range is reversed"
+    assert definition.caves.minimumRadius <= definition.caves.maximumRadius else "Cave radius range is reversed"
+    assert definition.aquifers.minimumWaterDepth <= definition.aquifers.maximumWaterDepth else "Aquifer depth range is reversed"
+    for mineral in definition.minerals:
+        assert Text.matches(mineral.key, r"^[a-z][a-z0-9_./:-]*$") else f"Mineral {mineral.key} must use a stable local key"
+        requireProbability(mineral.chance, f"Mineral {mineral.key} chance")
+        requireProbability(mineral.largeChance, f"Mineral {mineral.key} large chance")
+        assert mineral.minimumY <= mineral.maximumY else f"Mineral {mineral.key} height range is reversed"
+        assert mineral.minimumSize <= mineral.maximumSize else f"Mineral {mineral.key} size range is reversed"
+    return definition
+
+/// 材料调色板只校验内容绑定，不拥有任何地形参数。这里拒绝重复矿物槽位，
+/// 保证算法定义中的每个矿物 key 最终只能解析到一组方块。
+export def validateWorldGeneratorPaletteDefinition(palette: WorldGeneratorPaletteDefinition) -> WorldGeneratorPaletteDefinition:
+    assert palette.schemaVersion == 1 else "Unsupported world generator palette schema version"
+    requireNamespacedKey(palette.key, "World generator palette key")
+    const keys: Set<string> = Set()
+    for mineral in palette.minerals:
+        assert Text.matches(mineral.key, r"^[a-z][a-z0-9_./:-]*$") else f"Mineral material {mineral.key} must use a stable local key"
+        assert not (mineral.key in keys) else f"Duplicate mineral material {mineral.key}"
+        keys.add(mineral.key)
+        requireNamespacedKey(mineral.block, f"Mineral material {mineral.key} block")
+        requireNamespacedKey(mineral.source, f"Mineral material {mineral.key} source")
+    return palette

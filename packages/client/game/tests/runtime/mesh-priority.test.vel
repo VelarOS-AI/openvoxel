@@ -1,9 +1,12 @@
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
 import {expect} from "velar/test"
 import {PortalVisibilitySummary} from "../../src/runtime/portal-visibility.vel"
-import {chunkNeedsMesh, demandedChunkMeshKeys, priorityPendingChunk} from "../../src/runtime/mesh-priority.vel"
+import {ChunkMeshCandidate, chunkNeedsMesh, demandedChunkMeshKeys, priorityPendingChunkKey} from "../../src/runtime/mesh-priority.vel"
 
 def view(center: readonly ChunkPosition = {x: 0, y: 0, z: 0}): return {center, forwardX: 0, forwardY: 0, forwardZ: -1}
+
+def pending(positions: readonly List<readonly ChunkPosition>) -> readonly List<ChunkMeshCandidate>:
+    return positions.map(position => ({key: chunkKey(position), position}))
 
 test "pending Chunk priority follows the latest view instead of insertion history":
     const queued: List<readonly ChunkPosition> = [
@@ -13,25 +16,25 @@ test "pending Chunk priority follows the latest view instead of insertion histor
         {x: 8, y: 0, z: 8},
     ]
 
-    expect(priorityPendingChunk(queued, Set(), view({x: 10, y: 0, z: 9}))).toEqual({x: 10, y: 0, z: 10})
-    expect(priorityPendingChunk([], Set(), view())).toBe(null)
+    expect(priorityPendingChunkKey(pending(queued), Set(), view({x: 10, y: 0, z: 9}))).toBe("10:0:10")
+    expect(priorityPendingChunkKey([], Set(), view())).toBe(null)
 
 test "safety neighbors precede the expanded forward view and offscreen residents":
     const nearBehind: ChunkPosition = {x: 0, y: 0, z: 2}
     const forward: ChunkPosition = {x: 0, y: 0, z: -4}
     const farBehind: ChunkPosition = {x: 0, y: 0, z: 4}
-    expect(priorityPendingChunk([farBehind, forward, nearBehind], Set(), view())).toEqual(nearBehind)
-    expect(priorityPendingChunk([farBehind, forward], Set(), view())).toEqual(forward)
+    expect(priorityPendingChunkKey(pending([farBehind, forward, nearBehind]), Set(), view())).toBe(chunkKey(nearBehind))
+    expect(priorityPendingChunkKey(pending([farBehind, forward]), Set(), view())).toBe(chunkKey(forward))
 
 test "vertical view direction prioritizes the section the player is looking toward":
     const up: ChunkPosition = {x: 0, y: 4, z: 0}
     const down: ChunkPosition = {x: 0, y: -4, z: 0}
-    expect(priorityPendingChunk([down, up], Set(), {
+    expect(priorityPendingChunkKey(pending([down, up]), Set(), {
         center: {x: 0, y: 0, z: 0},
         forwardX: 0,
         forwardY: 1,
         forwardZ: 0,
-    })).toEqual(up)
+    })).toBe(chunkKey(up))
 
 test "mesh demand keeps the safety sphere and conservatively expands the forward view":
     expect(chunkNeedsMesh({x: 0, y: 0, z: 2}, view())).toBe(true)
@@ -50,8 +53,20 @@ test "active Chunk keys cannot start a second concurrent build":
     const next = {x: 8, y: 0, z: 8}
     const activeKeys: Set<string> = Set([chunkKey(active)])
 
-    expect(priorityPendingChunk([active, next], activeKeys, view({x: 10, y: 0, z: 9}))).toEqual(next)
-    expect(priorityPendingChunk([active], activeKeys, view({x: 10, y: 0, z: 9}))).toBe(null)
+    expect(priorityPendingChunkKey(pending([active, next]), activeKeys, view({x: 10, y: 0, z: 9}))).toBe(chunkKey(next))
+    expect(priorityPendingChunkKey(pending([active]), activeKeys, view({x: 10, y: 0, z: 9}))).toBe(null)
+
+test "equal-priority Chunk keys follow live queue insertion order through replacement and requeue":
+    const left: ChunkPosition = {x: -1, y: 0, z: 0}
+    const right: ChunkPosition = {x: 1, y: 0, z: 0}
+    const queued = pending([left, right]).keyBy(candidate => candidate.key)
+    expect(priorityPendingChunkKey(queued.values(), Set(), view())).toBe(chunkKey(left))
+    queued.set(chunkKey(left), {key: chunkKey(left), position: left})
+    expect(priorityPendingChunkKey(queued.values(), Set(), view())).toBe(chunkKey(left))
+    queued.remove(chunkKey(left))
+    queued.set(chunkKey(left), {key: chunkKey(left), position: left})
+    expect(priorityPendingChunkKey(queued.values(), Set(), view())).toBe(chunkKey(right))
+    expect(priorityPendingChunkKey(queued.values(), Set([chunkKey(right)]), view())).toBe(chunkKey(left))
 
 test "mesh demand combines conservative portal visibility with the safety sphere":
     const positions: List<readonly ChunkPosition> = [

@@ -18,24 +18,26 @@ def requireRenderState(
     assert state != null else f"Chunk references unknown runtimeId {runtimeId}"
     return state
 
-def centerStateAtIndex(
-    index: number,
-    edge: number,
-    paddedBlocks: UInt32Buffer,
-    byRuntimeId: Map<number, ClientRenderState>,
-) -> ClientRenderState:
-    const paddedEdge = edge + 2
-    const x = index % edge
-    const z = (index / edge).floor() % edge
-    const y = (index / (edge * edge)).floor()
-    return requireRenderState(byRuntimeId, paddedBlocks[blockIndex(x + 1, y + 1, z + 1, paddedEdge)])
-
 export def centerChunkStates(
     edge: number,
     paddedBlocks: UInt32Buffer,
     byRuntimeId: Map<number, ClientRenderState>,
 ) -> List<ClientRenderState>:
-    return range(edge * edge * edge).map(index => centerStateAtIndex(index, edge, paddedBlocks, byRuntimeId))
+    const paddedEdge = edge + 2
+    let previousRuntimeId = paddedBlocks[blockIndex(1, 1, 1, paddedEdge)]
+    let previousState = requireRenderState(byRuntimeId, previousRuntimeId)
+    // Air and terrain strata form long runs. Resolve a catalog entry only when
+    // its runtimeId changes, instead of repeating a Map lookup per voxel.
+    def centerState(index: number) -> ClientRenderState:
+        const x = index % edge
+        const z = (index / edge).floor() % edge
+        const y = (index / (edge * edge)).floor()
+        const runtimeId = paddedBlocks[blockIndex(x + 1, y + 1, z + 1, paddedEdge)]
+        if runtimeId != previousRuntimeId:
+            previousState = requireRenderState(byRuntimeId, runtimeId)
+            previousRuntimeId = runtimeId
+        return previousState
+    return range(edge * edge * edge).map(centerState)
 
 export def stateAt(
     states: Map<number, ClientRenderState>,

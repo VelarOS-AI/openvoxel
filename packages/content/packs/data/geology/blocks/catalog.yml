@@ -1,0 +1,4 @@
+schemaVersion: 6
+catalogVersion: geology:v1
+sources:
+  - blocks/flora.yml

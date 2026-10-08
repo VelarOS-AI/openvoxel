@@ -1,0 +1,19 @@
+import {readText} from "velar/fs"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {WorldGenerationPack} from "../src/definition/catalog.vel"
+import {parseWorldGenerationPack, validateWorldGenerationPack} from "../src/ecosystem/validation.vel"
+
+type EcosystemManifest:
+    formatVersion: number
+    sources: List<string>
+
+export async def readBuiltinEcosystemPacks() -> List<WorldGenerationPack>:
+    const manifest = EcosystemManifest.parse(parseYaml(await readText("data/packs/catalog.yml", 64 * 1024)))
+    assert manifest.formatVersion == 1 else "Unsupported ecosystem source manifest"
+    const packs: List<WorldGenerationPack> = []
+    for source in manifest.sources:
+        assert Text.matches(source, r"^[a-z0-9-]+\.yml$") else f"Invalid ecosystem source path {source}"
+        const pack = parseWorldGenerationPack(parseYaml(await readText(f"data/packs/{source}", 512 * 1024)))
+        validateWorldGenerationPack(pack)
+        packs.append(pack)
+    return packs

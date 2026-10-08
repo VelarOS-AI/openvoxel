@@ -1,4 +1,4 @@
-import {Cancellation} from "velar/task"
+import {Cancellation, CancellationError} from "velar/task"
 import {serveWorker} from "velar/worker"
 import {ClientRenderState, MeshingWorkerRequest, MeshingWorkerResponse, meshingWorkerOperations} from "./contracts.vel"
 import {meshChunkWithIndex} from "./mesher.vel"
@@ -7,7 +7,7 @@ import {indexRenderStates} from "./meshing/catalog.vel"
 let activeStates: Map<number, ClientRenderState>? = null
 
 async def handleMeshingWorker(request: MeshingWorkerRequest, cancellation: Cancellation) -> MeshingWorkerResponse:
-    await cancellation.checkpoint()
+    if cancellation.cancelled: throw CancellationError(cancellation.reason ?? "Meshing cancelled")
     if request.operation == meshingWorkerOperations.initialize:
         const states = request.states
         assert states != null and states.size > 0 else "Meshing Worker initialization requires render states"
@@ -21,8 +21,9 @@ async def handleMeshingWorker(request: MeshingWorkerRequest, cancellation: Cance
         const ticket = request.ticket
         assert states != null else "Meshing Worker is not initialized"
         assert position != null and edge != null and paddedBlocks != null and ticket != null else "Meshing Worker request is incomplete"
-        const mesh = meshChunkWithIndex(position, edge, paddedBlocks, states, ticket)
-        await cancellation.checkpoint()
+        const mesh = meshChunkWithIndex(position, edge, paddedBlocks, states, ticket, request.fluidDepthHalo)
+        // 返回消息本身就会让出 Worker 事件循环。逐块 checkpoint 会额外插入
+        // 浏览器定时器延迟，使空 section 也占满一个调度周期。
         return {operation: request.operation, mesh}
     throw Error(f"Unsupported Meshing Worker operation {request.operation}")
 

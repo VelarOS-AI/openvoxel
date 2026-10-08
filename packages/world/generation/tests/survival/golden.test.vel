@@ -2,7 +2,7 @@ import {expect} from "velar/test"
 import {ChunkPosition, chunkChecksum} from "@openvoxel/world"
 import {defaultGenerator, instantiateWorldGenerator} from "../../src/generator-registry.vel"
 
-test "survival v3 fixed seed corpus detects accidental algorithm drift":
+test "survival v7 fixed seed corpus detects accidental algorithm drift":
     const generator = instantiateWorldGenerator(defaultGenerator, "openvoxel", 16)
     const positions: List<ChunkPosition> = [
         {x: 0, y: 0, z: 0},
@@ -13,10 +13,11 @@ test "survival v3 fixed seed corpus detects accidental algorithm drift":
     let checksum = 0
     for position in positions: checksum = (checksum ^ chunkChecksum(generator.generate(position))) >>> 0
     // 固定四个区块即可检测算法漂移，单独执行不触发广域生态与出生点语料。
-    expect(checksum).toBe(3835990042)
+    expect(checksum).toBe(458225748)
 
 test "the visually reviewed forest locks its ground plants and vertically crossing crowns":
     const generator = instantiateWorldGenerator(defaultGenerator, "continental-ridges", 16)
-    const expected = [2112019444, 1710298786, 2399481100]
-    for checksum, index in expected:
-        expect(chunkChecksum(generator.generate({x: -48, y: index + 4, z: 16}))).toBe(checksum)
+    // 紫花包权重调整只改变底层 section 的一株地被；上方树冠保持同一校验值。
+    const expected = [1096830309, 4038706404, 2399481100]
+    const actual = range(3).map(index => chunkChecksum(generator.generate({x: -48, y: index + 4, z: 16})))
+    expect(actual).toEqual(expected)

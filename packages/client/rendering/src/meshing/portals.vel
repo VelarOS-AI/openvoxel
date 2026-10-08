@@ -1,14 +1,16 @@
 import {ChunkPortalSummary, ClientRenderState, chunkPortalFaceCount, chunkPortalFaceIndices} from "../contracts.vel"
+import {UInt32Buffer, uint32Buffer} from "velar/binary"
 
 def enqueueOpenNeighbor(
-    queue: List<number>,
-    visited: Set<number>,
-    openCells: readonly List<bool>,
+    queue: UInt32Buffer,
+    closedCells: UInt32Buffer,
     index: number,
-):
-    if not openCells[index] or index in visited: return
-    visited.add(index)
-    queue.append(index)
+    tail: number,
+) -> number:
+    if closedCells[index] != 0: return tail
+    closedCells[index] = 1
+    queue[tail] = index
+    return tail + 1
 
 def maskForBits(bits: readonly Set<number>) -> number: return bits.values().map(bit => Math.pow(2, bit)).sum()
 
@@ -28,17 +30,22 @@ export def summarizeChunkPortals(
             openFaces: Math.pow(2, chunkPortalFaceCount) - 1,
             connectedFaces: Math.pow(2, chunkPortalFaceCount * chunkPortalFaceCount) - 1,
         }
-    const openCells = states.map(state => not state.occludes)
-    const visited: Set<number> = Set()
+    // Dense voxel indices need one flag and one queue slot each. Reuse the
+    // bounded buffers for every component instead of hashing each neighbor.
+    const closedCells = uint32Buffer(states.size)
+    for state, index in states:
+        if state.occludes: closedCells[index] = 1
+    const queue = uint32Buffer(states.size)
     const openFaceBits: Set<number> = Set()
     const connectedFaceBits: Set<number> = Set()
-    for start in range(openCells.size):
-        if not openCells[start] or start in visited: continue
-        const queue: List<number> = [start]
+    for start in range(states.size):
+        if closedCells[start] != 0: continue
+        queue[0] = start
         const componentFaces: Set<number> = Set()
-        visited.add(start)
+        closedCells[start] = 1
         let cursor = 0
-        while cursor < queue.size:
+        let tail = 1
+        while cursor < tail:
             const index = queue[cursor]
             cursor += 1
             const x = index % edge
@@ -50,12 +57,12 @@ export def summarizeChunkPortals(
             if y + 1 == edge: componentFaces.add(chunkPortalFaceIndices.top)
             if z == 0: componentFaces.add(chunkPortalFaceIndices.north)
             if z + 1 == edge: componentFaces.add(chunkPortalFaceIndices.south)
-            if x > 0: enqueueOpenNeighbor(queue, visited, openCells, index - 1)
-            if x + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + 1)
-            if z > 0: enqueueOpenNeighbor(queue, visited, openCells, index - edge)
-            if z + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + edge)
-            if y > 0: enqueueOpenNeighbor(queue, visited, openCells, index - edge * edge)
-            if y + 1 < edge: enqueueOpenNeighbor(queue, visited, openCells, index + edge * edge)
+            if x > 0: tail = enqueueOpenNeighbor(queue, closedCells, index - 1, tail)
+            if x + 1 < edge: tail = enqueueOpenNeighbor(queue, closedCells, index + 1, tail)
+            if z > 0: tail = enqueueOpenNeighbor(queue, closedCells, index - edge, tail)
+            if z + 1 < edge: tail = enqueueOpenNeighbor(queue, closedCells, index + edge, tail)
+            if y > 0: tail = enqueueOpenNeighbor(queue, closedCells, index - edge * edge, tail)
+            if y + 1 < edge: tail = enqueueOpenNeighbor(queue, closedCells, index + edge * edge, tail)
         const faces = componentFaces.values()
         for source in faces:
             openFaceBits.add(source)

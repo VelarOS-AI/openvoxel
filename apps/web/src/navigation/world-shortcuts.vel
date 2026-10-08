@@ -1,0 +1,10 @@
+export type WorldShortcuts:
+    dispose: () -> null
+
+extern module "#openvoxel/web/world-shortcuts":
+    export def createWorldShortcuts(canvas: CanvasElement, inventoryDialog: () -> DialogElement?, openInventory: () -> null, closeInventory: () -> null) -> WorldShortcuts
+
+import js {createWorldShortcuts} from "#openvoxel/web/world-shortcuts"
+
+export def worldShortcuts(canvas: CanvasElement, inventoryDialog: () -> DialogElement?, openInventory: () -> null, closeInventory: () -> null) -> WorldShortcuts:
+    return createWorldShortcuts(canvas, inventoryDialog, openInventory, closeInventory)

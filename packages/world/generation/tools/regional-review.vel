@@ -1,0 +1,54 @@
+import {monotonic} from "velar/time"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {baseWorldGeneratorCatalog} from "../src/runtime/builtin-catalog.vel"
+import {createSurvivalBlockPalette} from "../src/survival/block-palette.vel"
+import {columnPlanner} from "../src/survival/terrain.vel"
+import {decorationPlanner} from "../src/survival/vegetation.vel"
+import {chunkChecksum} from "@openvoxel/world"
+import {defaultGenerator, instantiateWorldGenerator} from "../src/generator-registry.vel"
+import {createGenerationFields} from "../src/survival/terrain.vel"
+
+/// Small deterministic fixture discovery for visual reviews and algorithm revisions.
+/// It scans basin facts before building full density columns.
+@main:
+    const seed = "continental-ridges"
+    const generator = instantiateWorldGenerator(defaultGenerator, seed, 16)
+    const fields = createGenerationFields(seed)
+    const found: Set<string> = Set()
+    for x in range(-1536, 0, 16):
+        for z in range(-1024, 1024, 8):
+            const basin = fields.waterBodies.sample(x, z)
+            if basin == null or basin.floorY >= basin.waterLevel - 1: continue
+            const key = str(basin.kind)
+            if key in found: continue
+            const sample = generator.sample({x, z})
+            if sample.surfaceY >= basin.waterLevel - 1: continue
+            found.add(key)
+            print(Json.stringify({kind: key, x, z, waterLevel: basin.waterLevel, biome: sample.biome}))
+            if found.size == 2: break
+        if found.size == 2: break
+    const baseline = instantiateWorldGenerator(defaultGenerator, "openvoxel", 16)
+    let checksum = 0
+    for position in [{x: 0, y: 0, z: 0}, {x: 0, y: 4, z: 0}, {x: -10, y: 4, z: -10}, {x: 7, y: 6, z: -3}]:
+        checksum = (checksum ^ chunkChecksum(baseline.generate(position))) >>> 0
+    print(Json.stringify({checksum, forest: range(3).map(index => chunkChecksum(generator.generate({x: -48, y: index + 4, z: 16})))}))
+    print(Json.stringify(baseline.sample({x: 0, z: 0})))
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const columns = columnPlanner(fields, 16)
+    const decorations = decorationPlanner(profile, seed, blocks, columns, registry)
+    let logFound = false
+    for x in range(-54, -40):
+        for z in range(16, 32):
+            const feature = decorations.decorations(x, z).features.find(candidate => candidate.owner.startsWith("deadwood:") and candidate.writes.size >= 10)
+            if feature == null: continue
+            print(Json.stringify({name: "fallen-tree", seed, x: feature.origin.x, z: feature.origin.z, y: feature.origin.y + 1, owner: feature.owner, cells: feature.writes.size}))
+            logFound = true
+            break
+        if logFound: break
+    const started = monotonic()
+    for index in range(4):
+        const world = instantiateWorldGenerator(defaultGenerator, f"new-world-{index}", 16)
+        world.findSpawn()
+    print(Json.stringify({averageSpawnMilliseconds: (monotonic() - started) / 4}))

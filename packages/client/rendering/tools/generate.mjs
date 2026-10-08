@@ -2,6 +2,8 @@ import {mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
 import {buildResourcePack, paths} from "./resource-pack.mjs";
 
+import {resourceModules} from "./resource-modules.mjs";
+
 async function writeChanged(path, value) {
   let current = null;
   try {
@@ -20,4 +22,5 @@ await rm(paths.bankRoot, {recursive: true, force: true});
 await Promise.all([
   writeChanged(paths.artifact, output.artifactText),
   writeChanged(paths.audit, output.auditText),
+  ...[...resourceModules(paths.artifact, output.artifactText)].map(([path, text]) => writeChanged(path, text)),
 ]);

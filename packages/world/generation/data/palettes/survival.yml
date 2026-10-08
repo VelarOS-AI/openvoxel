@@ -3,6 +3,16 @@ key: worldGeneratorPalettes.survival
 
 blocks:
   air: blocks.air
+  podzol: blocks.podzol
+  moss: blocks.moss
+  mud: blocks.mud
+  coarseDirt: blocks.coarseDirt
+  redSand: blocks.redSand
+  terracotta: blocks.terracotta
+  ochreClay: blocks.ochreClay
+  fern: blocks.fern
+  redMushroom: blocks.redMushroom
+  brownMushroom: blocks.brownMushroom
   basalt: blocks.basalt
   birchLeaves: blocks.birchLeaves
   birchLog: blocks.birchLog
@@ -27,7 +37,7 @@ blocks:
   kelp: blocks.kelp
   largeDryBush: blocks.largeDryBush
   limestone: blocks.limestone
-  marble: blocks.marble
+  paleBasalt: blocks.paleBasalt
   magma: blocks.magma
   mimosaLeaves: blocks.mimosaLeaves
   mimosaLog: blocks.mimosaLog
@@ -64,11 +74,4 @@ blocks:
   wheat: blocks.wheat
   yellowFlower: blocks.yellowFlower
 
-minerals:
-  - {key: coal, block: blocks.coalOre, source: blocks.stone}
-  - {key: copper, block: blocks.copperOre, source: blocks.stone}
-  - {key: iron, block: blocks.ironOre, source: blocks.basalt}
-  - {key: saltpeter, block: blocks.saltpeterOre, source: blocks.sandstone}
-  - {key: sulphur, block: blocks.sulphurOre, source: blocks.basalt}
-  - {key: diamond, block: blocks.diamondOre, source: blocks.basalt}
-  - {key: germanium, block: blocks.germaniumOre, source: blocks.basalt}
+minerals: []

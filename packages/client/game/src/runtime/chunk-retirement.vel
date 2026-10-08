@@ -1,0 +1,68 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {Cancellation, Task, task} from "velar/task"
+import {monotonic} from "velar/time"
+
+export type ChunkRetirement:
+    defer: (positions: readonly List<readonly ChunkPosition>) -> null
+    retain: (key: string) -> null
+    refresh: () -> null
+    close: () -> Promise<null>
+
+readonly type RetiringChunk:
+    position: readonly ChunkPosition
+    deadline: number
+
+/// 临时离开需求的区块保留 800 ms；重新需要时撤销回收。一个休眠任务管理
+/// 整个队列，超出容量时只提前释放仍然过期的最老项，静止且无回收时没有轮询。
+export def chunkRetirement(
+    mayRelease: (key: string, position: readonly ChunkPosition) -> bool,
+    release: (positions: readonly List<readonly ChunkPosition>) -> null,
+    capacity: number,
+    clock: () -> number = monotonic,
+) -> ChunkRetirement:
+    const pending: Map<string, RetiringChunk> = Map()
+    let owner: Task<null>? = null
+    let closed = false
+    let closing: Promise<null>? = null
+
+    def refresh():
+        if closed: return
+        const expired: List<readonly ChunkPosition> = []
+        const now = clock()
+        for key, entry in pending:
+            if not mayRelease(key, entry.position): pending.remove(key)
+        for key, entry in pending:
+            if entry.deadline > now and pending.size <= capacity: continue
+            pending.remove(key)
+            expired.append(entry.position)
+        if expired.size > 0: release(expired)
+
+    async def run(cancellation: Cancellation):
+        try:
+            while not closed and pending.size > 0:
+                await Promise.sleep(100ms)
+                await cancellation.checkpoint()
+                refresh()
+        finally: owner = null
+
+    def defer(positions: readonly List<readonly ChunkPosition>):
+        if closed: return
+        const deadline = clock() + 800
+        for position in positions:
+            const key = chunkKey(position)
+            if (key not in pending) and mayRelease(key, position): pending.set(key, {position, deadline})
+        refresh()
+        if pending.size > 0 and owner == null: owner = task(run)
+
+    async def shutdown():
+        closed = true
+        pending.clear()
+        if owner != null: await owner.cancel("Chunk retirement closed")
+
+    def close() -> Promise<null>:
+        if closing == null: closing = shutdown()
+        return closing!
+
+    def retain(key: string): pending.remove(key)
+
+    return {defer, retain, refresh, close}

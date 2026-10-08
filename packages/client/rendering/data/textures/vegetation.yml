@@ -68,3 +68,6 @@ textures:
   - {key: openvoxel:texture/block/wheat_6, surface: plant, file: textures/vegetation/wheat_6.png}
   - {key: openvoxel:texture/block/wheat_7, surface: plant, file: textures/vegetation/wheat_7.png}
   - {key: openvoxel:texture/block/yellow_flower, surface: plant, file: textures/vegetation/yellow_flower.png}
+  - {key: openvoxel:texture/block/fern, surface: plant, file: textures/vegetation/fern.png}
+  - {key: openvoxel:texture/block/red_mushroom, surface: plant, file: textures/vegetation/red_mushroom.png}
+  - {key: openvoxel:texture/block/brown_mushroom, surface: plant, file: textures/vegetation/brown_mushroom.png}

@@ -6,7 +6,7 @@ import {
   WeatherColumnInvalidationScheduler,
 } from "../src/backends/babylon/native/surface-work-scheduler.mjs";
 
-test("Chunk uploads commit at most one latest value per render-frame drain", async () => {
+test("a single-item drain commits the latest value for one queued Chunk", async () => {
   const committed = [];
   const queue = new LatestFrameWorkQueue((value) => committed.push(value));
   const first = queue.enqueue("0:0:0", "old");
@@ -37,6 +37,21 @@ test("pending Chunk uploads can be cancelled without crossing the commit boundar
   assert.equal(queue.size, 0);
   assert.equal(queue.drainOne(), false);
   assert.deepEqual(committed, []);
+});
+
+test("GPU uploads recheck validity on the commit frame, keeping the previous mesh when stale", async () => {
+  let visible = "existing";
+  let current = true;
+  const queue = new LatestFrameWorkQueue(value => { visible = value; });
+  const stale = queue.enqueue("chunk", "stale", () => current);
+  current = false;
+  queue.drainOne();
+  assert.equal(await stale, false);
+  assert.equal(visible, "existing");
+  const fresh = queue.enqueue("chunk", "latest", () => true);
+  queue.drainOne();
+  assert.equal(await fresh, true);
+  assert.equal(visible, "latest");
 });
 
 test("re-enqueue after cancellation does not reuse the cancelled queue slot", async () => {
@@ -121,4 +136,19 @@ test("translucent scheduler removes disposed meshes from pending work", () => {
   assert.equal(scheduler.delete(mesh), true);
   assert.equal(scheduler.size, 0);
   assert.equal(scheduler.next({x: 0, y: 0, z: 0}, 80), null);
+});
+
+test("frame uploads share cheap work but stop at the elapsed time or item budget", async () => {
+  let clock = 0;
+  const committed = [];
+  const queue = new LatestFrameWorkQueue(cost => { committed.push(cost); clock += cost; });
+  const jobs = [0.4, 0.4, 1.4, 5, 0.1, 0.1].map((cost, index) => queue.enqueue(String(index), cost));
+  assert.equal(queue.drainFrame(2, 4, () => clock), 3);
+  assert.deepEqual(committed, [0.4, 0.4, 1.4]);
+  assert.equal(queue.size, 3);
+  assert.equal(queue.drainFrame(2, 4, () => clock), 1, "one expensive upload still yields before the next item");
+  assert.equal(queue.drainFrame(2, 1, () => clock), 1, "the count limit also bounds zero-cost work");
+  assert.equal(queue.drainFrame(2, 4, () => clock), 1);
+  assert.equal(queue.drainFrame(2, 4, () => clock), 0);
+  assert.deepEqual(await Promise.all(jobs), [true, true, true, true, true, true]);
 });

@@ -1,6 +1,6 @@
 import {ChunkPosition, chunkKey} from "@openvoxel/world"
 import {PortalVisibilitySummary, PortalVisibilityWorkspace, portalVisibilityWorkspace} from "./portal-visibility.vel"
-import {chunkNeedsMinimap, chunkNeedsResidency} from "./render-window.vel"
+import {chunkNeedsResidency, chunkWindowQuery} from "./render-window.vel"
 
 export readonly type MeshPriorityView:
     center: readonly ChunkPosition
@@ -8,32 +8,16 @@ export readonly type MeshPriorityView:
     forwardY: number
     forwardZ: number
     minimap: bool?
+    radius: number?
+
+export readonly type ChunkMeshCandidate:
+    key: string
+    position: readonly ChunkPosition
 
 export type ChunkMeshDemand:
     rebuild: (positions: readonly List<readonly ChunkPosition>, view: MeshPriorityView) -> null
     demandedKeys: (summaries: readonly Map<string, PortalVisibilitySummary>) -> Set<string>
-
-type MeshPriorityFacts:
-    tier: number
-    alignment: number
-    distanceSquared: number
-
-def priorityFacts(position: readonly ChunkPosition, view: MeshPriorityView) -> MeshPriorityFacts:
-    const forwardLength = Math.sqrt(view.forwardX * view.forwardX + view.forwardY * view.forwardY + view.forwardZ * view.forwardZ)
-    assert forwardLength.isFinite() and forwardLength > 0 else "Mesh priority forward direction must be finite and non-zero"
-    const dx = position.x - view.center.x
-    const dy = position.y - view.center.y
-    const dz = position.z - view.center.z
-    const distanceSquared = dx * dx + dy * dy + dz * dz
-    const distance = Math.sqrt(distanceSquared)
-    let alignment = 1
-    if distance > 0:
-        alignment = (dx * view.forwardX + dy * view.forwardY + dz * view.forwardZ) / (distance * forwardLength)
-    return {
-        tier: distanceSquared <= 4 ? 0 : chunkNeedsResidency(position, view) ? 1 : 2,
-        alignment,
-        distanceSquared,
-    }
+    revision: () -> number
 
 /// 两格内的玩家安全邻域不依赖视向或 Portal；即使相机所在 section 的摘要
 /// 尚未完成、或玩家贴着实体边界，这一圈仍会提前拥有可交互网格。
@@ -61,12 +45,22 @@ export def chunkMeshDemand() -> ChunkMeshDemand:
     const safetyKeys: Set<string> = Set()
 
     def rebuild(positions: readonly List<readonly ChunkPosition>, view: MeshPriorityView):
-        // 迟滞驻留只保存数据，不自动保留网格。Portal 只能在当前扩张视区内继续
-        // 收窄需求，否则开放天空会把背后 guard 中的全部 section 再次扩散为可见。
-        portal.rebuild(positions.filter(position => chunkNeedsMesh(position, view)), view.center)
+        // Portal 在当前扩张视区内收窄即时需求；已安装网格的短暂回收缓冲由
+        // meshing 所有者管理，避免天空把背后 guard 全部扩散成常驻绘制需求。
+        const query = chunkWindowQuery(view)
+        const needs = query.needs
+        portal.rebuild(positions.filter(needs), view.center)
+        const centerX = view.center.x
+        const centerY = view.center.y
+        const centerZ = view.center.z
+        const minimap = view.minimap == true
         safetyKeys.clear()
         for position in positions:
-            if chunkNeedsSafetyMesh(position, view) or chunkNeedsMinimap(position, view):
+            const dx = position.x - centerX
+            const dy = position.y - centerY
+            const dz = position.z - centerZ
+            const horizontalSquared = dx * dx + dz * dz
+            if horizontalSquared + dy * dy <= 4 or (minimap and horizontalSquared <= 9 and dy.abs() <= 3):
                 safetyKeys.add(chunkKey(position))
 
     def demandedKeys(summaries: readonly Map<string, PortalVisibilitySummary>) -> Set<string>:
@@ -74,37 +68,53 @@ export def chunkMeshDemand() -> ChunkMeshDemand:
         for key in safetyKeys: demanded.add(key)
         return demanded
 
-    return {rebuild, demandedKeys}
+    return {rebuild, demandedKeys, revision: portal.revision}
 
 /// 新同步的驻留 Chunk 只在安全邻域或扩张前向视区内立即构网。背后的数据仍
 /// 保留给碰撞和转身 guard，朝向改变后再提升为网格需求。
 export def chunkNeedsMesh(position: readonly ChunkPosition, view: MeshPriorityView) -> bool:
-    return priorityFacts(position, view).tier <= 1
+    return chunkNeedsResidency(position, view)
 
 /// 构网优先级按职责分档：两格内的碰撞安全邻域永远先行；其余扩张前向视锥
 /// 先于背后驻留项。同档再按视向夹角、距离和稳定输入顺序选择，既优先补齐玩家
 /// 正在看的区域，也不会让近身正确性依赖朝向。活动 key 始终被排除。
-export def priorityPendingChunk(
-    positions: readonly List<readonly ChunkPosition>,
+export def priorityPendingChunkKey(
+    candidates: readonly List<ChunkMeshCandidate>,
     activeKeys: readonly Set<string>,
     view: MeshPriorityView,
-) -> readonly ChunkPosition?:
-    let selected: readonly ChunkPosition? = null
+) -> string?:
+    const query = chunkWindowQuery(view)
+    const needs = query.needs
+    const centerX = view.center.x
+    const centerY = view.center.y
+    const centerZ = view.center.z
+    const forwardX = view.forwardX
+    const forwardY = view.forwardY
+    const forwardZ = view.forwardZ
+    const forwardLength = Math.sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ)
+    let selected: string? = null
     let selectedTier: number? = null
     let selectedPrimary: number? = null
     let selectedSecondary: number? = null
-    for position in positions:
-        if chunkKey(position) in activeKeys: continue
-        const facts = priorityFacts(position, view)
-        const primary = facts.tier == 0 ? -facts.distanceSquared : facts.alignment
-        const secondary = facts.tier == 0 ? facts.alignment : -facts.distanceSquared
+    for candidate in candidates:
+        const key = candidate.key
+        if key in activeKeys: continue
+        const position = candidate.position
+        const dx = position.x - centerX
+        const dy = position.y - centerY
+        const dz = position.z - centerZ
+        const distanceSquared = dx * dx + dy * dy + dz * dz
+        const alignment = distanceSquared == 0 ? 1 : (dx * forwardX + dy * forwardY + dz * forwardZ) / (Math.sqrt(distanceSquared) * forwardLength)
+        const tier = distanceSquared <= 4 ? 0 : needs(position) ? 1 : 2
+        const primary = tier == 0 ? -distanceSquared : alignment
+        const secondary = tier == 0 ? alignment : -distanceSquared
         const better = selectedTier == null
-            or facts.tier < selectedTier
-            or (facts.tier == selectedTier and primary > selectedPrimary!)
-            or (facts.tier == selectedTier and primary == selectedPrimary and secondary > selectedSecondary!)
+            or tier < selectedTier
+            or (tier == selectedTier and primary > selectedPrimary!)
+            or (tier == selectedTier and primary == selectedPrimary and secondary > selectedSecondary!)
         if better:
-            selected = position
-            selectedTier = facts.tier
+            selected = key
+            selectedTier = tier
             selectedPrimary = primary
             selectedSecondary = secondary
     return selected

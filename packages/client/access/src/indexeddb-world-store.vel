@@ -1,3 +1,4 @@
+import {storedKeyBelongsToWorld, worldManifestKey, worldDeltaKey} from "./world-storage-keys.vel"
 import {Bytes} from "velar/binary"
 import {database} from "velar/storage"
 import {decode, encode} from "@velarscript-labs/msgpack"
@@ -19,18 +20,13 @@ def localOrder(entry: StoredBlockOverride) -> number:
 export def indexedDbWorldStore(name: string) -> WorldStore:
     const storage = database(name)
 
-    def manifestKey(worldId: string) -> string: return f"manifest:{worldId}"
-
-    def deltaKey(worldId: string, position: readonly ChunkPosition) -> string:
-        return f"delta:{worldId}:{chunkKey(position)}"
-
-    async def saveManifest(manifest: WorldManifest): await storage.set(manifestKey(manifest.id), manifest)
+    async def saveManifest(manifest: WorldManifest): await storage.set(worldManifestKey(manifest.id), manifest)
 
     async def findManifest(worldId: string) -> WorldManifest?:
-        return await storage.get(manifestKey(worldId), WorldManifest)
+        return await storage.get(worldManifestKey(worldId), WorldManifest)
 
     async def storedDelta(worldId: string, position: readonly ChunkPosition) -> StoredChunkDelta?:
-        const bytes = await storage.getBytes(deltaKey(worldId, position))
+        const bytes = await storage.getBytes(worldDeltaKey(worldId, position))
         if bytes == null: return null
         const decoded = StoredChunkDelta.parse(decode(bytes))
         if decoded.storageRevision != null: return decoded
@@ -69,7 +65,7 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
                 else: byPosition.remove(localKey(write.position))
             const overrides = byPosition.values().sorted(by=localOrder)
             const next = StoredChunkDelta.from(commit, {overrides})
-            changes.append({key: deltaKey(worldId, commit.position), bytes: encode(next)})
+            changes.append({key: worldDeltaKey(worldId, commit.position), bytes: encode(next)})
 
         await storage.batch(changes)
 
@@ -80,3 +76,12 @@ export def indexedDbWorldStore(name: string) -> WorldStore:
         deltas: {findChunks, commitChunks},
         close,
     }
+
+/// 清单与稀疏方块覆盖在同一事务删除，失败时保留完整存档。
+export async def deleteIndexedDbWorld(name: string, worldId: string):
+    assert not name.isBlank() and not worldId.isBlank() else "删除世界需要数据库名称和世界编号"
+    const storage = database(name)
+    const changes: List<DatabaseBatchChange> = []
+    for key in await storage.keys():
+        if storedKeyBelongsToWorld(key, worldId): changes.append({key, bytes: null})
+    if changes.size > 0: await storage.batch(changes)

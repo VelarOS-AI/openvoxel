@@ -22,3 +22,22 @@ test "minimap demand survives player-facing portal pruning":
     demand.rebuild(positions, view)
     const keys = demand.demandedKeys(Map())
     expect(chunkKey(positions[1]) in keys).toBe(true)
+
+test "protected mesh demand refreshes across minimap toggles at the minimum view radius":
+    const center: ChunkPosition = {x: -19, y: 10, z: 7}
+    const positions: List<readonly ChunkPosition> = []
+    for z in range(-4, 5):
+        for y in range(-4, 5):
+            for x in range(-4, 5): positions.append({x: center.x + x, y: center.y + y, z: center.z + z})
+    const demand = chunkMeshDemand()
+    for minimap in [false, true, false]:
+        demand.rebuild(positions, {
+            center, forwardX: 2, forwardY: -1, forwardZ: -3, radius: 3, minimap,
+        })
+        const keys = demand.demandedKeys(Map([[chunkKey(center), {
+            empty: false, fullyOccluding: true, openFaces: 0, connectedFaces: 0,
+        }]]))
+        // 实心中心阻止 Portal 传播；仅安全球和地图的本地柱体无条件保留。
+        expect(keys.size).toBe(minimap ? 203 : 33)
+        expect(chunkKey({x: center.x + 3, y: center.y + 3, z: center.z}) in keys).toBe(minimap)
+        expect(chunkKey({x: center.x + 4, y: center.y, z: center.z}) in keys).toBe(false)

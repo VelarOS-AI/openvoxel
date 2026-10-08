@@ -1,0 +1,39 @@
+import json descriptorData from "@openvoxel/content/pack-descriptors-data"
+
+export readonly type ContentPackDescriptor:
+    owner: string
+    title: string
+    description: string
+    requires: readonly List<string>
+    required: bool
+
+type PackDescriptors = List<ContentPackDescriptor>
+export const builtinContentPackDescriptors = PackDescriptors.parse(descriptorData)
+
+/// 菜单只读取轻量描述；启用时闭合依赖，关闭时一并关闭依赖它的可选包。
+export def toggleContentPack(owners: readonly List<string>, owner: string) -> List<string>:
+    const descriptor = builtinContentPackDescriptors.find(pack => pack.owner == owner)
+    assert descriptor != null else f"Unknown content pack {owner}"
+    if descriptor.required: return owners.copy()
+    const selected = Set(owners)
+    if owner in selected:
+        selected.remove(owner)
+        let changed = true
+        while changed:
+            changed = false
+            for pack in builtinContentPackDescriptors:
+                if (pack.owner in selected) and pack.requires.some(dependency => dependency not in selected):
+                    selected.remove(pack.owner)
+                    changed = true
+    else:
+        selected.add(owner)
+        let changed = true
+        while changed:
+            changed = false
+            for pack in builtinContentPackDescriptors:
+                if pack.owner not in selected: continue
+                for dependency in pack.requires:
+                    if dependency not in selected:
+                        selected.add(dependency)
+                        changed = true
+    return selected.values().sorted()

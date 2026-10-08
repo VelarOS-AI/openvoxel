@@ -1,0 +1,572 @@
+formatVersion: 1
+owner: understory
+title: 地表植物
+description: 草丛、野花、蕨类、蘑菇、树苗、野生作物与仙人掌
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants:
+    - key: understory:grass
+      block: openvoxel:tall_grass
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 40
+      affinities: []
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:red_flower
+      block: openvoxel:red_flower
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 9
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:purple_flower
+      block: openvoxel:purple_flower
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 0.35
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 3
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:white_flower
+      block: openvoxel:white_flower
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 9
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:yellow_flower
+      block: openvoxel:yellow_flower
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 9
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:blue_flower
+      block: openvoxel:blue_flower
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 9
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:fern
+      block: openvoxel:fern
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 1
+        idealLow: 5
+        idealHigh: 18
+        maximum: 28
+      humidity:
+        minimum: 6
+        idealLow: 9
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 28
+        - biome: openvoxel:biome/taiga
+          weight: 28
+        - biome: openvoxel:biome/wetland
+          weight: 32
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:red_mushroom
+      block: openvoxel:red_mushroom
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 1
+        idealLow: 5
+        idealHigh: 18
+        maximum: 28
+      humidity:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 15
+        maximum: 15
+      weight: 0.4
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 12
+        - biome: openvoxel:biome/taiga
+          weight: 12
+        - biome: openvoxel:biome/wetland
+          weight: 12
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:brown_mushroom
+      block: openvoxel:brown_mushroom
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: 1
+        idealLow: 5
+        idealHigh: 18
+        maximum: 28
+      humidity:
+        minimum: 7
+        idealLow: 10
+        idealHigh: 15
+        maximum: 15
+      weight: 0.4
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 12
+        - biome: openvoxel:biome/taiga
+          weight: 12
+        - biome: openvoxel:biome/wetland
+          weight: 12
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:leaf_litter
+      block: openvoxel:fallen_leaves
+      support: openvoxel:lush_plant_support
+      temperature:
+        minimum: -5
+        idealLow: 2
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 9
+        - biome: openvoxel:biome/birch_forest
+          weight: 9
+        - biome: openvoxel:biome/taiga
+          weight: 5
+      properties:
+        - name: layers
+          values:
+            - 1
+            - 2
+            - 3
+            - 4
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:rye
+      naturalMaximumAge: 5
+      block: openvoxel:rye
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      affinities: []
+      properties:
+        - name: age
+          values:
+            - 3
+            - 4
+            - 5
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:cotton
+      naturalMaximumAge: 1
+      block: openvoxel:cotton
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 15
+        maximum: 15
+      weight: 1.5
+      affinities: []
+      properties:
+        - name: age
+          values:
+            - 0
+            - 1
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:pumpkin_stem
+      block: openvoxel:pumpkin_stem
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 15
+        maximum: 15
+      weight: 0.8
+      affinities: []
+      properties:
+        - name: age
+          values:
+            - 0
+            - 1
+            - 2
+            - 3
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:pumpkin
+      block: openvoxel:pumpkin
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 15
+        maximum: 15
+      weight: 0.2
+      affinities: []
+      properties:
+        - name: facing
+          values:
+            - north
+            - east
+            - south
+            - west
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:rotten_pumpkin
+      block: openvoxel:rotten_pumpkin
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 16
+        maximum: 22
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 15
+        maximum: 15
+      weight: 0.05
+      affinities: []
+      properties:
+        - name: facing
+          values:
+            - north
+            - east
+            - south
+            - west
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:oak_sapling
+      block: openvoxel:oak_sapling
+      support: openvoxel:tree_support
+      temperature:
+        minimum: 3
+        idealLow: 9
+        idealHigh: 15
+        maximum: 20
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 5
+        - biome: openvoxel:biome/wetland
+          weight: 4
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:birch_sapling
+      block: openvoxel:birch_sapling
+      support: openvoxel:tree_support
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 11
+        maximum: 15
+      humidity:
+        minimum: 3
+        idealLow: 9
+        idealHigh: 15
+        maximum: 15
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/birch_forest
+          weight: 5
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:spruce_sapling
+      block: openvoxel:spruce_sapling
+      support: openvoxel:tree_support
+      temperature:
+        minimum: -8
+        idealLow: 0
+        idealHigh: 5
+        maximum: 10
+      humidity:
+        minimum: 3
+        idealLow: 8
+        idealHigh: 11
+        maximum: 14
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/taiga
+          weight: 5
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:mimosa_sapling
+      block: openvoxel:mimosa_sapling
+      support: openvoxel:tree_support
+      temperature:
+        minimum: 2
+        idealLow: 5
+        idealHigh: 12
+        maximum: 15
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 4
+        maximum: 7
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/savanna
+          weight: 6
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:poplar_sapling
+      block: openvoxel:poplar_sapling
+      support: openvoxel:tree_support
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 12
+        maximum: 15
+      humidity:
+        minimum: 3
+        idealLow: 15
+        idealHigh: 15
+        maximum: 15
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/wetland
+          weight: 4
+        - biome: openvoxel:biome/meadow
+          weight: 1
+        - biome: openvoxel:biome/plains
+          weight: 1
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:dry_bush
+      block: openvoxel:dry_bush
+      support: openvoxel:dry_plant_support
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 20
+        maximum: 40
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 4
+        maximum: 7
+      weight: 0.5
+      affinities:
+        - biome: openvoxel:biome/desert
+          weight: 4
+        - biome: openvoxel:biome/badlands
+          weight: 4
+        - biome: openvoxel:biome/savanna
+          weight: 2
+        - biome: openvoxel:biome/steppe
+          weight: 2
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: understory:large_dry_bush
+      block: openvoxel:large_dry_bush
+      support: openvoxel:dry_plant_support
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 20
+        maximum: 40
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 4
+        maximum: 7
+      weight: 0.15
+      affinities:
+        - biome: openvoxel:biome/desert
+          weight: 4
+        - biome: openvoxel:biome/badlands
+          weight: 4
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features:
+    - key: understory:cactus
+      algorithm: cactus
+      block: openvoxel:cactus
+      chance: 1
+  stages: []

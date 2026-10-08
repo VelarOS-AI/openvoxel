@@ -2,12 +2,8 @@ import {ChunkPosition, Coordinate3, WorldManifest, chunkCoordinate, chunkKey, lo
 
 const initialHorizontalChunkRadius = 1
 const initialVerticalOffsets: readonly List<number> = [0, -1, 1]
-const streamedVerticalOffsets: readonly List<number> = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7]
 const collisionSafetyChunkRadius = 2
-const retainedCollisionSafetyChunkRadius = 3
-const retainedRenderChunkRadius = 7
 const visibleAlignmentThreshold = 0.2
-const retainedAlignmentThreshold = 0.1
 const streamDirectionCosineThreshold = 0.9659258262890683
 
 /// 可见需求向视点前方扩张到半径六；碰撞安全区独立保留全方向半径二。
@@ -20,6 +16,7 @@ export readonly type ChunkWindowView:
     forwardY: number
     forwardZ: number
     minimap: bool?
+    radius: number?
 
 def normalizedChunkWindowView(view: ChunkWindowView) -> ChunkWindowView:
     requireChunkPosition(view.center)
@@ -31,45 +28,54 @@ def normalizedChunkWindowView(view: ChunkWindowView) -> ChunkWindowView:
         forwardY: view.forwardY / length,
         forwardZ: view.forwardZ / length,
         minimap: view.minimap,
+        radius: Math.clamp(view.radius ?? horizontalRenderChunkRadius, 3, 8),
     }
 
-def chunkInsideDirectionalEnvelope(
-    position: readonly ChunkPosition,
-    view: ChunkWindowView,
-    safetyRadius: number,
-    directionalRadius: number,
-    alignmentThreshold: number,
-) -> bool:
-    const dx = position.x - view.center.x
-    const dy = position.y - view.center.y
-    const dz = position.z - view.center.z
-    const distanceSquared = dx * dx + dy * dy + dz * dz
-    if distanceSquared <= safetyRadius * safetyRadius: return true
-    if distanceSquared > directionalRadius * directionalRadius: return false
-    const alignment = (dx * view.forwardX + dy * view.forwardY + dz * view.forwardZ) / Math.sqrt(distanceSquared)
-    return alignment >= alignmentThreshold
+/// 一次窗口决策共用归一化方向与半径，逐区块查询只执行标量运算。
+export readonly type ChunkWindowQuery:
+    needs: (position: readonly ChunkPosition) -> bool
+    retains: (position: readonly ChunkPosition) -> bool
+
+export def chunkWindowQuery(view: ChunkWindowView) -> ChunkWindowQuery:
+    const normalized = normalizedChunkWindowView(view)
+    const centerX = normalized.center.x
+    const centerY = normalized.center.y
+    const centerZ = normalized.center.z
+    const forwardX = normalized.forwardX
+    const forwardY = normalized.forwardY
+    const forwardZ = normalized.forwardZ
+    const radius = normalized.radius ?? horizontalRenderChunkRadius
+    const radiusSquared = radius * radius
+    const retainedSquared = (radius + 1) * (radius + 1)
+    const minimap = normalized.minimap == true
+
+    def needs(position: readonly ChunkPosition) -> bool:
+        const dx = position.x - centerX
+        const dy = position.y - centerY
+        const dz = position.z - centerZ
+        const distanceSquared = dx * dx + dy * dy + dz * dz
+        if minimap and dx * dx + dz * dz <= 9 and dy.abs() <= 3: return true
+        if distanceSquared <= collisionSafetyChunkRadius * collisionSafetyChunkRadius: return true
+        if distanceSquared > radiusSquared: return false
+        return (dx * forwardX + dy * forwardY + dz * forwardZ) / Math.sqrt(distanceSquared) >= visibleAlignmentThreshold
+
+    def retains(position: readonly ChunkPosition) -> bool:
+        const dx = position.x - centerX
+        const dy = position.y - centerY
+        const dz = position.z - centerZ
+        return (minimap and dx * dx + dz * dz <= 9 and dy.abs() <= 3) or dx * dx + dy * dy + dz * dz <= retainedSquared
+
+    return {needs, retains}
 
 /// 新驻留需求由全方向碰撞安全球和前向扩张视区组成。方向判定使用完整三维
 /// forward，因此水平观察不会把同一 x/z 下整根高空柱当作可见数据。
 export def chunkNeedsResidency(position: readonly ChunkPosition, view: ChunkWindowView) -> bool:
-    return chunkNeedsMinimap(position, view) or chunkInsideDirectionalEnvelope(
-        position,
-        normalizedChunkWindowView(view),
-        collisionSafetyChunkRadius,
-        horizontalRenderChunkRadius,
-        visibleAlignmentThreshold,
-    )
+    return chunkWindowQuery(view).needs(position)
 
-/// 已驻留数据使用更宽的距离和夹角阈值，避免临界面附近移动或转头造成重复
-/// 装卸；迟滞只保留已有项，不会主动拉取半径六以外的数据。
+/// 已经访问的区块在全方向距离球内保留。转头只改变新数据的优先需求，
+/// 不淘汰身后的数据；移动越过半径加一的边界才回收，内存始终有空间上界。
 export def chunkRetainsResidency(position: readonly ChunkPosition, view: ChunkWindowView) -> bool:
-    return chunkNeedsMinimap(position, view) or chunkInsideDirectionalEnvelope(
-        position,
-        normalizedChunkWindowView(view),
-        retainedCollisionSafetyChunkRadius,
-        retainedRenderChunkRadius,
-        retainedAlignmentThreshold,
-    )
+    return chunkWindowQuery(view).retains(position)
 
 /// 64m 俯视图需要身后三格内的地表。只为启用地图的会话补一个有界局部柱体，
 /// 不扩大主相机前向远景，也不让地图依赖玩家当前朝向或 Portal 遮挡。
@@ -88,7 +94,8 @@ export def shouldRefreshChunkWindow(
     const normalizedNext = normalizedChunkWindowView(next)
     if previous == null: return true
     const normalizedPrevious = normalizedChunkWindowView(previous)
-    if normalizedPrevious.minimap != normalizedNext.minimap: return true
+    if normalizedPrevious.minimap != normalizedNext.minimap or normalizedPrevious.radius != normalizedNext.radius:
+        return true
     if normalizedPrevious.center.x != normalizedNext.center.x
         or normalizedPrevious.center.y != normalizedNext.center.y
         or normalizedPrevious.center.z != normalizedNext.center.z: return true
@@ -210,9 +217,14 @@ export def streamedChunkPositions(
 ) -> List<readonly ChunkPosition>:
     assert minimumChunkY.isInteger() and maximumChunkY.isInteger() and minimumChunkY <= maximumChunkY else "Chunk window height bounds must be ordered integers"
     const normalizedView = normalizedChunkWindowView(view)
+    const query = chunkWindowQuery(normalizedView)
     const trackedKeys = Set(tracked.map(position => chunkKey(position)))
+    const verticalOffsets: List<number> = [0]
+    for height in range(1, (normalizedView.radius ?? horizontalRenderChunkRadius) + 2):
+        verticalOffsets.append(-height)
+        verticalOffsets.append(height)
     const positions: List<readonly ChunkPosition> = []
-    for ring in range(retainedRenderChunkRadius + 1):
+    for ring in range((normalizedView.radius ?? horizontalRenderChunkRadius) + 2):
         const outerSquared = ring * ring
         const innerSquared = (ring - 1) * (ring - 1)
         for dz in range(-ring, ring + 1):
@@ -220,7 +232,7 @@ export def streamedChunkPositions(
                 const horizontalSquared = dx * dx + dz * dz
                 if horizontalSquared > outerSquared: continue
                 if ring > 0 and horizontalSquared <= innerSquared: continue
-                for dy in streamedVerticalOffsets:
+                for dy in verticalOffsets:
                     const y = normalizedView.center.y + dy
                     if y < minimumChunkY or y > maximumChunkY: continue
                     const position: ChunkPosition = {
@@ -228,19 +240,7 @@ export def streamedChunkPositions(
                         y,
                         z: normalizedView.center.z + dz,
                     }
-                    const acquire = chunkInsideDirectionalEnvelope(
-                        position,
-                        normalizedView,
-                        collisionSafetyChunkRadius,
-                        horizontalRenderChunkRadius,
-                        visibleAlignmentThreshold,
-                    )
-                    const retain = (chunkKey(position) in trackedKeys) and chunkInsideDirectionalEnvelope(
-                        position,
-                        normalizedView,
-                        retainedCollisionSafetyChunkRadius,
-                        retainedRenderChunkRadius,
-                        retainedAlignmentThreshold,
-                    )
-                    if acquire or retain or chunkNeedsMinimap(position, normalizedView): positions.append(position)
+                    const acquire = query.needs(position)
+                    const retain = not acquire and (chunkKey(position) in trackedKeys) and query.retains(position)
+                    if acquire or retain: positions.append(position)
     return positions

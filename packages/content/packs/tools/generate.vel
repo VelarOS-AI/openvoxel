@@ -1,0 +1,36 @@
+import {readText, writeText, exists, makeDirectory} from "velar/fs"
+import {parseYaml} from "@velarscript-labs/yaml"
+import {builtinEcosystemPacks} from "@openvoxel/world-generation"
+import {ContentPackArtifact, createContentPackArtifact} from "../src/content-pack.vel"
+import {readModContentDirectory} from "./mod-directory.vel"
+
+export type PackSourceManifest:
+    formatVersion: number
+    sources: List<string>
+
+export async def builtinPackArtifacts() -> List<ContentPackArtifact>:
+    const artifacts = builtinEcosystemPacks.map(pack => createContentPackArtifact(pack.owner, ecosystem=pack))
+    const manifest = PackSourceManifest.parse(parseYaml(await readText("data/catalog.yml", 64 * 1024)))
+    assert manifest.formatVersion == 1 else "Unsupported bundled content source manifest"
+    for source in manifest.sources:
+        assert Text.matches(source, r"^[a-z][a-z0-9-]*$") else "Invalid bundled pack source directory"
+        artifacts.append(await readModContentDirectory(f"data/{source}"))
+    return artifacts.sorted(by=artifact => artifact.owner)
+
+export def descriptorText(artifacts: readonly List<readonly ContentPackArtifact>) -> string:
+    const descriptors = artifacts.map(artifact => ({owner: artifact.owner, title: artifact.ecosystem?.title ?? artifact.owner, description: artifact.ecosystem?.description ?? "", requires: artifact.ecosystem?.requires ?? [], required: artifact.owner == "terrain"}))
+    return f"{Json.stableStringify(descriptors, 2)}\n"
+
+export async def generatedBuiltinPackText() -> string:
+    return f"{Json.stableStringify(await builtinPackArtifacts(), 2)}\n"
+
+@main:
+    if not await exists("generated"): await makeDirectory("generated")
+    const artifacts = await builtinPackArtifacts()
+    const path = "generated/builtin-packs.json"
+    const text = f"{Json.stableStringify(artifacts, 2)}\n"
+    if not await exists(path) or await readText(path, 8 * 1024 * 1024) != text: await writeText(path, text)
+    const descriptors = descriptorText(artifacts)
+    const descriptorPath = "generated/pack-descriptors.json"
+    if not await exists(descriptorPath) or await readText(descriptorPath, 64 * 1024) != descriptors:
+        await writeText(descriptorPath, descriptors)

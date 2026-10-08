@@ -1,3 +1,4 @@
+import {ContentPackArtifact} from "../src/content-pack.vel"
 import {exists, makeDirectory, readText, writeText} from "velar/fs"
 import {resolve} from "velar/path"
 import {parseYaml} from "@velarscript-labs/yaml"
@@ -7,9 +8,8 @@ import {ContentPackManifest, ContentPackSourceTexts, compileModContentPack} from
 
 /// 编译完整 Mod 目录。人工源固定在 sourceRoot，唯一运行时 JSON 固定写到 buildRoot，
 /// 不会在 blocks/ 或 world-generation/ 的 YAML 旁边产生文件。
-export async def compileModContentDirectory(sourceRoot: string, buildRoot: string) -> string:
-    assert not sourceRoot.isBlank() and not buildRoot.isBlank() else "Content pack source and build roots cannot be blank"
-    assert resolve([sourceRoot]) != resolve([buildRoot]) else "Content pack build output must use a directory separate from its YAML sources"
+export async def readModContentDirectory(sourceRoot: string) -> ContentPackArtifact:
+    assert not sourceRoot.isBlank() else "Content pack source root cannot be blank"
     const manifestText = await readText(f"{sourceRoot}/content.yml", 64 * 1024)
     const identitiesText = await readText(f"{sourceRoot}/identities.yml", 512 * 1024)
     const manifest = ContentPackManifest.parse(parseYaml(manifestText))
@@ -44,8 +44,14 @@ export async def compileModContentDirectory(sourceRoot: string, buildRoot: strin
         generatorManifestText,
         generatorSourceTexts,
         paletteSourceTexts,
+        ecosystemText: manifest.ecosystem ? await readText(f"{sourceRoot}/ecosystem.yml", 512 * 1024) : null,
     }
-    const artifact = compileModContentPack(inputs)
+    return compileModContentPack(inputs)
+
+export async def compileModContentDirectory(sourceRoot: string, buildRoot: string) -> string:
+    assert not buildRoot.isBlank() else "Content pack build root cannot be blank"
+    assert resolve([sourceRoot]) != resolve([buildRoot]) else "Content pack build output must use a directory separate from its YAML sources"
+    const artifact = await readModContentDirectory(sourceRoot)
     if not await exists(buildRoot): await makeDirectory(buildRoot)
     const outputPath = f"{buildRoot}/content-pack.json"
     const output = f"{Json.stableStringify(artifact, 2)}\n"

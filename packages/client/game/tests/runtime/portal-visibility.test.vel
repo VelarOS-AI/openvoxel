@@ -117,6 +117,35 @@ test "portal visibility expands a Chunk again when a different incoming face bec
 
     expect(portalVisibleChunkKeys(candidates, summaries, center)).toEqual(keys(candidates))
 
+test "portal connections preserve every incoming row including bits above 31 and respect closed exit faces":
+    const directions: List<ChunkPosition> = [
+        {x: -1, y: 0, z: 0}, {x: 1, y: 0, z: 0},
+        {x: 0, y: -1, z: 0}, {x: 0, y: 1, z: 0},
+        {x: 0, y: 0, z: -1}, {x: 0, y: 0, z: 1},
+    ]
+    const center: ChunkPosition = {x: 0, y: 0, z: 0}
+    for incoming in range(portalFaceCount):
+        for outgoing in range(portalFaceCount):
+            if incoming == outgoing: continue
+            const entry = directions[incoming]
+            const exit = directions[outgoing]
+            const junction: ChunkPosition = {x: -entry.x, y: -entry.y, z: -entry.z}
+            const beyond: ChunkPosition = {x: junction.x + exit.x, y: junction.y + exit.y, z: junction.z + exit.z}
+            const candidates: List<readonly ChunkPosition> = [center, junction, beyond]
+            const paths: List<PortalConnection> = [{source: incoming, target: outgoing}]
+            const summaries: Map<string, PortalVisibilitySummary> = Map([
+                [chunkKey(center), emptyPortal()],
+                [chunkKey(junction), portal([incoming, outgoing], [])],
+                [chunkKey(beyond), emptyPortal()],
+            ])
+            const workspace = portalVisibilityWorkspace()
+            workspace.rebuild(candidates, center)
+            expect(workspace.visibleChunkKeys(summaries)).toEqual(keys([center, junction]))
+            summaries.set(chunkKey(junction), portal([incoming, outgoing], paths))
+            expect(workspace.visibleChunkKeys(summaries)).toEqual(keys(candidates))
+            summaries.set(chunkKey(junction), portal([incoming], paths))
+            expect(workspace.visibleChunkKeys(summaries)).toEqual(keys([center, junction]))
+
 test "a disconnected geometric candidate fails open instead of becoming a visibility hole":
     const center: ChunkPosition = {x: 0, y: 0, z: 0}
     const isolated: ChunkPosition = {x: 0, y: 4, z: -3}

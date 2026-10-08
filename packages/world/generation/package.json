@@ -9,11 +9,15 @@
   ],
   "exports": {
     ".": "./dist/index.js",
-    "./world-generator-catalog-data": "./generated/world-generator-catalog.json"
+    "./world-generator-catalog-data": "./generated/world-generator-catalog.json",
+    "./ecosystem-packs-data": "./generated/ecosystem-packs.json",
+    "./compiler": "./dist/compiler/catalog-compiler.js"
   },
   "velar": {
     "entry": "src/index.vel",
-    "targets": ["core"],
+    "targets": [
+      "core"
+    ],
     "requires": {
       "capabilities": []
     },
@@ -21,7 +25,14 @@
       "./world-generator-catalog-data": {
         "path": "generated/world-generator-catalog.json",
         "type": "json"
+      },
+      "./ecosystem-packs-data": {
+        "path": "generated/ecosystem-packs.json",
+        "type": "json"
       }
+    },
+    "entries": {
+      "./compiler": "src/compiler/catalog-compiler.vel"
     }
   },
   "scripts": {
@@ -36,6 +47,7 @@
     "benchmark:caves": "node ../../../tools/run-validation.mjs -- velar run benchmarks/caves.vel",
     "benchmark:columns": "node ../../../tools/run-validation.mjs -- velar run benchmarks/columns.vel",
     "benchmark:phases": "node ../../../tools/run-validation.mjs -- velar run benchmarks/phases.vel",
+    "review:regions": "node ../../../tools/run-validation.mjs -- velar run tools/regional-review.vel",
     "quality": "node ../../../tools/run-validation.mjs -- velar run tools/quality-report.vel"
   },
   "dependencies": {

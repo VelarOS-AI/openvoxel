@@ -78,7 +78,7 @@ export def worldContextFactory(
     def prepare(manifest: WorldManifest) -> LoadedWorld:
         const active = requireContentSet(manifest)
         const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions, manifest.blockRegistry)
-        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
+        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions, packs=active.ecosystemPacks.size == 0 ? null : active.ecosystemPacks)
         const generator = worldGenerator(manifest, blocks, generators)
         return assemble(manifest, blocks, generators, generator, active)
 
@@ -100,7 +100,7 @@ export def worldContextFactory(
                 : contentCatalog.select(command.contentPacks)
         )
         const blocks = createWorldBlockRegistry(baseBlockCatalogSource, active.blockContributions)
-        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions)
+        const generators = createWorldGeneratorRegistry(contributions=active.generatorContributions, packs=active.ecosystemPacks.size == 0 ? null : active.ecosystemPacks)
         const generatorKey = command.generator ?? defaultGenerator
         if generatorKey.isBlank() or generatorKey.size > 128 or not generators.catalog.generators.some(definition => definition.key == generatorKey):
             throw WorldRequestError(f"Unknown world generator {generatorKey}")

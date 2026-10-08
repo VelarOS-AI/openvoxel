@@ -1,0 +1,13 @@
+import {ChunkPosition} from "@openvoxel/world"
+import {ClientLightState, LightingChunkInput, WorldLightingUpdate} from "./lighting-contracts.vel"
+
+export type ClientLightField:
+    solve: (chunks: readonly List<LightingChunkInput>, removed: readonly List<readonly ChunkPosition>) -> WorldLightingUpdate
+
+extern module "#openvoxel/renderer/lighting-native":
+    export def createVoxelLightField(edge: number, states: readonly List<ClientLightState>) -> ClientLightField
+
+import js {createVoxelLightField} from "#openvoxel/renderer/lighting-native"
+
+export def createClientLightField(edge: number, states: readonly List<ClientLightState>) -> ClientLightField:
+    return createVoxelLightField(edge, states)

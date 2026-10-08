@@ -1,0 +1,14 @@
+import {Icon, IconName} from "../icon.vel"
+
+export component TouchControls(creative: bool, openInventory: () -> null):
+    return <div data-touch-controls aria-label="触屏操作">
+        {creative ? <button type="button" data-touch-inventory on:click={openInventory} aria-label="打开物品栏"><Icon name={IconName.cube} /></button> : <></>}
+        <div data-touch-move role="group" aria-label="方向与跳跃">
+            <img src="/generated/controls/MoveRose.png" alt="" draggable={false} />
+            <button type="button" data-touch-direction="KeyW" aria-label="向前移动" tabindex={-1}></button>
+            <button type="button" data-touch-direction="KeyA" aria-label="向左移动" tabindex={-1}></button>
+            <button type="button" data-touch-direction="KeyS" aria-label="向后移动" tabindex={-1}></button>
+            <button type="button" data-touch-direction="KeyD" aria-label="向右移动" tabindex={-1}></button>
+            <button type="button" data-touch-direction="Space" aria-label={creative ? "上升" : "跳跃"} tabindex={-1}></button>
+        </div>
+    </div>

@@ -1,3 +1,7 @@
+import {composeWorldGeneration} from "./ecosystem/composition.vel"
+import {builtinEcosystemPacks} from "./runtime/builtin-ecosystem.vel"
+import {validateWorldGeneratorDefinition, validateWorldGeneratorPaletteDefinition} from "./definition/validation.vel"
+import {WorldGenerationPack} from "./definition/catalog.vel"
 import {WorldBlockRegistry, baseWorldBlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, ChunkPosition, WorldManifest, validateWorldManifest, worldClimateVersion} from "@openvoxel/world"
@@ -27,6 +31,7 @@ export def worldGeneratorDefinitionHash(definition: readonly WorldGeneratorDefin
 export def createWorldGeneratorRegistry(
     base: readonly WorldGeneratorCatalogSource = baseWorldGeneratorCatalog,
     contributions: readonly List<readonly WorldGeneratorCatalogContribution> = [],
+    packs: readonly List<readonly WorldGenerationPack>? = null,
 ) -> WorldGeneratorRegistry:
     const definitions: Map<string, readonly WorldGeneratorDefinition> = Map()
     const palettes: Map<string, readonly WorldGeneratorPaletteDefinition> = Map()
@@ -34,10 +39,10 @@ export def createWorldGeneratorRegistry(
         worldGeneratorClimate(definition)
         requireTreeShapeEnvelope(definition.vegetation.maximumTreeHeight, definition.vegetation.treeHorizontalReach)
         assert definitions.get(definition.key) == null else f"Duplicate base world generator {definition.key}"
-        definitions.set(definition.key, definition)
+        definitions.set(definition.key, validateWorldGeneratorDefinition(WorldGeneratorDefinition.parse(definition)))
     for palette in base.palettes:
         assert palettes.get(palette.key) == null else f"Duplicate base world generator palette {palette.key}"
-        palettes.set(palette.key, palette)
+        palettes.set(palette.key, validateWorldGeneratorPaletteDefinition(WorldGeneratorPaletteDefinition.parse(palette)))
     const owners: Set<string> = Set()
     for contribution in contributions:
         assert not (contribution.owner in owners) else f"Duplicate world generator contribution owner {contribution.owner}"
@@ -47,11 +52,18 @@ export def createWorldGeneratorRegistry(
             requireTreeShapeEnvelope(definition.vegetation.maximumTreeHeight, definition.vegetation.treeHorizontalReach)
             assert definition.key.split(":")[0] == contribution.owner else f"World generator {definition.key} is outside contribution namespace {contribution.owner}"
             assert definitions.get(definition.key) == null else f"Duplicate world generator {definition.key}"
-            definitions.set(definition.key, definition)
+            definitions.set(definition.key, validateWorldGeneratorDefinition(WorldGeneratorDefinition.parse(definition)))
         for palette in contribution.catalog.palettes:
             assert palette.key.split(":")[0] == contribution.owner else f"World generator palette {palette.key} is outside contribution namespace {contribution.owner}"
             assert palettes.get(palette.key) == null else f"Duplicate world generator palette {palette.key}"
-            palettes.set(palette.key, palette)
+            palettes.set(palette.key, validateWorldGeneratorPaletteDefinition(WorldGeneratorPaletteDefinition.parse(palette)))
+    for definition in definitions.values():
+        const palette = palettes.get(definition.palette)
+        assert palette != null else f"Missing generation palette {definition.palette}"
+        if packs != null or definition.ecosystem == null:
+            const composed = composeWorldGeneration(definition, palette, packs ?? builtinEcosystemPacks)
+            definitions.set(definition.key, validateWorldGeneratorDefinition(composed.definition))
+            palettes.set(palette.key, validateWorldGeneratorPaletteDefinition(composed.palette))
     const catalog: WorldGeneratorCatalogSource = {
         schemaVersion: 2,
         generators: definitions.values()
@@ -65,12 +77,12 @@ export def createWorldGeneratorRegistry(
     def definition(key: string) -> readonly WorldGeneratorDefinition:
         const found = definitions.get(key)
         assert found != null else f"Unknown world generator {key}"
-        return found
+        return WorldGeneratorDefinition.parse(found)
 
     def palette(key: string) -> readonly WorldGeneratorPaletteDefinition:
         const found = palettes.get(key)
         assert found != null else f"Unknown world generator palette {key}"
-        return found
+        return WorldGeneratorPaletteDefinition.parse(found)
 
     def definitionHash(key: string) -> string:
         const found = definition(key)

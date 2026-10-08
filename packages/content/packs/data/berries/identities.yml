@@ -1,0 +1,8 @@
+formatVersion: 3
+identities:
+  translations:
+    berries:
+      blueberryBush: block.berries.blueberry_bush
+      raspberryBush: block.berries.raspberry_bush
+      blackberryBush: block.berries.blackberry_bush
+      strawberry: block.berries.strawberry

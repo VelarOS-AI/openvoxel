@@ -1,0 +1,18 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+
+export def worldManifestKey(worldId: string) -> string: return f"manifest:{worldId}"
+
+export def worldDeltaKey(worldId: string, position: readonly ChunkPosition) -> string:
+    return f"delta:{worldId}:{chunkKey(position)}"
+
+/// 世界编号可以包含冒号；只匹配完整编号后的三个整数坐标，避免误删前缀相似的世界。
+export def storedKeyBelongsToWorld(key: string, worldId: string) -> bool:
+    if key == worldManifestKey(worldId): return true
+    const prefix = f"delta:{worldId}:"
+    if not key.startsWith(prefix): return false
+    const coordinates = key.slice(prefix.size).split(":")
+    if coordinates.size != 3: return false
+    for coordinate in coordinates:
+        const value = number(coordinate)
+        if value == null or not value.isInteger() or str(value) != coordinate: return false
+    return true

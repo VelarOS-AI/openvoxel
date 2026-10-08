@@ -1,0 +1,146 @@
+formatVersion: 1
+owner: berries
+title: 浆果与草莓
+description: 蓝莓、树莓、黑莓灌丛与野生草莓
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants:
+    - key: berries:blueberry_bush
+      block: berries:blueberry_bush
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 13
+        maximum: 18
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      weight: 2
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 5
+        - biome: openvoxel:biome/birch_forest
+          weight: 5
+        - biome: openvoxel:biome/taiga
+          weight: 3
+        - biome: openvoxel:biome/meadow
+          weight: 2
+      properties:
+        - name: age
+          values:
+            - 1
+            - 2
+            - 2
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: berries:raspberry_bush
+      block: berries:raspberry_bush
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 13
+        maximum: 18
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      weight: 2
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 5
+        - biome: openvoxel:biome/birch_forest
+          weight: 5
+        - biome: openvoxel:biome/taiga
+          weight: 3
+        - biome: openvoxel:biome/meadow
+          weight: 2
+      properties:
+        - name: age
+          values:
+            - 1
+            - 2
+            - 2
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: berries:blackberry_bush
+      block: berries:blackberry_bush
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 2
+        idealLow: 6
+        idealHigh: 13
+        maximum: 18
+      humidity:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 15
+        maximum: 15
+      weight: 2
+      affinities:
+        - biome: openvoxel:biome/forest
+          weight: 5
+        - biome: openvoxel:biome/birch_forest
+          weight: 5
+        - biome: openvoxel:biome/taiga
+          weight: 3
+        - biome: openvoxel:biome/meadow
+          weight: 2
+      properties:
+        - name: age
+          values:
+            - 1
+            - 2
+            - 2
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: berries:strawberry
+      block: berries:strawberry
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 15
+        maximum: 20
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 3
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 5
+        - biome: orchard:orchard
+          weight: 6
+        - biome: openvoxel:biome/birch_forest
+          weight: 3
+      properties:
+        - name: age
+          values:
+            - 1
+            - 2
+            - 3
+            - 3
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features: []
+  stages: []

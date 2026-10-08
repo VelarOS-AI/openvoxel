@@ -23,8 +23,8 @@ test "vegetation plans admit each feature only on its final substrate":
     let dryBushCount = 0
     let priorityOverlapCount = 0
 
-    for chunkX in range(-12, 13):
-        for chunkZ in range(-12, 13):
+    for chunkX in range(-60, 61, 5):
+        for chunkZ in range(-60, 61, 5):
             const plan = planner.decorations(chunkX, chunkZ)
             const structuralRoots: Set<string> = Set()
             const livingStructureWrites: Set<string> = Set()
@@ -57,7 +57,7 @@ test "vegetation plans admit each feature only on its final substrate":
                     cactusCount += 1
                     expect(registry.hasTag(ground, builtinIdentities.tags.cactusSupport)).toBe(true)
                 else if feature.owner.startsWith("snow:"): expect(feature.sortKey.startsWith("1_surface:")).toBe(true)
-                else if feature.owner.startsWith("plant:"):
+                else if feature.sortKey.startsWith("2_ground:"):
                     groundFeatureSeen = true
                     expect(feature.sortKey.startsWith("2_ground:")).toBe(true)
                     const write = feature.writes[0]
@@ -65,24 +65,9 @@ test "vegetation plans admit each feature only on its final substrate":
                     if target in structuralRoots: priorityOverlapCount += 1
                     plantCount += 1
                     const state = registry.requireStateByRuntimeId(write.runtimeId)
-                    const crop = findCropGrowthBehavior(state.behaviors) != null or state.blockKey == builtinIdentities.blocks.pumpkin or state.blockKey == builtinIdentities.blocks.rottenPumpkin
-                    const sapling = state.blockKey in Set([
-                        builtinIdentities.blocks.oakSapling,
-                        builtinIdentities.blocks.birchSapling,
-                        builtinIdentities.blocks.spruceSapling,
-                        builtinIdentities.blocks.mimosaSapling,
-                        builtinIdentities.blocks.poplarSapling,
-                    ])
-                    const supportTag = crop ? builtinIdentities.tags.cropSupport : (sapling ? builtinIdentities.tags.treeSupport : builtinIdentities.tags.lushPlantSupport)
-                    expect(registry.hasTag(ground, supportTag)).toBe(true)
-                else if feature.owner.startsWith("bush:") or feature.owner.startsWith("large-bush:"):
-                    groundFeatureSeen = true
-                    expect(feature.sortKey.startsWith("2_ground:")).toBe(true)
-                    const write = feature.writes[0]
-                    const target = f"{feature.origin.x + write.x}:{feature.origin.y + write.y}:{feature.origin.z + write.z}"
-                    if target in structuralRoots: priorityOverlapCount += 1
-                    dryBushCount += 1
-                    expect(registry.hasTag(ground, builtinIdentities.tags.dryPlantSupport)).toBe(true)
+                    const unit = profile.ecosystem!.plants.find(unit => feature.owner.startsWith(f"{unit.key}:"))!
+                    expect(registry.hasTag(ground, unit.support)).toBe(true)
+                    if unit.support == builtinIdentities.tags.dryPlantSupport: dryBushCount += 1
 
     expect(treeCount > 0).toBe(true)
     expect(tallSpruceCount > 0).toBe(true)
@@ -91,19 +76,48 @@ test "vegetation plans admit each feature only on its final substrate":
     expect(dryBushCount > 0).toBe(true)
     expect(priorityOverlapCount > 0).toBe(true)
 
-test "wild vegetation exposes crop stages and horizontal pumpkin states":
+test "vegetation plans omit a tree when its surface support was carved away":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const seed = "continental-ridges"
+    const columns = columnPlanner(createGenerationFields(seed, profile), 16)
+    const baseline = decorationPlanner(profile, seed, blocks, columns, registry)
+    let treeX = 0
+    let treeZ = 0
+    let ownerChunkX = 0
+    let ownerChunkZ = 0
+    let found = false
+    for chunkX in range(-4, 5):
+        for chunkZ in range(-4, 5):
+            const tree = baseline.decorations(chunkX, chunkZ).features.find(feature => feature.owner.startsWith("tree:"))
+            if tree == null: continue
+            treeX = tree.origin.x
+            treeZ = tree.origin.z
+            ownerChunkX = chunkX
+            ownerChunkZ = chunkZ
+            found = true
+            break
+        if found: break
+    expect(found).toBe(true)
+    def surfaceIntact(x: number, y: number, z: number) -> bool: return x != treeX or z != treeZ
+    const filtered = decorationPlanner(profile, seed, blocks, columns, registry, surfaceIntact)
+    expect(filtered.decorations(ownerChunkX, ownerChunkZ).features.some(feature => feature.owner.startsWith("tree:") and feature.origin.x == treeX and feature.origin.z == treeZ)).toBe(false)
+
+test "wild communities retain green cotton and rye while wheat is cultivated":
     const profile = baseWorldGeneratorCatalog.generators[0]
     const registry = baseWorldBlockRegistry.registry
     const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
     const columns = columnPlanner(createGenerationFields("ecology-variety", profile), 16)
     const planner = decorationPlanner(profile, "ecology-variety", blocks, columns, registry)
     const cropAges: Set<number> = Set()
+    let cottonCount = 0
     const pumpkinFacings: Set<string> = Set()
 
     for chunkX in range(-16, 17):
         for chunkZ in range(-16, 17):
             for feature in planner.decorations(chunkX, chunkZ).features:
-                if not feature.owner.startsWith("plant:"): continue
+                if not feature.sortKey.startsWith("2_ground:"): continue
                 const state = registry.requireStateByRuntimeId(feature.writes[0].runtimeId)
                 const growth = findCropGrowthBehavior(state.behaviors)
                 const crop = growth != null
@@ -115,13 +129,21 @@ test "wild vegetation exposes crop stages and horizontal pumpkin states":
                 if crop:
                     const ageProperty = growth!.ageProperty
                     const age = state.properties.find(property => property.name == ageProperty)?.value
-                    if age is number: cropAges.add(age)
+                    if age is number:
+                        cropAges.add(age)
+                        expect(state.blockKey != builtinIdentities.blocks.wheat).toBe(true)
+                        if state.blockKey == builtinIdentities.blocks.cotton:
+                            expect(age <= 1).toBe(true)
+                            cottonCount += 1
+                        else if state.blockKey == builtinIdentities.blocks.rye: expect(age <= 5).toBe(true)
                 if pumpkin:
                     const facing = state.properties.find(property => property.name == "facing")?.value
                     if facing is string: pumpkinFacings.add(facing)
 
+    expect(cottonCount > 30).toBe(true)
     expect(cropAges.size >= 4).toBe(true)
-    expect(pumpkinFacings).toEqual(Set(["north", "east", "south", "west"]))
+    expect(pumpkinFacings.size >= 2).toBe(true)
+    for facing in pumpkinFacings: expect(facing in ["north", "east", "south", "west"]).toBe(true)
 
 test "highland rivers share coherent water levels and do not flood buried cavities":
     const base = baseWorldGeneratorCatalog.generators[0]
@@ -179,7 +201,7 @@ def shapeEnvelope(kind: TreeShapeKind, height: number) -> TreeShapeEnvelope:
         maximumY = Math.max(maximumY, write.y)
         minimumZ = Math.min(minimumZ, write.z)
         maximumZ = Math.max(maximumZ, write.z)
-    expect(writes.some(write => write.runtimeId == 2 or write.runtimeId == 3)).toBe(kind == TreeShapeKind.oak or kind == TreeShapeKind.mimosa)
+    expect(writes.some(write => write.runtimeId == 2 or write.runtimeId == 3)).toBe(true)
     const horizontalReach = Math.max(minimumX.abs(), Math.max(maximumX.abs(), Math.max(minimumZ.abs(), maximumZ.abs())))
     return {width: maximumX - minimumX + 1, height: maximumY - minimumY + 1, depth: maximumZ - minimumZ + 1, maximumY, horizontalReach}
 

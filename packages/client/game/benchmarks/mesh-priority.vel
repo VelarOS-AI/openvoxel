@@ -1,0 +1,28 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {monotonic} from "velar/time"
+import {ChunkMeshCandidate, MeshPriorityView, priorityPendingChunkKey} from "../src/runtime/mesh-priority.vel"
+
+@main:
+    const pending: Map<string, ChunkMeshCandidate> = Map()
+    for z in range(-6, 7):
+        for y in range(-3, 4):
+            for x in range(-6, 7):
+                const position: ChunkPosition = {x, y, z}
+                const key = chunkKey(position)
+                pending.set(key, {key, position})
+    const active: Set<string> = Set()
+    const view: MeshPriorityView = {center: {x: 0, y: 0, z: 0}, forwardX: 0, forwardY: 0, forwardZ: -1, radius: 8}
+    def chooseBatch():
+        active.clear()
+        for _slot in range(4):
+            const key = priorityPendingChunkKey(pending.values(), active, view)
+            assert key != null else "Priority queue ran out of work"
+            active.add(key)
+        assert active.size == 4 else "Priority queue repeated an active Chunk"
+    for _warmup in range(20): chooseBatch()
+    const times: List<number> = []
+    for _run in range(5):
+        const started = monotonic()
+        for _batch in range(100): chooseBatch()
+        times.append(monotonic() - started)
+    print(Json.stringify({queued: pending.size, batches: 100, slots: 4, runs: 5, medianMs: times.sorted()[2]}))

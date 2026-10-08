@@ -1,0 +1,33 @@
+import {WorldEnvironmentSample, WorldPrecipitationKind, worldYearMilliseconds} from "@openvoxel/world"
+import {GameSettings} from "./game-settings.vel"
+
+/// 季节预览使用独立的气候采样时间，动画、闪电年龄与权威生态仍使用原世界时间。
+export def previewClimateMilliseconds(worldMilliseconds: number, settings: GameSettings) -> number:
+    match settings.season:
+        case "spring": return 0
+        case "summer": return worldYearMilliseconds * 0.25
+        case "autumn": return worldYearMilliseconds * 0.5
+        case "winter": return worldYearMilliseconds * 0.75
+        case _: return worldMilliseconds
+
+/// 环境预览只投影当前客户端的天空、天气与声音，权威生态时钟继续运行。
+export def previewEnvironment(sample: WorldEnvironmentSample, settings: GameSettings) -> WorldEnvironmentSample:
+    let precipitation = sample.precipitation
+    let intensity = sample.precipitationIntensity
+    let cloudiness = sample.cloudiness
+    if settings.weather != "auto":
+        precipitation = (settings.weather == "rain" ? WorldPrecipitationKind.rain
+            : settings.weather == "snow" ? WorldPrecipitationKind.snow : WorldPrecipitationKind.clear)
+        intensity = precipitation == WorldPrecipitationKind.clear ? 0 : settings.precipitation
+        cloudiness = settings.weather == "clear" ? 0.08 : settings.weather == "cloudy" ? 0.8 : 0.92
+    const speed = Math.sqrt(sample.windX * sample.windX + sample.windZ * sample.windZ)
+    const windScale = speed == 0 ? 0 : Math.min(settings.wind, 64 / speed)
+    return WorldEnvironmentSample.from(sample, {
+        timeOfDay: settings.timeMode == "fixed" ? settings.hour / 24 : sample.timeOfDay,
+        precipitation,
+        precipitationIntensity: intensity,
+        cloudiness,
+        windX: sample.windX * windScale,
+        windZ: sample.windZ * windScale,
+        lightning: settings.weather == "auto" ? sample.lightning : null,
+    })

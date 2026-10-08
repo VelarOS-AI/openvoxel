@@ -12,6 +12,14 @@ export const starCount = 250;
 const latitude = 35 * Math.PI / 180;
 const celestialPole = new Vector3(0, Math.sin(latitude), Math.cos(latitude));
 const saturate = (value) => Math.max(0, Math.min(1, value));
+const horizonFadeHeight = 0.08;
+
+function horizonVisibility(lightDirection) {
+  // A body below the horizon must not show through translucent water when the
+  // camera looks down. Fade it out just above the horizon to avoid a pop.
+  const height = saturate(-lightDirection.y / horizonFadeHeight);
+  return height * height * (3 - 2 * height);
+}
 
 export function celestialPresentation(frame) {
   const clear = 1 - frame.precipitationIntensity;
@@ -19,16 +27,17 @@ export function celestialPresentation(frame) {
   // reference world's fixed dawn and dusk times on its astronomy.
   const twilight = saturate(1 - Math.abs(frame.sunDirection.y) / 0.25);
   const sunBlue = 1 - twilight * (95 / 255);
-  const moonOpacity = (1 - frame.daylightIntensity) * clear;
-  const sunTint = [clear, clear, sunBlue * clear, clear];
-  const glowTint = (strength) => sunTint.map((component) => component * clear * strength);
+  const sunOpacity = horizonVisibility(frame.sunDirection) * clear;
+  const moonOpacity = horizonVisibility(frame.moonDirection) * (1 - frame.daylightIntensity) * clear;
+  const sunTint = [sunOpacity, sunOpacity, sunBlue * sunOpacity, sunOpacity];
+  const moonTint = [moonOpacity, moonOpacity, moonOpacity, moonOpacity];
   return {
     sunHalfSize: 90 + 70 * twilight,
     moonHalfSize: 60 + 20 * twilight,
     sunTint,
-    moonTint: [moonOpacity, moonOpacity, moonOpacity, moonOpacity],
-    sunGlowTint: glowTint(0.6),
-    moonGlowTint: glowTint(0.2),
+    moonTint,
+    sunGlowTint: sunTint.map((component) => component * clear * 0.6),
+    moonGlowTint: moonTint.map((component) => component * clear * 0.2),
     starOpacity: frame.starIntensity,
   };
 }
@@ -169,8 +178,8 @@ export function createCelestialLayer(scene, textures) {
     },
     stats() {
       return {
-        sunVisible: sun.mesh.isVisible && currentFrame.sunDirection.y < 0.12,
-        moonVisible: moon.mesh.isVisible && currentFrame.moonDirection.y < 0.12,
+        sunVisible: sun.mesh.isVisible,
+        moonVisible: moon.mesh.isVisible,
         starVisibility: presentation.starOpacity,
       };
     },

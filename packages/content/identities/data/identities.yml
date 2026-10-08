@@ -30,8 +30,26 @@ identities:
     forest: openvoxel:biome/forest
     desert: openvoxel:biome/desert
     tundra: openvoxel:biome/tundra
+    meadow: openvoxel:biome/meadow
+    birchForest: openvoxel:biome/birch_forest
+    taiga: openvoxel:biome/taiga
+    wetland: openvoxel:biome/wetland
+    savanna: openvoxel:biome/savanna
+    steppe: openvoxel:biome/steppe
+    badlands: openvoxel:biome/badlands
+    alpine: openvoxel:biome/alpine
 
   blocks:
+    podzol: openvoxel:podzol
+    moss: openvoxel:moss
+    mud: openvoxel:mud
+    coarseDirt: openvoxel:coarse_dirt
+    redSand: openvoxel:red_sand
+    terracotta: openvoxel:terracotta
+    ochreClay: openvoxel:ochre_clay
+    fern: openvoxel:fern
+    redMushroom: openvoxel:red_mushroom
+    brownMushroom: openvoxel:brown_mushroom
     air: openvoxel:air
     basalt: openvoxel:basalt
     birchLeaves: openvoxel:birch_leaves
@@ -53,6 +71,7 @@ identities:
     largeDryBush: openvoxel:large_dry_bush
     limestone: openvoxel:limestone
     marble: openvoxel:marble
+    paleBasalt: openvoxel:pale_basalt
     magma: openvoxel:magma
     mimosaLeaves: openvoxel:mimosa_leaves
     mimosaLog: openvoxel:mimosa_log
@@ -147,6 +166,7 @@ identities:
 
   materials:
     cross: openvoxel:material/cross
+    vine: openvoxel:material/vine
     ice: openvoxel:material/ice
     leaves: openvoxel:material/leaves
     magma: openvoxel:material/magma
@@ -157,6 +177,17 @@ identities:
 
   textures:
     block:
+      podzolTop: openvoxel:texture/block/podzol_top
+      podzolSide: openvoxel:texture/block/podzol_side
+      moss: openvoxel:texture/block/moss_block
+      mud: openvoxel:texture/block/mud
+      coarseDirt: openvoxel:texture/block/coarse_dirt
+      redSand: openvoxel:texture/block/red_sand
+      terracotta: openvoxel:texture/block/terracotta
+      ochreClay: openvoxel:texture/block/yellow_terracotta
+      fern: openvoxel:texture/block/fern
+      redMushroom: openvoxel:texture/block/red_mushroom
+      brownMushroom: openvoxel:texture/block/brown_mushroom
       basalt: openvoxel:texture/block/basalt
       birchLeaves: openvoxel:texture/block/birch_leaves
       birchLogSide: openvoxel:texture/block/birch_log_side
@@ -182,6 +213,7 @@ identities:
       largeDryBush: openvoxel:texture/block/large_dry_bush
       limestone: openvoxel:texture/block/limestone
       marble: openvoxel:texture/block/marble
+      paleBasalt: openvoxel:texture/block/pale_basalt
       magma: openvoxel:texture/block/magma
       mimosaLeaves: openvoxel:texture/block/mimosa_leaves
       mimosaLogSide: openvoxel:texture/block/mimosa_log_side
@@ -250,6 +282,7 @@ identities:
       yellowFlower: openvoxel:texture/block/yellow_flower
 
   tints:
+    paleStone: openvoxel:tint/pale_stone
     deciduousFoliage: openvoxel:tint/deciduous_foliage
     birchFoliage: openvoxel:tint/birch_foliage
     poplarFoliage: openvoxel:tint/poplar_foliage
@@ -268,6 +301,16 @@ identities:
   loot:
     empty: openvoxel:loot/empty
     block:
+      podzol: openvoxel:loot/block/podzol
+      moss: openvoxel:loot/block/moss
+      mud: openvoxel:loot/block/mud
+      coarseDirt: openvoxel:loot/block/coarse_dirt
+      redSand: openvoxel:loot/block/red_sand
+      terracotta: openvoxel:loot/block/terracotta
+      ochreClay: openvoxel:loot/block/ochre_clay
+      fern: openvoxel:loot/block/fern
+      redMushroom: openvoxel:loot/block/red_mushroom
+      brownMushroom: openvoxel:loot/block/brown_mushroom
       basalt: openvoxel:loot/block/basalt
       birchLeaves: openvoxel:loot/block/birch_leaves
       birchLog: openvoxel:loot/block/birch_log
@@ -288,6 +331,7 @@ identities:
       largeDryBush: openvoxel:loot/block/large_dry_bush
       limestone: openvoxel:loot/block/limestone
       marble: openvoxel:loot/block/marble
+      paleBasalt: openvoxel:loot/block/pale_basalt
       mimosaLeaves: openvoxel:loot/block/mimosa_leaves
       mimosaLog: openvoxel:loot/block/mimosa_log
       oakLeaves: openvoxel:loot/block/oak_leaves
@@ -351,6 +395,16 @@ identities:
 
   translations:
     block:
+      podzol: block.openvoxel.podzol
+      moss: block.openvoxel.moss
+      mud: block.openvoxel.mud
+      coarseDirt: block.openvoxel.coarse_dirt
+      redSand: block.openvoxel.red_sand
+      terracotta: block.openvoxel.terracotta
+      ochreClay: block.openvoxel.ochre_clay
+      fern: block.openvoxel.fern
+      redMushroom: block.openvoxel.red_mushroom
+      brownMushroom: block.openvoxel.brown_mushroom
       air: block.openvoxel.air
       basalt: block.openvoxel.basalt
       birchLeaves: block.openvoxel.birch_leaves
@@ -372,6 +426,7 @@ identities:
       largeDryBush: block.openvoxel.large_dry_bush
       limestone: block.openvoxel.limestone
       marble: block.openvoxel.marble
+      paleBasalt: block.openvoxel.pale_basalt
       magma: block.openvoxel.magma
       mimosaLeaves: block.openvoxel.mimosa_leaves
       mimosaLog: block.openvoxel.mimosa_log

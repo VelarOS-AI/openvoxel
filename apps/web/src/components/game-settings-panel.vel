@@ -1,0 +1,268 @@
+import {transitionPanel} from "../navigation/ui-motion.vel"
+import {GameSettings, activeGraphicsPreset, recommendedGraphicsPreset, applyGraphicsPreset, resetGameSettings, setGameSetting, settingBoolean, settingNumber, settingText, settingsPersistenceError} from "@openvoxel/game/settings"
+import {settingsQualityGridLook, settingsSelectedPresetLook, settingsDoneLook, settingsPresetLook, settingsActiveTabLook, settingsButtonLook, settingsContentLook, settingsFooterLook, settingsHeaderLook, settingsInputLook, settingsLabelLook, settingsNoteLook, settingsPanelLook, settingsRowLook, settingsSelectLook, settingsTabLook, settingsTabsLook, settingsTitleLook, settingsToggleLook, settingsValueLook} from "../styles/game-settings.vel"
+
+readonly type SettingChoice:
+    value: string
+    label: string
+
+component SettingSlider(settings: GameSettings, name: string, title: string, minimum: number, maximum: number, step: number, unit: string = "", percent: bool = false):
+    state value = str(settingNumber(settings, name))
+    watch settings:
+        value = str(settingNumber(settings, name))
+    def commit():
+        const parsed = number(value)
+        if parsed != null: setGameSetting(name, parsed)
+    computed numericValue = number(value) ?? minimum
+    computed display = percent ? f"{(numericValue * 100).round()}%" : f"{value}{unit}"
+    return <label look={settingsRowLook}>
+        <span look={settingsLabelLook}><span>{title}</span><output look={settingsValueLook}>{display}</output></span>
+        <input
+            look={settingsInputLook}
+            type="range"
+            min={minimum}
+            max={maximum}
+            step={step}
+            bind:value={value}
+            on:input={commit}
+            data-setting={name}
+        />
+    </label>
+
+component SettingToggle(settings: GameSettings, name: string, title: string):
+    state value = settingBoolean(settings, name)
+    watch settings:
+        value = settingBoolean(settings, name)
+    def commit(): setGameSetting(name, value)
+    return <label look={settingsRowLook}>
+        <span look={settingsLabelLook}>
+            <span>{title}</span>
+            <input
+                type="checkbox"
+                look={settingsToggleLook}
+                bind:checked={value}
+                on:change={commit}
+                data-setting={name}
+            />
+        </span>
+    </label>
+
+component SettingSelect(settings: GameSettings, name: string, title: string, choices: readonly List<SettingChoice>):
+    state value = settingText(settings, name)
+    watch settings:
+        value = settingText(settings, name)
+    def commit(): setGameSetting(name, value)
+    return <label look={settingsRowLook}>
+        <span look={settingsLabelLook}><span>{title}</span>
+            <select look={settingsSelectLook} bind:value={value} on:change={commit} data-setting={name}>
+                {choices.map(choice => <option key={choice.value} value={choice.value} selected={choice.value == value}>{choice.label}</option>)}
+            </select>
+        </span>
+    </label>
+
+const graphicsProfiles = [{value: "low", label: "节能"}, {value: "balanced", label: "均衡"}, {value: "high", label: "精细"}, {value: "ultra", label: "极致"}]
+
+const tabs = [{value: "graphics", label: "画面"}, {value: "audio", label: "声音"}, {value: "controls", label: "操作"}, {value: "interface", label: "界面"}, {value: "environment", label: "环境"}]
+const times: readonly List<SettingChoice> = [{value: "auto", label: "自动昼夜"}, {value: "fixed", label: "固定时间"}]
+const seasons: readonly List<SettingChoice> = [{value: "auto", label: "自动季节"}, {value: "spring", label: "春季"}, {value: "summer", label: "夏季"}, {value: "autumn", label: "秋季"}, {value: "winter", label: "冬季"}]
+const weather: readonly List<SettingChoice> = [{value: "auto", label: "自动天气"}, {value: "clear", label: "晴天"}, {value: "cloudy", label: "多云"}, {value: "rain", label: "下雨"}, {value: "snow", label: "下雪"}]
+const keyChoices: readonly List<SettingChoice> = [
+    {value: "Space", label: "空格"}, {value: "ShiftLeft", label: "左 Shift"}, {value: "ControlLeft", label: "左 Ctrl"},
+    {value: "ArrowUp", label: "↑"}, {value: "ArrowDown", label: "↓"}, {value: "ArrowLeft", label: "←"}, {value: "ArrowRight", label: "→"},
+    ..."ABCDFGHIJKLMNOPQRSTUVWXYZ".split("").map(letter => ({value: f"Key{letter}", label: letter})),
+]
+const bindings = [{value: "forwardKey", label: "前进"}, {value: "backwardKey", label: "后退"}, {value: "leftKey", label: "向左"}, {value: "rightKey", label: "向右"}, {value: "jumpKey", label: "跳跃 / 上升"}, {value: "sprintKey", label: "冲刺 / 加速"}, {value: "crouchKey", label: "潜行"}, {value: "descendKey", label: "飞行下降"}]
+
+export component GameSettingsPanel(settings: GameSettings, close: () -> null, leave: (() -> null)? = null):
+    let contentElement: Element? = null
+    state tab = "graphics"
+    state resetPending = false
+    const recommended = recommendedGraphicsPreset()
+    computed selectedProfile = activeGraphicsPreset(settings)
+    def leaveWorld(): leave?.()
+    def saveNotice(_settings: GameSettings) -> string: return settingsPersistenceError()
+    computed persistenceError = saveNotice(settings)
+    def preset(name: string): applyGraphicsPreset(name)
+    def setHour(value: number): setGameSetting("hour", value)
+    def reset():
+        if not resetPending:
+            resetPending = true
+            return
+        resetGameSettings()
+        resetPending = false
+    def setTab(value: string):
+        tab = value
+        resetPending = false
+    def selectTab(value: string):
+        if tab != value: transitionPanel(contentElement, () => setTab(value))
+    return <section look={settingsPanelLook} data-game-settings>
+        <header look={settingsHeaderLook}>
+            <h2 look={settingsTitleLook} id="game-settings-title">游戏设置</h2>
+            <button type="button" look={settingsDoneLook} on:click={close} aria-label="关闭设置" data-close-settings>
+                完成
+            </button>
+        </header>
+        <nav look={settingsTabsLook} aria-label="设置分类">
+            {tabs.map(item => <button key={item.value} type="button" look={tab == item.value ? settingsActiveTabLook : settingsTabLook} on:click={() => selectTab(item.value)} aria-pressed={str(tab == item.value)} data-settings-tab={item.value}>{item.label}</button>)}
+        </nav>
+        <div ref={contentElement} look={settingsContentLook} data-settings-content>
+            {tab == "graphics" ? <>
+                <SettingSelect
+                    settings={settings}
+                    name="renderBackend"
+                    title="图形后端"
+                    choices={[{value: "auto", label: "自动（WebGL 2）"}, {value: "webgpu", label: "WebGPU"}, {value: "webgl", label: "WebGL 2"}]}
+                />
+                <p look={settingsNoteLook}>切换图形后端后，重新进入世界生效。</p>
+                <div look={settingsRowLook}>
+                    <span look={settingsLabelLook}>画质预设 <span look={settingsValueLook}>{selectedProfile == "custom" ? "自定义" : ""}</span></span>
+                    <div look={settingsQualityGridLook}>
+                        {graphicsProfiles.map(profile => <button key={profile.value} type="button" look={selectedProfile == profile.value ? settingsSelectedPresetLook : settingsPresetLook} on:click={() => preset(profile.value)} aria-pressed={str(selectedProfile == profile.value)} data-preset-quality={profile.value}>
+                            {profile.label}{profile.value == recommended ? <small>推荐</small> : <></>}
+                        </button>)}
+                    </div>
+                </div>
+                <SettingSlider
+                    settings={settings}
+                    name="renderScale"
+                    title="渲染精度"
+                    minimum={0.5}
+                    maximum={1}
+                    step={0.05}
+                    percent={true}
+                />
+                <SettingSlider
+                    settings={settings}
+                    name="viewDistance"
+                    title="视野距离"
+                    minimum={3}
+                    maximum={8}
+                    step={1}
+                    unit=" 区块"
+                />
+                <SettingSlider settings={settings} name="fov" title="视野" minimum={45} maximum={100} step={1} unit="°" />
+                <SettingSlider
+                    settings={settings}
+                    name="brightness"
+                    title="亮度"
+                    minimum={0.6}
+                    maximum={1.5}
+                    step={0.05}
+                />
+                <SettingSlider
+                    settings={settings}
+                    name="saturation"
+                    title="色彩饱和度"
+                    minimum={-25}
+                    maximum={15}
+                    step={1}
+                />
+                <SettingToggle settings={settings} name="shadows" title="动态阴影" />
+                <SettingToggle settings={settings} name="softShadows" title="柔和阴影" />
+                <SettingToggle settings={settings} name="antialias" title="抗锯齿" />
+                <SettingToggle settings={settings} name="bloom" title="柔和泛光" />
+                <SettingToggle settings={settings} name="waterReflections" title="水面反射" />
+                <SettingToggle settings={settings} name="particles" title="雨雪与落叶粒子" />
+                <SettingToggle settings={settings} name="vegetationMotion" title="植物摆动与触碰效果" />
+            </> : <></>}
+            {tab == "audio" ? <>
+                <SettingSlider
+                    settings={settings}
+                    name="masterVolume"
+                    title="主音量"
+                    minimum={0}
+                    maximum={1}
+                    step={0.05}
+                    percent={true}
+                />
+                <SettingSlider
+                    settings={settings}
+                    name="effectsVolume"
+                    title="脚步与交互音效"
+                    minimum={0}
+                    maximum={1}
+                    step={0.05}
+                    percent={true}
+                />
+                <SettingSlider
+                    settings={settings}
+                    name="ambientVolume"
+                    title="风雨与环境音效"
+                    minimum={0}
+                    maximum={1}
+                    step={0.05}
+                    percent={true}
+                />
+                <SettingToggle settings={settings} name="muteUnfocused" title="切到后台时静音" />
+            </> : <></>}
+            {tab == "controls" ? <>
+                <SettingSlider
+                    settings={settings}
+                    name="sensitivity"
+                    title="鼠标灵敏度"
+                    minimum={0.2}
+                    maximum={3}
+                    step={0.1}
+                    unit="×"
+                />
+                <SettingToggle settings={settings} name="invertY" title="反转垂直视角" />
+                {bindings.map(binding => <SettingSelect key={binding.value} settings={settings} name={binding.value} title={binding.label} choices={keyChoices} />)}
+                <p look={settingsNoteLook}>重复按键会互换。Esc 释放鼠标；E 打开物品栏；数字 1–9 切换方块。</p>
+            </> : <></>}
+            {tab == "interface" ? <>
+                <SettingToggle settings={settings} name="minimap" title="小地图" />
+                <SettingToggle settings={settings} name="crosshair" title="准星" />
+                <SettingToggle settings={settings} name="toolbar" title="方块栏" />
+            </> : <></>}
+            {tab == "environment" ? <>
+                <p look={settingsNoteLook}>{leave == null ? "进入世界后应用光线、季节和天气设置。" : "预览当前世界的光线、季节和天气。选择自动即可跟随世界环境。"}</p>
+                <SettingSelect settings={settings} name="season" title="季节" choices={seasons} />
+                <p look={settingsNoteLook}>季节预览改变草木颜色与日照；作物生长和积雪仍按世界时间推进。</p>
+                <SettingSelect settings={settings} name="timeMode" title="昼夜" choices={times} />
+                {settings.timeMode == "fixed" ? <>
+                    <SettingSlider
+                        settings={settings}
+                        name="hour"
+                        title="时间"
+                        minimum={0}
+                        maximum={23.5}
+                        step={0.5}
+                        unit=" 时"
+                    />
+                    <div look={settingsLabelLook}>
+                        <button type="button" look={settingsButtonLook} on:click={() => setHour(6)}>
+                            日出
+                        </button>
+                        <button type="button" look={settingsButtonLook} on:click={() => setHour(12)}>
+                            正午
+                        </button>
+                        <button type="button" look={settingsButtonLook} on:click={() => setHour(18)}>
+                            日落
+                        </button>
+                        <button type="button" look={settingsButtonLook} on:click={() => setHour(0)}>
+                            午夜
+                        </button>
+                    </div>
+                </> : <></>}
+                <SettingSelect settings={settings} name="weather" title="天气" choices={weather} />
+                {settings.weather == "rain" or settings.weather == "snow" ? <SettingSlider settings={settings} name="precipitation" title="雨雪强度" minimum={0.1} maximum={1} step={0.1} percent={true} /> : <></>}
+                <SettingSlider settings={settings} name="wind" title="风力" minimum={0} maximum={2} step={0.1} unit="×" />
+                <SettingSlider
+                    settings={settings}
+                    name="fog"
+                    title="远景雾浓度"
+                    minimum={0.5}
+                    maximum={2}
+                    step={0.1}
+                    unit="×"
+                />
+            </> : <></>}
+            {persistenceError.isBlank() ? <></> : <p role="alert" look={settingsNoteLook}>{persistenceError}</p>}
+        </div>
+        <footer look={settingsFooterLook}>
+            <button type="button" look={settingsButtonLook} on:click={reset} data-reset-settings>
+                {resetPending ? "确认恢复默认" : "恢复默认"}
+            </button>
+            {leave == null ? <></> : <button type="button" look={settingsButtonLook} on:click={leaveWorld} data-leave-world>返回世界列表</button>}
+        </footer>
+    </section>

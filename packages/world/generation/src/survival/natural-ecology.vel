@@ -1,3 +1,6 @@
+import {biomeAffinity, ecosystemUnits, habitatWeight, stageEnabled} from "../ecosystem/composition.vel"
+import {plantRuntimeId} from "./ground-plants.vel"
+import {fallenTreeWrites} from "./fallen-trees.vel"
 import {Random, random} from "velar/random"
 import {BlockRegistry} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
@@ -6,11 +9,12 @@ import {WorldGeneratorDefinition} from "../definition/catalog.vel"
 import {SurvivalBlockPalette} from "./block-palette.vel"
 import {CompiledFeaturePlan, FeatureWrite, compiledFeaturePlan, featurePlansOverlap} from "./feature-plan.vel"
 import {ColumnPlanner, TerrainColumnPlan, surfaceBlock, temperatureAtHeight} from "./terrain.vel"
+import {surfaceBedrock} from "./surface-materials.vel"
 import {EcologyPatterns, createEcologyPatterns} from "./ecology-patterns.vel"
 
-/// 最长倒木写入四个水平方块；装饰规划器用同一包络扩展结构候选，保证
+/// 完整倒木与残枝的水平包络为六格；装饰规划器用同一包络扩展结构候选，保证
 /// 跨 Chunk 的整组避让决策只依赖同一组世界坐标所有者。
-export const naturalEcologyHorizontalReach = 4
+export const naturalEcologyHorizontalReach = 6
 
 type HorizontalAttachment:
     x: number
@@ -70,7 +74,7 @@ export def treeVineFeature(
     const vineOwner = f"vine-tree:{owner}"
     return compiledFeaturePlan(vineOwner, ground, featureSortKey("0_structure", vineOwner), writes)
 
-def deadwoodFeature(
+export def deadwoodFeature(
     profile: readonly WorldGeneratorDefinition,
     blocks: readonly SurvivalBlockPalette,
     columns: ColumnPlanner,
@@ -79,36 +83,51 @@ def deadwoodFeature(
     cellZ: number,
     stream: Random,
 ) -> CompiledFeaturePlan?:
+    const unit = ecosystemUnits(profile).features.find(feature => feature.algorithm == "deadwood")
+    if unit == null or not stageEnabled(profile, "vegetation"): return null
+    if not stream.bool(unit.chance): return null
+    const deadwood = registry.defaultStateRuntimeIdForKey(unit.block)
     const size = profile.vegetation.deadwoodCellSize
     const x = cellX * size + stream.int(0, size)
     const z = cellZ * size + stream.int(0, size)
     const plan = planAt(columns, x, z)
     const sample = plan.sampleAt(x, z)
+    if sample.roadDistance != null: return null
     if sample.surfaceY <= profile.world.seaLevel or sample.slope > profile.vegetation.treeMaximumSlope: return null
     const ground = surfaceBlock(profile, blocks, sample)
     if not registry.hasTag(ground, builtinIdentities.tags.treeSupport): return null
-    let chance = 0.025
-    if sample.biome == profile.biomes.forest: chance = 0.16 + sample.forestDensity * 0.18
-    else if sample.humidity >= 7: chance = 0.08
+    const woodland = (sample.biomeFamily ?? sample.biome) == profile.biomes.forest or (sample.biomeFamily ?? sample.biome) == profile.biomes.taiga or (sample.biomeFamily ?? sample.biome) == profile.biomes.birchForest
+    let chance = 0.008
+    if woodland: chance = 0.055 + sample.forestDensity * 0.095
+    else if sample.humidity >= 7: chance = 0.025
     if not stream.bool(chance): return null
 
     const owner = f"deadwood:{cellX}:{cellZ}"
     const writes: List<FeatureWrite> = []
-    if stream.bool(0.3):
-        for y in range(1, stream.int(2, 4)): writes.append({x: 0, y, z: 0, runtimeId: blocks.deadwood})
+    // 独立树桩只占枯木候选的 6%，其余生成完整倒木。
+    if stream.bool(0.06):
+        writes.append({x: 0, y: 1, z: 0, runtimeId: deadwood})
+        if stream.bool(0.2): writes.append({x: 0, y: 2, z: 0, runtimeId: deadwood})
     else:
         const alongX = stream.bool()
-        const length = stream.int(2, 5)
-        const axis = alongX ? "x" : "z"
-        const state = registry.withProperty(blocks.deadwood, "axis", axis)
-        for offset in range(length):
-            const blockX = alongX ? x + offset : x
-            const blockZ = alongX ? z : z + offset
-            const blockSample = planAt(columns, blockX, blockZ).sampleAt(blockX, blockZ)
-            const support = surfaceBlock(profile, blocks, blockSample)
-            if blockSample.surfaceY != sample.surfaceY or not registry.hasTag(support, builtinIdentities.tags.treeSupport):
+        const length = stream.int(6, 11)
+        const direction = stream.bool() ? 1 : -1
+        const trunk = registry.withProperty(deadwood, "axis", alongX ? "x" : "z")
+        const branch = registry.withProperty(deadwood, "axis", alongX ? "z" : "x")
+        const shape = fallenTreeWrites(length, alongX, direction, trunk, branch, deadwood)
+        let lowest = sample.surfaceY
+        let highest = sample.surfaceY
+        for write in shape:
+            const blockSample = planAt(columns, x + write.x, z + write.z).sampleAt(x + write.x, z + write.z)
+            if blockSample.roadDistance != null or blockSample.surfaceY <= (blockSample.waterLevel ?? profile.world.seaLevel):
                 return null
-            writes.append({x: alongX ? offset : 0, y: 1, z: alongX ? 0 : offset, runtimeId: state})
+            const support = surfaceBlock(profile, blocks, blockSample)
+            if not registry.hasTag(support, builtinIdentities.tags.treeSupport): return null
+            lowest = Math.min(lowest, blockSample.surfaceY)
+            highest = Math.max(highest, blockSample.surfaceY)
+        // 刚性主干保持直线，最多跨越一格浅洼，不随每列地面折成阶梯。
+        if highest - lowest > 1: return null
+        for write in shape: writes.append(FeatureWrite.from(write, {y: write.y + highest - sample.surfaceY + 1}))
     return compiledFeaturePlan(owner, {x, y: sample.surfaceY, z}, featureSortKey("0_structure", owner), writes)
 
 def deadwoodOwnerPrecedes(leftX: number, leftZ: number, rightX: number, rightZ: number) -> bool:
@@ -152,7 +171,7 @@ def cliffSupport(
         const supportZ = z - attachment.z
         const supportSample = planAt(columns, supportX, supportZ).sampleAt(supportX, supportZ)
         if supportSample.surfaceY - low.surfaceY < 3: continue
-        const support = surfaceBlock(profile, blocks, supportSample)
+        const support = surfaceBedrock(blocks, supportSample)
         if not registry.hasTag(support, builtinIdentities.tags.vineSupport): continue
         return {x: attachment.x, z: attachment.z, facing: attachment.facing, surfaceY: supportSample.surfaceY}
     return null
@@ -166,6 +185,9 @@ def cliffVineFeature(
     cellZ: number,
     stream: Random,
 ) -> CompiledFeaturePlan?:
+    const unit = ecosystemUnits(profile).features.find(feature => feature.algorithm == "cliff_vine")
+    if unit == null or not stageEnabled(profile, "vegetation"): return null
+    if not stream.bool(unit.chance): return null
     const size = profile.vegetation.cliffVineCellSize
     const x = cellX * size + stream.int(0, size)
     const z = cellZ * size + stream.int(0, size)
@@ -178,7 +200,7 @@ def cliffVineFeature(
     const available = selected.surfaceY - sample.surfaceY - 1
     const length = Math.min(available, stream.int(1, 4))
     if length <= 0: return null
-    const state = facingState(registry, blocks.vine, selected.facing)
+    const state = facingState(registry, registry.defaultStateRuntimeIdForKey(unit.block), selected.facing)
     const writes: List<FeatureWrite> = range(0, length).map(offset => ({x: 0, y: -offset, z: 0, runtimeId: state}))
     const owner = f"vine-cliff:{cellX}:{cellZ}"
     return compiledFeaturePlan(owner, {x, y: selected.surfaceY, z}, featureSortKey("1_surface", owner), writes)
@@ -193,6 +215,7 @@ def aquaticFeature(
     stream: Random,
     patterns: readonly EcologyPatterns,
 ) -> CompiledFeaturePlan?:
+    if not stageEnabled(profile, "vegetation"): return null
     const size = profile.vegetation.aquaticCellSize
     const x = cellX * size + stream.int(0, size)
     const z = cellZ * size + stream.int(0, size)
@@ -201,36 +224,26 @@ def aquaticFeature(
     const waterTop = plan.waterLevelAt(x, z).floor()
     const depth = waterTop - sample.surfaceY
     if depth < 2 or depth > 16: return null
-    const saltWater = sample.biome == profile.biomes.ocean or sample.biome == profile.biomes.coast
-    if not saltWater and sample.biome != profile.biomes.river: return null
+    const saltWater = (sample.biomeFamily ?? sample.biome) == profile.biomes.ocean or (sample.biomeFamily ?? sample.biome) == profile.biomes.coast
+    // Inland lakes and pools use the same freshwater substrate rules as rivers.
     const cover = patterns.cover(x, z)
     const chance = cover > 0.5 ? 0.25 + cover * 0.65 : 0.05
     if not stream.bool(saltWater ? chance : chance * 0.7): return null
     const substrate = surfaceBlock(profile, blocks, sample)
-    const aquaticSupport = registry.hasTag(substrate, builtinIdentities.tags.aquaticPlantSupport)
-    const bottomSupport = registry.hasTag(substrate, builtinIdentities.tags.bottomDwellerSupport)
-    const choice = stream.bool(0.7) ? patterns.species(x, z) * 8 : stream.int(0, 100)
-    let block = blocks.seagrass
-    let height = 1
-    let kind = "seagrass"
-    if saltWater and depth >= 4 and aquaticSupport and choice < 42:
-        block = blocks.kelp
-        height = stream.int(Math.max(2, depth - 3), depth)
-        kind = "kelp"
-    else if aquaticSupport and choice < 78:
-        block = blocks.seagrass
-        height = stream.bool(0.3) ? 2 : 1
-    else if saltWater and bottomSupport and choice < 90:
-        block = blocks.seaUrchin
-        kind = "sea-urchin"
-    else if saltWater and bottomSupport:
-        block = blocks.starfish
-        kind = "starfish"
-    else: return null
-
-    const writes: List<FeatureWrite> = range(1, height + 1).map(y => ({x: 0, y, z: 0, runtimeId: block}))
-    const owner = f"{kind}:{cellX}:{cellZ}"
-    return compiledFeaturePlan(owner, {x, y: sample.surfaceY, z}, featureSortKey("1_surface", owner), writes)
+    const units = ecosystemUnits(profile).plants.filter(unit => unit.aquatic and (unit.saltwater == null or unit.saltwater == saltWater))
+    const temperature = temperatureAtHeight(profile, sample.temperature, sample.surfaceY)
+    const weights = units.map(unit => registry.hasTag(substrate, unit.support) ? unit.weight * habitatWeight(temperature, unit.temperature) * habitatWeight(sample.humidity, unit.humidity) * biomeAffinity(profile, sample.biome, unit.affinities) : 0)
+    let remaining = stream.number() * weights.sum()
+    for unit, index in units:
+        remaining -= weights[index]
+        if remaining >= 0: continue
+        const height = unit.surfaceClearance == null ? Math.min(depth - 1, stream.int(unit.minimumHeight, unit.maximumHeight + 1)) : Math.min(unit.maximumHeight, depth - stream.int(1, unit.surfaceClearance + 1))
+        if height < unit.minimumHeight: return null
+        const runtimeId = plantRuntimeId(unit, registry, stream)
+        const writes: List<FeatureWrite> = range(1, height + 1).map(y => ({x: 0, y, z: 0, runtimeId}))
+        const owner = f"{unit.key}:{cellX}:{cellZ}"
+        return compiledFeaturePlan(owner, {x, y: sample.surfaceY, z}, featureSortKey("1_surface", owner), writes)
+    return null
 
 /// 枯木、岩壁藤蔓和水下生态都按有界二维候选格采样。浅水覆盖度与优势种
 /// 来自连续世界场，海带向水面延伸并保留一格水层。目标 Chunk 只查看其

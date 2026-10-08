@@ -1,0 +1,7 @@
+formatVersion: 3
+identities:
+  translations:
+    geology:
+      goldOre: block.geology.gold_ore
+      emeraldOre: block.geology.emerald_ore
+      amethystBlock: block.geology.amethyst_block

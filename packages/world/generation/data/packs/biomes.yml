@@ -1,0 +1,231 @@
+formatVersion: 1
+owner: biomes
+title: 区域群系
+description: 十二种陆地群系及气候过渡
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes:
+    - key: biomes:tundra
+      id: openvoxel:biome/tundra
+      family: openvoxel:biome/tundra
+      temperature:
+        minimum: -20
+        idealLow: -10
+        idealHigh: 2
+        maximum: 4
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      forestCover: 0.025
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:taiga
+      id: openvoxel:biome/taiga
+      family: openvoxel:biome/taiga
+      temperature:
+        minimum: -3
+        idealLow: 2
+        idealHigh: 5
+        maximum: 8
+      humidity:
+        minimum: 3
+        idealLow: 6
+        idealHigh: 12
+        maximum: 15
+      weight: 1
+      forestCover: 0.88
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:steppe
+      id: openvoxel:biome/steppe
+      family: openvoxel:biome/steppe
+      temperature:
+        minimum: 1
+        idealLow: 4
+        idealHigh: 7
+        maximum: 10
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 4
+        maximum: 6
+      weight: 0.8
+      forestCover: 0.025
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:desert
+      id: openvoxel:biome/desert
+      family: openvoxel:biome/desert
+      temperature:
+        minimum: 8
+        idealLow: 11
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 3
+        maximum: 6
+      weight: 1
+      forestCover: 0
+      groundCover: 0.2
+      relief: 0.7
+      upland: 3
+    - key: biomes:badlands
+      id: openvoxel:biome/badlands
+      family: openvoxel:biome/badlands
+      temperature:
+        minimum: 9
+        idealLow: 12
+        idealHigh: 20
+        maximum: 35
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 3
+        maximum: 6
+      weight: 0.9
+      forestCover: 0
+      groundCover: 0.2
+      relief: 1.5
+      upland: 22
+    - key: biomes:savanna
+      id: openvoxel:biome/savanna
+      family: openvoxel:biome/savanna
+      temperature:
+        minimum: 5
+        idealLow: 8
+        idealHigh: 14
+        maximum: 20
+      humidity:
+        minimum: 0
+        idealLow: 2
+        idealHigh: 5
+        maximum: 7
+      weight: 1
+      forestCover: 0.16
+      groundCover: 0.8
+      relief: 1
+      upland: 0
+    - key: biomes:wetland
+      id: openvoxel:biome/wetland
+      family: openvoxel:biome/wetland
+      temperature:
+        minimum: 7
+        idealLow: 9
+        idealHigh: 18
+        maximum: 25
+      humidity:
+        minimum: 9
+        idealLow: 12
+        idealHigh: 15
+        maximum: 15
+      weight: 1
+      forestCover: 0.38
+      groundCover: 1.4
+      relief: 0.25
+      upland: -2
+    - key: biomes:forest
+      id: openvoxel:biome/forest
+      family: openvoxel:biome/forest
+      temperature:
+        minimum: 4
+        idealLow: 8
+        idealHigh: 15
+        maximum: 22
+      humidity:
+        minimum: 6
+        idealLow: 10
+        idealHigh: 15
+        maximum: 15
+      weight: 2
+      forestCover: 0.94
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:birch_forest
+      id: openvoxel:biome/birch_forest
+      family: openvoxel:biome/birch_forest
+      temperature:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 11
+        maximum: 15
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 12
+        maximum: 15
+      weight: 1.3
+      forestCover: 0.7
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:meadow
+      id: openvoxel:biome/meadow
+      family: openvoxel:biome/meadow
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 13
+        maximum: 18
+      humidity:
+        minimum: 3
+        idealLow: 5
+        idealHigh: 8
+        maximum: 11
+      weight: 2
+      forestCover: 0.035
+      groundCover: 2.6
+      relief: 0.55
+      upland: 0
+    - key: biomes:plains
+      id: openvoxel:biome/plains
+      family: openvoxel:biome/plains
+      temperature:
+        minimum: 3
+        idealLow: 7
+        idealHigh: 14
+        maximum: 22
+      humidity:
+        minimum: 2
+        idealLow: 4
+        idealHigh: 8
+        maximum: 11
+      weight: 1
+      forestCover: 0.08
+      groundCover: 1
+      relief: 1
+      upland: 0
+    - key: biomes:alpine
+      id: openvoxel:biome/alpine
+      family: openvoxel:biome/alpine
+      temperature:
+        minimum: -50
+        idealLow: -20
+        idealHigh: 40
+        maximum: 60
+      humidity:
+        minimum: 0
+        idealLow: 0
+        idealHigh: 15
+        maximum: 15
+      weight: 0
+      forestCover: 0
+      groundCover: 0.15
+      relief: 1
+      upland: 0
+  trees: []
+  plants: []
+  minerals: []
+  features: []
+  stages: []

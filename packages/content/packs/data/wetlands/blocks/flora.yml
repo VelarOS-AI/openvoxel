@@ -1,0 +1,289 @@
+blocks:
+  - behaviors:
+      - ignitionChance: 0.05
+        kind: flammable
+        spreadChance: 0.05
+      - kind: placement
+        strategy: axis_from_face
+    defaultState:
+      - name: axis
+        value: y
+    interaction:
+      blastResistance: 2
+      breakable: true
+      drops: wetlands:loot/block/willow_log
+      hardness: 2
+      sounds: openvoxel:sound/wood
+      toolTag: openvoxel:tool/axe
+    key: wetlands:willow_log
+    light:
+      ambientOcclusion: true
+      emission: 0
+      opacity: 15
+      skylight: blocked
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: full_cube
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties:
+      - kind: enum
+        name: axis
+        values:
+          - x
+          - y
+          - z
+    render:
+      cullFaces: true
+      layer: opaque
+      material: openvoxel:material/terrain
+      model: openvoxel:model/block/column
+      textures:
+        top: wetlands:texture/block/willow_log_top
+        bottom: wetlands:texture/block/willow_log_top
+        side: wetlands:texture/block/willow_log
+    tags:
+      - openvoxel:flammable
+      - openvoxel:snow_support
+      - openvoxel:vine_support
+      - openvoxel:wood
+    translationKey: translations.wetlands.willowLog
+    variants: []
+  - behaviors:
+      - ignitionChance: 0.3
+        kind: flammable
+        spreadChance: 0.6
+      - handler: openvoxel:handler/leaf_decay
+        kind: random_tick
+    defaultState:
+      - name: distance
+        value: 7
+      - name: persistent
+        value: false
+    interaction:
+      blastResistance: 0.2
+      breakable: true
+      drops: wetlands:loot/block/willow_leaves
+      hardness: 0.2
+      sounds: openvoxel:sound/leaves
+      toolTag: openvoxel:tool/shears
+    key: wetlands:willow_leaves
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 1
+      skylight: diffuse
+    physics:
+      collision:
+        kind: full_cube
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: false
+      selection:
+        kind: full_cube
+      speedFactor: 1
+    properties:
+      - kind: integer
+        maximum: 7
+        minimum: 1
+        name: distance
+      - kind: boolean
+        name: persistent
+    render:
+      cullFaces: true
+      layer: cutout
+      material: openvoxel:material/leaves
+      model: openvoxel:model/block/cube
+      textures:
+        all: wetlands:texture/block/leaves_willow
+      tint: openvoxel:tint/deciduous_foliage
+    tags:
+      - openvoxel:flammable
+      - openvoxel:leaves
+      - openvoxel:snow_support
+    translationKey: translations.wetlands.willowLeaves
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: wetlands:cattail_stem
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: wetlands:loot/block/cattail_top
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: wetlands:cattail_top
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: wetlands:texture/block/tall_cattail_upper
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.wetlands.cattailTop
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: wetlands:loot/block/cattail
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: wetlands:cattail
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: wetlands:texture/block/tall_cattail_lower
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+      - wetlands:cattail_stem
+    translationKey: translations.wetlands.cattail
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: wetlands:loot/block/reed
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: wetlands:reed
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: wetlands:texture/block/reed
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.wetlands.reed
+    variants: []
+  - behaviors:
+      - kind: support
+        face: below
+        supportingTag: openvoxel:lush_plant_support
+    defaultState: []
+    interaction:
+      blastResistance: 0
+      breakable: true
+      drops: wetlands:loot/block/blue_orchid
+      hardness: 0
+      sounds: openvoxel:sound/grass
+    key: wetlands:blue_orchid
+    light:
+      ambientOcclusion: false
+      emission: 0
+      opacity: 0
+      skylight: pass_through
+    physics:
+      collision:
+        kind: none
+      friction: 0.6
+      jumpFactor: 1
+      occlusion:
+        kind: none
+      replaceable: true
+      selection:
+        key: openvoxel:shape/cross
+        kind: custom
+      speedFactor: 1
+    properties: []
+    render:
+      cullFaces: false
+      layer: cutout
+      material: openvoxel:material/cross
+      model: openvoxel:model/block/cross
+      textures:
+        all: wetlands:texture/block/blue_orchid
+      tint: null
+    tags:
+      - openvoxel:flammable
+      - openvoxel:plant
+      - openvoxel:replaceable
+    translationKey: translations.wetlands.blueOrchid
+    variants: []

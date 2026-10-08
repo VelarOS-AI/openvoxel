@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#openvoxel/client/chunk-palette": "./src/native/chunk-palette.mjs"
+  },
   "files": [
     "src"
   ],
@@ -22,17 +25,19 @@
     "check": "node ../../../tools/run-validation.mjs -- velar check",
     "format": "velar format",
     "format:check": "node ../../../tools/run-validation.mjs -- velar format --check",
-    "test": "node ../../../tools/run-validation.mjs -- velar test",
-    "build": "node ../../../tools/run-validation.mjs -- velar build"
+    "test": "node ../../../tools/run-validation.mjs --shell \"velar test && node --test --test-concurrency=1 tests/*.test.mjs\"",
+    "build": "node ../../../tools/run-validation.mjs -- velar build",
+    "benchmark:chunks": "node ../../../tools/run-validation.mjs -- velar run benchmarks/chunk-state.vel"
   },
   "dependencies": {
     "@openvoxel/protocol": "0.2.0",
     "@openvoxel/world": "0.2.0",
     "@openvoxel/world-runtime": "0.2.0",
-    "@velarscript-labs/msgpack": "0.1.7"
+    "@velarscript-labs/msgpack": "0.1.7",
+    "@openvoxel/content": "0.2.0"
   },
   "devDependencies": {
-    "@velarscript/cli": "0.34.0",
-    "@velarscript/web": "0.34.0"
+    "@velarscript/cli": "0.34.2",
+    "@velarscript/web": "0.34.2"
   }
 }

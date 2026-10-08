@@ -1,0 +1,45 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+import {expect} from "velar/test"
+import {chunkRetirement} from "../../src/runtime/chunk-retirement.vel"
+
+test "retirement preserves returning chunks and does not restart the grace period on repeated requests":
+    let now = 0
+    const wanted: Set<string> = Set()
+    const removed: List<number> = []
+    def release(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: removed.append(position.x)
+    const queue = chunkRetirement((key, _position) => key not in wanted, release, 4, () => now)
+    const first: ChunkPosition = {x: 1, y: 0, z: 0}
+    const second: ChunkPosition = {x: 2, y: 0, z: 0}
+    try:
+        queue.defer([first, second])
+        now = 799
+        queue.defer([first, second])
+        expect(removed).toEqual([])
+        wanted.add(chunkKey(first))
+        now = 800
+        queue.refresh()
+        expect(removed).toEqual([2])
+        wanted.clear()
+        queue.defer([first])
+        now = 1599
+        queue.refresh()
+        expect(removed).toEqual([2])
+        now = 1600
+        queue.refresh()
+        expect(removed).toEqual([2, 1])
+    finally: await queue.close()
+
+test "retirement bounds a teleport and closing cancels all delayed releases":
+    const removed: List<number> = []
+    def release(positions: readonly List<readonly ChunkPosition>):
+        for position in positions: removed.append(position.x)
+    const queue = chunkRetirement((_key, _position) => true, release, 2, () => 0)
+    queue.defer([{x: 1, y: 0, z: 0}, {x: 2, y: 0, z: 0}, {x: 3, y: 0, z: 0}])
+    expect(removed).toEqual([1])
+    queue.retain(chunkKey({x: 2, y: 0, z: 0}))
+    await queue.close()
+    queue.defer([{x: 4, y: 0, z: 0}])
+    queue.refresh()
+    await Promise.sleep(120ms)
+    expect(removed).toEqual([1])

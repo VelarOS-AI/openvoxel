@@ -35,7 +35,7 @@ async function sourceClosure(entry) {
 test("renderer exposes pure meshing and the game package owns its host bridge", async () => {
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   assert.equal(manifest.velar.entry, "src/index.vel");
-  assert.deepEqual(manifest.velar.entries, {"./meshing-worker": workerEntry});
+  assert.deepEqual(manifest.velar.entries, {"./meshing-worker": workerEntry, "./lighting-worker": "src/lighting-worker.vel"});
   assert.equal(manifest.exports["./meshing-worker"], "./dist/meshing-worker.js");
 
   const rootEntry = await readFile(join(packageRoot, manifest.velar.entry), "utf8");
@@ -53,18 +53,31 @@ test("renderer exposes pure meshing and the game package owns its host bridge", 
   assert.doesNotMatch(webBootstrap, /from "@openvoxel\/renderer/u);
 });
 
+test("lighting Worker stays in the CPU renderer closure behind the game bridge", async () => {
+  const closure = await sourceClosure("src/lighting-worker.vel");
+  const source = [...closure.values()].join("\n");
+  assert.doesNotMatch(source, /@babylonjs|resource-pack-data|builtinClientResourcePack|openWorldGraphics/u);
+  assert.match(source, /createClientLightField/u);
+  const game = await readFile(join(gameRoot, "src/lighting-worker.vel"), "utf8");
+  assert.match(game, /from "@openvoxel\/renderer\/lighting-worker"/u);
+  assert.doesNotMatch(game, /runtime\/|graphics\/|backends\/|@babylonjs/u);
+  const web = await readFile(join(projectRoot, "apps/web/src/lighting-worker.vel"), "utf8");
+  assert.match(web, /from "@openvoxel\/game\/lighting-worker"/u);
+});
+
 test("meshing Worker source closure excludes GPU and generated resource owners", async () => {
   const closure = await sourceClosure(workerEntry);
   const paths = [...closure.keys()].map((path) => relative(packageRoot, path).split("\\").join("/"));
   assert.ok(paths.includes(workerEntry));
   assert.ok(paths.includes("src/mesher.vel"));
-  for (const responsibility of ["catalog", "portals", "batch", "faces", "models"]) {
+  for (const responsibility of ["catalog", "scan", "batch", "faces", "models"]) {
     assert.ok(paths.includes(`src/meshing/${responsibility}.vel`));
   }
   assert.equal(paths.includes("src/index.vel"), false);
   assert.equal(paths.includes("src/builtin-resource-pack.vel"), false);
 
-  const source = [...closure.values()].join("\n");
+  const scan = await readFile(join(sourceRoot, "native/mesh-scan.mjs"), "utf8");
+  const source = [...closure.values(), scan].join("\n");
   for (const forbidden of [
     "@babylonjs/core",
     "PBRMaterial",

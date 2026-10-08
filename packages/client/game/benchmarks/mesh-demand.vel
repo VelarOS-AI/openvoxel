@@ -1,0 +1,29 @@
+import {ChunkPosition} from "@openvoxel/world"
+import {monotonic} from "velar/time"
+import {MeshPriorityView, chunkMeshDemand} from "../src/runtime/mesh-priority.vel"
+import {PortalVisibilitySummary} from "../src/runtime/portal-visibility.vel"
+
+@main:
+    const positions: List<readonly ChunkPosition> = []
+    for z in range(-9, 10):
+        for y in range(-4, 5):
+            for x in range(-9, 10):
+                if x * x + y * y + z * z <= 81: positions.append({x, y, z})
+    const summaries: Map<string, PortalVisibilitySummary> = Map()
+    for minimap in [false, true]:
+        const view: MeshPriorityView = {
+            center: {x: 0, y: 0, z: 0}, forwardX: 0.3, forwardY: -0.2, forwardZ: -1,
+            radius: 8, minimap,
+        }
+        const demand = chunkMeshDemand()
+        demand.rebuild(positions, view)
+        const expected = demand.demandedKeys(summaries).size
+        for _warmup in range(20): demand.rebuild(positions, view)
+        const times: List<number> = []
+        for _run in range(5):
+            const started = monotonic()
+            for _query in range(100):
+                demand.rebuild(positions, view)
+                assert demand.demandedKeys(summaries).size == expected else "Mesh demand changed"
+            times.append(monotonic() - started)
+        print(Json.stringify({minimap, residents: positions.size, demanded: expected, queries: 100, runs: 5, medianMs: times.sorted()[2]}))

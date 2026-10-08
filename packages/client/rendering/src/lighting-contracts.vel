@@ -1,0 +1,40 @@
+import {UInt8Buffer, UInt32Buffer} from "velar/binary"
+import {ChunkPosition} from "@openvoxel/world"
+
+export readonly type ClientLightState:
+    runtimeId: number
+    opacity: number
+    emission: number
+    passesSkylight: bool
+
+export readonly type LightingChunkInput:
+    position: readonly ChunkPosition
+    blocks: UInt32Buffer
+
+/// RGBA 分别保存直达天空光、传播天空光、方块光、透光阻力；每块带一格邻域。
+export readonly type ChunkLighting:
+    position: readonly ChunkPosition
+    edge: number
+    data: UInt8Buffer
+
+export readonly type VoxelLightSource:
+    x: number
+    y: number
+    z: number
+    level: number
+
+export readonly type WorldLightingUpdate:
+    chunks: readonly List<ChunkLighting>
+    removed: readonly List<readonly ChunkPosition>
+    sources: readonly List<VoxelLightSource>
+
+export readonly type LightingWorkerRequest:
+    operation: string
+    edge: number?
+    states: readonly List<ClientLightState>?
+    chunks: readonly List<LightingChunkInput>?
+    removed: readonly List<readonly ChunkPosition>?
+
+export readonly type LightingWorkerResponse:
+    ready: bool
+    update: WorldLightingUpdate?

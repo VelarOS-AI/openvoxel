@@ -1,3 +1,7 @@
+import {GameSettings, GameSettingsSubscription, gameSettings, subscribeGameSettings} from "@openvoxel/game/settings"
+import {showDialog, closeDialog} from "velar/browser"
+import {GameSettingsPanel} from "./game-settings-panel.vel"
+import {settingsDialogLook} from "../styles/game-settings.vel"
 import {Icon, IconName} from "../icon.vel"
 import {captureLink, navigate} from "../navigation/app-navigation.vel"
 import {brandIconLook, brandLook, brandNameLook, navButtonLook, navLabelLook, navLook} from "../styles/shell.vel"
@@ -9,7 +13,7 @@ export component Brand(back: bool = false):
         if captureLink(event): home()
 
     return <div look={brandLook}>
-        {back ? <button type="button" look={navButtonLook} on:click={home} aria-label="Back to worlds" data-back-home>
+        {back ? <button type="button" look={navButtonLook} on:click={home} aria-label="返回世界列表" data-back-home>
             <Icon name={IconName.chevronLeft} />
         </button> : <></>}
         <a href="/" look={brandLook} on:click={followHome}>
@@ -19,19 +23,36 @@ export component Brand(back: bool = false):
     </div>
 
 export component Navigation(showCreate: bool = true):
+    state preferences: GameSettings = gameSettings()
+    let subscription: GameSettingsSubscription? = null
+    let dialog: DialogElement? = null
+    def receivePreferences(value: GameSettings): preferences = value
+    def openSettings():
+        const current = dialog
+        if current != null: showDialog(current)
+    def closeSettings():
+        const current = dialog
+        if current != null: closeDialog(current)
+    @mounted:
+        subscription = subscribeGameSettings(receivePreferences)
+    @cleanup:
+        subscription?.close()
     def create(): navigate("/worlds/new")
 
-    return <nav look={navLook} aria-label="Application">
+    return <><nav host look={navLook} aria-label="主菜单">
         {showCreate ? <button type="button" look={navButtonLook} on:click={create} data-new-world>
             <Icon name={IconName.squarePlus} />
-            <span look={navLabelLook}>New world</span>
+            <span look={navLabelLook}>新建世界</span>
         </button> : <></>}
-        <button type="button" look={navButtonLook} title="Settings">
+        <button type="button" look={navButtonLook} title="设置" on:click={openSettings} data-open-menu-settings>
             <Icon name={IconName.gear} />
-            <span look={navLabelLook}>Settings</span>
+            <span look={navLabelLook}>设置</span>
         </button>
-        <button type="button" look={navButtonLook} title="Help">
+        <button type="button" look={navButtonLook} title="帮助">
             <Icon name={IconName.circleQuestion} />
-            <span look={navLabelLook}>Help</span>
+            <span look={navLabelLook}>帮助</span>
         </button>
     </nav>
+    <dialog ref={dialog} look={settingsDialogLook} aria-labelledby="game-settings-title" on:cancel.prevent={closeSettings} data-settings-dialog>
+        <GameSettingsPanel settings={preferences} close={closeSettings} />
+    </dialog></>

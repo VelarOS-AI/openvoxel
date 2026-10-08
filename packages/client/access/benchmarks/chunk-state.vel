@@ -1,0 +1,20 @@
+import {uint16Buffer} from "velar/binary"
+import {monotonic} from "velar/time"
+import {clientChunkState} from "../src/chunk-state.vel"
+import {ClientTerrainChunkSnapshot} from "../src/terrain-snapshot.vel"
+
+@main:
+    for count in [1, 16, 128]:
+        const indices = uint16Buffer(4096)
+        const palette = range(count).map(value => value * 13)
+        for index in range(indices.size): indices[index] = index % count
+        const terrain: ClientTerrainChunkSnapshot = {position: {x: 0, y: 0, z: 0}, edge: 16, palette, indices}
+        for _warmup in range(20): clientChunkState(terrain)
+        const times: List<number> = []
+        for _run in range(5):
+            const started = monotonic()
+            for _chunk in range(200):
+                const chunk = clientChunkState(terrain)
+                assert chunk.blockAtIndex(4095) == palette[4095 % count] else "Chunk palette expansion changed"
+            times.append(monotonic() - started)
+        print(Json.stringify({paletteSize: count, chunks: 200, runs: 5, medianMs: times.sorted()[2]}))

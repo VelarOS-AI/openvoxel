@@ -1,10 +1,11 @@
-import {Cancellation} from "velar/task"
+import {builtinContentCatalog} from "@openvoxel/content"
+import {Cancellation, CancellationError} from "velar/task"
 import {serveWorker} from "velar/worker"
 import {WorldBackendContract} from "./backend.vel"
 import {BlockEditsAppliedEvent, ChunksSyncedEvent, ClientContractResponse, RealtimeBlockChange, RealtimeChunkDelta, WorldBlocksChangedEvent, WorldBootstrapResponse, WorldContentResponse, WorldReadyEvent, chunkBlockIndexOrder, chunkLocalIndexEncoding, chunkPaletteEntryEncoding, clientContractVersion, protocolServiceName, protocolVersion} from "@openvoxel/protocol"
 import {Chunk, WorldManifest} from "@openvoxel/world"
 import {BlockChangeBatch, CreateWorld, WorldContentSnapshot, WorldRuntime, WorldRuntimeLease, WorldRuntimeSubscription, maximumChunkBatchSize, worldRuntime} from "@openvoxel/world-runtime"
-import {indexedDbWorldStore} from "./indexeddb-world-store.vel"
+import {indexedDbWorldStore, deleteIndexedDbWorld} from "./indexeddb-world-store.vel"
 import {ClientTerrainBatchSnapshot, ClientTerrainChunkSnapshot} from "./terrain-snapshot.vel"
 import {LocalWorkerRequest, LocalWorkerResponse, localWorkerOperations} from "./worker-contract.vel"
 
@@ -110,12 +111,18 @@ async def shutdown():
     if current != null: await current.close()
 
 async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> LocalWorkerResponse:
-    await cancellation.checkpoint()
+    // Receiving the Worker request already yielded to the event loop. The
+    // generator owns CPU-work checkpoints; these bounded projections do not.
+    if cancellation.cancelled: throw CancellationError(cancellation.reason ?? "Local request cancelled")
+    if request.operation == localWorkerOperations.deleteWorld:
+        assert activeRuntime == null else "请退出世界后再删除"
+        await deleteIndexedDbWorld(required(request.databaseName, "databaseName"), required(request.worldId, "worldId"))
+        return {operation: request.operation}
 
     if request.operation == localWorkerOperations.initialize:
         assert activeRuntime == null else "LocalBackend Worker is already initialized"
         const databaseName = required(request.databaseName, "databaseName")
-        activeRuntime = worldRuntime(indexedDbWorldStore(databaseName), options={
+        activeRuntime = worldRuntime(indexedDbWorldStore(databaseName), content=builtinContentCatalog, options={
             activeWorldCapacity: 8,
             // 热增量缓存同时容纳流送窗口和积雪遮蔽查询的上方列，避免生态查询
             // 淘汰仍可见 Chunk 的覆盖。真实覆盖另受独立内存预算约束。
@@ -156,10 +163,7 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const positions = request.positions
         assert positions != null else "LocalBackend terrain-chunks requires positions"
         const generated = await runtime().terrainChunks(worldId, positions, cancellation)
-        const chunks: List<ClientTerrainChunkSnapshot> = []
-        for chunk in generated:
-            await cancellation.checkpoint()
-            chunks.append(terrainSnapshot(chunk))
+        const chunks = generated.map(terrainSnapshot)
         const terrain: ClientTerrainBatchSnapshot = {worldId, chunks}
         return {operation: request.operation, terrain}
 
@@ -190,10 +194,7 @@ async def handle(request: LocalWorkerRequest, cancellation: Cancellation) -> Loc
         const positions = request.positions
         assert positions != null else "LocalBackend sync-chunks requires positions"
         const deltas = await runtime().chunkDeltas(current.worldId, positions, cancellation)
-        const chunks: List<RealtimeChunkDelta> = []
-        for delta in deltas:
-            await cancellation.checkpoint()
-            chunks.append(RealtimeChunkDelta.from(delta))
+        const chunks = deltas.map(delta => RealtimeChunkDelta.from(delta))
         const response: ChunksSyncedEvent = {
             event: "chunks.synced",
             requestId: required(request.requestId, "requestId"),

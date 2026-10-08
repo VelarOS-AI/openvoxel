@@ -12,23 +12,51 @@ test "continuous geology reveals native rock and deposit-specific coasts":
         position: {x: 0, z: 0}, surfaceY: 72, slope: 0, continentalness: 0.2,
         erosion: 0.4, ridge: 0.5, riverStrength: 0, temperature: 8, humidity: 8,
         forestDensity: 0.4, terrainType: profile.terrainTypes.plain, biome: profile.biomes.plains,
-        geology: 0, deposit: 0, exposure: 0, stoneVein: 1,
+        geology: 0, deposit: 0, exposure: 0, roadDistance: null,
     }
-    const marble = TerrainSample.from(base, {stoneVein: 0.01, exposure: 0.4, slope: 0.18})
-    expect(surfaceBlock(profile, blocks, marble)).toBe(blocks.marble)
-    expect(subsurfaceBlock(profile, blocks, marble)).toBe(blocks.marble)
-    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {stoneVein: 0.01}))).toBe(blocks.grass)
+    const road = TerrainSample.from(base, {roadDistance: -1, slope: 0.18})
+    expect(surfaceBlock(profile, blocks, road)).toBe(blocks.paleBasalt)
+    expect(subsurfaceBlock(profile, blocks, road)).toBe(blocks.dirt)
+    expect(surfaceBedrock(blocks, road)).toBe(blocks.stone)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(road, {roadDistance: 0.4}))).toBe(blocks.dirt)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(road, {roadDistance: 1}))).toBe(blocks.grass)
+    const desertRoad = TerrainSample.from(road, {biome: profile.biomes.desert})
+    expect(subsurfaceBlock(profile, blocks, desertRoad)).toBe(blocks.sandstone)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(desertRoad, {roadDistance: 0.4}))).toBe(blocks.sand)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {roadDistance: -1}))).toBe(blocks.paleBasalt)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {roadDistance: -1, slope: 0.7}))).toBe(blocks.stone)
     for geology, index in [-0.7, -0.3, 0, 0.5]:
         const rock = [blocks.basalt, blocks.granite, blocks.stone, blocks.limestone][index]
-        const exposed = TerrainSample.from(base, {geology, slope: 0.5})
+        const exposed = TerrainSample.from(base, {geology, slope: 0.7})
         expect(surfaceBedrock(blocks, exposed)).toBe(rock)
         expect(surfaceBlock(profile, blocks, exposed)).toBe(rock)
         expect(subsurfaceBlock(profile, blocks, exposed)).toBe(rock)
     const coast = TerrainSample.from(base, {surfaceY: 66, biome: profile.biomes.coast, terrainType: profile.terrainTypes.coast})
     expect(surfaceBlock(profile, blocks, coast)).toBe(blocks.sand)
-    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {deposit: 0.4}))).toBe(blocks.gravel)
-    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {exposure: 0.6, geology: 0.5}))).toBe(blocks.limestone)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {deposit: 0.4}))).toBe(blocks.sand)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {deposit: 0.4, slope: 0.3}))).toBe(blocks.gravel)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {exposure: 0.6, geology: 0.5}))).toBe(blocks.sand)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {exposure: 0.8, slope: 0.7, geology: 0.5}))).toBe(blocks.limestone)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(coast, {roadDistance: -1}))).toBe(blocks.sand)
     expect(surfaceBlock(profile, blocks, TerrainSample.from(base, {humidity: 12, riverStrength: 0.8, deposit: 0.4}))).toBe(blocks.clay)
     const forest = TerrainSample.from(base, {biome: profile.biomes.forest, deposit: 0.8})
     expect(surfaceBlock(profile, blocks, forest)).toBe(blocks.grass)
     expect(subsurfaceBlock(profile, blocks, forest)).toBe(blocks.dirt)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(forest, {exposure: 0.6, slope: 0.3, geology: -0.7}))).toBe(blocks.grass)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(forest, {deposit: 0.3, slope: 0.45}))).toBe(blocks.gravel)
+
+test "weathered basalt appears locally on exposed basalt while soil and buried rock stay intact":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const sample: TerrainSample = {
+        position: {x: 0, z: 0}, surfaceY: 96, slope: 0.7, continentalness: 0.2,
+        erosion: 0.4, ridge: 0.5, riverStrength: 0, temperature: 8, humidity: 8,
+        forestDensity: 0.4, terrainType: profile.terrainTypes.mountain, biome: profile.biomes.forest,
+        geology: -0.7, deposit: 0, exposure: 0.8, roadDistance: null,
+    }
+    expect(surfaceBlock(profile, blocks, sample)).toBe(blocks.paleBasalt)
+    expect(subsurfaceBlock(profile, blocks, sample)).toBe(blocks.basalt)
+    expect(surfaceBedrock(blocks, sample)).toBe(blocks.basalt)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(sample, {exposure: 0.2}))).toBe(blocks.basalt)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(sample, {geology: -0.3}))).toBe(blocks.granite)
+    expect(surfaceBlock(profile, blocks, TerrainSample.from(sample, {slope: 0.1}))).toBe(blocks.grass)

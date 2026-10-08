@@ -1,0 +1,63 @@
+import {expect} from "velar/test"
+import {WorldEnvironmentSample, WorldPrecipitationKind, worldDayMilliseconds, worldYearMilliseconds, worldYearProgress} from "@openvoxel/world"
+import {GameSettings, gameSettings} from "../src/settings/game-settings.vel"
+import {previewClimateMilliseconds, previewEnvironment} from "../src/settings/environment-preview.vel"
+import {worldGraphicsEnvironmentFrame} from "../src/graphics/environment-frame.vel"
+
+def sample() -> WorldEnvironmentSample:
+    return {
+        worldMilliseconds: worldDayMilliseconds * 5,
+        samplePosition: {x: 40, y: 64, z: -20},
+        timeOfDay: 0.3,
+        moonPhase: 2,
+        cloudiness: 0.5,
+        precipitation: WorldPrecipitationKind.rain,
+        precipitationIntensity: 0.2,
+        windX: 3,
+        windZ: 4,
+        lightning: null,
+    }
+
+test "automatic preview preserves the authoritative environment sample":
+    expect(previewEnvironment(sample(), gameSettings())).toEqual(sample())
+
+test "season preview changes climate and sunlight while retaining the live clock and lightning age":
+    const source = WorldEnvironmentSample.from(sample(), {
+        lightning: {sequence: 7, occurredAtWorldMilliseconds: sample().worldMilliseconds - 100, position: {x: 40, y: 64, z: -20}, intensity: 0.8},
+    })
+    const automatic = worldGraphicsEnvironmentFrame(source)
+    const seasons = ["spring", "summer", "autumn", "winter"]
+    for season, index in seasons:
+        const settings = GameSettings.from(gameSettings(), {season})
+        const climateTime = previewClimateMilliseconds(source.worldMilliseconds, settings)
+        expect(worldYearProgress(climateTime)).toBe(0.125 + index * 0.25)
+        const frame = worldGraphicsEnvironmentFrame(previewEnvironment(source, settings), climateTime)
+        expect(frame.worldMilliseconds).toBe(source.worldMilliseconds)
+        expect(frame.timeOfDay).toBe(source.timeOfDay)
+        expect(frame.climateMilliseconds).toBe(worldYearMilliseconds * index * 0.25)
+        expect(frame.lightning).toEqual(source.lightning)
+        expect(frame.lightningFlash).toBe(automatic.lightningFlash)
+    const summer = worldGraphicsEnvironmentFrame(source, worldYearMilliseconds * 0.25)
+    const winter = worldGraphicsEnvironmentFrame(source, worldYearMilliseconds * 0.75)
+    expect(summer.sunDirection.y < winter.sunDirection.y).toBe(true)
+    const advanced = source.worldMilliseconds + worldYearMilliseconds * 2
+    expect(previewClimateMilliseconds(advanced, GameSettings.from(gameSettings(), {season: "auto"}))).toBe(advanced)
+    expect(previewClimateMilliseconds(advanced, GameSettings.from(gameSettings(), {season: "winter"}))).toBe(worldYearMilliseconds * 0.75)
+
+test "fixed time and weather preview preserve ecology time and sampling position":
+    const source = sample()
+    const settings = GameSettings.from(gameSettings(), {timeMode: "fixed", hour: 12, weather: "snow", precipitation: 0.8, wind: 2})
+    const visible = previewEnvironment(source, settings)
+    expect(visible.timeOfDay).toBe(0.5)
+    expect(visible.precipitation).toBe(WorldPrecipitationKind.snow)
+    expect(visible.precipitationIntensity).toBe(0.8)
+    expect(visible.windX).toBe(6)
+    expect(visible.windZ).toBe(8)
+    expect(visible.worldMilliseconds).toBe(source.worldMilliseconds)
+    expect(visible.samplePosition).toEqual(source.samplePosition)
+    expect(source.precipitation).toBe(WorldPrecipitationKind.rain)
+    const clear = previewEnvironment(source, GameSettings.from(settings, {weather: "clear", wind: 0}))
+    expect(clear.precipitation).toBe(WorldPrecipitationKind.clear)
+    expect(clear.precipitationIntensity).toBe(0)
+    expect(clear.windX).toBe(0)
+    expect(clear.windZ).toBe(0)

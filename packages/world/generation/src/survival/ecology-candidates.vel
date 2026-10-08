@@ -1,3 +1,4 @@
+import {ecosystemUnits} from "../ecosystem/composition.vel"
 import {BlockBehaviorKind, BlockPropertyKind, BlockRegistry, findCropGrowthBehavior} from "@openvoxel/blocks"
 import {builtinIdentities} from "@openvoxel/identities"
 import {Chunk, ChunkPosition, chunkBlockAtIndex} from "@openvoxel/world"
@@ -55,7 +56,11 @@ export def ecologyCandidatePlanner(
         assert ageDefinition != null and ageDefinition.kind == BlockPropertyKind.integer else f"Crop {state.blockKey} requires its declared integer age property"
         const age = state.properties.find(property => property.name == ageProperty)?.value
         assert (age is number) and age.isInteger() and age >= ageDefinition.minimum and age <= ageDefinition.maximum else f"Crop {state.blockKey} has an invalid age state"
-        cropGrowthStates.set(state.runtimeId, {ageProperty, age, maximumAge: ageDefinition.maximum, epochsPerStage: behavior.epochsPerStage})
+        // Natural projections have their own ceiling. Player-planted crops use
+        // the full content behavior in world-runtime, including white cotton.
+        const unit = ecosystemUnits(profile).plants.find(plant => plant.block == state.blockKey)
+        const maximumAge = Math.min(ageDefinition.maximum, unit?.naturalMaximumAge ?? ageDefinition.maximum)
+        cropGrowthStates.set(state.runtimeId, {ageProperty, age, maximumAge, epochsPerStage: behavior.epochsPerStage})
 
     def remember(chunk: readonly Chunk) -> readonly List<EcologyCandidate>:
         const position = chunk.position

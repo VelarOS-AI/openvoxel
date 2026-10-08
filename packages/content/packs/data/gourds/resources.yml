@@ -1,0 +1,11 @@
+category: vegetation
+textures:
+  - key: gourds:texture/block/melon_top
+    surface: plant
+    file: textures/vegetation/gourds/melon_top.png
+  - key: gourds:texture/block/melon_side
+    surface: plant
+    file: textures/vegetation/gourds/melon_side.png
+  - key: gourds:texture/block/melon_stem
+    surface: plant
+    file: textures/vegetation/gourds/melon_stem.png

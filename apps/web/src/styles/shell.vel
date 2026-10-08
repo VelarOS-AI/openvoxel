@@ -1,5 +1,5 @@
 import {Look, alpha, border, dropShadow, linearGradient, rgba, spacing, transition} from "velar/look"
-import {brightBlue, ink, white} from "./theme.vel"
+import {accentStrong, ink, white} from "./theme.vel"
 
 export const appShellLook: Look = look:
     position = "fixed"
@@ -27,15 +27,15 @@ export const backgroundShadeLook: Look = look:
     inset = 0px
     zIndex = 1
     pointerEvents = "none"
-    backgroundColor = alpha(ink, 0.14)
-    backgroundImage = linearGradient(90deg, alpha(ink, 0.78), alpha(ink, 0.02))
+    backgroundColor = "transparent"
+    backgroundImage = "none"
 
 export const backgroundBottomShadeLook: Look = look:
     position = "absolute"
     inset = 0px
     zIndex = 2
     pointerEvents = "none"
-    backgroundImage = linearGradient(180deg, alpha(ink, 0.02), alpha(ink, 0.7))
+    backgroundImage = linearGradient(180deg, alpha(ink, 0), alpha(ink, 0.5))
 
 export const topBarLook: Look = look:
     position = "relative"
@@ -93,8 +93,8 @@ export const navButtonLook: Look = look:
     if @hover:
         backgroundColor = alpha(white, 0.1)
         borderColor = alpha(white, 0.12)
-    if @focus:
-        outline = border(2px, alpha(brightBlue, 0.86))
+    if @focusVisible:
+        outline = border(2px, alpha(accentStrong, 0.86))
         outlineOffset = 2px
 
     if viewport.width <= 640px:

@@ -1,0 +1,10 @@
+formatVersion: 3
+identities:
+  translations:
+    wetlands:
+      willowLog: block.wetlands.willow_log
+      willowLeaves: block.wetlands.willow_leaves
+      cattailTop: block.wetlands.cattail_top
+      cattail: block.wetlands.cattail
+      reed: block.wetlands.reed
+      blueOrchid: block.wetlands.blue_orchid

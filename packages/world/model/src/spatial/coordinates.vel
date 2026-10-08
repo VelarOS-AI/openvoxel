@@ -61,5 +61,10 @@ export def locateBlock(position: readonly BlockPosition, edge: number) -> Locate
     }
 
 export def chunkKey(position: readonly ChunkPosition) -> string:
-    requireChunkPosition(position)
-    return f"{position.x}:{position.y}:{position.z}"
+    const x = position.x
+    const y = position.y
+    const z = position.z
+    requireCoordinate(x, "Chunk x")
+    requireCoordinate(y, "Chunk y")
+    requireCoordinate(z, "Chunk z")
+    return f"{x}:{y}:{z}"

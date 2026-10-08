@@ -1,0 +1,23 @@
+import {WorldEnvironmentSample} from "@openvoxel/world"
+import {WorldNavigationPosition} from "../controls/world-navigation.vel"
+
+export enum WorldSoundAction:
+    breakBlock = "break"
+    placeBlock = "place"
+    step = "step"
+    land = "land"
+
+/// 游戏事件只携带内容目录中的声音组；浏览器音频节点由宿主适配器持有。
+export type WorldAudio:
+    play: (action: WorldSoundAction, soundGroup: string) -> null
+    setAmbient: (waterLevel: number, magmaLevel: number) -> null
+    setListenerPosition: (position: WorldNavigationPosition) -> null
+    setEnvironment: (sample: WorldEnvironmentSample) -> null
+    close: () -> Promise<null>
+
+extern module "#openvoxel/game/web-audio":
+    export def createAudioAdapter(canvas: CanvasElement) -> WorldAudio
+
+import js {createAudioAdapter} from "#openvoxel/game/web-audio"
+
+export def createWorldAudio(canvas: CanvasElement) -> WorldAudio: return createAudioAdapter(canvas)

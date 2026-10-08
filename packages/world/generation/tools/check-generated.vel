@@ -1,3 +1,4 @@
+import {readBuiltinEcosystemPacks} from "./ecosystem-input.vel"
 import {readText} from "velar/fs"
 import {generatedWorldGeneratorCatalogText} from "./generate.vel"
 
@@ -5,3 +6,5 @@ import {generatedWorldGeneratorCatalogText} from "./generate.vel"
     const expected = await generatedWorldGeneratorCatalogText()
     const actual = await readText("generated/world-generator-catalog.json", 2 * 1024 * 1024)
     assert actual == expected else "Generated world generator catalog is stale; run npm run generate"
+    const expectedPacks = f"{Json.stableStringify(await readBuiltinEcosystemPacks(), 2)}\n"
+    assert await readText("generated/ecosystem-packs.json", 2 * 1024 * 1024) == expectedPacks else "Generated ecosystem packs are stale"

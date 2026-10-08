@@ -1,17 +1,22 @@
 import {DrawWrapper} from "@babylonjs/core/Materials/drawWrapper.js";
 import {ShadowDepthWrapper} from "@babylonjs/core/Materials/shadowDepthWrapper.js";
+import {voxelPipelineReady} from "./voxel-pipeline-warmup.mjs";
 
-let nextWrapperId = 0;
+let nextEffectId = 0;
+const originalEffectTokens = new WeakMap();
 
 // Babylon 9.23 gives every SubMesh a random shader token and retains disposed
 // meshes. Keep its shader injection and per-draw state, but make program identity
 // follow the original Effect and make all observer/effect ownership explicit.
 export class SharedShadowDepthWrapper extends ShadowDepthWrapper {
+  isReadyForSubMesh(subMesh, defines, generator, instances, pass) {
+    if (!super.isReadyForSubMesh(subMesh, defines, generator, instances, pass)) return false;
+    return voxelPipelineReady(this._scene.getEngine(), this._baseMaterial, subMesh.getRenderingMesh(), this.getEffect(subMesh, generator, pass).effect, true);
+  }
+
   constructor(material, scene, options) {
     super(material, scene, options);
-    this.sharedWrapperId = nextWrapperId++;
-    this.nextEffectId = 0;
-    this.originalEffectTokens = new WeakMap();
+    this.shaderVariant = JSON.stringify(options ?? {});
     this.meshCleanupObservers = new Map();
     this.disposed = false;
     this.effectCleanupObserver = material.onEffectCreatedObservable.add(({subMesh}) => {
@@ -32,10 +37,12 @@ export class SharedShadowDepthWrapper extends ShadowDepthWrapper {
     const [effect, originalRenderPassId] = original;
     let entry = this._subMeshToDepthWrapper.get(subMesh, generator);
     if (!entry) {
-      let token = this.originalEffectTokens.get(effect);
+      let variants = originalEffectTokens.get(effect);
+      if (!variants) originalEffectTokens.set(effect, variants = new Map());
+      let token = variants.get(this.shaderVariant);
       if (token === undefined) {
-        token = `openvoxel-shadow:${this.sharedWrapperId}:${this.nextEffectId++}`;
-        this.originalEffectTokens.set(effect, token);
+        token = `openvoxel-shadow:${nextEffectId++}`;
+        variants.set(this.shaderVariant, token);
       }
       const mainDrawWrapper = new DrawWrapper(this._scene.getEngine());
       const originalDefines = subMesh._getDrawWrapper(originalRenderPassId)?.defines;
@@ -79,6 +86,5 @@ export class SharedShadowDepthWrapper extends ShadowDepthWrapper {
     for (const subMesh of this._subMeshToDepthWrapper.mm.keys()) this._deleteDepthWrapperEffect(subMesh);
     this._subMeshToEffect.clear();
     this._meshes.clear();
-    this.originalEffectTokens = new WeakMap();
   }
 }

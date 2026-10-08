@@ -1,0 +1,15 @@
+import {UInt32Buffer} from "velar/binary"
+import {ChunkPortalSummary, ClientRenderState} from "../contracts.vel"
+
+export type ChunkGeometryScan:
+    indices: UInt32Buffer
+    visibleBlocks: number
+    portalSummary: ChunkPortalSummary
+
+extern module "#openvoxel/renderer/mesh-scan":
+    export def scanChunkGeometry(edge: number, blocks: UInt32Buffer, states: Map<number, ClientRenderState>) -> ChunkGeometryScan
+
+import js {scanChunkGeometry} from "#openvoxel/renderer/mesh-scan"
+
+export def scanGeometry(edge: number, blocks: UInt32Buffer, states: Map<number, ClientRenderState>) -> ChunkGeometryScan:
+    return scanChunkGeometry(edge, blocks, states)

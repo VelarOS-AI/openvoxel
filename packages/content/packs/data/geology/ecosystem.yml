@@ -1,0 +1,48 @@
+formatVersion: 1
+owner: geology
+title: 珍稀矿藏
+description: 金矿、绿宝石与深层紫水晶矿体
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants: []
+  minerals:
+    - key: geology:gold_ore
+      block: geology:gold_ore
+      source: openvoxel:stone
+      distribution:
+        key: gold_ore
+        chance: 0.35
+        minimumY: 8
+        maximumY: 48
+        minimumSize: 3
+        maximumSize: 8
+        largeChance: 0.01
+    - key: geology:emerald_ore
+      block: geology:emerald_ore
+      source: openvoxel:stone
+      distribution:
+        key: emerald_ore
+        chance: 0.18
+        minimumY: 20
+        maximumY: 105
+        minimumSize: 3
+        maximumSize: 8
+        largeChance: 0
+    - key: geology:amethyst_block
+      block: geology:amethyst_block
+      source: openvoxel:basalt
+      distribution:
+        key: amethyst_block
+        chance: 0.16
+        minimumY: 8
+        maximumY: 38
+        minimumSize: 3
+        maximumSize: 15
+        largeChance: 0.012
+  features: []
+  stages: []

@@ -1,0 +1,92 @@
+formatVersion: 1
+owner: minerals
+title: 地下矿物
+description: 煤、铜、铁、硝石、硫、钻石与锗矿脉
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants: []
+  minerals:
+    - key: minerals:coal
+      distribution:
+        chance: 0.72
+        key: coal
+        largeChance: 0
+        maximumSize: 12
+        maximumY: 128
+        minimumSize: 5
+        minimumY: 5
+      block: openvoxel:coal_ore
+      source: openvoxel:stone
+    - key: minerals:copper
+      distribution:
+        chance: 0.38
+        key: copper
+        largeChance: 0.035
+        maximumSize: 9
+        maximumY: 96
+        minimumSize: 4
+        minimumY: 22
+      block: openvoxel:copper_ore
+      source: openvoxel:stone
+    - key: minerals:iron
+      distribution:
+        chance: 0.42
+        key: iron
+        largeChance: 0.04
+        maximumSize: 9
+        maximumY: 72
+        minimumSize: 4
+        minimumY: 5
+      block: openvoxel:iron_ore
+      source: openvoxel:basalt
+    - key: minerals:saltpeter
+      distribution:
+        chance: 0.24
+        key: saltpeter
+        largeChance: 0
+        maximumSize: 13
+        maximumY: 86
+        minimumSize: 6
+        minimumY: 48
+      block: openvoxel:saltpeter_ore
+      source: openvoxel:sandstone
+    - key: minerals:sulphur
+      distribution:
+        chance: 0.26
+        key: sulphur
+        largeChance: 0
+        maximumSize: 9
+        maximumY: 42
+        minimumSize: 4
+        minimumY: 5
+      block: openvoxel:sulphur_ore
+      source: openvoxel:basalt
+    - key: minerals:diamond
+      distribution:
+        chance: 0.055
+        key: diamond
+        largeChance: 0
+        maximumSize: 7
+        maximumY: 18
+        minimumSize: 3
+        minimumY: 5
+      block: openvoxel:diamond_ore
+      source: openvoxel:basalt
+    - key: minerals:germanium
+      distribution:
+        chance: 0.16
+        key: germanium
+        largeChance: 0
+        maximumSize: 9
+        maximumY: 56
+        minimumSize: 4
+        minimumY: 5
+      block: openvoxel:germanium_ore
+      source: openvoxel:basalt
+  features: []
+  stages: []

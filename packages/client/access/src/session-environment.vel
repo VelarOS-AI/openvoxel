@@ -46,6 +46,7 @@ export def sessionEnvironment(
         return worldEnvironmentAt(seed, value.worldMilliseconds + Math.max(0, clock() - observedAt), position ?? value.samplePosition, climate)
 
     def changed(changes: readonly List<RealtimeBlockChange>):
+        if changes.size == 0 and dirtyColumns.size == 0: return
         const trackedColumns = Set(state.trackedPositions().map(position => f"{position.x}:{position.z}"))
         for key in dirtyColumns.values():
             if key not in trackedColumns: dirtyColumns.remove(key)

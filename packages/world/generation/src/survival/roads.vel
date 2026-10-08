@@ -1,0 +1,184 @@
+import {simplex2} from "@velarscript-labs/noise"
+import {random} from "velar/random"
+import {Coordinate2} from "@openvoxel/world"
+import {RoadConfig} from "../definition/catalog.vel"
+import {evictOldest} from "./lru-cache.vel"
+
+export type RoadGround:
+    height: number
+    waterLevel: number
+
+export type RoadGroundSampler = (x: number, z: number) -> RoadGround
+
+type RoadSegment:
+    start: Coordinate2
+    end: Coordinate2
+    widthScale: number
+
+export type RoadArea:
+    /// 到铺装边缘的有符号距离；负数在路内，正数是路肩，远处为 null。
+    distanceAt: (x: number, z: number) -> number?
+
+export type RoadPlanner:
+    area: (minimumX: number, minimumZ: number, size: number) -> RoadArea
+
+def blend(a: readonly Coordinate2, b: readonly Coordinate2, t: number) -> Coordinate2:
+    return {x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t}
+
+def distanceToSegment(x: number, z: number, segment: readonly RoadSegment) -> number:
+    const dx = segment.end.x - segment.start.x
+    const dz = segment.end.z - segment.start.z
+    const lengthSquared = dx * dx + dz * dz
+    const t = lengthSquared == 0 ? 0 : Math.clamp(((x - segment.start.x) * dx + (z - segment.start.z) * dz) / lengthSquared, 0, 1)
+    return Math.hypot(x - segment.start.x - dx * t, z - segment.start.z - dz * t)
+
+/// 每条连接只搜索沿起终点方向的有限带状网格。动态规划选择低代价路线，
+/// 湿地和陡坡不可通行；宽缓的噪声代价令平地道路也有自然弯曲。
+def route(start: Coordinate2, end: Coordinate2, groundAt: RoadGroundSampler, preference: (number, number) -> number, config: readonly RoadConfig) -> List<Coordinate2>:
+    const dx = end.x - start.x
+    const dz = end.z - start.z
+    const length = Math.hypot(dx, dz)
+    const steps = Math.max(2, (length / 8).ceil())
+    const laneCount = 9
+    const middleLane = 4
+    const laneStep = Math.min(8, config.cellSize / 32)
+    const points: List<Coordinate2> = []
+    const heights: List<number> = []
+    const costs: List<number> = []
+    const parents: List<number> = []
+    for step in range(steps + 1):
+        const center = blend(start, end, step / steps)
+        for lane in range(laneCount):
+            const offset = (lane - middleLane) * laneStep
+            const point = {x: center.x - dz / length * offset, z: center.z + dx / length * offset}
+            const ground = groundAt(point.x, point.z)
+            points.append(point)
+            heights.append(ground.height)
+            let cost = Math.infinity
+            let parent = -1
+            if ground.height > ground.waterLevel + 1:
+                if step == 0 and lane == middleLane: cost = 0
+                else if step > 0 and (step < steps or lane == middleLane):
+                    const preferenceCost = 1 + 0.55 * (preference(point.x / 56 + 7.1, point.z / 56 - 3.4) + 1)
+                    for previousLane in range(Math.max(0, lane - 1), Math.min(laneCount, lane + 2)):
+                        const previous = (step - 1) * laneCount + previousLane
+                        if costs[previous] == Math.infinity: continue
+                        const distance = Math.hypot(point.x - points[previous].x, point.z - points[previous].z)
+                        const rise = (ground.height - heights[previous]).abs()
+                        if rise / distance > config.maximumGrade: continue
+                        const halfway = blend(points[previous], point, 0.5)
+                        const midpoint = groundAt(halfway.x, halfway.z)
+                        if midpoint.height <= midpoint.waterLevel + 1: continue
+                        if Math.max((midpoint.height - ground.height).abs(), (midpoint.height - heights[previous]).abs()) * 2 / distance > config.maximumGrade:
+                            continue
+                        const candidate = costs[previous] + distance * preferenceCost + rise * 7
+                        if candidate < cost:
+                            cost = candidate
+                            parent = previous
+            costs.append(cost)
+            parents.append(parent)
+    let index = steps * laneCount + middleLane
+    if costs[index] == Math.infinity: return []
+    const reversed: List<Coordinate2> = []
+    while index >= 0:
+        reversed.append(points[index])
+        index = parents[index]
+    let path: List<Coordinate2> = []
+    for i in range(reversed.size - 1, -1, -1): path.append(reversed[i])
+    // 两轮切角保留共享路口，消除规划网格造成的折线拐点。
+    for iteration in range(2):
+        const smooth: List<Coordinate2> = [path[0]]
+        for i in range(path.size - 1):
+            smooth.append(blend(path[i], path[i + 1], 0.25))
+            smooth.append(blend(path[i], path[i + 1], 0.75))
+        smooth.append(path[path.size - 1])
+        path = smooth
+    // 平滑后仍验证沿线的水域与坡度，不能以转弯平滑为由切过水湾。
+    for point, i in path:
+        const ground = groundAt(point.x, point.z)
+        if ground.height <= ground.waterLevel + 1: return []
+        if i == 0: continue
+        const previous = path[i - 1]
+        const distance = Math.hypot(point.x - previous.x, point.z - previous.z)
+        if (ground.height - groundAt(previous.x, previous.z).height).abs() > distance * config.maximumGrade: return []
+    return path
+
+/// 路口与有向连接由世界 seed 和 owner cell 唯一决定。每格的一条主连接形成
+/// 稀疏路网，额外连接形成较细支路；相邻 Chunk 复用同一条路，生成顺序无关。
+export def createRoadPlanner(seed: string, config: readonly RoadConfig, groundAt: RoadGroundSampler) -> RoadPlanner:
+    const root = random(f"{seed}:roads")
+    const preference = simplex2(f"{seed}:roads:route")
+    const width = simplex2(f"{seed}:roads:width")
+    const edge = simplex2(f"{seed}:roads:edge")
+    const nodes: Map<string, Coordinate2?> = Map()
+    const regions: Map<string, List<RoadSegment>> = Map()
+
+    def node(cellX: number, cellZ: number) -> Coordinate2?:
+        const key = f"{cellX}:{cellZ}"
+        if nodes.has(key): return nodes.get(key)
+        const stream = root.fork(f"node:{key}")
+        let selected: Coordinate2? = null
+        let best = Math.infinity
+        for candidate in range(5):
+            const x = (cellX + 0.25 + stream.number() * 0.5) * config.cellSize
+            const z = (cellZ + 0.25 + stream.number() * 0.5) * config.cellSize
+            const ground = groundAt(x, z)
+            if ground.height <= ground.waterLevel + 2: continue
+            const slope = Math.max((groundAt(x + 8, z).height - groundAt(x - 8, z).height).abs(), (groundAt(x, z + 8).height - groundAt(x, z - 8).height).abs()) / 16
+            if slope > config.maximumGrade: continue
+            const score = slope * 64 + Math.max(0, ground.height - ground.waterLevel - 16) * 0.1
+            if score < best:
+                best = score
+                selected = {x, z}
+        if nodes.size >= 256: evictOldest(nodes)
+        nodes.set(key, selected)
+        return selected
+
+    def region(cellX: number, cellZ: number) -> List<RoadSegment>:
+        const key = f"{cellX}:{cellZ}"
+        if regions.has(key):
+            const cached = regions.get(key)!
+            regions.remove(key)
+            regions.set(key, cached)
+            return cached
+        const segments: List<RoadSegment> = []
+        const start = node(cellX, cellZ)
+        if start != null:
+            const stream = root.fork(f"links:{key}")
+            const primary = stream.bool() ? 0 : 1
+            const branch = stream.bool(config.branchChance)
+            for direction in range(2):
+                if direction != primary and not branch: continue
+                const end = node(cellX + (direction == 0 ? 1 : 0), cellZ + (direction == 1 ? 1 : 0))
+                if end == null: continue
+                const path = route(start, end, groundAt, preference, config)
+                for i in range(path.size - 1):
+                    segments.append({start: path[i], end: path[i + 1], widthScale: direction == primary ? 1 : 0.8})
+        if regions.size >= 64: evictOldest(regions)
+        regions.set(key, segments)
+        return segments
+
+    def area(minimumX: number, minimumZ: number, size: number) -> RoadArea:
+        const segments: List<RoadSegment> = []
+        const padding = config.maximumWidth / 2 + config.shoulderWidth + 0.25
+        for cellX in range((minimumX / config.cellSize).floor() - 1, ((minimumX + size) / config.cellSize).floor() + 1):
+            for cellZ in range((minimumZ / config.cellSize).floor() - 1, ((minimumZ + size) / config.cellSize).floor() + 1):
+                for segment in region(cellX, cellZ):
+                    if Math.max(segment.start.x, segment.end.x) + padding < minimumX or Math.min(segment.start.x, segment.end.x) - padding > minimumX + size:
+                        continue
+                    if Math.max(segment.start.z, segment.end.z) + padding < minimumZ or Math.min(segment.start.z, segment.end.z) - padding > minimumZ + size:
+                        continue
+                    segments.append(segment)
+
+        def distanceAt(x: number, z: number) -> number?:
+            if segments.size == 0: return null
+            const halfWidth = (config.minimumWidth + (config.maximumWidth - config.minimumWidth) * Math.clamp(width(x / 32 + 11.4, z / 32 - 8.7) * 0.5 + 0.5, 0, 1)) / 2
+            const wear = edge(x / 5 + 4.3, z / 5 - 13.1) * 0.18
+            let distance = Math.infinity
+            for segment in segments:
+                distance = Math.min(distance, distanceToSegment(x, z, segment) - halfWidth * segment.widthScale + wear)
+            return distance <= config.shoulderWidth ? distance : null
+
+        return {distanceAt}
+
+    return {area}

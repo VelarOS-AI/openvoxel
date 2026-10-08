@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {NullEngine} from "@babylonjs/core/Engines/nullEngine.js";
+import {Scene} from "@babylonjs/core/scene.js";
+import {RawTexture} from "@babylonjs/core/Materials/Textures/rawTexture.js";
+import {Observable} from "@babylonjs/core/Misc/observable.js";
 import {BabylonWorldGraphics} from "../src/backends/babylon/native/surface.mjs";
 import {SurfaceLifetime} from "../src/backends/babylon/native/surface-lifetime.mjs";
 
@@ -20,30 +24,42 @@ test("surface invalidates ground immediately and coalesces weather work across v
   let renderedFrames = 0;
   let surface;
   const engine = {
+    onContextRestoredObservable: new Observable(),
     runRenderLoop(callback) { renderLoop = callback; },
     stopRenderLoop() {},
     getDeltaTime: () => 16,
+    getHardwareScalingLevel: () => 1,
+    setHardwareScalingLevel() {},
     resize() {},
   };
+  const gpu = new NullEngine();
+  const scene = new Scene(gpu);
+  scene.render = () => { renderedFrames += 1; };
   const environment = {
+    textures: {leaf: RawTexture.CreateRGBATexture(new Uint8Array([255,255,255,255]), 1, 1, scene)},
+    frame: {windX: 0, windZ: 0, daylightIntensity: 1, lightningFlash: 0},
+    renderDistance: 128,
+    weather: {},
+    updateVisuals() {},
+    setSoftShadows() {},
     invalidateTerrainColumn(x, z) {
       events.push({kind: "weather", x, z, chunks: [...surface.chunks.keys()]});
     },
     update(...args) { updates.push(args); },
   };
   try {
-    surface = new BabylonWorldGraphics({}, {
+    surface = new BabylonWorldGraphics({clientWidth: 960, clientHeight: 600, ownerDocument: Object.assign(new EventTarget(), {hidden: false})}, {
       edge: 16,
       minimumWorldY: 0,
       maximumWorldY: 255,
       climateAt: () => ({}),
-      environmentFrame: {worldMilliseconds: 0},
+      environmentFrame: {worldMilliseconds: 0, climateMilliseconds: 0},
       materials: [],
       textures: [],
       animations: [],
-    }, engine, {render() { renderedFrames += 1; }}, {
+    }, engine, scene, {
       globalPosition: {x: -0.5, y: 70, z: 0.5},
-    }, {update() {}}, new Map(), environment, new SurfaceLifetime());
+    }, {update() {}}, new Map(), environment, new SurfaceLifetime(), {});
     const invalidateColumn = surface.terrainGroundProbe.invalidateColumn;
     surface.terrainGroundProbe.invalidateColumn = (x, z) => {
       events.push({kind: "terrain", x, z, chunks: [...surface.chunks.keys()]});
@@ -89,11 +105,14 @@ test("surface invalidates ground immediately and coalesces weather work across v
     surface.release();
     assert.deepEqual(events.splice(0), []);
     assert.equal(disconnected, true);
+    assert.equal(engine.onContextRestoredObservable.hasObservers(), false);
     assert.equal(surface.terrainGroundProbe.stats().cachedColumns, 0);
     surface.release();
     assert.deepEqual(events, []);
   } finally {
     surface?.release();
+    scene.dispose();
+    gpu.dispose();
     if (previousResizeObserver === undefined) delete globalThis.ResizeObserver;
     else Object.defineProperty(globalThis, "ResizeObserver", previousResizeObserver);
   }

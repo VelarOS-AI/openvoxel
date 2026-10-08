@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "entries": [
+    {
+      "stateKey": "openvoxel:dirt"
+    },
+    {
+      "stateKey": "openvoxel:stone"
+    },
+    {
+      "stateKey": "openvoxel:sandstone"
+    },
+    {
+      "stateKey": "openvoxel:pale_basalt"
+    },
+    {
+      "stateKey": "openvoxel:clay"
+    },
+    {
+      "stateKey": "openvoxel:grass[snowy=false]"
+    },
+    {
+      "stateKey": "openvoxel:oak_log[axis=y]"
+    },
+    {
+      "stateKey": "openvoxel:oak_leaves[distance=7,persistent=false]"
+    },
+    {
+      "stateKey": "openvoxel:basalt"
+    }
+  ]
+}

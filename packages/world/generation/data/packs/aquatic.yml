@@ -1,0 +1,72 @@
+formatVersion: 1
+owner: aquatic
+title: 水生生态
+description: 海带、水草、海胆与海星
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants:
+    - key: aquatic:kelp
+      block: openvoxel:kelp
+      support: openvoxel:aquatic_plant_support
+      temperature: &a1
+        minimum: -50
+        idealLow: -20
+        idealHigh: 40
+        maximum: 60
+      humidity: &a2
+        minimum: 0
+        idealLow: 0
+        idealHigh: 15
+        maximum: 15
+      weight: 42
+      affinities: []
+      properties: []
+      minimumHeight: 2
+      maximumHeight: 15
+      surfaceClearance: 3
+      aquatic: true
+      saltwater: true
+    - key: aquatic:seagrass
+      block: openvoxel:seagrass
+      support: openvoxel:aquatic_plant_support
+      temperature: *a1
+      humidity: *a2
+      weight: 36
+      affinities: []
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 2
+      aquatic: true
+      saltwater: null
+    - key: aquatic:urchin
+      block: openvoxel:sea_urchin
+      support: openvoxel:bottom_dweller_support
+      temperature: *a1
+      humidity: *a2
+      weight: 12
+      affinities: []
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: true
+      saltwater: true
+    - key: aquatic:starfish
+      block: openvoxel:starfish
+      support: openvoxel:bottom_dweller_support
+      temperature: *a1
+      humidity: *a2
+      weight: 10
+      affinities: []
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: true
+      saltwater: true
+  minerals: []
+  features: []
+  stages: []

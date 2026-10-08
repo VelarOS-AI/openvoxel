@@ -1,54 +1,79 @@
+import {requestGameLandscape, releaseGameLandscape} from "../navigation/device-display.vel"
+import {closeDialog, showDialog} from "velar/browser"
+import {asyncPageLifetime, closeBestEffort} from "../lifecycle/async-page-lifetime.vel"
+import {deferredWorldLibrary} from "../worlds/world-library-operations.vel"
 import {Head} from "velar/web"
 import {Brand, Navigation} from "../components/app-chrome.vel"
 import {Icon, IconName} from "../icon.vel"
+import {transitionMenu} from "../navigation/ui-motion.vel"
 import {navigate} from "../navigation/app-navigation.vel"
-import {displayTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
-import {actionGroupLook, actionRowLook, activeDotLook, dotLook, dotsLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, settingsPanelLook, settingsRowLook, settingsValueLook} from "../styles/home.vel"
+import {errorLook, displayTitleLook, primaryButtonLook, secondaryButtonLook, subtitleLook, worldInfoLook} from "../styles/common.vel"
+import {deleteButtonLook, deleteDialogLook, deleteTitleLook, deleteDescriptionLook, deleteActionsLook, deleteCancelLook, deleteConfirmLook, actionGroupLook, actionRowLook, emptyActionsLook, emptyContentLook, homeContentLook, metadataItemLook, metadataLook, nextArrowLook, previousArrowLook, settingsPanelLook, settingsRowLook, settingsValueLook} from "../styles/home.vel"
 import {appShellLook, backgroundBottomShadeLook, backgroundImageLook, backgroundShadeLook, topBarLook} from "../styles/shell.vel"
-import {WorldPreset} from "../worlds/saved-world.vel"
-import {loadSavedWorlds, touchWorld} from "../worlds/world-library.vel"
-import {presetName, worldCover, worldGameModeName} from "../worlds/world-presentation.vel"
+import {SavedWorld, WorldPreset} from "../worlds/saved-world.vel"
+import {forgetWorld, loadSavedWorlds, touchWorld} from "../worlds/world-library.vel"
+import {lastPlayedLabel, presetName, worldCover, worldGameModeName} from "../worlds/world-presentation.vel"
 import {worldRoute} from "../worlds/world-route.vel"
 
-type CarouselWheelInput = (event: Event, worldCount: number) -> number
-
-extern module "#openvoxel/web/carousel-input":
-    export def createCarouselWheelInput() -> CarouselWheelInput
-
-import js {createCarouselWheelInput} from "#openvoxel/web/carousel-input"
-
 export component WorldHomePage:
-    const carouselWheelInput = createCarouselWheelInput()
+    const backend = deferredWorldLibrary()
+    const lifetime = asyncPageLifetime()
+    state deleteTarget: SavedWorld? = null
+    state deleteFailure = ""
+    let deleteDialog: DialogElement? = null
     state worlds = loadSavedWorlds()
     state selectedIndex = worlds.size > 0 ? worlds.size - 1 : 0
     state settingsOpen = false
 
     computed activeWorld = worlds.get(selectedIndex)
 
-    def selectWorld(index: number):
-        if index < 0 or index >= worlds.size: return
-        if index == selectedIndex: return
-        selectedIndex = index
-        settingsOpen = false
-
     def moveSelection(direction: number):
         if worlds.size <= 1: return
         selectedIndex = (selectedIndex + direction + worlds.size) % worlds.size
         settingsOpen = false
 
-    def previousWorld(): moveSelection(-1)
+    def previousWorld(): transitionMenu(() => moveSelection(-1))
 
-    def nextWorld(): moveSelection(1)
+    def nextWorld(): transitionMenu(() => moveSelection(1))
 
-    def switchByWheel(event: Event):
-        const direction = carouselWheelInput(event, worlds.size)
-        if direction != 0: moveSelection(direction)
+    def requestDelete():
+        deleteTarget = activeWorld
+        deleteFailure = ""
+        const dialog = deleteDialog
+        if deleteTarget != null and dialog != null: showDialog(dialog)
+
+    action removeWorld():
+        const selected = deleteTarget
+        if selected == null: return
+        const generation = lifetime.begin()
+        deleteFailure = ""
+        try:
+            await backend.deleteWorld(selected.id)
+            forgetWorld(selected.id)
+            if not lifetime.owns(generation): return
+            worlds = loadSavedWorlds()
+            selectedIndex = Math.max(0, Math.min(selectedIndex, worlds.size - 1))
+            settingsOpen = false
+            const dialog = deleteDialog
+            if dialog != null: closeDialog(dialog)
+        catch error:
+            if lifetime.owns(generation): deleteFailure = f"删除失败：{error.message}"
+
+    def cancelDelete():
+        if removeWorld.pending: return
+        const dialog = deleteDialog
+        if dialog != null: closeDialog(dialog)
+
+    @cleanup:
+        lifetime.dispose()
+        detach closeBestEffort([backend])
 
     def toggleWorldSettings(): settingsOpen = not settingsOpen
 
     def play():
         const selected = activeWorld
         if selected == null: return
+        requestGameLandscape()
         touchWorld(selected)
         navigate(worldRoute(selected.id))
 
@@ -60,13 +85,13 @@ export component WorldHomePage:
         const selected = activeWorld
         assert selected != null else "A selected world is required"
         return <>
-            <button type="button" look={previousArrowLook} on:click={previousWorld} disabled={worlds.size <= 1} aria-label="Previous world" data-carousel-previous>
+            <button type="button" look={previousArrowLook} on:click={previousWorld} disabled={worlds.size <= 1} aria-label="上一个世界" data-carousel-previous>
                 <Icon name={IconName.chevronLeft} />
             </button>
-            <button type="button" look={nextArrowLook} on:click={nextWorld} disabled={worlds.size <= 1} aria-label="Next world" data-carousel-next>
+            <button type="button" look={nextArrowLook} on:click={nextWorld} disabled={worlds.size <= 1} aria-label="下一个世界" data-carousel-next>
                 <Icon name={IconName.chevronRight} />
             </button>
-            <section look={homeContentLook} aria-label="Selected world" data-world-carousel>
+            <section look={homeContentLook} aria-label="当前世界" data-world-carousel>
                 <div look={worldInfoLook}>
                     <h1 look={displayTitleLook} data-selected-world-name>{selected.name}</h1>
                     <div look={metadataLook}>
@@ -76,7 +101,7 @@ export component WorldHomePage:
                         </span>
                         <span look={metadataItemLook}>
                             <Icon name={IconName.clock} />
-                            {selected.lastPlayed}
+                            {lastPlayedLabel(selected.lastPlayed)}
                         </span>
                     </div>
                 </div>
@@ -84,67 +109,59 @@ export component WorldHomePage:
                     <div look={actionGroupLook}>
                         <button type="button" look={primaryButtonLook} on:click={play} data-play-world>
                             <Icon name={IconName.play} />
-                            Play
+                            开始游戏
                         </button>
-                        <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings} aria-expanded={settingsOpen} data-world-settings>
+                        <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings} aria-expanded={str(settingsOpen)} data-world-settings>
                             <Icon name={IconName.gear} />
-                            World settings
+                            世界信息
                         </button>
                     </div>
-                    <div look={dotsLook} aria-label="Choose world" data-carousel-dots>
-                        {worlds.map((world, index) => <button
-                            type="button"
-                            look={index == selectedIndex ? activeDotLook : dotLook}
-                            on:pointermove={() => selectWorld(index)}
-                            on:click={() => selectWorld(index)}
-                            aria-label={f"Show {world.name}"}
-                            aria-current={str(index == selectedIndex)}
-                            data-carousel-dot={world.id}
-                        ></button>)}
-                    </div>
+                    <button type="button" look={deleteButtonLook} on:click={requestDelete} data-delete-world>
+                        删除世界
+                    </button>
                 </div>
             </section>
-            {settingsOpen ? <aside look={settingsPanelLook} aria-label="World settings" data-world-settings-panel>
+            <aside hidden={not settingsOpen} look={settingsPanelLook} aria-label="世界信息" data-world-settings-panel>
                 <div look={settingsRowLook}>
                     <strong>{selected.name}</strong>
                     <span look={settingsValueLook}>{selected.id}</span>
                 </div>
                 <div look={settingsRowLook}>
-                    <span>Seed</span>
+                    <span>种子</span>
                     <span look={settingsValueLook}>{selected.seed}</span>
                 </div>
                 <div look={settingsRowLook}>
-                    <span>World preset</span>
+                    <span>地形类型</span>
                     <span look={settingsValueLook}>{presetName(selected.preset)}</span>
                 </div>
-                <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings}>Close</button>
-            </aside> : <></>}
+                <button type="button" look={secondaryButtonLook} on:click={toggleWorldSettings}>关闭</button>
+            </aside>
         </>
 
     def emptyHome() -> WebNode:
         return <section look={emptyContentLook} data-empty-worlds>
             <div look={worldInfoLook}>
-                <h1 look={displayTitleLook}>Create your first world</h1>
-                <p look={subtitleLook}>Shape a place that is entirely yours.</p>
+                <h1 look={displayTitleLook}>创建你的第一个世界</h1>
+                <p look={subtitleLook}>从这里开始，创造属于你的世界。</p>
             </div>
             <div look={emptyActionsLook}>
                 <button type="button" look={primaryButtonLook} on:click={createFirstWorld} data-create-first-world>
                     <Icon name={IconName.plus} />
-                    Create world
+                    创建世界
                 </button>
                 <button type="button" look={secondaryButtonLook} on:click={openExistingWorld} data-open-existing-world>
                     <Icon name={IconName.folderOpen} />
-                    Open existing world
+                    打开已有世界
                 </button>
             </div>
         </section>
 
-    return <div look={appShellLook} on:wheel={switchByWheel} data-app data-screen="world-home">
+    return <div look={appShellLook} data-app data-screen="world-home">
         <Head
             title="OpenVoxel"
-            description="Create, manage, and enter your OpenVoxel worlds"
-            themeColor="#06101f"
-            language="en"
+            description="创建、管理并进入你的 OpenVoxel 世界"
+            themeColor="#202020"
+            language="zh-CN"
         />
         <img
             look={backgroundImageLook}
@@ -160,4 +177,30 @@ export component WorldHomePage:
             <Navigation showCreate={activeWorld != null} />
         </header>
         {activeWorld == null ? emptyHome() : worldHome()}
+        <dialog ref={deleteDialog} look={deleteDialogLook} aria-labelledby="delete-world-title" aria-describedby="delete-world-description" on:cancel.prevent={cancelDelete} data-delete-world-dialog>
+            <h2 id="delete-world-title" look={deleteTitleLook}>删除「{deleteTarget?.name ?? ""}」？</h2>
+            <p id="delete-world-description" look={deleteDescriptionLook}>此设备上的世界存档和所有修改将永久删除，无法恢复。</p>
+            {deleteFailure.isBlank() ? <></> : <p look={errorLook} role="alert" data-delete-world-error>{deleteFailure}</p>}
+            <div look={deleteActionsLook}>
+                <button
+                    type="button"
+                    look={deleteCancelLook}
+                    on:click={cancelDelete}
+                    disabled={removeWorld.pending}
+                    autofocus={true}
+                    data-cancel-delete-world
+                >
+                    取消
+                </button>
+                <button
+                    type="button"
+                    look={deleteConfirmLook}
+                    on:click={removeWorld}
+                    disabled={removeWorld.pending}
+                    data-confirm-delete-world
+                >
+                    {removeWorld.pending ? "正在删除…" : "确认删除"}
+                </button>
+            </div>
+        </dialog>
     </div>

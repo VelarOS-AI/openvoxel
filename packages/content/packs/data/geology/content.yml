@@ -1,0 +1,5 @@
+formatVersion: 1
+owner: geology
+blocks: true
+worldGeneration: false
+ecosystem: true

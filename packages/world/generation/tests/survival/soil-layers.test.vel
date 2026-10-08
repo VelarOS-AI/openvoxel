@@ -1,0 +1,56 @@
+import {expect} from "velar/test"
+import {baseWorldBlockRegistry} from "@openvoxel/blocks"
+import {chunkBlock, emptyChunk, paintChunkBlockAtIndex} from "@openvoxel/world"
+import {baseWorldGeneratorCatalog} from "../../src/runtime/builtin-catalog.vel"
+import {TerrainSample} from "../../src/terrain-sample.vel"
+import {createSurvivalBlockPalette} from "../../src/survival/block-palette.vel"
+import {TerrainColumnPlan, columnPlanner, createGenerationFields} from "../../src/survival/terrain.vel"
+import {surfaceBlock, surfaceLayerDepth} from "../../src/survival/surface-materials.vel"
+import {generateSurface, surfacePlanner} from "../../src/survival/surface.vel"
+
+test "soil and beach deposits continue below the top across vertical chunk boundaries":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const registry = baseWorldBlockRegistry.registry
+    const blocks = createSurvivalBlockPalette(registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const actual = columnPlanner(createGenerationFields("soil-section"), 16).columns(-1, -1)
+    const base = TerrainSample.from(actual.sampleAt(-16, -16), {surfaceY: 80, slope: 0, humidity: 8, forestDensity: 0.8, riverStrength: 0, waterBody: null, waterLevel: 64, roadDistance: null, deposit: 0, exposure: 0, biome: profile.biomes.plains})
+    for biome in [profile.biomes.plains, profile.biomes.taiga, profile.biomes.coast, profile.biomes.desert]:
+        const sample = TerrainSample.from(base, {biome, biomeFamily: biome})
+        const plan = TerrainColumnPlan.from(actual, {sampleAt: (x, z) => sample})
+        const paint = surfacePlanner(profile, blocks).surface(plan)
+        const top = emptyChunk({x: -1, y: 5, z: -1}, 16, blocks.stone)
+        const below = emptyChunk({x: -1, y: 4, z: -1}, 16, blocks.stone)
+        // 洞口和流体不能被新的厚土层封死。
+        paintChunkBlockAtIndex(below, 1 + 16 * 16 * 15, blocks.air)
+        paintChunkBlockAtIndex(below, 2 + 16 * 16 * 15, blocks.water)
+        generateSurface(top, paint, blocks, registry)
+        generateSurface(below, paint, blocks, registry)
+        expect(chunkBlock(top, {x: 0, y: 0, z: 0})).toBe(surfaceBlock(profile, blocks, sample))
+        const deposit = biome == profile.biomes.coast or biome == profile.biomes.desert ? blocks.sand : blocks.dirt
+        for y in range(13, 16): expect(chunkBlock(below, {x: 0, y, z: 0})).toBe(deposit)
+        expect(chunkBlock(below, {x: 0, y: 12, z: 0})).toBe(blocks.stone)
+        expect(chunkBlock(below, {x: 1, y: 15, z: 0})).toBe(blocks.air)
+        expect(chunkBlock(below, {x: 2, y: 15, z: 0})).toBe(blocks.water)
+
+test "erosion keeps at least two soil blocks beneath grass and wet lowlands retain deeper soil":
+    const profile = baseWorldGeneratorCatalog.generators[0]
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    const sample = TerrainSample.from(columnPlanner(createGenerationFields("soil-depth"), 16).columns(0, 0).sampleAt(0, 0), {surfaceY: 140, slope: 0.6, humidity: 1, biome: profile.biomes.plains, biomeFamily: profile.biomes.plains, terrainType: profile.terrainTypes.hill, exposure: 0, deposit: -0.4, roadDistance: null, waterBody: null})
+    expect(surfaceBlock(profile, blocks, sample)).toBe(blocks.grass)
+    expect(surfaceLayerDepth(profile, blocks, sample)).toBe(3)
+    expect(surfaceLayerDepth(profile, blocks, TerrainSample.from(sample, {surfaceY: 70, slope: 0, humidity: 12}))).toBe(6)
+
+test "dry inland depressions at sea level elevation are soil instead of isolated beaches":
+    const fields = createGenerationFields("inland-soil")
+    fields.continentalness = (x, z) => 0.1
+    fields.ridge = (x, z) => -0.5
+    fields.hills = (x, z) => 0
+    fields.river = (x, z) => 1
+    fields.detail = (x, y, z) => 0
+    fields.surfaceMicroDetail = (x, z) => 0
+    fields.regions = (x, z) => ({id: "test:lowland", center: {x, z}, biome: fields.profile.biomes.plains, neighboringBiome: fields.profile.biomes.plains, edgeDistance: 100, forestCover: 0, relief: 1, upland: -2})
+    const sample = columnPlanner(fields, 16).columns(0, 0).sampleAt(0, 0)
+    expect(sample.surfaceY > 64 and sample.surfaceY <= 67).toBe(true)
+    expect(sample.biome).toBe(fields.profile.biomes.plains)
+    const blocks = createSurvivalBlockPalette(baseWorldBlockRegistry.registry, baseWorldGeneratorCatalog.palettes[0].blocks)
+    expect(surfaceBlock(fields.profile, blocks, sample) != blocks.sand).toBe(true)

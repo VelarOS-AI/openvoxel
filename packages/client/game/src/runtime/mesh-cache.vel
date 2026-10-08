@@ -1,0 +1,46 @@
+import {ChunkPosition, chunkKey} from "@openvoxel/world"
+
+export readonly type CachedMeshCost:
+    position: readonly ChunkPosition
+    bytes: number
+    meshes: number
+
+export type MeshCache:
+    has: (key: string) -> bool
+    remove: (key: string) -> null
+    retain: (entry: CachedMeshCost) -> List<readonly ChunkPosition>
+    clear: () -> null
+
+/// 背向 GPU 缓存独立于世界数据驻留，按进入缓存的先后回收。
+/// 预算同时约束几何字节与材质/绘制对象；再次可见后移出缓存，再转走成为最近项。
+export def meshCache(maximumBytes: number = 16 * 1024 * 1024, maximumMeshes: number = 128) -> MeshCache:
+    const entries: Map<string, CachedMeshCost> = Map()
+    let bytes = 0
+    let meshes = 0
+
+    def remove(key: string):
+        const entry = entries.get(key)
+        if entry == null: return
+        bytes -= entry.bytes
+        meshes -= entry.meshes
+        entries.remove(key)
+
+    def retain(entry: CachedMeshCost) -> List<readonly ChunkPosition>:
+        const key = chunkKey(entry.position)
+        const previous = entries.get(key)
+        bytes += entry.bytes - (previous?.bytes ?? 0)
+        meshes += entry.meshes - (previous?.meshes ?? 0)
+        entries.set(key, entry)
+        const evicted: List<readonly ChunkPosition> = []
+        for oldKey, old in entries:
+            if bytes <= maximumBytes and meshes <= maximumMeshes: break
+            evicted.append(old.position)
+            remove(oldKey)
+        return evicted
+
+    def clear():
+        entries.clear()
+        bytes = 0
+        meshes = 0
+
+    return {has: key => key in entries, remove, retain, clear}

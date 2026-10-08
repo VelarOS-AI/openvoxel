@@ -1,0 +1,67 @@
+formatVersion: 1
+owner: gourds
+title: 野生瓜田
+description: 温暖草地与河谷中的西瓜和瓜藤
+requires:
+  - terrain
+replaces: []
+removes: []
+units:
+  biomes: []
+  trees: []
+  plants:
+    - key: gourds:watermelon
+      block: gourds:watermelon
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 6
+        idealLow: 10
+        idealHigh: 19
+        maximum: 28
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 0.7
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 3
+        - biome: openvoxel:biome/plains
+          weight: 3
+        - biome: openvoxel:biome/savanna
+          weight: 2
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+    - key: gourds:watermelon_vine
+      block: gourds:watermelon_vine
+      support: openvoxel:crop_support
+      temperature:
+        minimum: 6
+        idealLow: 10
+        idealHigh: 19
+        maximum: 28
+      humidity:
+        minimum: 4
+        idealLow: 7
+        idealHigh: 13
+        maximum: 15
+      weight: 2
+      affinities:
+        - biome: openvoxel:biome/meadow
+          weight: 3
+        - biome: openvoxel:biome/plains
+          weight: 3
+        - biome: openvoxel:biome/savanna
+          weight: 2
+      properties: []
+      minimumHeight: 1
+      maximumHeight: 1
+      aquatic: false
+      saltwater: null
+  minerals: []
+  features: []
+  stages: []
